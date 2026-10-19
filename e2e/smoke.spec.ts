@@ -407,3 +407,50 @@ test("a scripted event shows a card that names the layer and highlights it in th
   await expect(card.getByTestId("event-tone")).toHaveText("Not your problem");
   await expect(student.getByTestId("uptime")).toHaveText("100%");
 });
+
+test("on SaaS, a feature the platform can't provide shows a card, then stays on screen", async ({ browser, request }) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  await teacher.getByRole("button", { name: "Create code" }).click();
+  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+
+  const created = await request.post(`/api/codes/${code}/companies`, {
+    data: { name: "Walled Garden Ltd", productType: "social", model: "saas" },
+  });
+  const { id } = await created.json();
+
+  // The default config opens the SaaS feature gap on day 6.
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${id}`);
+  for (let day = 2; day <= 6; day++) {
+    await student.getByRole("button", { name: "Continue" }).click();
+    await expect(student.getByTestId("day")).toContainText(`${day} of 180`);
+  }
+
+  const card = student.getByTestId("event-card").and(student.locator('[data-event="saasFeatureGap"]'));
+  await expect(card).toBeVisible();
+  await expect(card.getByRole("strong").first()).toHaveText("A feature SaaS can't provide");
+  await expect(card.getByTestId("event-responsibility")).toHaveText(
+    "Application / features is shared between you and the provider on SaaS.",
+  );
+  await expect(card.getByTestId("event-outcome")).toContainText("a feed that ranks posts your way, and no add-on offers it");
+  await expect(card.getByTestId("event-tone")).toHaveText("It hurt");
+  const application = student.getByTestId("stack").locator('[data-layer="application"]');
+  await expect(application).toHaveAttribute("data-event", "saasFeatureGap");
+  await expect(student.getByTestId("day-log").getByTestId("event")).toContainText("A feature SaaS can't provide");
+
+  // The next day the card has gone, but the gap is still on screen, in the stack and in the add-on shop.
+  await student.getByRole("button", { name: "Continue" }).click();
+  await expect(student.getByTestId("day")).toContainText("7 of 180");
+  await expect(card).toHaveCount(0);
+  const gap = student.getByTestId("feature-gap");
+  await expect(gap).toBeVisible();
+  await expect(gap).toContainText("Growth is 20% slower every day until you migrate");
+  await expect(application).toHaveAttribute("data-gap", "saasFeatureGap");
+  await expect(application).toContainText("Feature gap");
+  await expect(student.getByTestId("gap-shop-note")).toContainText("a feed that ranks posts your way");
+  await gap.getByRole("button", { name: "See Application / features in the stack" }).click();
+  await expect(application).toBeFocused();
+});

@@ -967,7 +967,7 @@ describe("scripted events", () => {
     const entries = log[0]!.entries;
     expect(entries[0]).toMatchObject({ kind: "event", text: expect.stringContaining("OS and patching is your job on IaaS.") });
     expect(entries).toContainEqual(expect.objectContaining({ kind: "outage" }));
-    const cleanUp = event("osPatch").effects.iaas.shortOfOps!.cost!.amount;
+    const cleanUp = event("osPatch").effects.iaas!.shortOfOps!.cost!.amount;
     expect(entries).toContainEqual(expect.objectContaining({ category: "infrastructure", cashDelta: -cleanUp }));
     expect(company.outageDays).toBe(1);
 
@@ -1024,6 +1024,102 @@ describe("scripted events", () => {
     const burst = log[0]!.entries.find((e) => e.text.startsWith("Traffic spike: scaled up"));
     expect(burst).toMatchObject({ category: "infrastructure" });
     expect(burst!.cashDelta).toBeLessThan(0);
+  });
+});
+
+describe("provider and SaaS events", () => {
+  // The default price rise and feature gap on fixed days: the price rise on day 2 and the gap on day 3. Cash to
+  // pay for on-prem's kit.
+  const event = (id: string) => defaultConfig.events.find((e) => e.id === id)!;
+  const eventSim = createSim({
+    ...sim.config,
+    startingCash: 100_000,
+    events: [
+      { ...event("providerPriceRise"), schedule: { type: "fixed", days: [2] } },
+      { ...event("saasFeatureGap"), schedule: { type: "fixed", days: [3] } },
+    ],
+  });
+  let eventApp: Awaited<ReturnType<typeof buildApp>>;
+
+  beforeAll(async () => {
+    eventApp = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), sim: eventSim });
+  });
+
+  afterAll(async () => {
+    await eventApp?.close();
+  });
+
+  async function setup(model: string) {
+    const code = await newCode();
+    const created = await eventApp.inject({
+      method: "POST",
+      url: `/api/codes/${code}/companies`,
+      payload: { name: "Acme", productType: "social", model },
+    });
+    const url = `/api/codes/${code}/companies/${created.json<CompanyView>().id}`;
+    const next = async () => (await eventApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    return { url, company: created.json<CompanyView>(), next };
+  }
+
+  it("puts PaaS's charges up from the day of the price rise", async () => {
+    const { company: before, next } = await setup("paas");
+    const percent = event("providerPriceRise").effects.paas!.priceRise!.percent;
+    // £300 a month here, so £10 a day before the rise.
+    expect(before.monthlyInfrastructureCost).toBe(300);
+    const { company, log } = await next();
+    expect(company.events).toEqual([
+      expect.objectContaining({
+        id: "providerPriceRise",
+        layer: "hardware",
+        owner: "provider",
+        responsibility: "Hardware is the provider's job on PaaS.",
+        hit: true,
+      }),
+    ]);
+    const risen = 300 * (1 + percent / 100);
+    expect(company.monthlyInfrastructureCost).toBe(risen);
+    const charge = Math.round(risen / defaultConfig.billing.daysPerMonth);
+    expect(log[0]!.entries).toContainEqual(
+      expect.objectContaining({ category: "infrastructure", cashDelta: -charge, text: expect.stringContaining("running costs") }),
+    );
+    expect(company.cash).toBe(before.cash - charge);
+    expect(company.spend.infrastructure).toBe(before.spend.infrastructure + charge);
+  });
+
+  it("leaves an on-prem company's charges alone", async () => {
+    const { company: before, next } = await setup("onprem");
+    const { company } = await next();
+    expect(company.events).toEqual([expect.objectContaining({ id: "providerPriceRise", owner: "you", hit: false })]);
+    expect(company.monthlyInfrastructureCost).toBe(before.monthlyInfrastructureCost);
+  });
+
+  it("gives only a SaaS company the feature gap, and keeps showing it after the day it fired", async () => {
+    const saas = await setup("saas");
+    await saas.next();
+    const { company } = await saas.next();
+    expect(company.day).toBe(3);
+    expect(company.events).toEqual([
+      expect.objectContaining({ id: "saasFeatureGap", layer: "application", owner: "shared", hit: true }),
+    ]);
+    const { growthMultiplier, features } = event("saasFeatureGap").effects.saas!.featureGap!;
+    expect(company.featureGaps).toEqual([
+      expect.objectContaining({ id: "saasFeatureGap", model: "saas", feature: features.social, growthMultiplier }),
+    ]);
+    const { company: later } = await saas.next();
+    expect(later.events).toEqual([]);
+    expect(later.featureGaps).toEqual(company.featureGaps);
+    expect((await eventApp.inject({ method: "GET", url: saas.url })).json<CompanyView>().featureGaps).toEqual(
+      company.featureGaps,
+    );
+
+    for (const model of ["onprem", "iaas", "paas"]) {
+      const other = await setup(model);
+      await other.next();
+      const { company: day3 } = await other.next();
+      expect(day3.day).toBe(3);
+      expect(day3.events).toEqual([]);
+      expect(day3.featureGaps).toEqual([]);
+    }
   });
 });
 

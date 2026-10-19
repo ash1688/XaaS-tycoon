@@ -91,6 +91,7 @@ export async function buildApp(opts: AppOptions) {
       migration: sim.migration(state),
       migrations: state.migrations,
       events: sim.events(state),
+      featureGaps: sim.featureGaps(state),
     };
   }
 

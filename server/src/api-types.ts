@@ -3,6 +3,7 @@ import type {
   Action,
   DayLog,
   EventView,
+  FeatureGapView,
   FeatureView,
   MigrationPhase,
   MigrationQuote,
@@ -91,6 +92,11 @@ export interface CompanyView {
    * layer that decided it and who owns that layer on the model it hit, and how it played out. Empty on other days.
    */
   events: EventView[];
+  /**
+   * Features the platform can't provide, each still slowing growth until the company migrates off that model. Shown
+   * every day, not just the day the event fired.
+   */
+  featureGaps: FeatureGapView[];
 }
 
 
