@@ -1,0 +1,21 @@
+{
+  "name": "@xaas/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -p . && vite build",
+    "typecheck": "vue-tsc -p ."
+  },
+  "dependencies": {
+    "@xaas/sim": "*",
+    "vue": "^3.5.44",
+    "vue-router": "^4.6.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.10",
+    "@xaas/server": "*",
+    "vite": "^8.3.4",
+    "vue-tsc": "^3.3.13"
+  }
+}

@@ -1,0 +1,32 @@
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: xaas
+      POSTGRES_PASSWORD: xaas
+      POSTGRES_DB: xaas
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xaas"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgres://xaas:xaas@db:5432/xaas
+      TEACHER_PASSWORD: ${TEACHER_PASSWORD:-change-me}
+      SESSION_SECRET: ${SESSION_SECRET:-local-dev-secret-change-me-please-32ch}
+      PORT: 3080
+    ports:
+      - "3080:3080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
