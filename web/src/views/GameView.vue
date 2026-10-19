@@ -78,10 +78,19 @@ const quoteRows = computed(() => {
 const quotePerUser = computed(() =>
   [quote.value?.from, quote.value?.to].some((id) => (meta.value?.models.find((m) => m.id === id)?.monthlyCostPerUser ?? 0) > 0),
 );
-// Add-ons are the SaaS provider's, so leaving SaaS leaves them behind.
-const addonsLost = computed(() =>
-  onSaas.value ? (company.value?.features.filter((f) => f.status === "addon") ?? []) : [],
+// Vendor lock-in: add-ons are the SaaS provider's, so leaving SaaS leaves them behind, to rebuild in developer-days.
+const lostAddons = computed(() => quote.value?.lostAddons ?? []);
+const rebuildDays = computed(() => lostAddons.value.reduce((sum, a) => sum + a.devDays, 0));
+const namesList = (names: string[]) =>
+  names.length < 2 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+// While leaving SaaS, the add-ons that go when the move completes.
+const addonsAtRisk = computed(() =>
+  migration.value?.from === "saas" && migration.value.to !== "saas"
+    ? (company.value?.features.filter((f) => f.status === "addon") ?? [])
+    : [],
 );
+// The add-ons left behind by a migration that completed today, shown in the features panel until the next day.
+const leftBehind = ref<string[]>([]);
 
 function pickTarget(id: ModelId) {
   migrationTarget.value = id;
@@ -163,8 +172,12 @@ async function continueDay() {
   error.value = "";
   try {
     const before = company.value?.model;
+    const addons = company.value?.features.filter((f) => f.status === "addon") ?? [];
     const result = await api.continueDay(props.code, props.id);
     previousModel.value = before !== result.company.model ? before : undefined;
+    leftBehind.value = addons
+      .filter((a) => result.company.features.find((f) => f.id === a.id)?.status === "notStarted")
+      .map((a) => a.name);
     company.value = result.company;
     lastDay.value = result.log.at(-1);
   } catch (e) {
@@ -422,6 +435,10 @@ async function continueDay() {
         It runs in the background: your staff aren't tied up. You stay on {{ modelName(migration.from) }} until the
         move completes, paying for it and for {{ modelName(migration.to) }} at the same time.
       </p>
+      <p v-if="addonsAtRisk.length" class="warn-text migration-note" data-testid="addons-at-risk">
+        Your add-ons ({{ namesList(addonsAtRisk.map((f) => f.name)) }}) keep working, and keep being billed, until
+        the move completes. Then they stay behind with the SaaS provider.
+      </p>
     </template>
     <template v-else>
       <p class="muted migration-note">
@@ -455,6 +472,22 @@ async function continueDay() {
       </button>
       <div v-else-if="targetModel && quote" class="confirm" role="group" aria-labelledby="confirm-migration-heading">
         <h3 id="confirm-migration-heading">Migrate to {{ targetModel.name }}?</h3>
+        <div v-if="lostAddons.length" class="lockin" role="alert" data-testid="lockin-warning">
+          <p class="lockin-title">
+            <span class="badge">Vendor lock-in</span>
+            You'll lose {{ lostAddons.length }} add-on{{ lostAddons.length === 1 ? "" : "s" }}
+          </p>
+          <ul class="lockin-addons">
+            <li v-for="a in lostAddons" :key="a.id" :data-addon="a.id">
+              <strong>{{ a.name }}</strong>
+              <span class="muted">{{ a.devDays }} developer-days to rebuild</span>
+            </li>
+          </ul>
+          <p>
+            Add-ons belong to the SaaS provider, not you, so they stay behind when you leave: your developers must
+            rebuild them, {{ rebuildDays }} developer-days in all. Until then, you lose their growth boost.
+          </p>
+        </div>
         <table class="quote" data-testid="migration-quote">
           <caption>
             What it costs
@@ -492,9 +525,6 @@ async function continueDay() {
             Then {{ targetModel.name }} needs <strong>{{ targetModel.opsNeeded }}</strong> ops staff. You have
             {{ company.ops }}.
           </li>
-          <li v-if="addonsLost.length" class="warn-text" data-testid="addons-lost">
-            Your add-ons stay behind on SaaS: {{ addonsLost.map((f) => f.name).join(", ") }}.
-          </li>
         </ul>
         <div class="confirm-buttons">
           <button :disabled="busy || bankrupt" @click="startMigration">Start migration</button>
@@ -529,6 +559,11 @@ async function continueDay() {
     </template>
     <p v-else class="muted features-intro">
       Your developers build features, one at a time. Each developer does one developer-day of work a day.
+    </p>
+    <p v-if="leftBehind.length && !onSaas" class="lockin lockin-done" role="status" data-testid="addons-left-behind">
+      <span class="badge">Vendor lock-in</span>
+      {{ namesList(leftBehind) }} stayed with the SaaS provider. {{ leftBehind.length === 1 ? "It's" : "They're" }}
+      not built here: build {{ leftBehind.length === 1 ? "it" : "them" }} below to get the growth back.
     </p>
     <ul class="features">
       <li
@@ -590,6 +625,9 @@ async function continueDay() {
               {{ feature.daysLeft }} day{{ feature.daysLeft === 1 ? "" : "s" }} left with {{ company.developers }}
               developer{{ company.developers === 1 ? "" : "s" }}.
             </template>
+            <strong v-else-if="onSaas" class="muted" :data-testid="`feature-paused-${feature.id}`">
+              Paused: on SaaS you buy add-ons instead. It carries on if you leave SaaS.
+            </strong>
             <strong v-else class="warn-text">No developers: hire some to carry on.</strong>
           </p>
         </div>

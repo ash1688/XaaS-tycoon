@@ -90,7 +90,7 @@ export interface CompanyView {
 
 /**
  * GET .../migration-quote?target=: what migrating to the target would cost (duration, upfront, double billing, pro
- * rata, exit penalty, total) and the odds of an overrun, for the confirm step.
+ * rata, exit penalty, total), the odds of an overrun, and the add-ons lost when leaving SaaS, for the confirm step.
  */
 export type MigrationQuoteView = MigrationQuote;
 

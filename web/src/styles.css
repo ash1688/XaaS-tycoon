@@ -930,6 +930,51 @@ fieldset > p {
   color: var(--warn);
 }
 
+.lockin {
+  margin: 0 0 0.75rem;
+  padding: 0.75rem 1rem;
+  border: 2px solid var(--warn);
+  border-radius: 10px;
+  background: var(--warn-soft);
+}
+
+.lockin .badge {
+  color: var(--warn);
+}
+
+.lockin-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.5rem;
+  margin: 0 0 0.5rem;
+  font-weight: 700;
+  color: var(--warn);
+}
+
+.lockin p:last-child {
+  margin: 0;
+}
+
+.confirm .lockin-addons {
+  margin: 0 0 0.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.lockin-addons li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0 1rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.lockin-done {
+  margin-top: 0;
+}
+
 .confirm-buttons {
   display: flex;
   flex-wrap: wrap;
