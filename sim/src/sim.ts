@@ -45,10 +45,7 @@ export interface Migration {
   phase: MigrationPhase;
   /** Days done in the current phase. */
   phaseDaysDone: number;
-  /**
-   * Extra days added to the moving phase by an overrun. Always 0 for now.
-   * TODO(#10): roll a seeded overrun when the migration starts, and show it in the quote.
-   */
+  /** Extra days added to the moving phase by an overrun, rolled when that phase starts. 0 until then. */
   overrunDays: number;
 }
 
@@ -148,6 +145,32 @@ export interface MigrationView {
   daysLeft: number;
   /** Days the whole migration takes, overrun included. */
   totalDays: number;
+  /** Extra days from an overrun, included in the days above. 0 if it hasn't overrun (or not yet). */
+  overrunDays: number;
+}
+
+/**
+ * What a migration is expected to cost, for the student to see before confirming. Every charge in it is
+ * infrastructure. Charges with a per-user part are priced at today's users, as they are billed on each day's users;
+ * with no overrun and no per-user fees, the quote is exactly what gets charged.
+ */
+export interface MigrationQuote {
+  from: ModelId;
+  to: ModelId;
+  /** Days the migration takes if it doesn't overrun. The model switches at the end of the last one. */
+  days: number;
+  /** The new model's upfront cost, charged on the migration's first day. */
+  upfrontCost: number;
+  /** The new provider's running costs for every day of the migration, on top of the old one's. */
+  doubleBilling: number;
+  /** The old provider's running costs from the first day of the migration up to the day you leave. */
+  proRata: number;
+  /** Charged once by the old provider on the day you leave. */
+  exitPenalty: number;
+  /** Everything above added up. */
+  total: number;
+  /** The odds of an overrun and how many extra days it can add. Both providers bill for those days too. */
+  overrun: { chance: number; minDays: number; maxDays: number };
 }
 
 export interface NewGameParams {
@@ -212,6 +235,11 @@ export interface Sim {
   features(state: SavedState): FeatureView[];
   /** The migration under way, or null. */
   migration(state: SavedState): MigrationView | null;
+  /**
+   * What migrating to the target would cost, before starting it. Rejects the same targets startMigration does: an
+   * unknown model, the current one, or any while a migration is running.
+   */
+  migrationQuote(state: SavedState, target: string): MigrationQuote;
 }
 
 export function isModelId(v: string): v is ModelId {
@@ -345,14 +373,70 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return { ...state, [from]: state[from] - 1, [to]: state[to] + 1 };
   }
 
-  function startMigration(state: GameState, to: string): GameState {
+  /** Checks a migration to this model can start, and returns it as a model id. */
+  function migrationTarget(state: GameState, to: string): ModelId {
     if (!isModelId(to)) throw new SimError("unknown_model", "Pick a deployment model from the list.");
     if (state.migration) {
       const { name } = config.models[state.migration.to];
       throw new SimError("migration_running", `You're already migrating to ${name}. Finish that first.`);
     }
     if (to === state.model) throw new SimError("same_model", `You're already on ${config.models[to].name}.`);
+    return to;
+  }
+
+  function startMigration(state: GameState, model: string): GameState {
+    const to = migrationTarget(state, model);
     return { ...state, migration: { to, phase: MIGRATION_PHASES[0], phaseDaysDone: 0, overrunDays: 0 } };
+  }
+
+  /** What a day of a model's running costs comes to, on the given users. */
+  const dailyInfrastructure = (modelId: ModelId, users: number) =>
+    -infrastructureEntries(modelId, users).reduce((sum, e) => sum + e.cashDelta, 0);
+
+  function migrationQuote(saved: SavedState, target: string): MigrationQuote {
+    const state = load(saved);
+    const to = migrationTarget(state, target);
+    const days = MIGRATION_PHASES.reduce((sum, p) => sum + config.migration.phases[p].days, 0);
+    // Priced by the same daily rules advanceOneDay bills by, so the rounding matches too.
+    const upfrontCost = config.models[to].upfrontCost;
+    const doubleBilling = config.migration.billNewFromStart ? days * dailyInfrastructure(to, state.users) : 0;
+    const proRata = days * dailyInfrastructure(state.model, state.users);
+    const exitPenalty = config.models[state.model].exitPenalty;
+    const { chance, minDays, maxDays } = config.migration.overrun;
+    return {
+      from: state.model,
+      to,
+      days,
+      upfrontCost,
+      doubleBilling,
+      proRata,
+      exitPenalty,
+      total: upfrontCost + doubleBilling + proRata + exitPenalty,
+      overrun: { chance, minDays, maxDays },
+    };
+  }
+
+  /**
+   * The migration's own charges for a day, on top of the current model's bill: the new model's upfront cost on the
+   * first day, and (if config says so) the new provider's running costs in full from that day to the switch.
+   */
+  function migrationCharges(state: GameState): LogEntry[] {
+    const m = state.migration;
+    if (!m) return [];
+    const firstDay = m.phase === MIGRATION_PHASES[0] && m.phaseDaysDone === 0;
+    const running = config.migration.billNewFromStart
+      ? infrastructureEntries(m.to, state.users).map((e) => ({ ...e, text: `Double billing: ${e.text}` }))
+      : [];
+    return [...(firstDay ? upfrontEntries(m.to) : []), ...running];
+  }
+
+  /** A seeded roll for whether a migration overruns, and by how many days. Always draws once, then again if so. */
+  function rollOverrun(rng: number): [days: number, next: number] {
+    const { chance, minDays, maxDays } = config.migration.overrun;
+    const [r, afterChance] = nextRandom(rng);
+    if (r >= chance) return [0, afterChance];
+    const [d, next] = nextRandom(afterChance);
+    return [minDays + Math.floor(d * (maxDays - minDays + 1)), next];
   }
 
   /** How long a phase of this migration takes: the configured days, plus any overrun on the moving phase. */
@@ -368,7 +452,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const phaseDaysLeft = phaseLength(m, m.phase) - m.phaseDaysDone;
     const daysLeft = later.reduce((sum, p) => sum + phaseLength(m, p), phaseDaysLeft);
     const totalDays = MIGRATION_PHASES.reduce((sum, p) => sum + phaseLength(m, p), 0);
-    return { from: state.model, to: m.to, phase: m.phase, phaseDaysLeft, daysLeft, totalDays };
+    const { overrunDays } = m;
+    return { from: state.model, to: m.to, phase: m.phase, phaseDaysLeft, daysLeft, totalDays, overrunDays };
   }
 
   /**
@@ -386,17 +471,23 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const done = config.migration.phases[m.phase].name;
     const next = MIGRATION_PHASES[MIGRATION_PHASES.indexOf(m.phase) + 1];
     if (next) {
-      const days = phaseLength(m, next);
+      // Migrations slip while moving: roll for an overrun as that phase starts.
+      const [extraDays, rng] = next === "moving" ? rollOverrun(state.rng) : [0, state.rng];
+      const moved: Migration = { ...m, phase: next, phaseDaysDone: 0, overrunDays: m.overrunDays + extraDays };
+      const days = phaseLength(moved, next);
       const nextName = config.migration.phases[next].name;
       const text = `Migration to ${toName}: ${done} done. ${nextName} next, ${days} day${days === 1 ? "" : "s"}.`;
-      return {
-        state: { ...state, migration: { ...m, phase: next, phaseDaysDone: 0 } },
-        entries: [{ text, cashDelta: 0, kind: "migration" }],
-      };
+      const entries: LogEntry[] = [{ text, cashDelta: 0, kind: "migration" }];
+      if (extraDays > 0) {
+        const extra = `${extraDays} extra day${extraDays === 1 ? "" : "s"}`;
+        const overrun = `Migration overrun: ${nextName.toLowerCase()} will take ${extra}, billed by both providers.`;
+        entries.push({ text: overrun, cashDelta: 0, kind: "migration" });
+      }
+      return { state: { ...state, rng, migration: moved }, entries };
     }
-    // TODO(#10): charge the exit penalty for the model being left here.
     const switched: GameState = { ...state, model: m.to, migration: null, migrations: state.migrations + 1 };
     const needed = opsNeeded(m.to);
+    const left = config.models[state.model];
     const entries: LogEntry[] = [
       {
         text: `Migration complete: you're now on ${toName}, which needs ${needed} ops staff.`,
@@ -404,6 +495,11 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         kind: "migration",
       },
     ];
+    // Charged once, on the day you leave. The old provider's pro-rata share for today was billed with the rest.
+    if (left.exitPenalty > 0) {
+      const text = `Exit penalty: leaving ${left.name}`;
+      entries.push({ text, cashDelta: -left.exitPenalty, category: "infrastructure" });
+    }
     // Add-ons belong to the SaaS provider, so they stop (and stop being billed) when you leave it. This is the
     // minimum that keeps billing right. TODO(#11): make it the lock-in lesson, warning before the migration starts.
     const lost = state.model === "saas" && m.to !== "saas" ? activeAddons(state) : [];
@@ -664,11 +760,12 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     // Developers work on the current build. A feature finished today helps growth from tomorrow.
     const build = buildDay(state);
 
-    // Billed on the current model until a migration completes. TODO(#10): during a migration, also bill the target
-    // model in full from its first day; the model being left is then billed pro rata up to the day you leave.
+    // Billed on the current model until a migration completes, so the model being left is billed pro rata up to the
+    // day you leave. During a migration the new model is billed as well (see migrationCharges).
     const entries: LogEntry[] = [
       ...build.entries,
       ...infrastructureEntries(state.model, state.users),
+      ...migrationCharges(state),
       ...addonEntries(state),
       ...staffEntries(state),
     ];
@@ -726,5 +823,6 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     uptime,
     features,
     migration,
+    migrationQuote,
   };
 }

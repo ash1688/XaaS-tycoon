@@ -3,18 +3,36 @@ import { eq, sql } from "drizzle-orm";
 import { createSim, defaultConfig } from "@xaas/sim";
 import { buildApp } from "../src/app.ts";
 import { companies } from "../src/db/schema.ts";
-import type { ActionBody, CompanyView, ContinueResult, MetaView, TeacherCodeView } from "../src/api-types.ts";
+import type {
+  ActionBody,
+  CompanyView,
+  ContinueResult,
+  MetaView,
+  MigrationQuoteView,
+  TeacherCodeView,
+} from "../src/api-types.ts";
 import { setupTestDb } from "./testDb.ts";
 
 const PASSWORD = "test-teacher-password";
 const sim = createSim({
   ...defaultConfig,
   startingCash: 1000,
-  // IaaS costs a flat 25 a day (750 a month), with nothing upfront, unless a test says otherwise.
+  // IaaS costs a flat 25 a day (750 a month), with nothing upfront, unless a test says otherwise. Leaving it costs
+  // 200, and PaaS 100 upfront and 10 a day, so a migration between them fits in the starting cash.
   models: {
     ...defaultConfig.models,
-    iaas: { ...defaultConfig.models.iaas, upfrontCost: 0, monthlyCost: 750, monthlyCostPerUser: 0, opsNeeded: 2 },
+    iaas: {
+      ...defaultConfig.models.iaas,
+      upfrontCost: 0,
+      monthlyCost: 750,
+      monthlyCostPerUser: 0,
+      opsNeeded: 2,
+      exitPenalty: 200,
+    },
+    paas: { ...defaultConfig.models.paas, upfrontCost: 100, monthlyCost: 300, monthlyCostPerUser: 0 },
   },
+  // Seeds are random here, so migrations never overrun.
+  migration: { ...defaultConfig.migration, overrun: { ...defaultConfig.migration.overrun, chance: 0 } },
   // No starting staff, so continue charges only the model's running cost unless a test hires someone.
   staff: {
     developers: { ...defaultConfig.staff.developers, dayRate: 10, startingCount: 0 },
@@ -647,7 +665,15 @@ describe("migration", () => {
       day: 1,
       cash: 1000,
       model: "iaas",
-      migration: { from: "iaas", to: "paas", phase: "planning", phaseDaysLeft: 5, daysLeft: 14, totalDays: 14 },
+      migration: {
+        from: "iaas",
+        to: "paas",
+        phase: "planning",
+        phaseDaysLeft: 5,
+        daysLeft: 14,
+        totalDays: 14,
+        overrunDays: 0,
+      },
     });
     // Kept across reloads.
     expect((await app.inject({ method: "GET", url })).json<CompanyView>().migration).toMatchObject({ to: "paas" });
@@ -663,7 +689,7 @@ describe("migration", () => {
 
     body = await next();
     expect(body.company).toMatchObject({ day: 15, model: "paas", opsNeeded: 1, migration: null, migrations: 1 });
-    expect(body.company.monthlyInfrastructureCost).toBe(defaultConfig.models.paas.monthlyCost);
+    expect(body.company.monthlyInfrastructureCost).toBe(sim.config.models.paas.monthlyCost);
     expect(body.log[0]!.entries).toContainEqual(
       expect.objectContaining({ kind: "migration", text: expect.stringContaining("Migration complete") }),
     );
@@ -739,6 +765,74 @@ describe("migration", () => {
     const loaded = (await app.inject({ method: "GET", url })).json<CompanyView>();
     expect(loaded).toMatchObject({ migration: null, migrations: 0 });
     expect((await app.inject({ method: "POST", url: `${url}/actions`, payload: toPaas })).statusCode).toBe(200);
+  });
+});
+
+describe("migration quote", () => {
+  async function setup() {
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const quote = (target: string) => app.inject({ method: "GET", url: `${url}/migration-quote?target=${target}` });
+    return { code, company, url, quote };
+  }
+
+  it("quotes the duration and each charge, without changing anything", async () => {
+    const { url, quote } = await setup();
+    const res = await quote("paas");
+    expect(res.statusCode).toBe(200);
+    expect(res.json<MigrationQuoteView>()).toEqual({
+      from: "iaas",
+      to: "paas",
+      days: 14,
+      upfrontCost: 100,
+      doubleBilling: 14 * 10,
+      proRata: 14 * 25,
+      exitPenalty: 200,
+      total: 100 + 140 + 350 + 200,
+      overrun: { chance: 0, minDays: 2, maxDays: 5 },
+    });
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({ cash: 1000, migration: null });
+  });
+
+  it("matches what continuing through the migration charges, with no overrun", async () => {
+    const { url, quote, company } = await setup();
+    const quoted = (await quote("paas")).json<MigrationQuoteView>();
+    await app.inject({ method: "POST", url: `${url}/actions`, payload: { type: "startMigration", model: "paas" } });
+    let body: ContinueResult | undefined;
+    for (let day = 1; day <= quoted.days; day++) {
+      body = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    }
+    expect(body!.company).toMatchObject({ model: "paas", migration: null, migrations: 1 });
+    expect(body!.company.spend.infrastructure - company.spend.infrastructure).toBe(quoted.total);
+    expect(company.cash - body!.company.cash).toBe(quoted.total);
+  });
+
+  it("rejects an unknown or missing target with 400", async () => {
+    const { url, quote } = await setup();
+    for (const res of [await quote("mainframe"), await app.inject({ method: "GET", url: `${url}/migration-quote` })]) {
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ error: "bad_request" });
+    }
+  });
+
+  it("rejects the current model, and a quote while migrating, with 400", async () => {
+    const { url, quote } = await setup();
+    expect((await quote("iaas")).json()).toMatchObject({ error: "same_model" });
+    await app.inject({ method: "POST", url: `${url}/actions`, payload: { type: "startMigration", model: "paas" } });
+    const running = await quote("saas");
+    expect(running.statusCode).toBe(400);
+    expect(running.json()).toMatchObject({ error: "migration_running" });
+  });
+
+  it("returns 404 for another code's company", async () => {
+    const { company } = await setup();
+    const other = await newCode();
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/codes/${other}/companies/${company.id}/migration-quote?target=paas`,
+    });
+    expect(res.statusCode).toBe(404);
   });
 });
 

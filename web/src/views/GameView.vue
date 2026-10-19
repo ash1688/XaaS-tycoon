@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { SPEND_CATEGORIES, type DayLog, type ModelId, type SpendCategory, type StaffPool } from "@xaas/sim";
-import type { ActionBody, CompanyView, MetaView } from "@xaas/server/api-types";
+import type { ActionBody, CompanyView, MetaView, MigrationQuoteView } from "@xaas/server/api-types";
 import { api, formatCash, formatCount, formatPrice, formatUptime } from "../api";
 
 const props = defineProps<{ code: string; id: string }>();
@@ -42,17 +42,42 @@ const configTeamNeeded = computed(() => meta.value?.minConfigDevelopers ?? 0);
 const configTeamShort = computed(() => (company.value ? Math.max(0, configTeamNeeded.value - company.value.developers) : 0));
 const currentModel = computed(() => meta.value?.models.find((m) => m.id === company.value?.model));
 
-// Migration: pick a target, confirm, then it runs in the background while you keep playing.
+// Migration: pick a target, see the quote and confirm, then it runs in the background while you keep playing.
 const migration = computed(() => company.value?.migration ?? null);
 const migrationTarget = ref<ModelId>();
 const confirmingMigration = ref(false);
+const quote = ref<MigrationQuoteView>();
 const migrationTargets = computed(() => meta.value?.models.filter((m) => m.id !== company.value?.model) ?? []);
 const targetModel = computed(() => meta.value?.models.find((m) => m.id === migrationTarget.value));
 const migrationDays = computed(() => meta.value?.migrationPhases.reduce((sum, p) => sum + p.days, 0) ?? 0);
 const phaseName = (id: string) => meta.value?.migrationPhases.find((p) => p.id === id)?.name ?? id;
 const phaseIndex = computed(() => meta.value?.migrationPhases.findIndex((p) => p.id === migration.value?.phase) ?? -1);
 const phaseState = (i: number) => (i < phaseIndex.value ? "done" : i === phaseIndex.value ? "current" : "next");
+// An overrun adds its days to moving infrastructure.
+const phaseDays = (phase: { id: string; days: number }) =>
+  phase.days + (phase.id === "moving" ? (migration.value?.overrunDays ?? 0) : 0);
 const days = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
+// Each charge the migration brings, in the order they land. Every one is infrastructure.
+const quoteRows = computed(() => {
+  const q = quote.value;
+  if (!q) return [];
+  const [from, to] = [modelName(q.from), modelName(q.to)];
+  return [
+    { id: "upfront", label: "New setup", detail: `${to} upfront cost, on the first day`, amount: q.upfrontCost },
+    {
+      id: "double",
+      label: "Double billing",
+      detail: `${to} billed in full for ${days(q.days)}, on top of ${from}`,
+      amount: q.doubleBilling,
+    },
+    { id: "pro-rata", label: "Pro rata", detail: `${from} billed up to the day you leave`, amount: q.proRata },
+    { id: "exit", label: "Exit penalty", detail: `${from} charges once for leaving`, amount: q.exitPenalty },
+  ];
+});
+// Per-user fees are priced at today's users, so they're an estimate if users grow.
+const quotePerUser = computed(() =>
+  [quote.value?.from, quote.value?.to].some((id) => (meta.value?.models.find((m) => m.id === id)?.monthlyCostPerUser ?? 0) > 0),
+);
 // Add-ons are the SaaS provider's, so leaving SaaS leaves them behind.
 const addonsLost = computed(() =>
   onSaas.value ? (company.value?.features.filter((f) => f.status === "addon") ?? []) : [],
@@ -61,6 +86,22 @@ const addonsLost = computed(() =>
 function pickTarget(id: ModelId) {
   migrationTarget.value = id;
   confirmingMigration.value = false;
+  quote.value = undefined;
+}
+
+// Fetches the quote for the confirm step, so the student sees what it costs before committing.
+async function planMigration() {
+  if (!migrationTarget.value) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    quote.value = await api.migrationQuote(props.code, props.id, migrationTarget.value);
+    confirmingMigration.value = true;
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    busy.value = false;
+  }
 }
 
 async function startMigration() {
@@ -69,6 +110,7 @@ async function startMigration() {
   if (migration.value) {
     migrationTarget.value = undefined;
     confirmingMigration.value = false;
+    quote.value = undefined;
   }
 }
 
@@ -342,7 +384,7 @@ async function continueDay() {
           :aria-current="phaseState(i) === 'current' ? 'step' : undefined"
         >
           <strong>{{ phase.name }}</strong>
-          <span class="muted">{{ phaseState(i) === "done" ? "Done" : days(phase.days) }}</span>
+          <span class="muted">{{ phaseState(i) === "done" ? "Done" : days(phaseDays(phase)) }}</span>
         </li>
       </ol>
       <div
@@ -369,9 +411,16 @@ async function continueDay() {
           <strong data-testid="migration-days-left">{{ days(migration.daysLeft) }}</strong>
         </span>
       </p>
+      <p v-if="migration.overrunDays" class="overrun" role="status" data-testid="migration-overrun">
+        <span class="badge">Overrun</span>
+        <span>
+          Moving infrastructure is taking <strong>{{ days(migration.overrunDays) }}</strong> longer than planned, and
+          both providers bill for every extra day.
+        </span>
+      </p>
       <p class="muted migration-note">
-        It runs in the background: your staff aren't tied up. You stay on {{ modelName(migration.from) }}, and keep
-        paying for it, until the move completes.
+        It runs in the background: your staff aren't tied up. You stay on {{ modelName(migration.from) }} until the
+        move completes, paying for it and for {{ modelName(migration.to) }} at the same time.
       </p>
     </template>
     <template v-else>
@@ -400,15 +449,45 @@ async function continueDay() {
         v-if="!confirmingMigration"
         class="plan-migration"
         :disabled="busy || bankrupt || !targetModel"
-        @click="confirmingMigration = true"
+        @click="planMigration"
       >
         Plan migration
       </button>
-      <div v-else-if="targetModel" class="confirm" role="group" aria-labelledby="confirm-migration-heading">
+      <div v-else-if="targetModel && quote" class="confirm" role="group" aria-labelledby="confirm-migration-heading">
         <h3 id="confirm-migration-heading">Migrate to {{ targetModel.name }}?</h3>
+        <table class="quote" data-testid="migration-quote">
+          <caption>
+            What it costs
+          </caption>
+          <tbody>
+            <tr data-quote="days">
+              <th scope="row">
+                Duration
+                <span class="muted">You switch on day {{ company.day + quote.days }}</span>
+              </th>
+              <td data-testid="quote-days">{{ days(quote.days) }}</td>
+            </tr>
+            <tr v-for="row in quoteRows" :key="row.id" :data-quote="row.id">
+              <th scope="row">
+                {{ row.label }}
+                <span class="muted">{{ row.detail }}</span>
+              </th>
+              <td :data-testid="`quote-${row.id}`">{{ formatCash(row.amount) }}</td>
+            </tr>
+          </tbody>
+          <tfoot>
+            <tr>
+              <th scope="row">Total</th>
+              <td data-testid="quote-total">{{ formatCash(quote.total) }}</td>
+            </tr>
+          </tfoot>
+        </table>
         <ul>
-          <li>Takes {{ days(migrationDays) }}. You switch on day {{ company.day + migrationDays }}.</li>
-          <li>You stay on {{ modelName(company.model) }}, and keep paying for it, until then.</li>
+          <li v-if="quote.overrun.chance > 0" data-testid="quote-overrun">
+            Migrations slip: a {{ Math.round(100 * quote.overrun.chance) }}% chance of
+            {{ quote.overrun.minDays }}–{{ quote.overrun.maxDays }} extra days, with both providers billing for them.
+          </li>
+          <li v-if="quotePerUser">Per-user fees are priced at today's users, so they'll be more if you grow.</li>
           <li>
             Then {{ targetModel.name }} needs <strong>{{ targetModel.opsNeeded }}</strong> ops staff. You have
             {{ company.ops }}.

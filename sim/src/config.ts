@@ -40,6 +40,11 @@ export interface ModelConfig {
   opsNeeded: number;
   /** Load the model can serve in a day when fully staffed. */
   capacity: number;
+  /**
+   * Charged once, in infrastructure, when a migration away from this model completes: the provider's fee for leaving
+   * (early exit, getting your data out). Nothing on-prem, where you own the kit.
+   */
+  exitPenalty: number;
 }
 
 export interface StaffPoolConfig {
@@ -129,6 +134,13 @@ export interface CapacityConfig {
  * How monthly costs are billed. Each day is charged its share of the month: monthly cost × days ÷ daysPerMonth,
  * rounded to the pound. Students see the same line every day rather than a lump once a month, and a model can be
  * billed for part of a month (say when leaving it) with the same rule.
+ *
+ * Pro rata on leaving maps straight onto this. The design notes' example is paying 280 a month in February and
+ * leaving on the 14th, which charges 140: 14 of February's 28 days. Here the old provider is billed its daily share
+ * on every day of a migration, up to and including the day it completes (the day you leave), and nothing after. So
+ * for the migration's days you pay days ÷ daysPerMonth of the old provider's month: the pro-rata charge. With
+ * daysPerMonth 28 and a 14-day migration starting on the 1st, that is 14 × 280 ÷ 28 = 140, as in the notes. The
+ * migration quote shows it as the pro-rata charge. Per-user fees follow the same rule on each day's users.
  */
 export interface BillingConfig {
   daysPerMonth: number;
@@ -156,6 +168,25 @@ export interface MigrationPhaseConfig {
  */
 export interface MigrationConfig {
   phases: Record<MigrationPhase, MigrationPhaseConfig>;
+  /**
+   * Whether the new provider bills in full from the first day of a migration, on top of the old one, so you pay for
+   * two setups while you move. The design notes assume it does, still to confirm, hence the switch. Off, the new
+   * provider bills from the day after the switch. Its upfront cost is charged on the migration's first day either way.
+   */
+  billNewFromStart: boolean;
+  overrun: OverrunConfig;
+}
+
+/**
+ * Migrations slip. When the moving phase starts, a seeded roll decides whether it overruns, and by how many extra
+ * days. Both providers are billed for those days too. The quote can't know in advance, so it shows the odds.
+ */
+export interface OverrunConfig {
+  /** Chance a migration overruns (0.25 = 1 in 4). */
+  chance: number;
+  /** Extra days on an overrun, picked evenly from minDays to maxDays. */
+  minDays: number;
+  maxDays: number;
 }
 
 export interface GameConfig {
@@ -187,6 +218,7 @@ export const defaultConfig: GameConfig = {
       monthlyCostPerUser: 0,
       opsNeeded: 3,
       capacity: 80_000,
+      exitPenalty: 0,
     },
     iaas: {
       name: "Rent VMs (IaaS)",
@@ -197,6 +229,7 @@ export const defaultConfig: GameConfig = {
       monthlyCostPerUser: 0,
       opsNeeded: 2,
       capacity: 90_000,
+      exitPenalty: 3_000,
     },
     paas: {
       name: "Deploy to a platform (PaaS)",
@@ -207,6 +240,7 @@ export const defaultConfig: GameConfig = {
       monthlyCostPerUser: 0,
       opsNeeded: 1,
       capacity: 100_000,
+      exitPenalty: 4_000,
     },
     saas: {
       name: "Build on a SaaS platform (SaaS)",
@@ -217,6 +251,7 @@ export const defaultConfig: GameConfig = {
       monthlyCostPerUser: 0.5,
       opsNeeded: 0,
       capacity: 100_000,
+      exitPenalty: 2_000,
     },
   },
   productTypes: {
@@ -374,5 +409,7 @@ export const defaultConfig: GameConfig = {
       testing: { name: "Testing", days: 2 },
       moving: { name: "Moving infrastructure", days: 7 },
     },
+    billNewFromStart: true,
+    overrun: { chance: 0.3, minDays: 2, maxDays: 5 },
   },
 };

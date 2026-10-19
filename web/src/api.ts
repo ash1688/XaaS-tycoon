@@ -5,6 +5,7 @@ import type {
   CompanyView,
   ContinueResult,
   MetaView,
+  MigrationQuoteView,
   NewCompanyBody,
   TeacherCodeView,
 } from "@xaas/server/api-types";
@@ -43,6 +44,11 @@ export const api = {
     request<ContinueResult>("POST", `/api/codes/${enc(code)}/companies/${enc(id)}/continue`),
   act: (code: string, id: string, action: ActionBody) =>
     request<CompanyView>("POST", `/api/codes/${enc(code)}/companies/${enc(id)}/actions`, action),
+  migrationQuote: (code: string, id: string, target: string) =>
+    request<MigrationQuoteView>(
+      "GET",
+      `/api/codes/${enc(code)}/companies/${enc(id)}/migration-quote?target=${enc(target)}`,
+    ),
 
   teacherLogin: (password: string) => request<{ ok: true }>("POST", "/api/teacher/login", { password }),
   teacherLogout: () => request<{ ok: true }>("POST", "/api/teacher/logout"),

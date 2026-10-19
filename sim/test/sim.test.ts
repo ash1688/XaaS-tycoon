@@ -32,7 +32,7 @@ const features = [
 ];
 
 function costs(monthlyCost: number) {
-  return { upfrontCost: 0, monthlyCost, monthlyCostPerUser: 0 };
+  return { upfrontCost: 0, monthlyCost, monthlyCostPerUser: 0, exitPenalty: 0 };
 }
 
 const config: GameConfig = {
@@ -76,6 +76,9 @@ const config: GameConfig = {
       testing: { name: "Testing", days: 2 },
       moving: { name: "Moving infrastructure", days: 7 },
     },
+    billNewFromStart: true,
+    // Never overruns unless a test says so.
+    overrun: { chance: 0, minDays: 2, maxDays: 4 },
   },
 };
 
@@ -983,8 +986,8 @@ describe("default config", () => {
 describe("migration", () => {
   const migrate = (model: string): Action => ({ type: "startMigration", model: model as never });
   const moveTo = (to: "developers" | "ops"): Action => ({ type: "moveStaff", to });
-  // On IaaS with a developer and an ops person, migrating to PaaS from day 1.
-  const migrating = () => sim.applyAction({ ...start(), developers: 1, ops: 1 }, migrate("paas"));
+  // On IaaS with a developer and an ops person, migrating to PaaS from day 1, with cash for paying two providers.
+  const migrating = () => sim.applyAction({ ...start(), cash: 100_000, developers: 1, ops: 1 }, migrate("paas"));
   const charges = (entries: LogEntry[]) => entries.filter((e) => e.category === "infrastructure").map((e) => e.text);
 
   it("starts in planning without moving time on, touching cash or staff", () => {
@@ -998,6 +1001,7 @@ describe("migration", () => {
       phaseDaysLeft: 5,
       daysLeft: 14,
       totalDays: 14,
+      overrunDays: 0,
     });
   });
 
@@ -1049,7 +1053,7 @@ describe("migration", () => {
 
   it("takes its phase lengths from config", () => {
     const phases = { planning: { name: "P", days: 1 }, testing: { name: "T", days: 1 }, moving: { name: "M", days: 2 } };
-    const quick = createSim({ ...config, migration: { phases } });
+    const quick = createSim({ ...config, migration: { ...config.migration, phases } });
     const state = quick.applyAction(start(), migrate("paas"));
     expect(quick.migration(state)).toMatchObject({ daysLeft: 4, totalDays: 4 });
     expect(quick.advance(state, 3).state.model).toBe("iaas");
@@ -1091,9 +1095,9 @@ describe("migration", () => {
     expect(sim.migration(next)).toMatchObject({ daysLeft: 10 });
   });
 
-  it("keeps billing the current model until the migration completes, then the new one", () => {
+  it("bills the current model until the migration completes, then only the new one", () => {
     const { log } = sim.advance(migrating(), 15);
-    for (const day of log.slice(0, 14)) expect(charges(day.entries)).toEqual(["IaaS running costs (£600 a month)"]);
+    for (const day of log.slice(0, 14)) expect(charges(day.entries)).toContain("IaaS running costs (£600 a month)");
     expect(charges(log[14]!.entries)).toEqual(["PaaS running costs (£900 a month)"]);
     expect(sim.monthlyInfrastructureCost(sim.advance(migrating(), 14).state)).toBe(900);
   });
@@ -1162,6 +1166,192 @@ describe("migration", () => {
   });
 });
 
+describe("migration costs", () => {
+  const migrate = (model: string): Action => ({ type: "startMigration", model: model as never });
+  // Plenty of cash, so paying two providers never bankrupts the company here.
+  const rich = () => ({ ...start(), cash: 100_000 });
+  const infra = (entries: LogEntry[]) =>
+    entries.filter((e) => e.category === "infrastructure").map((e) => [e.text, e.cashDelta]);
+  const withModels = (models: Partial<GameConfig["models"]>) =>
+    createSim({ ...config, models: { ...config.models, ...models } });
+
+  it("bills both providers on every day of the migration, the new one in full from day 1", () => {
+    const { log } = sim.advance(sim.applyAction(rich(), migrate("paas")), 15);
+    for (const day of log.slice(0, 14)) {
+      expect(infra(day.entries)).toEqual([
+        ["IaaS running costs (£600 a month)", -20],
+        ["Double billing: PaaS running costs (£900 a month)", -30],
+      ]);
+    }
+    // The day after you leave, only the new provider bills.
+    expect(infra(log[14]!.entries)).toEqual([["PaaS running costs (£900 a month)", -30]]);
+  });
+
+  it("bills the new provider only after the switch when config turns double billing off", () => {
+    const single = createSim({ ...config, migration: { ...config.migration, billNewFromStart: false } });
+    const { log } = single.advance(single.applyAction(rich(), migrate("paas")), 15);
+    for (const day of log.slice(0, 14)) {
+      expect(infra(day.entries)).toEqual([["IaaS running costs (£600 a month)", -20]]);
+    }
+    expect(infra(log[14]!.entries)).toEqual([["PaaS running costs (£900 a month)", -30]]);
+    expect(single.migrationQuote(rich(), "paas").doubleBilling).toBe(0);
+  });
+
+  it("charges the old provider pro rata up to the day you leave: 280 a month, leaving on 14 February, is 140", () => {
+    // February has 28 days. Only the old provider costs anything: the new one is free and there are no staff.
+    const feb = createSim({
+      ...config,
+      billing: { daysPerMonth: 28 },
+      models: {
+        ...config.models,
+        iaas: { ...config.models.iaas, monthlyCost: 280 },
+        paas: { ...config.models.paas, monthlyCost: 0 },
+      },
+    });
+    // Start on the 1st: the 14-day migration completes, and you leave, on the 14th.
+    const first = feb.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 });
+    expect(feb.migrationQuote(first, "paas").proRata).toBe(140);
+    const left = feb.advance(feb.applyAction(first, migrate("paas")), 14).state;
+    expect(left.model).toBe("paas");
+    expect(left.spend.infrastructure).toBe(140);
+    // Nothing more from the old provider once you've left.
+    expect(feb.advance(left, 10).state.spend.infrastructure).toBe(140);
+  });
+
+  it("charges the old provider's exit penalty once, on the day you leave, as infrastructure", () => {
+    const s = withModels({ iaas: { ...config.models.iaas, exitPenalty: 250 } });
+    const { log } = s.advance(s.applyAction(rich(), migrate("paas")), 20);
+    const penalties = log.flatMap((d) =>
+      d.entries.filter((e) => e.text.startsWith("Exit penalty")).map((e) => [d.day, e.text, e.cashDelta, e.category]),
+    );
+    expect(penalties).toEqual([[15, "Exit penalty: leaving IaaS", -250, "infrastructure"]]);
+  });
+
+  it("charges no exit penalty leaving a model that has none", () => {
+    const { log } = sim.advance(sim.applyAction(rich(), migrate("paas")), 14);
+    expect(log.flatMap((d) => d.entries).some((e) => e.text.startsWith("Exit penalty"))).toBe(false);
+  });
+
+  it("charges the new model's upfront cost once, on the migration's first day", () => {
+    const s = withModels({ paas: { ...config.models.paas, upfrontCost: 100 } });
+    const { log } = s.advance(s.applyAction(rich(), migrate("paas")), 14);
+    const upfront = log.flatMap((d) =>
+      d.entries.filter((e) => e.text.startsWith("Upfront")).map((e) => [d.day, e.cashDelta]),
+    );
+    expect(upfront).toEqual([[2, -100]]);
+  });
+
+  describe("overrun", () => {
+    // Overruns half the time, by 2 to 4 days. Seed 7 rolls one of 3 days; seed 2 doesn't overrun.
+    const withOverrun = (overrun: GameConfig["migration"]["overrun"]) =>
+      createSim({ ...config, migration: { ...config.migration, overrun } });
+    const slips = withOverrun({ chance: 0.5, minDays: 2, maxDays: 4 });
+    const gameWith = (seed: number) => ({
+      ...slips.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed }),
+      cash: 100_000,
+    });
+    const migratingWith = (seed: number) => slips.applyAction(gameWith(seed), migrate("paas"));
+
+    it("with a seed that forces it, adds days to moving infrastructure and logs them", () => {
+      const state = migratingWith(7);
+      // No overrun is known until moving starts.
+      expect(slips.migration(slips.advance(state, 6).state)).toMatchObject({ overrunDays: 0, totalDays: 14 });
+      const { state: moving, log } = slips.advance(state, 7);
+      expect(slips.migration(moving)).toMatchObject({
+        phase: "moving",
+        phaseDaysLeft: 10,
+        overrunDays: 3,
+        totalDays: 17,
+      });
+      expect(log[6]!.entries.filter((e) => e.kind === "migration").map((e) => e.text)).toEqual([
+        "Migration to PaaS: Testing done. Moving infrastructure next, 10 days.",
+        "Migration overrun: moving infrastructure will take 3 extra days, billed by both providers.",
+      ]);
+      expect(slips.advance(state, 16).state.model).toBe("iaas");
+      expect(slips.advance(state, 17).state.model).toBe("paas");
+    });
+
+    it("bills both providers for the extra days, so it costs more than the quote", () => {
+      const quote = slips.migrationQuote(gameWith(7), "paas");
+      const state = migratingWith(7);
+      const { log, state: done } = slips.advance(state, 17);
+      const doubleBilled = log.flatMap((d) => d.entries).filter((e) => e.text.startsWith("Double billing"));
+      expect(doubleBilled).toHaveLength(17);
+      expect(done.spend.infrastructure - state.spend.infrastructure).toBe(quote.total + 3 * (20 + 30));
+    });
+
+    it("doesn't overrun with a seed that rolls against it", () => {
+      const { state } = slips.advance(migratingWith(2), 14);
+      expect(state).toMatchObject({ model: "paas", migration: null, migrations: 1 });
+    });
+
+    it("always overruns at a chance of 1", () => {
+      const always = withOverrun({ chance: 1, minDays: 2, maxDays: 2 });
+      const state = always.advance(always.applyAction(rich(), migrate("paas")), 7).state;
+      expect(always.migration(state)).toMatchObject({ overrunDays: 2, totalDays: 16 });
+    });
+
+    it("is deterministic and resumes identically after a JSON round trip", () => {
+      expect(slips.advance(migratingWith(7), 20)).toEqual(slips.advance(migratingWith(7), 20));
+      const saved = JSON.parse(JSON.stringify(slips.advance(migratingWith(7), 4).state));
+      expect(slips.advance(saved, 16).state).toEqual(slips.advance(migratingWith(7), 20).state);
+    });
+  });
+
+  describe("quote", () => {
+    // IaaS charges 250 to leave; PaaS costs 100 upfront.
+    const s = withModels({
+      iaas: { ...config.models.iaas, exitPenalty: 250 },
+      paas: { ...config.models.paas, upfrontCost: 100 },
+    });
+
+    it("gives the duration, upfront cost, double billing, pro-rata charge, exit penalty and total", () => {
+      expect(s.migrationQuote(start(), "paas")).toEqual({
+        from: "iaas",
+        to: "paas",
+        days: 14,
+        upfrontCost: 100,
+        // 14 days of PaaS at £30 a day, on top of IaaS.
+        doubleBilling: 420,
+        // 14 days of IaaS at £20 a day, up to the day you leave.
+        proRata: 280,
+        exitPenalty: 250,
+        total: 1050,
+        overrun: { chance: 0, minDays: 2, maxDays: 4 },
+      });
+    });
+
+    it("equals what the migration actually charges when it doesn't overrun", () => {
+      const before = rich();
+      const quote = s.migrationQuote(before, "paas");
+      const { state } = s.advance(s.applyAction(before, migrate("paas")), 14);
+      expect(state.model).toBe("paas");
+      expect(state.spend.infrastructure - before.spend.infrastructure).toBe(quote.total);
+    });
+
+    it("prices per-user fees on today's users", () => {
+      const perUser = withModels({ saas: { ...config.models.saas, monthlyCost: 0, monthlyCostPerUser: 0.3 } });
+      // 1,000 users at £0.30 a month is £10 a day.
+      expect(perUser.migrationQuote(start(), "saas").doubleBilling).toBe(140);
+    });
+
+    it("rejects the targets starting a migration rejects, and changes nothing", () => {
+      expect(() => s.migrationQuote(start(), "mainframe")).toThrow(expect.objectContaining({ code: "unknown_model" }));
+      expect(() => s.migrationQuote(start(), "iaas")).toThrow(expect.objectContaining({ code: "same_model" }));
+      const migrating = s.applyAction(rich(), migrate("paas"));
+      expect(() => s.migrationQuote(migrating, "saas")).toThrow(expect.objectContaining({ code: "migration_running" }));
+      const state = start();
+      s.migrationQuote(state, "paas");
+      expect(state).toEqual(start());
+    });
+
+    it("quotes from older saved state", () => {
+      const { migration: _m, migrations: _n, ...rest } = start();
+      expect(s.migrationQuote({ ...rest, version: 5 } as GameStateV5, "paas").total).toBe(1050);
+    });
+  });
+});
+
 describe("moving staff between pools", () => {
   const moveTo = (to: "developers" | "ops"): Action => ({ type: "moveStaff", to });
 
@@ -1205,5 +1395,19 @@ describe("default migration config", () => {
   it("takes 2 weeks: 5 days planning, 2 testing and 7 moving", () => {
     const { phases } = defaultConfig.migration;
     expect([phases.planning.days, phases.testing.days, phases.moving.days]).toEqual([5, 2, 7]);
+  });
+
+  it("bills the new provider from the first day, and can overrun", () => {
+    expect(defaultConfig.migration.billNewFromStart).toBe(true);
+    const { chance, minDays, maxDays } = defaultConfig.migration.overrun;
+    expect(chance).toBeGreaterThan(0);
+    expect(chance).toBeLessThan(1);
+    expect(minDays).toBeGreaterThan(0);
+    expect(maxDays).toBeGreaterThanOrEqual(minDays);
+  });
+
+  it("charges no exit penalty for leaving on-prem, and one for leaving a provider", () => {
+    expect(defaultConfig.models.onprem.exitPenalty).toBe(0);
+    for (const id of ["iaas", "paas", "saas"] as const) expect(defaultConfig.models[id].exitPenalty).toBeGreaterThan(0);
   });
 });
