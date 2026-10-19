@@ -6,6 +6,7 @@ import {
   SPEND_CATEGORIES,
   STAFF_POOLS,
   type EventConfig,
+  type EventEffect,
   type EventOutcome,
   type FeatureConfig,
   type GameConfig,
@@ -69,8 +70,16 @@ export interface EventRecord {
   model: ModelId;
   /** Short of the ops staff needed to deal with it. */
   shortOfOps: boolean;
-  /** It hurt: it caused downtime or a penalty. */
+  /** It hurt: it caused downtime, a penalty, a price rise or a feature gap. */
   hit: boolean;
+}
+
+/** A feature the platform can't provide (see EventOutcome.featureGap), slowing growth until the company leaves it. */
+export interface FeatureGap {
+  /** The event that opened it. */
+  event: string;
+  /** The model it's tied to: completing a migration off it closes the gap. */
+  model: ModelId;
 }
 
 /** A bankrupt game is over: it accepts no more actions or advances. */
@@ -78,7 +87,7 @@ export type GameStatus = "playing" | "bankrupt";
 
 /** Plain, JSON-serialisable game state. The server stores it as-is. */
 export interface GameState {
-  version: 7;
+  version: 8;
   status: GameStatus;
   companyName: string;
   productType: ProductTypeId;
@@ -108,10 +117,24 @@ export interface GameState {
   schedule: ScheduledEvent[];
   /** Scripted events that were on during the day just played. */
   events: EventRecord[];
+  /**
+   * What provider price rises have done to each model's charges, as a multiplier (1.2 = 20% dearer). Models with no
+   * rise yet are missing. Applies to the model's monthly and per-user costs.
+   */
+  priceRises: Partial<Record<ModelId, number>>;
+  /** The same for SaaS add-on prices. 1 until a price rise covers add-ons. */
+  addonPriceRise: number;
+  /** Features the platform can't provide, each slowing growth until the company migrates off that model. */
+  featureGaps: FeatureGap[];
+}
+
+/** State saved before provider price rises and feature gaps existed. */
+export interface GameStateV7 extends Omit<GameState, "version" | "priceRises" | "addonPriceRise" | "featureGaps"> {
+  version: 7;
 }
 
 /** State saved before scripted events existed. */
-export interface GameStateV6 extends Omit<GameState, "version" | "schedule" | "events"> {
+export interface GameStateV6 extends Omit<GameStateV7, "version" | "schedule" | "events"> {
   version: 6;
 }
 
@@ -141,7 +164,11 @@ export interface GameStateV1 extends Omit<GameStateV2, "version" | StaffPool> {
 }
 
 /** Anything the server may have stored. Every Sim method accepts it and upgrades it first. */
-export type SavedState = GameState | GameStateV6 | GameStateV5 | GameStateV4 | GameStateV3 | GameStateV2 | GameStateV1;
+export type SavedState =
+  | GameState
+  | GameStateV7
+  | GameStateV6
+  | GameStateV5 | GameStateV4 | GameStateV3 | GameStateV2 | GameStateV1;
 
 /** Something the player does between days. */
 export type Action =
@@ -236,8 +263,26 @@ export interface EventView {
   outcome: string;
   /** Short of the ops staff needed to deal with it. */
   shortOfOps: boolean;
-  /** It hurt: it caused downtime or a penalty. */
+  /** It hurt: it caused downtime, a penalty, a price rise or a feature gap. */
   hit: boolean;
+}
+
+/** A feature gap still slowing growth, for the screen to show every day until it closes. */
+export interface FeatureGapView {
+  /** The event that opened it. */
+  id: string;
+  name: string;
+  /** The feature the company needs and can't have. */
+  feature: string;
+  /** The model it's tied to: migrating off it closes the gap. */
+  model: ModelId;
+  /** The layer of the responsibility stack it's about, and who owns it on that model. */
+  layer: LayerId;
+  owner: Owner;
+  /** Growth is multiplied by this every day while it's open. */
+  growthMultiplier: number;
+  /** Why, and how it ends: the event's explanation on that model. */
+  detail: string;
 }
 
 export interface NewGameParams {
@@ -309,6 +354,8 @@ export interface Sim {
   migrationQuote(state: SavedState, target: string): MigrationQuote;
   /** Scripted events that were on during the day just played, each explained, in config order. */
   events(state: SavedState): EventView[];
+  /** Feature gaps still slowing growth, oldest first. Shown every day, not just the day the event fired. */
+  featureGaps(state: SavedState): FeatureGapView[];
 }
 
 export function isModelId(v: string): v is ModelId {
@@ -324,6 +371,9 @@ export function isStaffPool(v: string): v is StaffPool {
 }
 
 const noSpend = (): Spend => ({ staff: 0, infrastructure: 0, addons: 0 });
+
+/** Events added with state version 8. Saves from version 7 get a schedule for these only, keeping the rest. */
+const EVENTS_ADDED_IN_V8 = ["providerPriceRise", "providerOutage", "saasFeatureGap"];
 
 const count = new Intl.NumberFormat("en-GB");
 
@@ -344,9 +394,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     }
     if (!isProductTypeId(productType)) throw new SimError("unknown_product_type", "Pick a product type from the list.");
     if (!isModelId(model)) throw new SimError("unknown_model", "Pick a deployment model from the list.");
-    const [schedule, rng] = rollSchedule(seedRng(seed), 1);
+    const [schedule, rng] = rollSchedule(seedRng(seed), 1, config.events);
     const state: GameState = {
-      version: 7,
+      version: 8,
       status: "playing",
       companyName: name,
       productType,
@@ -364,6 +414,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       migrations: 0,
       schedule,
       events: [],
+      priceRises: {},
+      addonPriceRise: 1,
+      featureGaps: [],
     };
     return settle(state, 1, upfrontEntries(model)).state;
   }
@@ -374,14 +427,24 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   }
 
   function load(saved: SavedState): GameState {
-    if (saved.version === 7) return saved;
+    if (saved.version === 8) return saved;
+    const v7 = saved.version === 7 ? saved : loadV6(saved);
+    // Games started before these events existed keep their schedule, and get these events in the days still to come.
+    const added = config.events.filter((e) => EVENTS_ADDED_IN_V8.includes(e.id));
+    const [more, rng] = rollSchedule(v7.rng, v7.day, added);
+    const schedule = [...v7.schedule, ...more].sort((a, b) => a.day - b.day);
+    return { ...v7, version: 8, rng, schedule, priceRises: {}, addonPriceRise: 1, featureGaps: [] };
+  }
+
+  function loadV6(saved: Exclude<SavedState, GameState | GameStateV7>): GameStateV7 {
     const v6 = saved.version === 6 ? saved : loadV5(saved);
     // Games started before events existed get their schedule now, from the days still to come.
-    const [schedule, rng] = rollSchedule(v6.rng, v6.day);
+    const older = config.events.filter((e) => !EVENTS_ADDED_IN_V8.includes(e.id));
+    const [schedule, rng] = rollSchedule(v6.rng, v6.day, older);
     return { ...v6, version: 7, rng, schedule, events: [] };
   }
 
-  function loadV5(saved: Exclude<SavedState, GameState | GameStateV6>): GameStateV6 {
+  function loadV5(saved: Exclude<SavedState, GameState | GameStateV7 | GameStateV6>): GameStateV6 {
     const v5 = saved.version === 5 ? saved : loadV4(saved);
     // Games started before migration existed have never migrated.
     return { ...v5, version: 6, migration: null, migrations: 0 };
@@ -469,8 +532,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   }
 
   /** What a day of a model's running costs comes to, on the given users. */
-  const dailyInfrastructure = (modelId: ModelId, users: number) =>
-    -infrastructureEntries(modelId, users).reduce((sum, e) => sum + e.cashDelta, 0);
+  const dailyInfrastructure = (state: GameState, modelId: ModelId, users: number) =>
+    -infrastructureEntries(state, modelId, users).reduce((sum, e) => sum + e.cashDelta, 0);
 
   function migrationQuote(saved: SavedState, target: string): MigrationQuote {
     const state = load(saved);
@@ -478,8 +541,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const days = MIGRATION_PHASES.reduce((sum, p) => sum + config.migration.phases[p].days, 0);
     // Priced by the same daily rules advanceOneDay bills by, so the rounding matches too.
     const upfrontCost = config.models[to].upfrontCost;
-    const doubleBilling = config.migration.billNewFromStart ? days * dailyInfrastructure(to, state.users) : 0;
-    const proRata = days * dailyInfrastructure(state.model, state.users);
+    const doubleBilling = config.migration.billNewFromStart ? days * dailyInfrastructure(state, to, state.users) : 0;
+    const proRata = days * dailyInfrastructure(state, state.model, state.users);
     const exitPenalty = config.models[state.model].exitPenalty;
     const { chance, minDays, maxDays } = config.migration.overrun;
     const lostAddons = addonsLeftBehind(state, to).map(({ id, name, devDays }) => ({ id, name, devDays }));
@@ -506,7 +569,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     if (!m) return [];
     const firstDay = m.phase === MIGRATION_PHASES[0] && m.phaseDaysDone === 0;
     const running = config.migration.billNewFromStart
-      ? infrastructureEntries(m.to, state.users).map((e) => ({ ...e, text: `Double billing: ${e.text}` }))
+      ? infrastructureEntries(state, m.to, state.users).map((e) => ({ ...e, text: `Double billing: ${e.text}` }))
       : [];
     return [...(firstDay ? upfrontEntries(m.to) : []), ...running];
   }
@@ -595,6 +658,17 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         `Vendor lock-in: your add-ons stayed with the SaaS provider (${names}). ` +
         `Rebuild them in developer-days to get them back: ${devDays} in all.`;
       entries.push({ text, cashDelta: 0, kind: "migration" });
+    }
+    // Off the model a feature gap is tied to, you can build what you like, so the gap closes.
+    const closed = state.featureGaps.filter((g) => g.model === state.model);
+    if (closed.length) {
+      switched.featureGaps = state.featureGaps.filter((g) => g.model !== state.model);
+      for (const g of closed) {
+        const feature = gapFeature(state, g);
+        if (feature === undefined) continue;
+        const text = `Feature gap closed: off ${left.name}, you're free to build ${feature} yourself. Growth is back to normal.`;
+        entries.push({ text, cashDelta: 0, kind: "migration" });
+      }
     }
     // Onto SaaS, a build under way pauses: developers there configure add-ons rather than build.
     const paused = m.to === "saas" ? currentBuild(state) : undefined;
@@ -701,13 +775,24 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return [{ text: `Upfront cost: ${name}`, cashDelta: -upfrontCost, category: "infrastructure" }];
   }
 
+  /** A price after any provider price rises, to the penny. */
+  const risen = (price: number, rise: number) => Math.round(price * rise * 100) / 100;
+
+  /** A model's monthly and per-user prices, after any provider price rises. */
+  function modelPrices(state: GameState, modelId: ModelId) {
+    const rise = state.priceRises[modelId] ?? 1;
+    const { monthlyCost, monthlyCostPerUser } = config.models[modelId];
+    return { monthlyCost: risen(monthlyCost, rise), monthlyCostPerUser: risen(monthlyCostPerUser, rise) };
+  }
+
   /**
    * A model's running costs for some days: its monthly cost, plus its per-user cost on the given users, each billed
    * as days ÷ daysPerMonth of a month and rounded to the pound. Advance bills one day at a time; billing part of a
-   * month (say when leaving a model) uses the same rule.
+   * month (say when leaving a model) uses the same rule. Prices include any provider price rises.
    */
-  function infrastructureEntries(modelId: ModelId, users: number, days = 1): LogEntry[] {
-    const { name, monthlyCost, monthlyCostPerUser } = config.models[modelId];
+  function infrastructureEntries(state: GameState, modelId: ModelId, users: number, days = 1): LogEntry[] {
+    const { name } = config.models[modelId];
+    const { monthlyCost, monthlyCostPerUser } = modelPrices(state, modelId);
     const share = days / config.billing.daysPerMonth;
     const entries: LogEntry[] = [];
     if (monthlyCost > 0) {
@@ -733,24 +818,28 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   const addonsLeftBehind = (state: GameState, to: ModelId) =>
     state.model === "saas" && to !== "saas" ? activeAddons(state) : [];
 
-  /** Each active add-on's per-user price on the given users, billed like the model's per-user fee. */
+  /** Each active add-on's per-user price on the given users, billed like the model's per-user fee, after price rises. */
   function addonEntries(state: GameState, days = 1): LogEntry[] {
     const share = days / config.billing.daysPerMonth;
-    return activeAddons(state).map((f) => ({
-      text: `Add-on: ${f.name} (${count.format(state.users)} users at ${pounds(f.addonPricePerUser)} a month)`,
-      cashDelta: -Math.round(state.users * f.addonPricePerUser * share),
-      category: "addons",
-    }));
+    return activeAddons(state).map((f) => {
+      const price = risen(f.addonPricePerUser, state.addonPriceRise);
+      return {
+        text: `Add-on: ${f.name} (${count.format(state.users)} users at ${pounds(price)} a month)`,
+        cashDelta: -Math.round(state.users * price * share),
+        category: "addons",
+      };
+    });
   }
 
   function monthlyAddonCost(saved: SavedState): number {
     const state = load(saved);
-    return Math.round(activeAddons(state).reduce((sum, f) => sum + state.users * f.addonPricePerUser, 0));
+    const perUser = activeAddons(state).reduce((sum, f) => sum + risen(f.addonPricePerUser, state.addonPriceRise), 0);
+    return Math.round(state.users * perUser);
   }
 
   function monthlyInfrastructureCost(saved: SavedState): number {
     const state = load(saved);
-    const { monthlyCost, monthlyCostPerUser } = config.models[state.model];
+    const { monthlyCost, monthlyCostPerUser } = modelPrices(state, state.model);
     return Math.round(monthlyCost + state.users * monthlyCostPerUser);
   }
 
@@ -830,6 +919,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       ...featureList(state)
         .filter((f) => isActive(state, f.id))
         .map((f) => f.growthMultiplier),
+      // Each feature the platform can't provide.
+      ...state.featureGaps.map((g) => gapOutcome(g)?.featureGap?.growthMultiplier ?? 1),
     ];
   }
 
@@ -851,9 +942,13 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
    * The days each event fires on, in day order. Fixed days come from config; seeded ones are picked with the RNG,
    * drawing once per day picked. Only days after afterDay are kept, as the game has already played the rest.
    */
-  function rollSchedule(rng: number, afterDay: number): [schedule: ScheduledEvent[], next: number] {
+  function rollSchedule(
+    rng: number,
+    afterDay: number,
+    events: EventConfig[],
+  ): [schedule: ScheduledEvent[], next: number] {
     const schedule: ScheduledEvent[] = [];
-    for (const event of config.events) {
+    for (const event of events) {
       const when = event.schedule;
       let days = when.type === "fixed" ? when.days : [];
       if (when.type === "seeded") {
@@ -873,23 +968,57 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return [schedule.sort((a, b) => a.day - b.day), rng];
   }
 
-  /** Events on during a day: each one that fired that day or recently enough to last until it. In config order. */
-  function eventsOn(state: GameState, day: number): EventConfig[] {
-    return config.events.filter((e) =>
-      state.schedule.some((s) => s.event === e.id && day >= s.day && day < s.day + e.days),
+  /**
+   * Events on during a day for a company on this model: each one that fired that day or recently enough to last until
+   * it, and has an effect on the model. In config order.
+   */
+  function eventsOn(state: GameState, day: number, model: ModelId): EventConfig[] {
+    return config.events.filter(
+      (e) => e.effects[model] && state.schedule.some((s) => s.event === e.id && day >= s.day && day < s.day + e.days),
     );
   }
 
+  const NO_EFFECT: EventEffect = { detail: "" };
+
   /** How an event plays out on a model, short of ops or not. */
   function outcomeFor(event: EventConfig, model: ModelId, shortOfOps: boolean): EventOutcome {
-    const effect = event.effects[model];
+    const effect = event.effects[model] ?? NO_EFFECT;
     return shortOfOps && effect.shortOfOps ? effect.shortOfOps : effect;
   }
 
-  function explain(event: EventConfig, { model, shortOfOps, hit }: Omit<EventRecord, "event">): EventView {
+  /** The outcome that opened a feature gap, if its event is still in config. */
+  function gapOutcome(gap: FeatureGap): EventOutcome | undefined {
+    const event = eventConfig(gap.event);
+    return event && outcomeFor(event, gap.model, false);
+  }
+
+  /** The feature a gap is about, for this company's product. */
+  const gapFeature = (state: GameState, gap: FeatureGap) => gapOutcome(gap)?.featureGap?.features[state.productType];
+
+  /** What an outcome does that lasts beyond the day, put first in its explanation. */
+  function lastingNote(outcome: EventOutcome, productType: ProductTypeId): string {
+    const notes: string[] = [];
+    if (outcome.priceRise) {
+      const { percent, addons } = outcome.priceRise;
+      notes.push(`Its prices are up ${percent}% from today${addons ? ", add-ons included" : ""}.`);
+    }
+    if (outcome.featureGap) {
+      const feature = outcome.featureGap.features[productType];
+      const slower = Math.round(100 * (1 - outcome.featureGap.growthMultiplier));
+      notes.push(`Your customers want ${feature}, and no add-on offers it. Growth is ${slower}% slower without it.`);
+    }
+    return notes.map((n) => `${n} `).join("");
+  }
+
+  function explain(
+    event: EventConfig,
+    { model, shortOfOps, hit }: Omit<EventRecord, "event">,
+    productType: ProductTypeId,
+  ): EventView {
     const { id, name, description, layer } = event;
-    const needed = event.effects[model].opsNeeded;
-    const { detail } = outcomeFor(event, model, shortOfOps);
+    const needed = event.effects[model]?.opsNeeded;
+    const result = outcomeFor(event, model, shortOfOps);
+    const detail = lastingNote(result, productType) + result.detail;
     const outcome = shortOfOps ? `${detail} You needed ${needed} ops staff.` : detail;
     const owner = layerOwner(model, layer);
     const responsibility = layerResponsibility(model, layer);
@@ -901,20 +1030,57 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     // An event taken out of config since the day was played has nothing left to explain it.
     return state.events.flatMap((r) => {
       const event = eventConfig(r.event);
-      return event ? [explain(event, r)] : [];
+      return event ? [explain(event, r, state.productType)] : [];
     });
   }
 
-  function advanceOneDay(state: GameState): AdvanceResult {
-    const day = state.day + 1;
-    const profile = config.productTypes[state.productType].growth;
+  function featureGaps(saved: SavedState): FeatureGapView[] {
+    const state = load(saved);
+    // A gap whose event was taken out of config no longer slows growth either, so there's nothing to show.
+    return state.featureGaps.flatMap((g) => {
+      const event = eventConfig(g.event);
+      const gap = gapOutcome(g)?.featureGap;
+      if (!event || !gap) return [];
+      const feature = gap.features[state.productType];
+      const { id, name, layer } = event;
+      const { detail } = outcomeFor(event, g.model, false);
+      const owner = layerOwner(g.model, layer);
+      return [{ id, name, feature, model: g.model, layer, owner, growthMultiplier: gap.growthMultiplier, detail }];
+    });
+  }
+
+  /**
+   * Price rises and feature gaps from events that fire today. They last: they apply from today's bill and growth on,
+   * so they're applied before the day is played. Each applies once, on the day its event fires.
+   */
+  function lastingEffects(state: GameState, day: number, today: { event: EventConfig; outcome: EventOutcome }[]) {
+    let { priceRises, addonPriceRise, featureGaps } = state;
+    for (const { event, outcome } of today) {
+      if (!state.schedule.some((s) => s.event === event.id && s.day === day)) continue;
+      if (outcome.priceRise) {
+        const rise = 1 + outcome.priceRise.percent / 100;
+        priceRises = { ...priceRises, [state.model]: (priceRises[state.model] ?? 1) * rise };
+        if (outcome.priceRise.addons) addonPriceRise *= rise;
+      }
+      if (outcome.featureGap && !featureGaps.some((g) => g.event === event.id && g.model === state.model)) {
+        featureGaps = [...featureGaps, { event: event.id, model: state.model }];
+      }
+    }
+    return { priceRises, addonPriceRise, featureGaps };
+  }
+
+  function advanceOneDay(start: GameState): AdvanceResult {
+    const day = start.day + 1;
+    const profile = config.productTypes[start.productType].growth;
 
     // Scripted events on today, and how each plays out on the current model with today's ops.
-    const today = eventsOn(state, day).map((event) => {
-      const needed = event.effects[state.model].opsNeeded;
-      const shortOfOps = needed !== undefined && state.ops < needed;
-      return { event, shortOfOps, outcome: outcomeFor(event, state.model, shortOfOps) };
+    const today = eventsOn(start, day, start.model).map((event) => {
+      const needed = event.effects[start.model]?.opsNeeded;
+      const shortOfOps = needed !== undefined && start.ops < needed;
+      return { event, shortOfOps, outcome: outcomeFor(event, start.model, shortOfOps) };
     });
+    // A price rise or feature gap from today counts from today's bill and growth.
+    const state: GameState = { ...start, ...lastingEffects(start, day, today) };
 
     // Today's load comes from the users at the start of the day, plus any an event brings.
     const [loadVariation, afterLoad] = vary(state.rng, profile.loadNoise);
@@ -951,7 +1117,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     // day you leave. During a migration the new model is billed as well (see migrationCharges).
     const entries: LogEntry[] = [
       ...build.entries,
-      ...infrastructureEntries(state.model, state.users),
+      ...infrastructureEntries(state, state.model, state.users),
       ...migrationCharges(state),
       ...addonEntries(state),
       ...staffEntries(state),
@@ -986,11 +1152,16 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       event: event.id,
       model: state.model,
       shortOfOps,
-      hit: !!outcome.downtimeHours || !!outcome.cost || (overloaded && !!event.load),
+      hit:
+        !!outcome.downtimeHours ||
+        !!outcome.cost ||
+        !!outcome.priceRise ||
+        !!outcome.featureGap ||
+        (overloaded && !!event.load),
     }));
     entries.unshift(
       ...today.map(({ event }, i): LogEntry => {
-        const { name, responsibility, outcome } = explain(event, records[i]!);
+        const { name, responsibility, outcome } = explain(event, records[i]!, state.productType);
         return { text: `${name}: ${responsibility} ${outcome}`, cashDelta: 0, kind: "event" };
       }),
     );
@@ -1043,5 +1214,6 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     migration,
     migrationQuote,
     events,
+    featureGaps,
   };
 }

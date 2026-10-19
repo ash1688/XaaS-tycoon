@@ -4,6 +4,7 @@ import {
   SPEND_CATEGORIES,
   type DayLog,
   type EventView,
+  type FeatureGapView,
   type LayerId,
   type ModelId,
   type SpendCategory,
@@ -56,6 +57,17 @@ const layerName = (id: LayerId) => stack.value.find((l) => l.id === id)?.name ??
 const eventModelNote = (e: EventView) => (e.model !== company.value?.model ? ` (you were on ${modelName(e.model)})` : "");
 const eventTone = (e: EventView) => (e.hit ? "hit" : e.owner === "you" ? "handled" : "covered");
 const EVENT_TONES = { hit: "It hurt", handled: "You handled it", covered: "Not your problem" } as const;
+
+// Features the platform can't provide keep slowing growth until the company migrates off that model, so they're shown
+// every day, with their layer marked in the stack. On the day one opens, its event card says it instead.
+const featureGaps = computed(() => company.value?.featureGaps ?? []);
+const openGaps = computed(() => featureGaps.value.filter((g) => !events.value.some((e) => e.id === g.id)));
+const gapsByLayer = computed(() => {
+  const byLayer = new Map<LayerId, FeatureGapView[]>();
+  for (const g of featureGaps.value) byLayer.set(g.layer, [...(byLayer.get(g.layer) ?? []), g]);
+  return byLayer;
+});
+const slowerBy = (multiplier: number) => `${Math.round(100 * (1 - multiplier))}%`;
 
 async function showLayer(id: LayerId) {
   await nextTick();
@@ -309,6 +321,30 @@ async function continueDay() {
       <p class="event-outcome" data-testid="event-outcome">{{ event.outcome }}</p>
       <button type="button" class="link-button" @click="showLayer(event.layer)">
         See {{ layerName(event.layer) }} in the stack
+      </button>
+    </section>
+
+    <section
+      v-for="gap in openGaps"
+      :key="gap.id"
+      :class="['feature-gap', gap.owner]"
+      role="status"
+      :aria-labelledby="`gap-${gap.id}`"
+      data-testid="feature-gap"
+      :data-event="gap.id"
+    >
+      <p class="event-head">
+        <span class="badge">Feature gap</span>
+        <strong :id="`gap-${gap.id}`" class="event-name">{{ gap.name }}</strong>
+        <span class="event-tone">Still slowing you down</span>
+      </p>
+      <p>
+        Your customers want <strong>{{ gap.feature }}</strong>, and no add-on offers it. Growth is
+        <strong>{{ slowerBy(gap.growthMultiplier) }} slower</strong> every day until you migrate to another model and
+        build it yourself.
+      </p>
+      <button type="button" class="link-button" @click="showLayer(gap.layer)">
+        See {{ layerName(gap.layer) }} in the stack
       </button>
     </section>
 
@@ -616,6 +652,10 @@ async function continueDay() {
       <p class="addon-bill" data-testid="addon-bill">
         Add-on bill at today's users: <strong>{{ formatCash(company.monthlyAddonCost) }}</strong> a month
       </p>
+      <p v-for="gap in featureGaps" :key="gap.id" class="gap-note" data-testid="gap-shop-note">
+        <span class="badge">Not in the shop</span> {{ gap.feature }}: no add-on offers it, and the platform's code isn't
+        yours to change.
+      </p>
     </template>
     <p v-else class="muted features-intro">
       Your developers build features, one at a time. Each developer does one developer-day of work a day.
@@ -728,15 +768,18 @@ async function continueDay() {
           {
             changed: previousModel && previousOwners.get(layer.id) !== layer.owner,
             'event-layer': eventsByLayer.has(layer.id),
+            'gap-layer': gapsByLayer.has(layer.id),
           },
         ]"
         :data-layer="layer.id"
         :data-event="eventsByLayer.get(layer.id)?.map((e) => e.id).join(' ')"
+        :data-gap="gapsByLayer.get(layer.id)?.map((g) => g.id).join(' ')"
         tabindex="-1"
       >
         <span class="layer-name">
           {{ layer.name }}
           <small v-for="e in eventsByLayer.get(layer.id)" :key="e.id" class="event-tag">{{ e.name }}</small>
+          <small v-if="gapsByLayer.has(layer.id) && !eventsByLayer.has(layer.id)" class="gap-tag">Feature gap</small>
         </span>
         <span class="owner">
           <small v-if="previousModel && previousOwners.get(layer.id) !== layer.owner" class="was">

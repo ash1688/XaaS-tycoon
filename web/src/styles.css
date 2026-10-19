@@ -1122,3 +1122,43 @@ fieldset > p {
 .day-log li[data-kind="event"] .badge {
   color: var(--accent);
 }
+
+/* A feature the platform can't provide: shown every day until the company migrates off that model. */
+.feature-gap {
+  margin-top: 1rem;
+  padding: 0.9rem 1rem;
+  border: 2px dashed var(--owner);
+  border-left: 6px solid var(--owner);
+  border-radius: 10px;
+  background: var(--owner-soft);
+}
+
+.feature-gap p {
+  margin: 0 0 0.5rem;
+}
+
+.feature-gap .badge,
+.feature-gap .event-tone {
+  color: var(--owner);
+}
+
+.gap-note {
+  margin: 0.5rem 0 0;
+}
+
+.gap-note .badge {
+  color: var(--shared);
+}
+
+.resp-stack li.gap-layer:not(.event-layer) {
+  outline: 2px dashed var(--owner);
+  outline-offset: 2px;
+}
+
+.gap-tag {
+  font-weight: 700;
+  padding: 0 0.45rem;
+  border: 1px dashed var(--owner);
+  border-radius: 999px;
+  color: var(--owner);
+}

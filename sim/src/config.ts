@@ -207,6 +207,19 @@ export interface EventOutcome {
   downtimeHours?: number;
   /** A charge in infrastructure, such as cleaning up after a break-in. */
   cost?: { amount: number; text: string };
+  /**
+   * The provider puts its prices up, for good, from the day the event fires: the model's monthly and per-user charges
+   * (infrastructure) rise by this percent, and with `addons` so do SaaS add-on prices (addons). A later rise compounds.
+   * It sticks to the provider: leave and come back, and you pay the new prices.
+   */
+  priceRise?: { percent: number; addons?: boolean };
+  /**
+   * A feature the company needs that the platform can't provide and no add-on offers, named per product type. From
+   * the day the event fires, every day's growth is multiplied by `growthMultiplier`, until the company completes a
+   * migration off the model it hit: then it can build what it likes, so the gap closes. That migration (its time,
+   * double billing and lost add-ons) is the price of getting control back.
+   */
+  featureGap?: { growthMultiplier: number; features: Record<ProductTypeId, string> };
 }
 
 /** How an event hits one model. */
@@ -240,7 +253,8 @@ export interface EventConfig {
   days: number;
   /** Extra load while it's on: the day's load × multiplier, plus extra. */
   load?: { multiplier: number; extra: number };
-  effects: Record<ModelId, EventEffect>;
+  /** A model left out isn't hit: the event doesn't happen at all for a company running on it. */
+  effects: Partial<Record<ModelId, EventEffect>>;
 }
 
 export interface GameConfig {
@@ -530,6 +544,80 @@ export const defaultConfig: GameConfig = {
         },
         paas: { detail: "The provider patched the platform for you. Nothing for you to do." },
         saas: { detail: "The provider patched the platform for you. Nothing for you to do." },
+      },
+    },
+    {
+      id: "providerPriceRise",
+      name: "Provider price rise",
+      description: "Your provider announced new prices, starting today. Every customer pays them, you included.",
+      layer: "hardware",
+      // Once, after students have settled on a model, with time left to react by migrating.
+      schedule: { type: "seeded", count: 1, fromDay: 30, toDay: 130 },
+      days: 1,
+      effects: {
+        onprem: { detail: "You own your servers, so there's no provider to put prices up. Your costs stay the same." },
+        iaas: {
+          priceRise: { percent: 20 },
+          detail:
+            "You can't control what the provider charges. Leaving means a migration: double billing, an exit penalty and weeks of work.",
+        },
+        paas: {
+          priceRise: { percent: 20 },
+          detail:
+            "You can't control what the provider charges. Leaving means a migration: double billing, an exit penalty and weeks of work.",
+        },
+        saas: {
+          priceRise: { percent: 25, addons: true },
+          detail:
+            "You can't control what the provider charges, add-ons included. Leaving means a migration, and your add-ons stay behind.",
+        },
+      },
+    },
+    {
+      id: "providerOutage",
+      name: "Provider outage",
+      description: "Your provider's data centre lost power, taking everything running there down with it.",
+      layer: "facilities",
+      schedule: { type: "seeded", count: 1, fromDay: 30, toDay: 160 },
+      days: 1,
+      effects: {
+        onprem: { detail: "Your servers are in your own building, so the provider's outage didn't touch you." },
+        iaas: {
+          downtimeHours: 10,
+          detail: "Your VMs went down with it. All you could do was wait for the provider to fix it.",
+        },
+        paas: {
+          downtimeHours: 8,
+          detail: "The platform went down with it. All you could do was wait for the provider to fix it.",
+        },
+        saas: {
+          downtimeHours: 6,
+          detail: "The SaaS platform went down with it. All you could do was wait for the provider to fix it.",
+        },
+      },
+    },
+    {
+      id: "saasFeatureGap",
+      name: "A feature SaaS can't provide",
+      description: "Your customers keep asking for something the SaaS platform doesn't do.",
+      layer: "application",
+      // Early, so a SaaS company has time to weigh up migrating away.
+      schedule: { type: "fixed", days: [6] },
+      days: 1,
+      // Only SaaS: on the other models your developers build whatever the product needs.
+      effects: {
+        saas: {
+          featureGap: {
+            growthMultiplier: 0.8,
+            features: {
+              ecommerce: "delivery options built around your own couriers",
+              social: "a feed that ranks posts your way",
+              video: "your own video player",
+            },
+          },
+          detail:
+            "The platform's code isn't yours to change, so you can't build it. Growth stays slower until you migrate off SaaS and build what you like.",
+        },
       },
     },
   ],
