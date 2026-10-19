@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import Fastify, { type FastifyReply } from "fastify";
 import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
-import { and, asc, count, desc, eq, gte } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
   createSim,
   MIGRATION_PHASES,
@@ -56,8 +56,8 @@ export const MAX_DASHBOARD_HOURS = 7 * 24;
 
 const CODE_PATTERN = /^\d{8}$/;
 
-/** SimError codes for a game that has ended, or that the student retired. */
-const GAME_OVER = new Set(["bankrupt", "finished", "retired"]);
+/** SimError codes for a game that has ended, that the student retired or that the teacher archived. */
+const GAME_OVER = new Set(["bankrupt", "finished", "retired", "archived"]);
 
 type CompanyRow = typeof companies.$inferSelect;
 
@@ -94,6 +94,7 @@ export async function buildApp(opts: AppOptions) {
       finalDay: sim.config.finalDay,
       cash: state.cash,
       status: (state.status === "playing" ? row.status : state.status) as CompanyStatus,
+      archived: row.archivedAt !== null,
       developers: state.developers,
       ops: state.ops,
       opsNeeded: sim.opsNeeded(state.model),
@@ -194,13 +195,13 @@ export async function buildApp(opts: AppOptions) {
       if (!code) return sendError(reply, 404, "unknown_code", "That code wasn't recognised. Check it with your teacher.");
       const { name, productType, model } = req.body;
       // Locks the code so two creates at once can't both see room under the limit. Only games still being played
-      // count: finished, bankrupt and retired ones are history.
+      // count: finished, bankrupt and retired ones are history, and archived ones are read-only.
       const row = await db.transaction(async (tx) => {
         await tx.select().from(loginCodes).where(eq(loginCodes.code, code.code)).for("update");
         const [counted] = await tx
           .select({ active: count() })
           .from(companies)
-          .where(and(eq(companies.loginCode, code.code), eq(companies.status, "active")));
+          .where(and(eq(companies.loginCode, code.code), eq(companies.status, "active"), isNull(companies.archivedAt)));
         if (counted!.active >= maxActiveCompanies) return undefined;
         const state = sim.newGame({ companyName: name, productType, model, seed: randomInt(2 ** 31) });
         const [inserted] = await tx
@@ -304,7 +305,7 @@ export async function buildApp(opts: AppOptions) {
     // Locks the row so a Continue in another tab can't finish the game while it's being retired.
     const row = await db.transaction(async (tx) => {
       const [current] = await tx.select().from(companies).where(companyWhere(code, id)).for("update");
-      if (current?.status !== "active") return current;
+      if (current?.status !== "active" || current.archivedAt) return current;
       const [updated] = await tx
         .update(companies)
         .set({ status: "retired", updatedAt: new Date() })
@@ -313,6 +314,7 @@ export async function buildApp(opts: AppOptions) {
       return updated;
     });
     if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+    if (row.archivedAt) return sendError(reply, 409, "archived", archivedMessage(row));
     if (row.status !== "retired") {
       return sendError(reply, 409, "not_active", `${row.name} has already ended, so it's in your history.`);
     }
@@ -333,6 +335,7 @@ export async function buildApp(opts: AppOptions) {
     return db.transaction(async (tx) => {
       const [row] = await tx.select().from(companies).where(companyWhere(code, id)).for("update");
       if (!row) return undefined;
+      if (row.archivedAt) throw new SimError("archived", archivedMessage(row));
       if (row.status === "retired") {
         throw new SimError("retired", `${row.name} was retired, so this game is over. Start a new company to play again.`);
       }
@@ -345,6 +348,9 @@ export async function buildApp(opts: AppOptions) {
       return { ...result, company: view(updated!) };
     });
   }
+
+  const archivedMessage = (row: CompanyRow) =>
+    `Your teacher archived ${row.name}, so it can't be played any more. You can still see how it did.`;
 
   const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -412,55 +418,139 @@ export async function buildApp(opts: AppOptions) {
       return sendError(reply, 500, "code_generation_failed", "Couldn't create a unique code. Try again.");
     });
 
-    // The live dashboard: recent games grouped by code, read from the denormalised columns rather than each state.
-    teacher.get<{ Querystring: { hours?: number } }>(
+    // The live dashboard: recent games grouped by code, read from the denormalised columns rather than each state. With
+    // archived=true, every archived game and code instead, however old.
+    teacher.get<{ Querystring: { hours?: number; archived?: boolean } }>(
       "/api/teacher/games",
       {
         schema: {
           querystring: {
             type: "object",
-            properties: { hours: { type: "integer", minimum: 1, maximum: MAX_DASHBOARD_HOURS } },
+            properties: {
+              hours: { type: "integer", minimum: 1, maximum: MAX_DASHBOARD_HOURS },
+              archived: { type: "boolean" },
+            },
           },
         },
       },
       async (req): Promise<TeacherGamesView> => {
-        const hours = req.query.hours ?? dashboardHours;
-        const since = new Date(Date.now() - hours * 3600 * 1000);
+        const hours = req.query.archived ? null : (req.query.hours ?? dashboardHours);
+        const where = hours
+          ? and(
+              gte(companies.updatedAt, new Date(Date.now() - hours * 3600 * 1000)),
+              isNull(companies.archivedAt),
+              eq(loginCodes.archived, false),
+            )
+          : or(isNotNull(companies.archivedAt), eq(loginCodes.archived, true));
+        // From the codes, so an archived code with no games still shows in the archived view.
         const rows = await db
           .select({
-            code: companies.loginCode,
-            id: companies.id,
-            name: companies.name,
-            productType: companies.productType,
-            model: companies.model,
-            migratingTo: companies.migratingTo,
-            day: companies.day,
-            cash: companies.cash,
-            users: companies.users,
-            uptime: companies.uptime,
-            status: companies.status,
-            updatedAt: companies.updatedAt,
+            code: loginCodes.code,
+            codeArchived: loginCodes.archived,
+            game: {
+              id: companies.id,
+              name: companies.name,
+              productType: companies.productType,
+              model: companies.model,
+              migratingTo: companies.migratingTo,
+              day: companies.day,
+              cash: companies.cash,
+              users: companies.users,
+              uptime: companies.uptime,
+              status: companies.status,
+              updatedAt: companies.updatedAt,
+              archivedAt: companies.archivedAt,
+            },
           })
-          .from(companies)
-          .innerJoin(loginCodes, eq(loginCodes.code, companies.loginCode))
-          .where(and(gte(companies.updatedAt, since), eq(loginCodes.archived, false)))
+          .from(loginCodes)
+          .leftJoin(companies, eq(companies.loginCode, loginCodes.code))
+          .where(where)
           .orderBy(desc(loginCodes.createdAt), asc(companies.createdAt));
-        const codes = new Map<string, TeacherGameView[]>();
-        for (const { code, ...r } of rows) {
-          if (!codes.has(code)) codes.set(code, []);
-          codes.get(code)!.push({
-            ...r,
-            productType: r.productType as TeacherGameView["productType"],
-            model: r.model as TeacherGameView["model"],
-            migratingTo: r.migratingTo as TeacherGameView["migratingTo"],
-            status: r.status as CompanyStatus,
+        const codes = new Map<string, TeacherGamesView["codes"][number]>();
+        for (const { code, codeArchived, game: g } of rows) {
+          if (!codes.has(code)) codes.set(code, { code, archived: codeArchived, companies: [] });
+          if (!g) continue;
+          codes.get(code)!.companies.push({
+            ...g,
+            productType: g.productType as TeacherGameView["productType"],
+            model: g.model as TeacherGameView["model"],
+            migratingTo: g.migratingTo as TeacherGameView["migratingTo"],
+            status: g.status as CompanyStatus,
             finalDay: sim.config.finalDay,
-            updatedAt: r.updatedAt.toISOString(),
+            updatedAt: g.updatedAt.toISOString(),
+            archivedAt: g.archivedAt?.toISOString() ?? null,
           });
         }
-        return { hours, codes: [...codes].map(([code, list]) => ({ code, companies: list })) };
+        return { hours, codes: [...codes.values()] };
       },
     );
+
+    // Archiving takes a game off the live dashboard and stops the student playing it; they can still see how it did.
+    teacher.post<{ Params: { id: string } }>("/api/teacher/companies/:id/archive", async (req, reply) => {
+      const { id } = req.params;
+      const [row] = UUID_PATTERN.test(id)
+        ? await db
+            .update(companies)
+            .set({ archivedAt: sql`coalesce(${companies.archivedAt}, now())` })
+            .where(eq(companies.id, id))
+            .returning({ id: companies.id })
+        : [];
+      if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      return { ok: true };
+    });
+
+    // Puts a game back on the live dashboard. The code's limit only stops new games starting, so this can take a code
+    // over it.
+    teacher.post<{ Params: { id: string } }>("/api/teacher/companies/:id/unarchive", async (req, reply) => {
+      const { id } = req.params;
+      const [row] = UUID_PATTERN.test(id)
+        ? await db
+            .select({ codeArchived: loginCodes.archived })
+            .from(companies)
+            .innerJoin(loginCodes, eq(loginCodes.code, companies.loginCode))
+            .where(eq(companies.id, id))
+        : [];
+      if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      if (row.codeArchived) {
+        return sendError(reply, 409, "code_archived", "Its code is archived. Unarchive the code to bring its games back.");
+      }
+      await db.update(companies).set({ archivedAt: null }).where(eq(companies.id, id));
+      return { ok: true };
+    });
+
+    teacher.delete<{ Params: { id: string } }>("/api/teacher/companies/:id", async (req, reply) => {
+      const { id } = req.params;
+      const [row] = UUID_PATTERN.test(id)
+        ? await db.delete(companies).where(eq(companies.id, id)).returning({ id: companies.id })
+        : [];
+      if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      return { ok: true };
+    });
+
+    // Archiving a code stops students using it and archives all its games with it. Unarchiving brings them all back.
+    teacher.post<{ Params: { code: string } }>("/api/teacher/codes/:code/archive", async (req, reply) => {
+      if (!(await setCodeArchived(req.params.code, true))) {
+        return sendError(reply, 404, "unknown_code", "That code wasn't found.");
+      }
+      return { ok: true };
+    });
+
+    teacher.post<{ Params: { code: string } }>("/api/teacher/codes/:code/unarchive", async (req, reply) => {
+      if (!(await setCodeArchived(req.params.code, false))) {
+        return sendError(reply, 404, "unknown_code", "That code wasn't found.");
+      }
+      return { ok: true };
+    });
+
+    // Deletes the code and, through the foreign key, every game under it.
+    teacher.delete<{ Params: { code: string } }>("/api/teacher/codes/:code", async (req, reply) => {
+      const { code } = req.params;
+      const [row] = CODE_PATTERN.test(code)
+        ? await db.delete(loginCodes).where(eq(loginCodes.code, code)).returning({ code: loginCodes.code })
+        : [];
+      if (!row) return sendError(reply, 404, "unknown_code", "That code wasn't found.");
+      return { ok: true };
+    });
 
     // Any company's summary. The teacher picks it from the dashboard, so it goes by id alone.
     teacher.get<{ Params: { id: string } }>("/api/teacher/companies/:id/summary", async (req, reply) => {
@@ -471,6 +561,24 @@ export async function buildApp(opts: AppOptions) {
       return { code: row.loginCode, status, summary: sim.summarise(row.state) } satisfies TeacherSummaryView;
     });
   });
+
+  /** Archives or unarchives a code along with all its games. False if there's no such code. */
+  async function setCodeArchived(code: string, archived: boolean) {
+    if (!CODE_PATTERN.test(code)) return false;
+    return db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(loginCodes)
+        .set({ archived })
+        .where(eq(loginCodes.code, code))
+        .returning({ code: loginCodes.code });
+      if (!row) return false;
+      await tx
+        .update(companies)
+        .set({ archivedAt: archived ? sql`coalesce(${companies.archivedAt}, now())` : null })
+        .where(eq(companies.loginCode, code));
+      return true;
+    });
+  }
 
   // --- web client ---
 

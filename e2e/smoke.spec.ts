@@ -610,3 +610,47 @@ test("a code runs up to 3 active companies; retiring one moves it to history and
   await expect(student.getByTestId("summary")).toContainText("Retired on day 1");
   await expect(student.getByRole("button", { name: "Continue" })).toHaveCount(0);
 });
+
+test("the teacher archives a game, finds it under Archived, then deletes it", async ({ browser, request }) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  await teacher.getByRole("button", { name: "Create code" }).click();
+  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+
+  const created = await request.post(`/api/codes/${code}/companies`, {
+    data: { name: "Archive Me Ltd", productType: "ecommerce", model: "paas" },
+  });
+  const { id } = await created.json();
+  await teacher.reload();
+  const live = teacher.getByTestId("live-dashboard");
+  await expect(live.getByRole("link", { name: "Archive Me Ltd" })).toBeVisible();
+
+  // Archiving takes it off the live list.
+  await live.getByRole("button", { name: "Archive Archive Me Ltd" }).click();
+  await expect(live.getByRole("link", { name: "Archive Me Ltd" })).toHaveCount(0);
+
+  // The student can still open it, read-only.
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${id}`);
+  await expect(student.getByTestId("archived-screen")).toContainText("Your teacher archived Archive Me Ltd");
+  await expect(student.getByRole("button", { name: "Continue" })).toHaveCount(0);
+
+  // It's under Archived.
+  await live.getByRole("button", { name: "Archived", exact: true }).click();
+  await expect(live.getByRole("heading", { name: "Archived games" })).toBeVisible();
+  await expect(live.getByRole("link", { name: "Archive Me Ltd" })).toBeVisible();
+
+  // Deleting asks first, naming the company, and Cancel leaves it alone.
+  await live.getByRole("button", { name: "Delete Archive Me Ltd" }).click();
+  const confirm = live.getByRole("group", { name: "Delete Archive Me Ltd?" });
+  await expect(confirm).toContainText("can't be undone");
+  await confirm.getByRole("button", { name: "Cancel" }).click();
+  await expect(live.getByRole("link", { name: "Archive Me Ltd" })).toBeVisible();
+
+  await live.getByRole("button", { name: "Delete Archive Me Ltd" }).click();
+  await confirm.getByRole("button", { name: "Yes, delete it" }).click();
+  await expect(live.getByRole("link", { name: "Archive Me Ltd" })).toHaveCount(0);
+  expect((await request.get(`/api/codes/${code}/companies/${id}`)).status()).toBe(404);
+});

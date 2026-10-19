@@ -39,8 +39,11 @@ const loadLevel = computed(() => (loadPercent.value > 100 ? "over" : loadPercent
 const bankrupt = computed(() => company.value?.status === "bankrupt");
 const finished = computed(() => company.value?.status === "finished");
 const retired = computed(() => company.value?.status === "retired");
-// Once the game is over, bankrupt, played to the end or retired, the screen shows its summary instead of the controls.
-const over = computed(() => bankrupt.value || finished.value || retired.value);
+// The teacher archived it while it was still being played: read-only, like a retired game.
+const archived = computed(() => !!company.value?.archived && company.value.status === "active");
+// Once the game is over, bankrupt, played to the end, retired or archived, the screen shows its summary instead of the
+// controls.
+const over = computed(() => bankrupt.value || finished.value || retired.value || archived.value);
 const summary = ref<SummaryView>();
 const EVENT_LABELS = {
   outage: "Outage",
@@ -284,6 +287,15 @@ async function continueDay() {
       </p>
     </div>
 
+    <div v-else-if="archived" class="game-end retired" role="status" data-testid="archived-screen">
+      <span class="badge">Archived</span>
+      <h2>Your teacher archived {{ company.name }} on day {{ company.day }}</h2>
+      <p>
+        You can't continue this game any more. Look at how it went below, then
+        <RouterLink :to="`/play/${code}`">go back to your companies</RouterLink>.
+      </p>
+    </div>
+
     <template v-if="!over">
       <div class="stats">
         <div class="stat">
@@ -415,7 +427,7 @@ async function continueDay() {
     </div>
   </section>
 
-  <SummaryPanel v-if="over && summary" :summary="summary" :model-name="modelName(summary.model)" :retired="retired" />
+  <SummaryPanel v-if="over && summary" :summary="summary" :model-name="modelName(summary.model)" :retired="retired || archived" />
 
   <section v-if="company && !over" class="card" aria-labelledby="spend-heading" data-testid="spend">
     <div class="row-between">
