@@ -56,8 +56,8 @@ export const MAX_DASHBOARD_HOURS = 7 * 24;
 
 const CODE_PATTERN = /^\d{8}$/;
 
-/** SimError codes for a game that has ended, that the student retired or that the teacher archived. */
-const GAME_OVER = new Set(["bankrupt", "finished", "retired", "archived"]);
+/** SimError codes for a game that has ended, or that the student retired. */
+const GAME_OVER = new Set(["bankrupt", "finished", "retired"]);
 
 type CompanyRow = typeof companies.$inferSelect;
 
@@ -94,7 +94,6 @@ export async function buildApp(opts: AppOptions) {
       finalDay: sim.config.finalDay,
       cash: state.cash,
       status: (state.status === "playing" ? row.status : state.status) as CompanyStatus,
-      archived: row.archivedAt !== null,
       developers: state.developers,
       ops: state.ops,
       opsNeeded: sim.opsNeeded(state.model),
@@ -195,13 +194,14 @@ export async function buildApp(opts: AppOptions) {
       if (!code) return sendError(reply, 404, "unknown_code", "That code wasn't recognised. Check it with your teacher.");
       const { name, productType, model } = req.body;
       // Locks the code so two creates at once can't both see room under the limit. Only games still being played
-      // count: finished, bankrupt and retired ones are history, and archived ones are read-only.
+      // count: finished, bankrupt and retired ones are history. Archiving is only the teacher's view, so it doesn't
+      // change what counts.
       const row = await db.transaction(async (tx) => {
         await tx.select().from(loginCodes).where(eq(loginCodes.code, code.code)).for("update");
         const [counted] = await tx
           .select({ active: count() })
           .from(companies)
-          .where(and(eq(companies.loginCode, code.code), eq(companies.status, "active"), isNull(companies.archivedAt)));
+          .where(and(eq(companies.loginCode, code.code), eq(companies.status, "active")));
         if (counted!.active >= maxActiveCompanies) return undefined;
         const state = sim.newGame({ companyName: name, productType, model, seed: randomInt(2 ** 31) });
         const [inserted] = await tx
@@ -305,7 +305,7 @@ export async function buildApp(opts: AppOptions) {
     // Locks the row so a Continue in another tab can't finish the game while it's being retired.
     const row = await db.transaction(async (tx) => {
       const [current] = await tx.select().from(companies).where(companyWhere(code, id)).for("update");
-      if (current?.status !== "active" || current.archivedAt) return current;
+      if (current?.status !== "active") return current;
       const [updated] = await tx
         .update(companies)
         .set({ status: "retired", updatedAt: new Date() })
@@ -314,7 +314,6 @@ export async function buildApp(opts: AppOptions) {
       return updated;
     });
     if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
-    if (row.archivedAt) return sendError(reply, 409, "archived", archivedMessage(row));
     if (row.status !== "retired") {
       return sendError(reply, 409, "not_active", `${row.name} has already ended, so it's in your history.`);
     }
@@ -335,7 +334,6 @@ export async function buildApp(opts: AppOptions) {
     return db.transaction(async (tx) => {
       const [row] = await tx.select().from(companies).where(companyWhere(code, id)).for("update");
       if (!row) return undefined;
-      if (row.archivedAt) throw new SimError("archived", archivedMessage(row));
       if (row.status === "retired") {
         throw new SimError("retired", `${row.name} was retired, so this game is over. Start a new company to play again.`);
       }
@@ -348,9 +346,6 @@ export async function buildApp(opts: AppOptions) {
       return { ...result, company: view(updated!) };
     });
   }
-
-  const archivedMessage = (row: CompanyRow) =>
-    `Your teacher archived ${row.name}, so it can't be played any more. You can still see how it did.`;
 
   const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -485,36 +480,20 @@ export async function buildApp(opts: AppOptions) {
       },
     );
 
-    // Archiving takes a game off the live dashboard and stops the student playing it; they can still see how it did.
+    // Archiving only tidies the teacher's view: the game leaves the live dashboard for the Archived tab. The student
+    // sees no change and can keep playing it, and it still counts towards the code's limit.
     teacher.post<{ Params: { id: string } }>("/api/teacher/companies/:id/archive", async (req, reply) => {
-      const { id } = req.params;
-      const [row] = UUID_PATTERN.test(id)
-        ? await db
-            .update(companies)
-            .set({ archivedAt: sql`coalesce(${companies.archivedAt}, now())` })
-            .where(eq(companies.id, id))
-            .returning({ id: companies.id })
-        : [];
-      if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      if (!(await setGameArchived(req.params.id, true))) {
+        return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      }
       return { ok: true };
     });
 
-    // Puts a game back on the live dashboard. The code's limit only stops new games starting, so this can take a code
-    // over it.
+    // Back to the live dashboard. A game under an archived code stays in the Archived tab until the code comes back.
     teacher.post<{ Params: { id: string } }>("/api/teacher/companies/:id/unarchive", async (req, reply) => {
-      const { id } = req.params;
-      const [row] = UUID_PATTERN.test(id)
-        ? await db
-            .select({ codeArchived: loginCodes.archived })
-            .from(companies)
-            .innerJoin(loginCodes, eq(loginCodes.code, companies.loginCode))
-            .where(eq(companies.id, id))
-        : [];
-      if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
-      if (row.codeArchived) {
-        return sendError(reply, 409, "code_archived", "Its code is archived. Unarchive the code to bring its games back.");
+      if (!(await setGameArchived(req.params.id, false))) {
+        return sendError(reply, 404, "unknown_company", "That company wasn't found.");
       }
-      await db.update(companies).set({ archivedAt: null }).where(eq(companies.id, id));
       return { ok: true };
     });
 
@@ -527,7 +506,8 @@ export async function buildApp(opts: AppOptions) {
       return { ok: true };
     });
 
-    // Archiving a code stops students using it and archives all its games with it. Unarchiving brings them all back.
+    // Archiving a code stops students using it, and takes it and all its games off the live dashboard. It leaves each
+    // game's own archived flag alone, so unarchiving the code brings back the games that weren't archived on their own.
     teacher.post<{ Params: { code: string } }>("/api/teacher/codes/:code/archive", async (req, reply) => {
       if (!(await setCodeArchived(req.params.code, true))) {
         return sendError(reply, 404, "unknown_code", "That code wasn't found.");
@@ -562,22 +542,27 @@ export async function buildApp(opts: AppOptions) {
     });
   });
 
-  /** Archives or unarchives a code along with all its games. False if there's no such code. */
+  /** Archives or unarchives one game in the teacher's view. False if there's no such game. */
+  async function setGameArchived(id: string, archived: boolean) {
+    if (!UUID_PATTERN.test(id)) return false;
+    // Keeps the first archive time if it's archived twice.
+    const [row] = await db
+      .update(companies)
+      .set({ archivedAt: archived ? sql`coalesce(${companies.archivedAt}, now())` : null })
+      .where(eq(companies.id, id))
+      .returning({ id: companies.id });
+    return !!row;
+  }
+
+  /** Archives or unarchives a code. False if there's no such code. */
   async function setCodeArchived(code: string, archived: boolean) {
     if (!CODE_PATTERN.test(code)) return false;
-    return db.transaction(async (tx) => {
-      const [row] = await tx
-        .update(loginCodes)
-        .set({ archived })
-        .where(eq(loginCodes.code, code))
-        .returning({ code: loginCodes.code });
-      if (!row) return false;
-      await tx
-        .update(companies)
-        .set({ archivedAt: archived ? sql`coalesce(${companies.archivedAt}, now())` : null })
-        .where(eq(companies.loginCode, code));
-      return true;
-    });
+    const [row] = await db
+      .update(loginCodes)
+      .set({ archived })
+      .where(eq(loginCodes.code, code))
+      .returning({ code: loginCodes.code });
+    return !!row;
   }
 
   // --- web client ---

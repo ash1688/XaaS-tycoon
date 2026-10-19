@@ -74,11 +74,6 @@ export interface CompanyView {
    * if cash went below zero, "finished" if it played the final day, or "retired" if the student retired it.
    */
   status: CompanyStatus;
-  /**
-   * True once the teacher has archived the game. It can still be viewed, with its summary, but not played, and it no
-   * longer counts towards the code's limit.
-   */
-  archived: boolean;
   developers: number;
   ops: number;
   /** Ops staff the current model needs. */
@@ -170,7 +165,7 @@ export interface TeacherGameView {
   uptime: number;
   status: CompanyStatus;
   updatedAt: string;
-  /** When the teacher archived it, or null if it's still on the live dashboard. */
+  /** When the teacher archived it, or null if it isn't. Only the teacher's view: the student can still play it. */
   archivedAt: string | null;
 }
 
@@ -185,7 +180,7 @@ export interface TeacherGamesView {
   hours: number | null;
   codes: {
     code: string;
-    /** The code itself is archived: students can't use it, and its games come back only when it does. */
+    /** The code itself is archived: students can't use it, and its games stay here until it's unarchived. */
     archived: boolean;
     companies: TeacherGameView[];
   }[];

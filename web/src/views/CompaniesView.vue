@@ -18,10 +18,9 @@ const formError = ref("");
 const nameError = ref("");
 const busy = ref(false);
 
-// Only games still being played count towards the limit; finished, bankrupt, retired and archived ones are history.
-const playable = (c: CompanyView) => c.status === "active" && !c.archived;
-const active = computed(() => companies.value.filter(playable));
-const history = computed(() => companies.value.filter((c) => !playable(c)));
+// Only games still being played count towards the limit; finished, bankrupt and retired ones are history.
+const active = computed(() => companies.value.filter((c) => c.status === "active"));
+const history = computed(() => companies.value.filter((c) => c.status !== "active"));
 const atLimit = computed(() => !!meta.value && active.value.length >= meta.value.maxActiveCompanies);
 const STATUS_LABELS = { active: "Active", retired: "Retired", bankrupt: "Bankrupt", finished: "Finished" } as const;
 const STATUS_BADGES = { active: "", retired: "retired-badge", bankrupt: "warn-badge", finished: "done-badge" } as const;
@@ -229,8 +228,7 @@ async function start() {
             <strong>{{ c.name }}</strong>
             <span class="muted">{{ productName(c.productType) }} · {{ modelName(c.model) }}</span>
             <span>Day {{ c.day }} of {{ c.finalDay }} · {{ formatCash(c.cash) }}</span>
-            <span v-if="c.archived && c.status === 'active'" class="badge retired-badge">Archived</span>
-            <span v-else :class="['badge', STATUS_BADGES[c.status]]">{{ STATUS_LABELS[c.status] }}</span>
+            <span :class="['badge', STATUS_BADGES[c.status]]">{{ STATUS_LABELS[c.status] }}</span>
           </RouterLink>
         </li>
       </ul>

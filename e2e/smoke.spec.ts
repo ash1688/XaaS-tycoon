@@ -631,11 +631,11 @@ test("the teacher archives a game, finds it under Archived, then deletes it", as
   await live.getByRole("button", { name: "Archive Archive Me Ltd" }).click();
   await expect(live.getByRole("link", { name: "Archive Me Ltd" })).toHaveCount(0);
 
-  // The student can still open it, read-only.
+  // Archiving is only the teacher's view: the student can keep playing.
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
-  await expect(student.getByTestId("archived-screen")).toContainText("Your teacher archived Archive Me Ltd");
-  await expect(student.getByRole("button", { name: "Continue" })).toHaveCount(0);
+  await student.getByRole("button", { name: "Continue" }).click();
+  await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
 
   // It's under Archived.
   await live.getByRole("button", { name: "Archived", exact: true }).click();

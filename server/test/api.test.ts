@@ -860,30 +860,38 @@ describe("archiving and deleting", () => {
     expect(ids(await archived())).toEqual([old.id]);
   });
 
-  it("leaves an archived game viewable by the student but not playable, and frees its slot", async () => {
+  it("changes nothing for the student: an archived game can still be played", async () => {
     const code = await newCode();
-    const games = [];
-    for (let i = 0; i < 3; i++) games.push((await newCompany(code)).json<CompanyView>());
-    expect((await newCompany(code)).statusCode).toBe(409);
-    const id = games[0]!.id;
+    const { id } = (await newCompany(code)).json<CompanyView>();
     await teacher("POST", `/api/teacher/companies/${id}/archive`);
 
     const view = await app.inject({ method: "GET", url: `/api/codes/${code}/companies/${id}` });
     expect(view.statusCode).toBe(200);
-    expect(view.json<CompanyView>()).toMatchObject({ archived: true, status: "active" });
-    expect((await app.inject({ method: "GET", url: `/api/codes/${code}/companies/${id}/summary` })).statusCode).toBe(200);
-    for (const url of ["continue", "retire"]) {
-      const res = await app.inject({ method: "POST", url: `/api/codes/${code}/companies/${id}/${url}` });
-      expect(res.statusCode).toBe(409);
-      expect(res.json()).toMatchObject({ error: "archived" });
-    }
+    expect(view.json<CompanyView>()).toMatchObject({ status: "active", day: 1 });
+    const next = await app.inject({ method: "POST", url: `/api/codes/${code}/companies/${id}/continue` });
+    expect(next.statusCode).toBe(200);
+    expect(next.json<ContinueResult>().company.day).toBe(2);
     const action = await app.inject({
       method: "POST",
       url: `/api/codes/${code}/companies/${id}/actions`,
       payload: { type: "hire", pool: "developers" },
     });
-    expect(action.statusCode).toBe(409);
-    // Archived games don't count towards the limit.
+    expect(action.statusCode).toBe(200);
+    // Playing it doesn't bring it back to the live dashboard.
+    expect(ids(await live())).toEqual([]);
+    expect(ids(await archived())).toEqual([id]);
+  });
+
+  it("still counts an archived game towards the code's limit", async () => {
+    const code = await newCode();
+    const games = [];
+    for (let i = 0; i < 3; i++) games.push((await newCompany(code)).json<CompanyView>());
+    await teacher("POST", `/api/teacher/companies/${games[0]!.id}/archive`);
+    const res = await newCompany(code);
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ error: "too_many_active" });
+    // Retiring it as usual makes room.
+    await app.inject({ method: "POST", url: `/api/codes/${code}/companies/${games[0]!.id}/retire` });
     expect((await newCompany(code)).statusCode).toBe(201);
   });
 
@@ -901,15 +909,17 @@ describe("archiving and deleting", () => {
   it("archives a whole code with its games, so students can't use it, and unarchives it", async () => {
     const [code, other] = [await newCode(), await newCode()];
     const company = (await newCompany(code)).json<CompanyView>();
+    const archivedAlone = (await newCompany(code)).json<CompanyView>();
+    await teacher("POST", `/api/teacher/companies/${archivedAlone.id}/archive`);
     const empty = await newCode();
-    await newCompany(other);
+    const elsewhere = (await newCompany(other)).json<CompanyView>();
 
     expect((await teacher("POST", `/api/teacher/codes/${code}/archive`)).statusCode).toBe(200);
     expect((await teacher("POST", `/api/teacher/codes/${empty}/archive`)).statusCode).toBe(200);
     expect((await live()).codes.map((g) => g.code)).toEqual([other]);
     expect((await archived()).codes).toMatchObject([
       { code: empty, archived: true, companies: [] },
-      { code, archived: true, companies: [{ id: company.id }] },
+      { code, archived: true, companies: [{ id: company.id, archivedAt: null }, { id: archivedAlone.id }] },
     ]);
     const codes = (await teacher("GET", "/api/teacher/codes")).json<TeacherCodeView[]>();
     expect(codes.map((c) => c.code)).toEqual([other]);
@@ -921,12 +931,10 @@ describe("archiving and deleting", () => {
     }
     expect((await newCompany(code)).statusCode).toBe(404);
 
-    // A game comes back with its code, not on its own.
-    const alone = await teacher("POST", `/api/teacher/companies/${company.id}/unarchive`);
-    expect(alone.statusCode).toBe(409);
-    expect(alone.json()).toMatchObject({ error: "code_archived" });
+    // Unarchiving the code brings back its games, except one the teacher archived on its own.
     expect((await teacher("POST", `/api/teacher/codes/${code}/unarchive`)).statusCode).toBe(200);
-    expect(ids(await live())).toContain(company.id);
+    expect(ids(await live())).toEqual([elsewhere.id, company.id]);
+    expect(ids(await archived())).toEqual([archivedAlone.id]);
     expect((await app.inject({ method: "GET", url: `/api/codes/${code}` })).statusCode).toBe(200);
   });
 

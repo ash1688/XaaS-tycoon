@@ -176,8 +176,8 @@ const formatTime = (d: Date) => d.toLocaleTimeString("en-GB", { timeStyle: "shor
       </div>
     </div>
     <p v-if="showArchived" class="muted live-note">
-      Archived games and codes, however old. Students can still open an archived game to see how it did, but can't play
-      it, and an archived code doesn't work at all.
+      Archived games and codes, however old. Archiving a game only hides it from your live view: the student can still
+      play it. An archived code stops working for students until you unarchive it.
     </p>
     <p v-else-if="hours" class="muted live-note">
       Games played in the last {{ hours === 168 ? "7 days" : `${hours} hour${hours === 1 ? "" : "s"}` }}.

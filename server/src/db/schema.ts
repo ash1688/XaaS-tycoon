@@ -17,7 +17,7 @@ export const companies = pgTable(
     name: text("name").notNull(),
     productType: text("product_type").notNull(),
     // "active" while being played, then "retired", "bankrupt" or "finished" (see CompanyStatus). Only active games
-    // that aren't archived count towards a code's limit.
+    // count towards a code's limit.
     status: text("status").notNull().default("active"),
     // Denormalised from state so the dashboard can list games without parsing JSON.
     model: text("model").notNull(),
@@ -29,8 +29,8 @@ export const companies = pgTable(
     // The model a migration under way is moving to, or null.
     migratingTo: text("migrating_to"),
     state: jsonb("state").$type<GameState>().notNull(),
-    // Set when the teacher archives the game: hidden from the live dashboard, read-only for the student and no longer
-    // counted towards the code's limit. Separate from status, which is where the game itself got to.
+    // Set when the teacher archives the game, which only moves it from the live dashboard to the Archived tab: the
+    // student can keep playing it. Separate from status, which is where the game itself got to.
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
