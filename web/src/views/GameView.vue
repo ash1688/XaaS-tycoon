@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import type { DayLog } from "@xaas/sim";
-import type { CompanyView, MetaView } from "@xaas/server/api-types";
+import type { ActionBody, CompanyView, MetaView } from "@xaas/server/api-types";
 import { api, formatCash } from "../api";
 
 const props = defineProps<{ code: string; id: string }>();
@@ -17,6 +17,7 @@ const modelName = (id: string) => meta.value?.models.find((m) => m.id === id)?.n
 // Top layer first, so the stack reads like the diagram: your data on top, the building at the bottom.
 const stack = computed(() => meta.value?.models.find((m) => m.id === company.value?.model)?.stack.toReversed() ?? []);
 const OWNER_LABELS = { you: "You", provider: "Provider", shared: "Shared" } as const;
+const understaffed = computed(() => !!company.value && company.value.ops < company.value.opsNeeded);
 
 onMounted(async () => {
   try {
@@ -25,6 +26,18 @@ onMounted(async () => {
     error.value = (e as Error).message;
   }
 });
+
+async function act(action: ActionBody) {
+  busy.value = true;
+  error.value = "";
+  try {
+    company.value = await api.act(props.code, props.id, action);
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    busy.value = false;
+  }
+}
 
 async function continueDay() {
   busy.value = true;
@@ -71,6 +84,46 @@ async function continueDay() {
         </li>
       </ul>
     </div>
+  </section>
+
+  <section v-if="company && meta" class="card" aria-labelledby="staff-heading">
+    <div class="row-between">
+      <h2 id="staff-heading">Staff</h2>
+      <span class="muted">
+        Total <strong data-testid="staff-cost">{{ formatCash(company.dailyStaffCost) }}</strong> a day
+      </span>
+    </div>
+    <ul class="staff">
+      <li v-for="pool in meta.staff" :key="pool.id" :data-pool="pool.id">
+        <div class="staff-info">
+          <strong>{{ pool.name }}</strong>
+          <span class="muted">{{ formatCash(pool.dayRate) }} each a day</span>
+        </div>
+        <div class="counter">
+          <button
+            class="ghost"
+            :disabled="busy || company[pool.id] < 1"
+            :aria-label="`Let go one ${pool.personName}`"
+            @click="act({ type: 'letGo', pool: pool.id })"
+          >
+            −
+          </button>
+          <output :data-testid="`${pool.id}-count`" aria-live="polite">{{ company[pool.id] }}</output>
+          <button
+            class="ghost"
+            :disabled="busy"
+            :aria-label="`Hire one ${pool.personName}`"
+            @click="act({ type: 'hire', pool: pool.id })"
+          >
+            +
+          </button>
+        </div>
+      </li>
+    </ul>
+    <p :class="['ops-needed', { warn: understaffed }]" data-testid="ops-needed">
+      <span>{{ modelName(company.model) }} needs <strong>{{ company.opsNeeded }}</strong> ops staff.</span>
+      <span v-if="understaffed" class="badge">Understaffed: {{ company.opsNeeded - company.ops }} short</span>
+    </p>
   </section>
 
   <section v-else-if="error" class="card narrow">

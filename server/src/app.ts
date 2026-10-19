@@ -10,6 +10,7 @@ import {
   PRODUCT_TYPE_IDS,
   responsibilityStack,
   SimError,
+  STAFF_POOLS,
   type GameState,
   type Sim,
 } from "@xaas/sim";
@@ -17,6 +18,7 @@ import type { Db } from "./db/client.ts";
 import { companies, loginCodes } from "./db/schema.ts";
 import { endTeacherSession, isTeacher, passwordMatches, startTeacherSession } from "./teacherAuth.ts";
 import type {
+  ActionBody,
   ApiError,
   CodeView,
   CompanyView,
@@ -59,16 +61,23 @@ export async function buildApp(opts: AppOptions) {
     return sendError(reply, 500, "server_error", "Something went wrong.");
   });
 
-  const view = (row: CompanyRow): CompanyView => ({
-    id: row.id,
-    name: row.name,
-    productType: row.state.productType,
-    model: row.state.model,
-    day: row.state.day,
-    finalDay: sim.config.finalDay,
-    cash: row.state.cash,
-    status: row.status,
-  });
+  function view(row: CompanyRow): CompanyView {
+    const state = sim.load(row.state);
+    return {
+      id: row.id,
+      name: row.name,
+      productType: state.productType,
+      model: state.model,
+      day: state.day,
+      finalDay: sim.config.finalDay,
+      cash: state.cash,
+      status: row.status,
+      developers: state.developers,
+      ops: state.ops,
+      opsNeeded: sim.opsNeeded(state.model),
+      dailyStaffCost: sim.dailyStaffCost(state),
+    };
+  }
 
   const columnsFor = (state: GameState) => ({ model: state.model, day: state.day, cash: state.cash, state });
 
@@ -88,8 +97,12 @@ export async function buildApp(opts: AppOptions) {
       maxCompanyNameLength: config.maxCompanyNameLength,
       productTypes: PRODUCT_TYPE_IDS.map((id) => ({ id, ...config.productTypes[id] })),
       models: MODEL_IDS.map((id) => {
-        const { name, blurb, comparison } = config.models[id];
-        return { id, name, blurb, comparison, stack: responsibilityStack(id) };
+        const { name, blurb, comparison, opsNeeded } = config.models[id];
+        return { id, name, blurb, comparison, stack: responsibilityStack(id), opsNeeded };
+      }),
+      staff: STAFF_POOLS.map((id) => {
+        const { name, personName, dayRate } = config.staff[id];
+        return { id, name, personName, dayRate };
       }),
     };
   });
@@ -139,28 +152,55 @@ export async function buildApp(opts: AppOptions) {
   });
 
   app.post<{ Params: { code: string; id: string } }>("/api/codes/:code/companies/:id/continue", async (req, reply) => {
-    if (!(await findCode(req.params.code))) {
-      return sendError(reply, 404, "unknown_company", "That company wasn't found.");
-    }
-    // Lock the row so two tabs pressing Continue can't both advance from the same day.
-    const result = await db.transaction(async (tx) => {
-      const [row] = await tx
-        .select()
-        .from(companies)
-        .where(companyWhere(req.params.code, req.params.id))
-        .for("update");
+    const result = await updateCompany(req.params.code, req.params.id, (state) => sim.advance(state, 1));
+    if (!result) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+    return { company: result.company, log: result.log } satisfies ContinueResult;
+  });
+
+  app.post<{ Params: { code: string; id: string }; Body: ActionBody }>(
+    "/api/codes/:code/companies/:id/actions",
+    {
+      schema: {
+        body: {
+          type: "object",
+          required: ["type", "pool"],
+          properties: { type: { enum: ["hire", "letGo"] }, pool: { enum: [...STAFF_POOLS] } },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (req, reply) => {
+      const result = await updateCompany(req.params.code, req.params.id, (state) => ({
+        state: sim.applyAction(state, req.body),
+      }));
+      if (!result) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      return result.company;
+    },
+  );
+
+  /**
+   * Runs a sim step against a company's saved state and stores the result.
+   * Locks the row so two tabs can't both change it from the same starting point.
+   * Returns undefined if the company isn't under that code. A SimError rolls back and becomes a 400.
+   */
+  async function updateCompany<T extends { state: GameState }>(
+    code: string,
+    id: string,
+    step: (state: GameState) => T,
+  ): Promise<(T & { company: CompanyView }) | undefined> {
+    if (!UUID_PATTERN.test(id) || !(await findCode(code))) return undefined;
+    return db.transaction(async (tx) => {
+      const [row] = await tx.select().from(companies).where(companyWhere(code, id)).for("update");
       if (!row) return undefined;
-      const { state, log } = sim.advance(row.state, 1);
+      const result = step(sim.load(row.state));
       const [updated] = await tx
         .update(companies)
-        .set({ ...columnsFor(state), updatedAt: new Date() })
+        .set({ ...columnsFor(result.state), updatedAt: new Date() })
         .where(eq(companies.id, row.id))
         .returning();
-      return { company: view(updated!), log } satisfies ContinueResult;
+      return { ...result, company: view(updated!) };
     });
-    if (!result) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
-    return result;
-  });
+  }
 
   const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

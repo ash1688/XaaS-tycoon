@@ -1,11 +1,21 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { sql } from "drizzle-orm";
 import { createSim, defaultConfig } from "@xaas/sim";
 import { buildApp } from "../src/app.ts";
-import type { CompanyView, ContinueResult, TeacherCodeView } from "../src/api-types.ts";
+import type { ActionBody, CompanyView, ContinueResult, MetaView, TeacherCodeView } from "../src/api-types.ts";
 import { setupTestDb } from "./testDb.ts";
 
 const PASSWORD = "test-teacher-password";
-const sim = createSim({ ...defaultConfig, startingCash: 1000, models: { ...defaultConfig.models, iaas: { ...defaultConfig.models.iaas, dailyCost: 25 } } });
+const sim = createSim({
+  ...defaultConfig,
+  startingCash: 1000,
+  models: { ...defaultConfig.models, iaas: { ...defaultConfig.models.iaas, dailyCost: 25, opsNeeded: 2 } },
+  // No starting staff, so continue charges only the model's running cost unless a test hires someone.
+  staff: {
+    developers: { ...defaultConfig.staff.developers, dayRate: 10, startingCount: 0 },
+    ops: { ...defaultConfig.staff.ops, dayRate: 4, startingCount: 0 },
+  },
+});
 
 let testDb: Awaited<ReturnType<typeof setupTestDb>>;
 let app: Awaited<ReturnType<typeof buildApp>>;
@@ -178,7 +188,95 @@ describe("continue", () => {
   });
 });
 
+describe("staff actions", () => {
+  async function setup() {
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
+    return { code, company, url, act };
+  }
+
+  it("starts with the configured staff and the model's ops requirement", async () => {
+    const { company } = await setup();
+    expect(company).toMatchObject({ developers: 0, ops: 0, opsNeeded: 2, dailyStaffCost: 0 });
+  });
+
+  it("hires staff and keeps them across reloads", async () => {
+    const { url, act } = await setup();
+    const hireDev: ActionBody = { type: "hire", pool: "developers" };
+    expect((await act(hireDev)).statusCode).toBe(200);
+    const res = await act({ type: "hire", pool: "ops" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json<CompanyView>()).toMatchObject({ developers: 1, ops: 1, dailyStaffCost: 14, day: 1, cash: 1000 });
+
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({ developers: 1, ops: 1 });
+  });
+
+  it("deducts staff cost on continue", async () => {
+    const { url, act } = await setup();
+    await act({ type: "hire", pool: "developers" });
+    await act({ type: "hire", pool: "developers" });
+    const body = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    expect(body.company).toMatchObject({ day: 2, cash: 1000 - 25 - 20, developers: 2 });
+    expect(body.log[0]!.entries).toContainEqual({ text: "Developers pay (2)", cashDelta: -20 });
+  });
+
+  it("rejects letting go below zero with 400 and changes nothing", async () => {
+    const { url, act } = await setup();
+    const res = await act({ type: "letGo", pool: "ops" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: "no_staff" });
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({ ops: 0 });
+  });
+
+  it("validates the body", async () => {
+    const { act } = await setup();
+    for (const payload of [{ type: "promote", pool: "ops" }, { type: "hire", pool: "sales" }, { type: "hire" }]) {
+      expect((await act(payload)).statusCode).toBe(400);
+    }
+    // Extra fields are stripped, so a client can't set headcount directly.
+    expect((await act({ type: "hire", pool: "ops", ops: 50 })).json<CompanyView>().ops).toBe(1);
+  });
+
+  it("returns 404 for another code's company", async () => {
+    const { company } = await setup();
+    const other = await newCode();
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/codes/${other}/companies/${company.id}/actions`,
+      payload: { type: "hire", pool: "developers" },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ error: "unknown_company" });
+  });
+
+  it("serialises concurrent hires so none are lost", async () => {
+    const { url, act } = await setup();
+    await Promise.all(Array.from({ length: 5 }, () => act({ type: "hire", pool: "developers" })));
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>().developers).toBe(5);
+  });
+
+  it("shows a game saved before staff existed with no staff", async () => {
+    const { company, url } = await setup();
+    const v1 = { version: 1, companyName: "Acme", productType: "ecommerce", model: "iaas", day: 3, cash: 950, rng: 1 };
+    await testDb.db.execute(sql`update companies set state = ${JSON.stringify(v1)}::jsonb where id = ${company.id}`);
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({ day: 3, developers: 0, ops: 0 });
+    const res = await app.inject({ method: "POST", url: `${url}/continue` });
+    expect(res.json<ContinueResult>().company).toMatchObject({ day: 4, cash: 925 });
+  });
+});
+
 describe("meta", () => {
+  it("includes staff day rates and ops needed per model", async () => {
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.staff.map((s) => [s.id, s.dayRate])).toEqual([
+      ["developers", 10],
+      ["ops", 4],
+    ]);
+    expect(meta.models.map((m) => m.opsNeeded)).toEqual([3, 2, 1, 0]);
+  });
+
   it("lists product types and models from config", async () => {
     const res = await app.inject({ method: "GET", url: "/api/meta" });
     const meta = res.json();

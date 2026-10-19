@@ -17,6 +17,8 @@
   --provider-soft: #e3f6f3;
   --shared: #7c3aed;
   --shared-soft: #f1eafe;
+  --warn: #b42318;
+  --warn-soft: #fdeceb;
   color-scheme: light;
 }
 
@@ -39,6 +41,8 @@
     --provider-soft: #12302d;
     --shared: #b794f6;
     --shared-soft: #2a2140;
+    --warn: #ff9b91;
+    --warn-soft: #3a1b1b;
     color-scheme: dark;
   }
 }
@@ -435,4 +439,78 @@ fieldset > p {
 
 .resp-stack strong {
   color: var(--owner);
+}
+
+.staff {
+  list-style: none;
+  padding: 0;
+  margin: 0.75rem 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.staff li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.staff-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.staff-info .muted {
+  font-size: 0.9rem;
+}
+
+.counter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.counter button {
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.counter output {
+  min-width: 2.5ch;
+  text-align: center;
+  font-size: 1.4rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ops-needed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin: 0;
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  background: var(--accent-soft);
+}
+
+.ops-needed.warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.badge {
+  font-weight: 700;
+  font-size: 0.85rem;
+  padding: 0.15rem 0.6rem;
+  border: 2px solid currentColor;
+  border-radius: 999px;
 }

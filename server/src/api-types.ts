@@ -1,5 +1,5 @@
 // Shapes the API sends and receives. Type-only, so the web client can import it.
-import type { DayLog, ModelComparison, ModelId, ProductTypeId, StackLayer } from "@xaas/sim";
+import type { Action, DayLog, ModelComparison, ModelId, ProductTypeId, StackLayer, StaffPool } from "@xaas/sim";
 
 export interface ApiError {
   error: string;
@@ -18,7 +18,9 @@ export interface MetaView {
     comparison: ModelComparison;
     /** Responsibility stack, bottom layer first. */
     stack: StackLayer[];
+    opsNeeded: number;
   }[];
+  staff: { id: StaffPool; name: string; personName: string; dayRate: number }[];
 }
 
 export interface CompanyView {
@@ -30,6 +32,12 @@ export interface CompanyView {
   finalDay: number;
   cash: number;
   status: string;
+  developers: number;
+  ops: number;
+  /** Ops staff the current model needs. */
+  opsNeeded: number;
+  /** What the current headcount costs per day. */
+  dailyStaffCost: number;
 }
 
 export interface CodeView {
@@ -42,6 +50,8 @@ export interface NewCompanyBody {
   productType: string;
   model: string;
 }
+
+export type ActionBody = Action;
 
 export interface ContinueResult {
   company: CompanyView;

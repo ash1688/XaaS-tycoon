@@ -1,4 +1,5 @@
 import type {
+  ActionBody,
   ApiError,
   CodeView,
   CompanyView,
@@ -40,6 +41,8 @@ export const api = {
   company: (code: string, id: string) => request<CompanyView>("GET", `/api/codes/${enc(code)}/companies/${enc(id)}`),
   continueDay: (code: string, id: string) =>
     request<ContinueResult>("POST", `/api/codes/${enc(code)}/companies/${enc(id)}/continue`),
+  act: (code: string, id: string, action: ActionBody) =>
+    request<CompanyView>("POST", `/api/codes/${enc(code)}/companies/${enc(id)}/actions`, action),
 
   teacherLogin: (password: string) => request<{ ok: true }>("POST", "/api/teacher/login", { password }),
   teacherLogout: () => request<{ ok: true }>("POST", "/api/teacher/logout"),
