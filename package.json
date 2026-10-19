@@ -1,0 +1,27 @@
+{
+  "name": "xaas-tycoon",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "sim",
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "db:up": "docker compose up -d db",
+    "dev": "concurrently -n server,web -c blue,green \"npm run dev -w server\" \"npm run dev -w web\"",
+    "build": "npm run build -w web",
+    "start": "npm start -w server",
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "npm test -w sim -w server",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^24.19.2",
+    "concurrently": "^9.2.5",
+    "postgres": "^3.4.9",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}
