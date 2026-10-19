@@ -21,10 +21,15 @@ test("teacher creates a code, student starts a game and presses Continue", async
 
   await student.getByLabel("Login code").fill(code!);
   await student.getByRole("button", { name: "Go" }).click();
-  await student.getByLabel("Company name").fill("Playwright Ltd");
   await expect(student.getByRole("table")).toContainText("Ops staff needed");
   await student.getByText("Social network").click();
   await student.locator("label.choice", { hasText: "Rent VMs (IaaS)" }).click();
+  // A name on the profanity list is turned away with a message by the name field.
+  await student.getByLabel("Company name").fill("Big Arse Ltd");
+  await student.getByRole("button", { name: "Start company" }).click();
+  await expect(student.locator("#name-error")).toContainText("choose another company name");
+  await student.getByLabel("Company name").fill("Playwright Ltd");
+  await expect(student.locator("#name-error")).toBeHidden();
   await student.getByRole("button", { name: "Start company" }).click();
 
   await expect(student.getByRole("heading", { name: "Playwright Ltd" })).toBeVisible();
