@@ -4,7 +4,15 @@ import Fastify, { type FastifyReply } from "fastify";
 import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
 import { and, count, desc, eq } from "drizzle-orm";
-import { createSim, MODEL_IDS, PRODUCT_TYPE_IDS, SimError, type GameState, type Sim } from "@xaas/sim";
+import {
+  createSim,
+  MODEL_IDS,
+  PRODUCT_TYPE_IDS,
+  responsibilityStack,
+  SimError,
+  type GameState,
+  type Sim,
+} from "@xaas/sim";
 import type { Db } from "./db/client.ts";
 import { companies, loginCodes } from "./db/schema.ts";
 import { endTeacherSession, isTeacher, passwordMatches, startTeacherSession } from "./teacherAuth.ts";
@@ -79,7 +87,10 @@ export async function buildApp(opts: AppOptions) {
       finalDay: config.finalDay,
       maxCompanyNameLength: config.maxCompanyNameLength,
       productTypes: PRODUCT_TYPE_IDS.map((id) => ({ id, ...config.productTypes[id] })),
-      models: MODEL_IDS.map((id) => ({ id, name: config.models[id].name, blurb: config.models[id].blurb })),
+      models: MODEL_IDS.map((id) => {
+        const { name, blurb, comparison } = config.models[id];
+        return { id, name, blurb, comparison, stack: responsibilityStack(id) };
+      }),
     };
   });
 

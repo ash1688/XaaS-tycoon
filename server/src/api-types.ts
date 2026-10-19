@@ -1,5 +1,5 @@
 // Shapes the API sends and receives. Type-only, so the web client can import it.
-import type { DayLog, ModelId, ProductTypeId } from "@xaas/sim";
+import type { DayLog, ModelComparison, ModelId, ProductTypeId, StackLayer } from "@xaas/sim";
 
 export interface ApiError {
   error: string;
@@ -11,7 +11,14 @@ export interface MetaView {
   finalDay: number;
   maxCompanyNameLength: number;
   productTypes: { id: ProductTypeId; name: string; profile: string }[];
-  models: { id: ModelId; name: string; blurb: string }[];
+  models: {
+    id: ModelId;
+    name: string;
+    blurb: string;
+    comparison: ModelComparison;
+    /** Responsibility stack, bottom layer first. */
+    stack: StackLayer[];
+  }[];
 }
 
 export interface CompanyView {

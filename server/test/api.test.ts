@@ -186,4 +186,18 @@ describe("meta", () => {
     expect(meta.models.map((m: { id: string }) => m.id)).toEqual(["onprem", "iaas", "paas", "saas"]);
     expect(meta.startingCash).toBe(1000);
   });
+
+  it("includes each model's comparison and responsibility stack", async () => {
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json();
+    type Layer = { id: string; owner: string };
+    const owner = (model: string, layer: string) =>
+      meta.models.find((m: { id: string }) => m.id === model).stack.find((l: Layer) => l.id === layer).owner;
+    for (const m of meta.models) {
+      expect(owner(m.id, "data")).toBe("you");
+      expect(Object.keys(m.comparison)).toEqual(["upfrontCost", "monthlyCost", "opsNeeded", "control"]);
+    }
+    expect(owner("saas", "application")).toBe("shared");
+    expect(owner("iaas", "os")).toBe("you");
+    expect(meta.models.find((m: { id: string }) => m.id === "saas").comparison.opsNeeded).toBe("None");
+  });
 });
