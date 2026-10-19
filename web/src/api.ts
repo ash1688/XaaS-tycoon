@@ -41,6 +41,8 @@ export const api = {
   createCompany: (code: string, body: NewCompanyBody) =>
     request<CompanyView>("POST", `/api/codes/${enc(code)}/companies`, body),
   company: (code: string, id: string) => request<CompanyView>("GET", `/api/codes/${enc(code)}/companies/${enc(id)}`),
+  retire: (code: string, id: string) =>
+    request<CompanyView>("POST", `/api/codes/${enc(code)}/companies/${enc(id)}/retire`),
   summary: (code: string, id: string) =>
     request<SummaryView>("GET", `/api/codes/${enc(code)}/companies/${enc(id)}/summary`),
   continueDay: (code: string, id: string) =>

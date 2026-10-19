@@ -138,7 +138,7 @@ Shown at the end of the game (and visible on the staff dashboard):
 ## Accounts and access
 
 - **Login codes:** random 8-digit codes created by the teacher on the staff dashboard. A code takes the student to their companies.
-- **Companies per code:** up to **3 active** companies at once. Only active companies count towards the limit. Retired companies move to history rather than being deleted *(assumed; to confirm)*.
+- **Companies per code:** up to **3 active** companies at once (configurable). Only games still being played count towards the limit: finished and bankrupt games move to history automatically, and a student can retire an active one to make room. Retired companies move to history rather than being deleted *(assumed; to confirm)*, and stay viewable with their summary, but can't be played.
 - **Company name:** entered in a text box when starting a new game, with a profanity filter. Names don't need to be unique; the code identifies the game.
 
 ## Staff dashboard

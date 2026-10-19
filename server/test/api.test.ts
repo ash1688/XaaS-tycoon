@@ -187,6 +187,131 @@ describe("companies", () => {
   });
 });
 
+describe("active company limit and retiring", () => {
+  const retire = (code: string, id: string) =>
+    app.inject({ method: "POST", url: `/api/codes/${code}/companies/${id}/retire` });
+  const setStatus = (id: string, status: string) =>
+    testDb.db.execute(sql`update companies set status = ${status} where id = ${id}`);
+  const statuses = async (code: string) =>
+    (await app.inject({ method: "GET", url: `/api/codes/${code}` }))
+      .json()
+      .companies.map((c: CompanyView) => c.status)
+      .sort();
+
+  it("shows the limit in meta", async () => {
+    expect((await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>().maxActiveCompanies).toBe(3);
+  });
+
+  it("rejects a 4th active company with 409 and a clear message, and creates nothing", async () => {
+    const code = await newCode();
+    for (let i = 0; i < 3; i++) expect((await newCompany(code)).statusCode).toBe(201);
+    const res = await newCompany(code);
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ error: "too_many_active", message: expect.stringContaining("Retire one") });
+    expect(await testDb.db.select().from(companies).where(eq(companies.loginCode, code))).toHaveLength(3);
+  });
+
+  it("counts each code's active companies separately", async () => {
+    const a = await newCode();
+    const b = await newCode();
+    for (let i = 0; i < 3; i++) await newCompany(a);
+    expect((await newCompany(b)).statusCode).toBe(201);
+  });
+
+  it("allows duplicate names, within a code and across codes", async () => {
+    const a = await newCode();
+    const b = await newCode();
+    expect((await newCompany(a)).statusCode).toBe(201);
+    expect((await newCompany(a)).statusCode).toBe(201);
+    expect((await newCompany(b)).statusCode).toBe(201);
+    const names = (await testDb.db.select().from(companies)).map((c) => c.name);
+    expect(names).toEqual(["Acme", "Acme", "Acme"]);
+  });
+
+  it("retires an active company, which then doesn't count towards the limit", async () => {
+    const code = await newCode();
+    const ids = [];
+    for (let i = 0; i < 3; i++) ids.push((await newCompany(code)).json<CompanyView>().id);
+    const res = await retire(code, ids[0]!);
+    expect(res.statusCode).toBe(200);
+    expect(res.json<CompanyView>()).toMatchObject({ id: ids[0], status: "retired" });
+    const [row] = await testDb.db.select().from(companies).where(eq(companies.id, ids[0]!));
+    expect(row!.status).toBe("retired");
+
+    expect((await newCompany(code)).statusCode).toBe(201);
+    expect(await statuses(code)).toEqual(["active", "active", "active", "retired"]);
+    expect((await newCompany(code)).statusCode).toBe(409);
+  });
+
+  it("doesn't count finished or bankrupt games", async () => {
+    const code = await newCode();
+    const ids = [];
+    for (let i = 0; i < 3; i++) ids.push((await newCompany(code)).json<CompanyView>().id);
+    await setStatus(ids[0]!, "finished");
+    await setStatus(ids[1]!, "bankrupt");
+    expect((await newCompany(code)).statusCode).toBe(201);
+    expect((await newCompany(code)).statusCode).toBe(201);
+    expect((await newCompany(code)).statusCode).toBe(409);
+  });
+
+  it("keeps a retired game viewable, with its summary, but rejects continue and actions with 409", async () => {
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    await app.inject({ method: "POST", url: `${url}/continue` });
+    await retire(code, company.id);
+
+    for (const attempt of [
+      app.inject({ method: "POST", url: `${url}/continue` }),
+      app.inject({ method: "POST", url: `${url}/actions`, payload: { type: "hire", pool: "ops" } }),
+    ]) {
+      const rejected = await attempt;
+      expect(rejected.statusCode).toBe(409);
+      expect(rejected.json()).toMatchObject({ error: "retired", message: expect.stringContaining("retired") });
+    }
+
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({
+      day: 2,
+      ops: 0,
+      status: "retired",
+    });
+    const summary = await app.inject({ method: "GET", url: `${url}/summary` });
+    expect(summary.statusCode).toBe(200);
+    expect(summary.json<SummaryView>()).toMatchObject({ companyName: "Acme", day: 2 });
+  });
+
+  it("retiring twice is fine, but a finished or bankrupt game can't be retired", async () => {
+    const code = await newCode();
+    const a = (await newCompany(code)).json<CompanyView>().id;
+    const b = (await newCompany(code)).json<CompanyView>().id;
+    await retire(code, a);
+    expect((await retire(code, a)).json<CompanyView>().status).toBe("retired");
+    await setStatus(b, "bankrupt");
+    const res = await retire(code, b);
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ error: "not_active" });
+    expect(await statuses(code)).toEqual(["bankrupt", "retired"]);
+  });
+
+  it("returns 404 when retiring another code's company, or a malformed id", async () => {
+    const a = await newCode();
+    const b = await newCode();
+    const company = (await newCompany(a)).json<CompanyView>();
+    expect((await retire(b, company.id)).statusCode).toBe(404);
+    expect((await retire(a, "not-a-uuid")).statusCode).toBe(404);
+    expect((await retire("12345678", company.id)).statusCode).toBe(404);
+    expect(await statuses(a)).toEqual(["active"]);
+  });
+
+  it("doesn't go over the limit when creates arrive at once", async () => {
+    const code = await newCode();
+    await newCompany(code);
+    const results = await Promise.all(Array.from({ length: 6 }, () => newCompany(code)));
+    expect(results.map((r) => r.statusCode).sort()).toEqual([201, 201, 409, 409, 409, 409]);
+    expect(await statuses(code)).toEqual(["active", "active", "active"]);
+  });
+});
+
 describe("continue", () => {
   it("advances exactly one day and saves the result", async () => {
     const code = await newCode();

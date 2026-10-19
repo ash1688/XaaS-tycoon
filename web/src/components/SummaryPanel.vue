@@ -7,7 +7,8 @@ import CostChart from "./CostChart.vue";
 import CashChart from "./CashChart.vue";
 
 // How a company did, from its summary. Takes everything it shows as props, so the teacher's dashboard can show it too.
-const props = defineProps<{ summary: SummaryView; modelName: string }>();
+// retired: the student stopped playing it, which the summary's ending can't tell from a game still being played.
+const props = defineProps<{ summary: SummaryView; modelName: string; retired?: boolean }>();
 
 const CATEGORY_LABELS: Record<SpendCategory, string> = {
   staff: "Staff",
@@ -29,6 +30,7 @@ const biggest = computed(() =>
       <template v-else-if="summary.ending === 'bankrupt'">
         Ran out of cash on day {{ summary.day }} of {{ summary.finalDay }}
       </template>
+      <template v-else-if="retired">Retired on day {{ summary.day }} of {{ summary.finalDay }}</template>
       <template v-else>So far: day {{ summary.day }} of {{ summary.finalDay }}</template>
       · ended on {{ modelName }}
     </p>

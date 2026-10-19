@@ -527,11 +527,66 @@ test("a company plays to the final day and sees its summary, again when reopened
   await elsewhere.goto("/");
   await elsewhere.getByLabel("Login code").fill(code!);
   await elsewhere.getByRole("button", { name: "Go" }).click();
-  const row = elsewhere.getByRole("link", { name: /Finishers Ltd/ });
+  // A finished game is history, not one of the active companies.
+  const row = elsewhere.getByTestId("history").getByRole("link", { name: /Finishers Ltd/ });
   await expect(row).toContainText("Finished");
   await row.click();
   await expect(elsewhere.getByTestId("finished-screen")).toBeVisible();
   await expect(elsewhere.getByTestId("summary")).toContainText(`Played all ${E2E_FINAL_DAY} days`);
   await expect(elsewhere.getByTestId("summary-cash")).toHaveText(money(api.cash));
   await expect(elsewhere.getByRole("button", { name: "Continue" })).toHaveCount(0);
+});
+
+test("a code runs up to 3 active companies; retiring one moves it to history and makes room", async ({ browser }) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  await teacher.getByRole("button", { name: "Create code" }).click();
+  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}`);
+  async function startCompany(name: string) {
+    await student.getByLabel("Company name").fill(name);
+    await student.locator("label.choice", { hasText: "E-commerce platform" }).click();
+    await student.locator("label.choice", { hasText: "(PaaS)" }).click();
+    await student.getByRole("button", { name: "Start company" }).click();
+    await expect(student.getByRole("heading", { name })).toBeVisible();
+    await student.getByRole("link", { name: "Your companies" }).click();
+  }
+
+  // Names don't need to be unique: two companies share one here.
+  for (const name of ["Alpha Ltd", "Alpha Ltd", "Gamma Ltd"]) await startCompany(name);
+  const active = student.getByTestId("active-companies");
+  await expect(active.getByRole("listitem")).toHaveCount(3);
+  await expect(active).toContainText("3 of 3");
+
+  // At the limit, the form is replaced by a message saying to retire one first.
+  await expect(student.getByTestId("limit-message")).toContainText("retire one of them first");
+  await expect(student.getByRole("button", { name: "Start company" })).toHaveCount(0);
+
+  // Retiring asks first, and Cancel leaves it alone.
+  await student.getByRole("button", { name: "Retire Gamma Ltd" }).click();
+  await student.getByRole("button", { name: "Cancel" }).click();
+  await expect(active.getByRole("listitem")).toHaveCount(3);
+  await student.getByRole("button", { name: "Retire Gamma Ltd" }).click();
+  await expect(student.getByRole("group", { name: "Retire Gamma Ltd?" })).toContainText("moves to your history");
+  await student.getByRole("button", { name: "Yes, retire it" }).click();
+
+  await expect(active.getByRole("listitem")).toHaveCount(2);
+  const history = student.getByTestId("history");
+  await expect(history.getByRole("link", { name: /Gamma Ltd/ })).toContainText("Retired");
+  await expect(student.getByTestId("limit-message")).toHaveCount(0);
+
+  // The freed slot takes a new company.
+  await startCompany("Delta Ltd");
+  await expect(active.getByRole("listitem")).toHaveCount(3);
+  await expect(student.getByTestId("limit-message")).toBeVisible();
+
+  // The retired game opens read-only, with its summary.
+  await history.getByRole("link", { name: /Gamma Ltd/ }).click();
+  await expect(student.getByTestId("retired-screen")).toContainText("You retired Gamma Ltd");
+  await expect(student.getByTestId("summary")).toContainText("Retired on day 1");
+  await expect(student.getByRole("button", { name: "Continue" })).toHaveCount(0);
 });

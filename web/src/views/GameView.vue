@@ -38,8 +38,9 @@ const loadLevel = computed(() => (loadPercent.value > 100 ? "over" : loadPercent
 
 const bankrupt = computed(() => company.value?.status === "bankrupt");
 const finished = computed(() => company.value?.status === "finished");
-// Once the game is over, bankrupt or played to the end, the screen shows its summary instead of the controls.
-const over = computed(() => bankrupt.value || finished.value);
+const retired = computed(() => company.value?.status === "retired");
+// Once the game is over, bankrupt, played to the end or retired, the screen shows its summary instead of the controls.
+const over = computed(() => bankrupt.value || finished.value || retired.value);
 const summary = ref<SummaryView>();
 const EVENT_LABELS = {
   outage: "Outage",
@@ -274,6 +275,15 @@ async function continueDay() {
       </p>
     </div>
 
+    <div v-else-if="retired" class="game-end retired" role="status" data-testid="retired-screen">
+      <span class="badge">Retired</span>
+      <h2>You retired {{ company.name }} on day {{ company.day }}</h2>
+      <p>
+        This game is in your history now, so you can't continue it. Look at how it went below, then
+        <RouterLink :to="`/play/${code}`">go back to your companies</RouterLink>.
+      </p>
+    </div>
+
     <template v-if="!over">
       <div class="stats">
         <div class="stat">
@@ -405,7 +415,7 @@ async function continueDay() {
     </div>
   </section>
 
-  <SummaryPanel v-if="over && summary" :summary="summary" :model-name="modelName(summary.model)" />
+  <SummaryPanel v-if="over && summary" :summary="summary" :model-name="modelName(summary.model)" :retired="retired" />
 
   <section v-if="company && !over" class="card" aria-labelledby="spend-heading" data-testid="spend">
     <div class="row-between">
