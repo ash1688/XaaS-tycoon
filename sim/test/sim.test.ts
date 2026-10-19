@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { createSim, defaultConfig, MODEL_IDS, SimError, type Action, type GameConfig } from "../src/index.ts";
+import {
+  createSim,
+  defaultConfig,
+  MODEL_IDS,
+  SPEND_CATEGORIES,
+  SimError,
+  type Action,
+  type GameConfig,
+  type LogEntry,
+} from "../src/index.ts";
 
 const comparison = { upfrontCost: "", monthlyCost: "", opsNeeded: "", control: "" };
 const growth = {
@@ -11,16 +20,21 @@ const growth = {
   loadNoise: 0.1,
 };
 
+function costs(monthlyCost: number) {
+  return { upfrontCost: 0, monthlyCost, monthlyCostPerUser: 0 };
+}
+
 const config: GameConfig = {
   startingCash: 1000,
   finalDay: 180,
   maxCompanyNameLength: 20,
   // Capacity far above any load here, so outages only happen where a test lowers it.
+  // No upfront or per-user costs, so each model costs a flat monthly ÷ 30 a day unless a test adds them.
   models: {
-    onprem: { name: "On-prem", blurb: "", comparison, dailyCost: 10, opsNeeded: 3, capacity: 1_000_000 },
-    iaas: { name: "IaaS", blurb: "", comparison, dailyCost: 20, opsNeeded: 2, capacity: 1_000_000 },
-    paas: { name: "PaaS", blurb: "", comparison, dailyCost: 30, opsNeeded: 1, capacity: 1_000_000 },
-    saas: { name: "SaaS", blurb: "", comparison, dailyCost: 5, opsNeeded: 0, capacity: 1_000_000 },
+    onprem: { name: "On-prem", blurb: "", comparison, ...costs(300), opsNeeded: 3, capacity: 1_000_000 },
+    iaas: { name: "IaaS", blurb: "", comparison, ...costs(600), opsNeeded: 2, capacity: 1_000_000 },
+    paas: { name: "PaaS", blurb: "", comparison, ...costs(900), opsNeeded: 1, capacity: 1_000_000 },
+    saas: { name: "SaaS", blurb: "", comparison, ...costs(150), opsNeeded: 0, capacity: 1_000_000 },
   },
   productTypes: {
     ecommerce: {
@@ -42,6 +56,7 @@ const config: GameConfig = {
   },
   capacity: { unstaffedShare: 0.4 },
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25 },
+  billing: { daysPerMonth: 30 },
 };
 
 const sim = createSim(config);
@@ -76,11 +91,11 @@ describe("newGame", () => {
 });
 
 describe("advance", () => {
-  it("moves exactly one day by default and charges the model's daily cost", () => {
+  it("moves exactly one day by default and charges a day's share of the model's monthly cost", () => {
     const { state, log } = sim.advance(start());
     expect(state.day).toBe(2);
     expect(state.cash).toBe(980);
-    expect(log).toEqual([{ day: 2, entries: [{ text: "IaaS running costs", cashDelta: -20 }] }]);
+    expect(log).toEqual([{ day: 2, entries: [{ text: "IaaS running costs (£600 a month)", cashDelta: -20, category: "infrastructure" }] }]);
   });
 
   it("advances N days with one log per day", () => {
@@ -118,7 +133,7 @@ describe("advance", () => {
   });
 
   it("takes its numbers from the config passed in", () => {
-    const pricier = createSim({ ...config, models: { ...config.models, iaas: { ...config.models.iaas, dailyCost: 100 } } });
+    const pricier = createSim({ ...config, models: { ...config.models, iaas: { ...config.models.iaas, monthlyCost: 3000 } } });
     const state = pricier.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1 });
     expect(pricier.advance(state).state.cash).toBe(900);
   });
@@ -176,16 +191,16 @@ describe("staff", () => {
     const { state, log } = sim.advance(staffed);
     expect(state.cash).toBe(1000 - 20 - 14 - 3);
     expect(log[0]!.entries).toEqual([
-      { text: "IaaS running costs", cashDelta: -20 },
-      { text: "Developers pay (2)", cashDelta: -14 },
-      { text: "Ops pay (1)", cashDelta: -3 },
+      { text: "IaaS running costs (£600 a month)", cashDelta: -20, category: "infrastructure" },
+      { text: "Developers pay (2)", cashDelta: -14, category: "staff" },
+      { text: "Ops pay (1)", cashDelta: -3, category: "staff" },
     ]);
   });
 
   it("charges nothing for an empty pool", () => {
     expect(sim.dailyStaffCost(start())).toBe(0);
     expect(sim.advance(apply(start(), hire("ops"))).log[0]!.entries.map((e) => e.text)).toEqual([
-      "IaaS running costs",
+      "IaaS running costs (£600 a month)",
       "Ops pay (1)",
     ]);
   });
@@ -220,23 +235,26 @@ describe("state saved before staff existed (version 1)", () => {
   it("loads with no staff, starting users and the current version", () => {
     expect(sim.load(v1())).toEqual({
       ...v1(),
-      version: 3,
+      version: 4,
+      status: "playing",
       developers: 0,
       ops: 0,
       users: 1000,
       load: 1000,
       outageDays: 0,
       downtimeHours: 0,
+      spend: { staff: 0, infrastructure: 0, addons: 0 },
+      spendByDay: [],
     });
   });
 
   it("still advances, charging only the model's running cost", () => {
     const { state } = sim.advance(v1());
-    expect(state).toMatchObject({ version: 3, day: 6, cash: 900, developers: 0, ops: 0 });
+    expect(state).toMatchObject({ version: 4, day: 6, cash: 900, developers: 0, ops: 0 });
   });
 
   it("accepts actions", () => {
-    expect(sim.applyAction(v1(), { type: "hire", pool: "developers" })).toMatchObject({ version: 3, developers: 1 });
+    expect(sim.applyAction(v1(), { type: "hire", pool: "developers" })).toMatchObject({ version: 4, developers: 1 });
     expect(() => sim.applyAction(v1(), { type: "letGo", pool: "ops" })).toThrow(SimError);
   });
 });
@@ -249,7 +267,7 @@ describe("state saved before users existed (version 2)", () => {
 
   it("keeps its staff and picks up with the product's starting users and full uptime", () => {
     const state = sim.load(v2());
-    expect(state).toMatchObject({ version: 3, developers: 1, ops: 2, users: 1000, load: 5000, outageDays: 0 });
+    expect(state).toMatchObject({ version: 4, developers: 1, ops: 2, users: 1000, load: 5000, outageDays: 0 });
     expect(sim.uptime(state)).toBe(100);
   });
 
@@ -394,6 +412,184 @@ describe("capacity and outages", () => {
   });
 });
 
+describe("ledger", () => {
+  const withModel = (model: Partial<GameConfig["models"]["iaas"]>, base = config) =>
+    createSim({ ...base, models: { ...base.models, iaas: { ...base.models.iaas, ...model } } });
+  const startOn = (s: ReturnType<typeof createSim>, productType = "ecommerce") =>
+    s.newGame({ companyName: "Acme", productType, model: "iaas", seed: 42 });
+  const charges = (log: { entries: LogEntry[] }[]) => log.flatMap((d) => d.entries).filter((e) => e.category);
+
+  it("charges the model's upfront cost once, at the start", () => {
+    const s = withModel({ upfrontCost: 400 });
+    const state = startOn(s);
+    expect(state).toMatchObject({ day: 1, cash: 600, spend: { staff: 0, infrastructure: 400, addons: 0 } });
+    const { state: later, log } = s.advance(state, 10);
+    expect(later.cash).toBe(600 - 10 * 20);
+    expect(charges(log).some((e) => e.text.startsWith("Upfront"))).toBe(false);
+  });
+
+  it("charges each model its own upfront cost", () => {
+    const s = createSim({
+      ...config,
+      models: {
+        ...config.models,
+        onprem: { ...config.models.onprem, upfrontCost: 900 },
+        saas: { ...config.models.saas, upfrontCost: 10 },
+      },
+    });
+    const cashOn = (model: string) => s.newGame({ companyName: "Acme", productType: "social", model, seed: 1 }).cash;
+    expect(cashOn("onprem")).toBe(100);
+    expect(cashOn("saas")).toBe(990);
+    expect(cashOn("iaas")).toBe(1000);
+  });
+
+  it("bills a day's share of the monthly cost every day, so a month of days bills the monthly cost", () => {
+    const s = withModel({ monthlyCost: 300 });
+    const { state, log } = s.advance(startOn(s), 30);
+    expect(state.cash).toBe(700);
+    expect(log.every((d) => d.entries.some((e) => e.cashDelta === -10 && e.category === "infrastructure"))).toBe(true);
+  });
+
+  it("rounds each day's share to the pound", () => {
+    const s = withModel({ monthlyCost: 100 });
+    expect(s.advance(startOn(s)).log[0]!.entries).toEqual([
+      { text: "IaaS running costs (£100 a month)", cashDelta: -3, category: "infrastructure" },
+    ]);
+  });
+
+  it("bills per user on that day's users where the model charges per user", () => {
+    const s = withModel({ monthlyCost: 0, monthlyCostPerUser: 0.3 });
+    const state = startOn(s);
+    expect(s.monthlyInfrastructureCost(state)).toBe(300);
+    const first = s.advance(state);
+    expect(first.log[0]!.entries).toEqual([
+      { text: "IaaS per-user fee (1,000 users at £0.30 a month)", cashDelta: -10, category: "infrastructure" },
+    ]);
+    // Later days charge more as users grow.
+    const later = s.advance(first.state, 30);
+    const fees = charges(later.log).map((e) => -e.cashDelta);
+    expect(later.state.users).toBeGreaterThan(state.users);
+    expect(fees.at(-1)).toBeGreaterThan(fees[0]!);
+  });
+
+  it("tags every charge with a category", () => {
+    let state = sim.applyAction(start(), { type: "hire", pool: "developers" });
+    const { log } = sim.advance(state, 5);
+    for (const e of log.flatMap((d) => d.entries)) {
+      if (e.cashDelta !== 0) expect(SPEND_CATEGORIES).toContain(e.category);
+    }
+    state = sim.advance(state, 5).state;
+    expect(state.spend.staff).toBeGreaterThan(0);
+    expect(state.spend.infrastructure).toBeGreaterThan(0);
+  });
+
+  it("keeps category totals equal to the sum of the tagged log entries", () => {
+    const s = withModel({ upfrontCost: 50, monthlyCostPerUser: 0.1 });
+    const opening = startOn(s);
+    const hired = s.applyAction(s.applyAction(opening, { type: "hire", pool: "developers" }), { type: "hire", pool: "ops" });
+    const { state, log } = s.advance(hired, 20);
+    for (const c of SPEND_CATEGORIES) {
+      const logged = charges(log)
+        .filter((e) => e.category === c)
+        .reduce((sum, e) => sum - e.cashDelta, 0);
+      expect(state.spend[c] - opening.spend[c]).toBe(logged);
+    }
+    expect(state.spend.addons).toBe(0);
+    // Cash is starting cash less everything spent.
+    expect(state.cash).toBe(1000 - SPEND_CATEGORIES.reduce((sum, c) => sum + state.spend[c], 0));
+  });
+
+  it("records spend for every day, day 1 first, adding up to the totals", () => {
+    const s = withModel({ upfrontCost: 50 });
+    const { state } = s.advance(s.applyAction(startOn(s), { type: "hire", pool: "ops" }), 4);
+    expect(state.spendByDay).toEqual([
+      { day: 1, staff: 0, infrastructure: 50, addons: 0 },
+      ...[2, 3, 4, 5].map((day) => ({ day, staff: 3, infrastructure: 20, addons: 0 })),
+    ]);
+    for (const c of SPEND_CATEGORIES) {
+      expect(state.spendByDay.reduce((sum, d) => sum + d[c], 0)).toBe(state.spend[c]);
+    }
+  });
+
+  it("is deterministic for the same seed and actions", () => {
+    const s = withModel({ upfrontCost: 50, monthlyCostPerUser: 0.2 });
+    const play = () => s.advance(s.applyAction(startOn(s, "social"), { type: "hire", pool: "developers" }), 40);
+    expect(play()).toEqual(play());
+  });
+});
+
+describe("bankruptcy", () => {
+  // 1000 cash at 20 a day on IaaS: day 51 leaves exactly 0, day 52 goes below.
+  const broke = () => sim.advance(start(), 50);
+
+  it("does not end the game at exactly zero cash", () => {
+    const { state } = broke();
+    expect(state).toMatchObject({ day: 51, cash: 0, status: "playing" });
+  });
+
+  it("ends the game the day cash goes below zero, and says so in the log", () => {
+    const { state, log } = sim.advance(broke().state);
+    expect(state).toMatchObject({ day: 52, cash: -20, status: "bankrupt" });
+    expect(log[0]!.entries.at(-1)).toMatchObject({ kind: "bankrupt", cashDelta: 0 });
+    expect(log[0]!.entries.at(-1)!.text).toMatch(/bankrupt/);
+  });
+
+  it("stops a multi-day advance on the day of bankruptcy", () => {
+    const { state, log } = sim.advance(start(), 100);
+    expect(state).toMatchObject({ day: 52, status: "bankrupt" });
+    expect(log.at(-1)!.day).toBe(52);
+  });
+
+  it("rejects advances and actions afterwards", () => {
+    const { state } = sim.advance(start(), 100);
+    for (const attempt of [
+      () => sim.advance(state),
+      () => sim.applyAction(state, { type: "hire", pool: "ops" }),
+      () => sim.applyAction(state, { type: "letGo", pool: "ops" }),
+    ]) {
+      expect(attempt).toThrow(SimError);
+      expect(attempt).toThrow(expect.objectContaining({ code: "bankrupt" }));
+    }
+  });
+
+  it("goes bankrupt sooner with more staff", () => {
+    const hired = sim.applyAction(start(), { type: "hire", pool: "developers" });
+    expect(sim.advance(hired, 100).state.day).toBeLessThan(sim.advance(start(), 100).state.day);
+  });
+
+  it("is deterministic", () => {
+    expect(sim.advance(start(), 100)).toEqual(sim.advance(start(), 100));
+  });
+
+  it("starts bankrupt if the upfront cost is more than the starting cash", () => {
+    const s = createSim({ ...config, models: { ...config.models, iaas: { ...config.models.iaas, upfrontCost: 1001 } } });
+    const state = s.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 1 });
+    expect(state).toMatchObject({ cash: -1, status: "bankrupt" });
+    expect(() => s.advance(state)).toThrow(expect.objectContaining({ code: "bankrupt" }));
+  });
+});
+
+describe("state saved before the ledger existed (version 3)", () => {
+  const v3 = (cash = 920) => ({ ...JSON.parse(JSON.stringify(start())), version: 3, day: 5, cash }) as Record<string, unknown>;
+  const withoutLedger = (state: Record<string, unknown>) => {
+    const { status: _s, spend: _sp, spendByDay: _d, ...rest } = state;
+    return rest as unknown as Parameters<typeof sim.load>[0];
+  };
+
+  it("keeps playing with spend counted from now on", () => {
+    const state = sim.load(withoutLedger(v3()));
+    expect(state).toMatchObject({ version: 4, status: "playing", day: 5, cash: 920, spendByDay: [] });
+    expect(state.spend).toEqual({ staff: 0, infrastructure: 0, addons: 0 });
+    expect(sim.advance(state).state).toMatchObject({ cash: 900, spend: { infrastructure: 20 } });
+  });
+
+  it("loads a game already in debt as bankrupt", () => {
+    const saved = withoutLedger(v3(-50));
+    expect(sim.load(saved).status).toBe("bankrupt");
+    expect(() => sim.advance(saved)).toThrow(SimError);
+  });
+});
+
 describe("default config", () => {
   const sim180 = createSim(defaultConfig);
   const run = (productType: string, model: string, ops?: number) => {
@@ -411,5 +607,27 @@ describe("default config", () => {
 
   it("makes outages possible when understaffed", () => {
     expect(run("video", "iaas", 1).outageDays).toBeGreaterThan(0);
+  });
+
+  it("lets every model and product reach day 180 with starting developers and the ops it needs", () => {
+    for (const model of MODEL_IDS) {
+      for (const p of ["ecommerce", "social", "video"]) {
+        const state = run(p, model, sim180.opsNeeded(model));
+        expect(state).toMatchObject({ day: defaultConfig.finalDay, status: "playing" });
+      }
+    }
+  });
+
+  it("bankrupts a company that hires far more than it needs", () => {
+    const start = sim180.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 7 });
+    const state = sim180.advance({ ...start, developers: 12, ops: 2 }, defaultConfig.finalDay - 1).state;
+    expect(state.status).toBe("bankrupt");
+    expect(state.day).toBeLessThan(defaultConfig.finalDay);
+  });
+
+  it("makes on-prem's upfront cost the highest, and only SaaS charge per user", () => {
+    const upfront = (m: (typeof MODEL_IDS)[number]) => defaultConfig.models[m].upfrontCost;
+    for (const m of ["iaas", "paas", "saas"] as const) expect(upfront("onprem")).toBeGreaterThan(upfront(m) * 10);
+    expect(MODEL_IDS.filter((m) => defaultConfig.models[m].monthlyCostPerUser > 0)).toEqual(["saas"]);
   });
 });

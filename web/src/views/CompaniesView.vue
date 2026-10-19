@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import type { CompanyView, MetaView } from "@xaas/server/api-types";
-import { api, formatCash } from "../api";
+import { api, formatCash, formatPrice } from "../api";
 
 const props = defineProps<{ code: string }>();
 const router = useRouter();
@@ -64,6 +64,7 @@ async function start() {
             <strong>{{ c.name }}</strong>
             <span class="muted">{{ productName(c.productType) }} · {{ modelName(c.model) }}</span>
             <span>Day {{ c.day }} of {{ c.finalDay }} · {{ formatCash(c.cash) }}</span>
+            <span v-if="c.status === 'bankrupt'" class="badge warn-badge">Bankrupt</span>
           </RouterLink>
         </li>
       </ul>
@@ -104,8 +105,18 @@ async function start() {
               <tbody>
                 <tr v-for="m in meta.models" :key="m.id" :class="{ on: model === m.id }">
                   <th scope="row">{{ m.name }}</th>
-                  <td>{{ m.comparison.upfrontCost }}</td>
-                  <td>{{ m.comparison.monthlyCost }}</td>
+                  <td>
+                    {{ m.comparison.upfrontCost }}
+                    <span class="muted price">{{ formatCash(m.upfrontCost) }}</span>
+                  </td>
+                  <td>
+                    {{ m.comparison.monthlyCost }}
+                    <span class="muted price">
+                      {{ formatCash(m.monthlyCost) }}<template v-if="m.monthlyCostPerUser">
+                        + {{ formatPrice(m.monthlyCostPerUser) }}/user</template
+                      >
+                    </span>
+                  </td>
                   <td>{{ m.comparison.opsNeeded }}</td>
                   <td>{{ m.comparison.control }}</td>
                 </tr>

@@ -2,17 +2,31 @@ import {
   defaultConfig,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
+  SPEND_CATEGORIES,
   STAFF_POOLS,
   type GameConfig,
   type ModelId,
   type ProductTypeId,
+  type SpendCategory,
   type StaffPool,
 } from "./config.ts";
 import { nextRandom, seedRng } from "./rng.ts";
 
+/** Money spent in each category. */
+export type Spend = Record<SpendCategory, number>;
+
+/** What was spent on one day, for the cost-over-time chart. */
+export interface DaySpend extends Spend {
+  day: number;
+}
+
+/** A bankrupt game is over: it accepts no more actions or advances. */
+export type GameStatus = "playing" | "bankrupt";
+
 /** Plain, JSON-serialisable game state. The server stores it as-is. */
 export interface GameState {
-  version: 3;
+  version: 4;
+  status: GameStatus;
   companyName: string;
   productType: ProductTypeId;
   model: ModelId;
@@ -27,10 +41,19 @@ export interface GameState {
   outageDays: number;
   /** Total hours down across every day played, for uptime. */
   downtimeHours: number;
+  /** Running totals of every charge so far, by category. */
+  spend: Spend;
+  /** Spend on each day played, day 1 (upfront costs) first. Days before the ledger existed are missing. */
+  spendByDay: DaySpend[];
+}
+
+/** State saved before the ledger existed. */
+export interface GameStateV3 extends Omit<GameState, "version" | "status" | "spend" | "spendByDay"> {
+  version: 3;
 }
 
 /** State saved before users and capacity existed. */
-export interface GameStateV2 extends Omit<GameState, "version" | "users" | "load" | "outageDays" | "downtimeHours"> {
+export interface GameStateV2 extends Omit<GameStateV3, "version" | "users" | "load" | "outageDays" | "downtimeHours"> {
   version: 2;
 }
 
@@ -40,7 +63,7 @@ export interface GameStateV1 extends Omit<GameStateV2, "version" | StaffPool> {
 }
 
 /** Anything the server may have stored. Every Sim method accepts it and upgrades it first. */
-export type SavedState = GameState | GameStateV2 | GameStateV1;
+export type SavedState = GameState | GameStateV3 | GameStateV2 | GameStateV1;
 
 /** Something the player does between days. */
 export type Action = { type: "hire"; pool: StaffPool } | { type: "letGo"; pool: StaffPool };
@@ -55,8 +78,10 @@ export interface NewGameParams {
 export interface LogEntry {
   text: string;
   cashDelta: number;
-  /** Set on entries that need to stand out, such as an outage. */
-  kind?: "outage";
+  /** Set on every charge, and only on charges. */
+  category?: SpendCategory;
+  /** Set on entries that need to stand out, such as an outage or bankruptcy. */
+  kind?: "outage" | "bankrupt";
 }
 
 export interface DayLog {
@@ -93,6 +118,8 @@ export interface Sim {
   opsNeeded(model: ModelId): number;
   /** What the current headcount costs per day. */
   dailyStaffCost(state: SavedState): number;
+  /** What the current model costs per month at today's users. */
+  monthlyInfrastructureCost(state: SavedState): number;
   /** Load the company can serve in a day with its current model and staff. */
   capacity(state: SavedState): number;
   /** Share of time up across every day played, as a percentage. 100 before the first day. */
@@ -111,6 +138,15 @@ export function isStaffPool(v: string): v is StaffPool {
   return (STAFF_POOLS as readonly string[]).includes(v);
 }
 
+const noSpend = (): Spend => ({ staff: 0, infrastructure: 0, addons: 0 });
+
+const count = new Intl.NumberFormat("en-GB");
+
+function pounds(n: number): string {
+  const digits = Number.isInteger(n) ? 0 : 2;
+  return n.toLocaleString("en-GB", { style: "currency", currency: "GBP", minimumFractionDigits: digits });
+}
+
 export function createSim(config: GameConfig = defaultConfig): Sim {
   function newGame({ companyName, productType, model, seed }: NewGameParams): GameState {
     const name = companyName.trim();
@@ -120,8 +156,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     }
     if (!isProductTypeId(productType)) throw new SimError("unknown_product_type", "Pick a product type from the list.");
     if (!isModelId(model)) throw new SimError("unknown_model", "Pick a deployment model from the list.");
-    return {
-      version: 3,
+    const state: GameState = {
+      version: 4,
+      status: "playing",
       companyName: name,
       productType,
       model,
@@ -131,7 +168,10 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       developers: config.staff.developers.startingCount,
       ops: config.staff.ops.startingCount,
       ...startingUsers(productType, 1),
+      spend: noSpend(),
+      spendByDay: [],
     };
+    return settle(state, 1, upfrontEntries(model)).state;
   }
 
   function startingUsers(productType: ProductTypeId, day: number) {
@@ -140,15 +180,30 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   }
 
   function load(saved: SavedState): GameState {
-    if (saved.version === 3) return saved;
+    if (saved.version === 4) return saved;
+    const v3 = saved.version === 3 ? saved : loadV2(saved);
+    // Games started before the ledger existed count spend from now on. One already in debt is bankrupt.
+    return { ...v3, version: 4, status: v3.cash < 0 ? "bankrupt" : "playing", spend: noSpend(), spendByDay: [] };
+  }
+
+  function loadV2(saved: GameStateV2 | GameStateV1): GameStateV3 {
     // Games started before staff existed keep going with no staff, rather than suddenly paying for some.
     const v2: GameStateV2 = saved.version === 2 ? saved : { ...saved, version: 2, developers: 0, ops: 0 };
     // Games started before users existed pick up with the product's starting users and a clean record.
     return { ...v2, version: 3, ...startingUsers(v2.productType, v2.day) };
   }
 
-  function applyAction(saved: SavedState, action: Action): GameState {
+  /** Loads saved state and checks the game is still going. */
+  function loadPlaying(saved: SavedState): GameState {
     const state = load(saved);
+    if (state.status === "bankrupt") {
+      throw new SimError("bankrupt", `${state.companyName} is bankrupt, so this game is over. Start a new company to play again.`);
+    }
+    return state;
+  }
+
+  function applyAction(saved: SavedState, action: Action): GameState {
+    const state = loadPlaying(saved);
     if (!isStaffPool(action.pool)) throw new SimError("unknown_pool", "Pick developers or ops.");
     const { pool } = action;
     switch (action.type) {
@@ -169,8 +224,68 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   function staffEntries(state: GameState): LogEntry[] {
     return STAFF_POOLS.filter((pool) => state[pool] > 0).map((pool) => {
       const { name, dayRate } = config.staff[pool];
-      return { text: `${name} pay (${state[pool]})`, cashDelta: -state[pool] * dayRate };
+      return { text: `${name} pay (${state[pool]})`, cashDelta: -state[pool] * dayRate, category: "staff" };
     });
+  }
+
+  function upfrontEntries(modelId: ModelId): LogEntry[] {
+    const { name, upfrontCost } = config.models[modelId];
+    if (upfrontCost === 0) return [];
+    return [{ text: `Upfront cost: ${name}`, cashDelta: -upfrontCost, category: "infrastructure" }];
+  }
+
+  /**
+   * A model's running costs for some days: its monthly cost, plus its per-user cost on the given users, each billed
+   * as days ÷ daysPerMonth of a month and rounded to the pound. Advance bills one day at a time; billing part of a
+   * month (say when leaving a model) uses the same rule.
+   */
+  function infrastructureEntries(modelId: ModelId, users: number, days = 1): LogEntry[] {
+    const { name, monthlyCost, monthlyCostPerUser } = config.models[modelId];
+    const share = days / config.billing.daysPerMonth;
+    const entries: LogEntry[] = [];
+    if (monthlyCost > 0) {
+      entries.push({
+        text: `${name} running costs (${pounds(monthlyCost)} a month)`,
+        cashDelta: -Math.round(monthlyCost * share),
+        category: "infrastructure",
+      });
+    }
+    if (monthlyCostPerUser > 0 && users > 0) {
+      entries.push({
+        text: `${name} per-user fee (${count.format(users)} users at ${pounds(monthlyCostPerUser)} a month)`,
+        cashDelta: -Math.round(users * monthlyCostPerUser * share),
+        category: "infrastructure",
+      });
+    }
+    return entries;
+  }
+
+  function monthlyInfrastructureCost(saved: SavedState): number {
+    const state = load(saved);
+    const { monthlyCost, monthlyCostPerUser } = config.models[state.model];
+    return Math.round(monthlyCost + state.users * monthlyCostPerUser);
+  }
+
+  /**
+   * The ledger. Applies a day's entries to cash, adds each charge to its category's running total and the day's
+   * spend, and ends the game if cash has gone below zero. Returns the entries with any bankruptcy notice added.
+   */
+  function settle(state: GameState, day: number, entries: LogEntry[]): { state: GameState; entries: LogEntry[] } {
+    const daySpend = noSpend();
+    for (const e of entries) if (e.category) daySpend[e.category] -= e.cashDelta;
+    const spend = noSpend();
+    for (const c of SPEND_CATEGORIES) spend[c] = state.spend[c] + daySpend[c];
+    const cash = state.cash + entries.reduce((sum, e) => sum + e.cashDelta, 0);
+    if (cash >= 0) {
+      return { state: { ...state, cash, spend, spendByDay: [...state.spendByDay, { day, ...daySpend }] }, entries };
+    }
+    return {
+      state: { ...state, cash, spend, spendByDay: [...state.spendByDay, { day, ...daySpend }], status: "bankrupt" },
+      entries: [
+        ...entries,
+        { text: `Cash ran out: ${state.companyName} is bankrupt. Game over.`, cashDelta: 0, kind: "bankrupt" },
+      ],
+    };
   }
 
   function dailyStaffCost(saved: SavedState): number {
@@ -230,7 +345,6 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
 
   function advanceOneDay(state: GameState): AdvanceResult {
     const day = state.day + 1;
-    const model = config.models[state.model];
     const profile = config.productTypes[state.productType].growth;
 
     // Today's load comes from the users at the start of the day.
@@ -249,10 +363,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     );
     const users = Math.max(0, state.users + Math.round(state.users * rate));
 
-    const entries: LogEntry[] = [
-      { text: `${model.name} running costs`, cashDelta: -model.dailyCost },
-      ...staffEntries(state),
-    ];
+    const entries: LogEntry[] = [...infrastructureEntries(state.model, state.users), ...staffEntries(state)];
     if (outage) {
       const percent = Math.round((100 * load) / cap);
       entries.unshift({
@@ -261,29 +372,27 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         kind: "outage",
       });
     }
-    const cash = state.cash + entries.reduce((sum, e) => sum + e.cashDelta, 0);
-    return {
-      state: {
-        ...state,
-        day,
-        cash,
-        rng,
-        users,
-        load,
-        outageDays: state.outageDays + (outage ? 1 : 0),
-        downtimeHours: state.downtimeHours + hoursDown,
-      },
-      log: [{ day, entries }],
+    const played: GameState = {
+      ...state,
+      day,
+      rng,
+      users,
+      load,
+      outageDays: state.outageDays + (outage ? 1 : 0),
+      downtimeHours: state.downtimeHours + hoursDown,
     };
+    const settled = settle(played, day, entries);
+    return { state: settled.state, log: [{ day, entries: settled.entries }] };
   }
 
   function advance(saved: SavedState, days = 1): AdvanceResult {
     if (!Number.isInteger(days) || days < 1) {
       throw new SimError("bad_days", "Days to advance must be a whole number of at least 1.");
     }
-    let current = load(saved);
+    let current = loadPlaying(saved);
     const log: DayLog[] = [];
-    for (let i = 0; i < days; i++) {
+    // Stops early if the company goes bankrupt part-way through.
+    for (let i = 0; i < days && current.status === "playing"; i++) {
       const result = advanceOneDay(current);
       current = result.state;
       log.push(...result.log);
@@ -291,5 +400,16 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return { state: current, log };
   }
 
-  return { config, newGame, load, applyAction, advance, opsNeeded, dailyStaffCost, capacity, uptime };
+  return {
+    config,
+    newGame,
+    load,
+    applyAction,
+    advance,
+    opsNeeded,
+    dailyStaffCost,
+    monthlyInfrastructureCost,
+    capacity,
+    uptime,
+  };
 }

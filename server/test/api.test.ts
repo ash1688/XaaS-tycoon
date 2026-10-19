@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { createSim, defaultConfig } from "@xaas/sim";
 import { buildApp } from "../src/app.ts";
+import { companies } from "../src/db/schema.ts";
 import type { ActionBody, CompanyView, ContinueResult, MetaView, TeacherCodeView } from "../src/api-types.ts";
 import { setupTestDb } from "./testDb.ts";
 
@@ -9,7 +10,11 @@ const PASSWORD = "test-teacher-password";
 const sim = createSim({
   ...defaultConfig,
   startingCash: 1000,
-  models: { ...defaultConfig.models, iaas: { ...defaultConfig.models.iaas, dailyCost: 25, opsNeeded: 2 } },
+  // IaaS costs a flat 25 a day (750 a month), with nothing upfront, unless a test says otherwise.
+  models: {
+    ...defaultConfig.models,
+    iaas: { ...defaultConfig.models.iaas, upfrontCost: 0, monthlyCost: 750, monthlyCostPerUser: 0, opsNeeded: 2 },
+  },
   // No starting staff, so continue charges only the model's running cost unless a test hires someone.
   staff: {
     developers: { ...defaultConfig.staff.developers, dayRate: 10, startingCount: 0 },
@@ -219,7 +224,7 @@ describe("staff actions", () => {
     await act({ type: "hire", pool: "developers" });
     const body = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
     expect(body.company).toMatchObject({ day: 2, cash: 1000 - 25 - 20, developers: 2 });
-    expect(body.log[0]!.entries).toContainEqual({ text: "Developers pay (2)", cashDelta: -20 });
+    expect(body.log[0]!.entries).toContainEqual({ text: "Developers pay (2)", cashDelta: -20, category: "staff" });
   });
 
   it("rejects letting go below zero with 400 and changes nothing", async () => {
@@ -361,6 +366,93 @@ describe("users, capacity and uptime", () => {
   });
 });
 
+describe("ledger and bankruptcy", () => {
+  async function setup() {
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    return { code, company, url };
+  }
+  const setCash = (id: string, cash: number) =>
+    testDb.db.execute(sql`update companies set state = jsonb_set(state, '{cash}', ${String(cash)}::jsonb) where id = ${id}`);
+
+  it("starts active with nothing spent", async () => {
+    const { company } = await setup();
+    expect(company).toMatchObject({ status: "active", spend: { staff: 0, infrastructure: 0, addons: 0 } });
+    expect(company.monthlyInfrastructureCost).toBe(750);
+  });
+
+  it("charges the model's upfront cost when the company starts", async () => {
+    const pricey = createSim({
+      ...sim.config,
+      models: { ...sim.config.models, iaas: { ...sim.config.models.iaas, upfrontCost: 300 } },
+    });
+    const priceyApp = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), sim: pricey });
+    try {
+      const code = await newCode();
+      const res = await priceyApp.inject({
+        method: "POST",
+        url: `/api/codes/${code}/companies`,
+        payload: { name: "Acme", productType: "ecommerce", model: "iaas" },
+      });
+      expect(res.json<CompanyView>()).toMatchObject({ cash: 700, spend: { infrastructure: 300 } });
+    } finally {
+      await priceyApp.close();
+    }
+  });
+
+  it("totals spend by category on continue and keeps it across reloads", async () => {
+    const { url } = await setup();
+    await app.inject({ method: "POST", url: `${url}/actions`, payload: { type: "hire", pool: "ops" } });
+    let body: ContinueResult | undefined;
+    for (let i = 0; i < 2; i++) body = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    expect(body!.log[0]!.entries).toEqual([
+      { text: expect.stringContaining("running costs"), cashDelta: -25, category: "infrastructure" },
+      { text: "Ops staff pay (1)", cashDelta: -4, category: "staff" },
+    ]);
+    const spend = { staff: 8, infrastructure: 50, addons: 0 };
+    expect(body!.company).toMatchObject({ cash: 1000 - 58, spend });
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>().spend).toEqual(spend);
+  });
+
+  it("goes bankrupt when cash drops below zero, then rejects continue and actions with 409", async () => {
+    const { company, url } = await setup();
+    await setCash(company.id, 10);
+    const res = await app.inject({ method: "POST", url: `${url}/continue` });
+    expect(res.statusCode).toBe(200);
+    const body = res.json<ContinueResult>();
+    expect(body.company).toMatchObject({ day: 2, cash: -15, status: "bankrupt" });
+    expect(body.log[0]!.entries.at(-1)).toMatchObject({ kind: "bankrupt" });
+
+    for (const attempt of [
+      app.inject({ method: "POST", url: `${url}/continue` }),
+      app.inject({ method: "POST", url: `${url}/actions`, payload: { type: "hire", pool: "ops" } }),
+    ]) {
+      const rejected = await attempt;
+      expect(rejected.statusCode).toBe(409);
+      expect(rejected.json()).toMatchObject({ error: "bankrupt", message: expect.stringContaining("bankrupt") });
+    }
+
+    // Nothing changed, and the game still shows as bankrupt after a reload.
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({
+      day: 2,
+      cash: -15,
+      ops: 0,
+      status: "bankrupt",
+    });
+    const [row] = await testDb.db.select().from(companies).where(eq(companies.id, company.id));
+    expect(row!.status).toBe("bankrupt");
+  });
+
+  it("keeps going at exactly zero cash", async () => {
+    const { company, url } = await setup();
+    await setCash(company.id, 25);
+    const body = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    expect(body.company).toMatchObject({ cash: 0, status: "active" });
+    expect((await app.inject({ method: "POST", url: `${url}/continue` })).statusCode).toBe(200);
+  });
+});
+
 describe("meta", () => {
   it("includes staff day rates and ops needed per model", async () => {
     const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
@@ -369,6 +461,13 @@ describe("meta", () => {
       ["ops", 4],
     ]);
     expect(meta.models.map((m) => m.opsNeeded)).toEqual([3, 2, 1, 0]);
+  });
+
+  it("includes each model's upfront and monthly costs", async () => {
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    const iaas = meta.models.find((m) => m.id === "iaas")!;
+    expect(iaas).toMatchObject({ upfrontCost: 0, monthlyCost: 750, monthlyCostPerUser: 0 });
+    expect(meta.models.find((m) => m.id === "saas")!.monthlyCostPerUser).toBeGreaterThan(0);
   });
 
   it("lists product types and models from config", async () => {
