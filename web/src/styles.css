@@ -1011,3 +1011,114 @@ fieldset > p {
 .resp-stack .was {
   color: var(--muted);
 }
+
+/* Scripted events: a card under Continue, tied to the highlighted layer of the stack. */
+.event-card {
+  margin-top: 1rem;
+  padding: 0.9rem 1rem;
+  border: 2px solid var(--owner);
+  border-left-width: 6px;
+  border-radius: 10px;
+  background: var(--owner-soft);
+}
+
+.event-card.hit {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.event-card p {
+  margin: 0 0 0.5rem;
+}
+
+.event-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.event-card .badge,
+.event-tone {
+  color: var(--owner);
+}
+
+.event-card.hit .badge,
+.event-card.hit .event-tone {
+  color: var(--warn);
+}
+
+.event-name {
+  font-size: 1.1rem;
+}
+
+.event-tone {
+  margin-left: auto;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.event-why {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.5rem;
+}
+
+.layer-chip {
+  font-size: 0.85rem;
+  font-weight: 700;
+  padding: 0.1rem 0.5rem;
+  border-radius: 6px;
+  border-left: 4px solid var(--owner);
+  background: var(--surface);
+  color: var(--owner);
+}
+
+.link-button {
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.event-note {
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 2px dashed var(--border);
+}
+
+.resp-stack li.event-layer {
+  outline: 3px solid var(--owner);
+  outline-offset: 2px;
+}
+
+.resp-stack li:focus-visible,
+.resp-stack li.event-layer:focus {
+  outline-style: double;
+}
+
+.resp-stack .layer-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.5rem;
+}
+
+.event-tag {
+  font-weight: 700;
+  padding: 0 0.45rem;
+  border-radius: 999px;
+  background: var(--owner);
+  color: var(--surface);
+}
+
+.day-log li[data-kind="event"] {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.day-log li[data-kind="event"] .badge {
+  color: var(--accent);
+}

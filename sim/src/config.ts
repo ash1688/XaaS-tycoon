@@ -1,4 +1,5 @@
 // All balance numbers live here. Figures are placeholders, to be tuned after the alpha.
+import type { LayerId } from "./responsibility.ts";
 
 export const MODEL_IDS = ["onprem", "iaas", "paas", "saas"] as const;
 export type ModelId = (typeof MODEL_IDS)[number];
@@ -189,6 +190,59 @@ export interface OverrunConfig {
   maxDays: number;
 }
 
+/**
+ * One way a scripted event can play out on a model. It applies on each day the event is on, after the day's load is
+ * worked out; with none of these set, the event changes nothing.
+ */
+export interface EventOutcome {
+  /** Why it played out like this on this model, for the student. Follows the line naming the responsible layer. */
+  detail: string;
+  /**
+   * Capacity grows to meet the event's extra load, so the load causes no outage, charged per unit of load the event
+   * adds (infrastructure). 0 scales for free. Left out, capacity stays as it is, so the extra load can cause an
+   * outage by the usual capacity rules.
+   */
+  scaleCostPerLoad?: number;
+  /** Hours down, on top of any outage from load. Counts as an outage. */
+  downtimeHours?: number;
+  /** A charge in infrastructure, such as cleaning up after a break-in. */
+  cost?: { amount: number; text: string };
+}
+
+/** How an event hits one model. */
+export interface EventEffect extends EventOutcome {
+  /** Ops staff needed to deal with it. With fewer, `shortOfOps` happens instead. */
+  opsNeeded?: number;
+  shortOfOps?: EventOutcome;
+}
+
+/** When an event fires. */
+export type EventSchedule =
+  /** On these days in every game. */
+  | { type: "fixed"; days: number[] }
+  /** On `count` different days from fromDay to toDay, picked with the game's seeded RNG when it starts. */
+  | { type: "seeded"; count: number; fromDay: number; toDay: number };
+
+/**
+ * A scripted event. Each one shows a model handling the same situation its own way, so its effects are set per model,
+ * along with the layer of the responsibility stack that decides who deals with it.
+ */
+export interface EventConfig {
+  /** Unique. Saved in game state, so don't rename. */
+  id: string;
+  name: string;
+  /** What happened, the same on every model. */
+  description: string;
+  /** The layer whose owner deals with it: the explanation names who that is on the student's model. */
+  layer: LayerId;
+  schedule: EventSchedule;
+  /** Days it lasts, from the day it fires. */
+  days: number;
+  /** Extra load while it's on: the day's load × multiplier, plus extra. */
+  load?: { multiplier: number; extra: number };
+  effects: Record<ModelId, EventEffect>;
+}
+
 export interface GameConfig {
   startingCash: number;
   finalDay: number;
@@ -201,6 +255,8 @@ export interface GameConfig {
   billing: BillingConfig;
   addons: AddonConfig;
   migration: MigrationConfig;
+  /** Scripted events, in the order they're logged on a day when more than one is on. */
+  events: EventConfig[];
 }
 
 export const defaultConfig: GameConfig = {
@@ -412,4 +468,69 @@ export const defaultConfig: GameConfig = {
     billNewFromStart: true,
     overrun: { chance: 0.3, minDays: 2, maxDays: 5 },
   },
+  events: [
+    {
+      id: "trafficSpike",
+      name: "Traffic spike",
+      description: "Your product went viral: a flood of visitors on top of your usual users.",
+      layer: "runtime",
+      // Somewhere in the game, never in the first weeks.
+      schedule: { type: "seeded", count: 2, fromDay: 20, toDay: 170 },
+      days: 2,
+      // More than any model's normal capacity, so only a model that scales stays up.
+      load: { multiplier: 2, extra: 80_000 },
+      effects: {
+        onprem: {
+          detail: "You own the hardware, and new servers take weeks to arrive, so capacity can't grow to meet it.",
+        },
+        iaas: {
+          opsNeeded: 2,
+          scaleCostPerLoad: 0.04,
+          detail: "Your ops team rented extra VMs to meet it, so you stayed up, but you pay for every extra VM.",
+          shortOfOps: {
+            detail: "Without enough ops staff to rent and set up extra VMs in time, capacity stayed where it was.",
+          },
+        },
+        paas: {
+          scaleCostPerLoad: 0.05,
+          detail: "The platform scaled up by itself, so you stayed up, but it bills you for the extra capacity.",
+        },
+        saas: {
+          scaleCostPerLoad: 0,
+          detail: "The SaaS provider absorbed it on their platform. You pay per user, so the burst cost you nothing.",
+        },
+      },
+    },
+    {
+      id: "osPatch",
+      name: "OS security patch",
+      description: "A serious security hole was found in the operating system. Servers need patching today.",
+      layer: "os",
+      // Early, so students meet an event in their first lesson, then again later.
+      schedule: { type: "fixed", days: [3, 75, 140] },
+      days: 1,
+      effects: {
+        onprem: {
+          opsNeeded: 2,
+          detail: "Your ops team patched every server, so nothing got in.",
+          shortOfOps: {
+            detail: "Without enough ops staff to patch in time, attackers got in and you had to take everything down.",
+            downtimeHours: 8,
+            cost: { amount: 5_000, text: "Cleaning up after the break-in" },
+          },
+        },
+        iaas: {
+          opsNeeded: 1,
+          detail: "Your ops team patched your VMs, so nothing got in.",
+          shortOfOps: {
+            detail: "Without enough ops staff to patch in time, attackers got in and you had to take everything down.",
+            downtimeHours: 8,
+            cost: { amount: 5_000, text: "Cleaning up after the break-in" },
+          },
+        },
+        paas: { detail: "The provider patched the platform for you. Nothing for you to do." },
+        saas: { detail: "The provider patched the platform for you. Nothing for you to do." },
+      },
+    },
+  ],
 };

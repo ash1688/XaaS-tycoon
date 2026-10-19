@@ -38,6 +38,8 @@ const sim = createSim({
     developers: { ...defaultConfig.staff.developers, dayRate: 10, startingCount: 0 },
     ops: { ...defaultConfig.staff.ops, dayRate: 4, startingCount: 0 },
   },
+  // No scripted events, so continue charges and outages are only the ones a test sets up.
+  events: [],
 });
 
 let testDb: Awaited<ReturnType<typeof setupTestDb>>;
@@ -902,6 +904,126 @@ describe("leaving SaaS (vendor lock-in)", () => {
       url: `/api/codes/${code}/companies/${company.id}/migration-quote?target=saas`,
     });
     expect(res.json<MigrationQuoteView>().lostAddons).toEqual([]);
+  });
+});
+
+describe("scripted events", () => {
+  // The default events, on fixed days: the OS patch on day 2 and the traffic spike on day 3. Cash to pay for them.
+  const event = (id: string) => defaultConfig.events.find((e) => e.id === id)!;
+  const eventSim = createSim({
+    ...sim.config,
+    startingCash: 100_000,
+    events: [
+      { ...event("osPatch"), schedule: { type: "fixed", days: [2] } },
+      { ...event("trafficSpike"), schedule: { type: "fixed", days: [3] } },
+    ],
+  });
+  let eventApp: Awaited<ReturnType<typeof buildApp>>;
+
+  beforeAll(async () => {
+    eventApp = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), sim: eventSim });
+  });
+
+  afterAll(async () => {
+    await eventApp?.close();
+  });
+
+  async function setup(model: string, ops = 0) {
+    const code = await newCode();
+    const created = await eventApp.inject({
+      method: "POST",
+      url: `/api/codes/${code}/companies`,
+      payload: { name: "Acme", productType: "social", model },
+    });
+    const url = `/api/codes/${code}/companies/${created.json<CompanyView>().id}`;
+    for (let i = 0; i < ops; i++) {
+      await eventApp.inject({ method: "POST", url: `${url}/actions`, payload: { type: "hire", pool: "ops" } });
+    }
+    const next = async () => (await eventApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    return { url, company: created.json<CompanyView>(), next };
+  }
+
+  it("has none before the first one fires", async () => {
+    const { company } = await setup("iaas");
+    expect(company.events).toEqual([]);
+  });
+
+  it("shows the OS patch on its day, explained, and hits IaaS short of ops", async () => {
+    const { url, next } = await setup("iaas");
+    const { company, log } = await next();
+    expect(company.day).toBe(2);
+    expect(company.events).toEqual([
+      expect.objectContaining({
+        id: "osPatch",
+        name: "OS security patch",
+        model: "iaas",
+        layer: "os",
+        owner: "you",
+        responsibility: "OS and patching is your job on IaaS.",
+        shortOfOps: true,
+        hit: true,
+      }),
+    ]);
+    const entries = log[0]!.entries;
+    expect(entries[0]).toMatchObject({ kind: "event", text: expect.stringContaining("OS and patching is your job on IaaS.") });
+    expect(entries).toContainEqual(expect.objectContaining({ kind: "outage" }));
+    const cleanUp = event("osPatch").effects.iaas.shortOfOps!.cost!.amount;
+    expect(entries).toContainEqual(expect.objectContaining({ category: "infrastructure", cashDelta: -cleanUp }));
+    expect(company.outageDays).toBe(1);
+
+    // Saved with the day: a reload shows the same event.
+    expect((await eventApp.inject({ method: "GET", url })).json<CompanyView>().events).toEqual(company.events);
+  });
+
+  it("lets an IaaS company with ops patch it, at no cost", async () => {
+    const { next } = await setup("iaas", 1);
+    const { company } = await next();
+    expect(company.events).toEqual([expect.objectContaining({ id: "osPatch", shortOfOps: false, hit: false })]);
+    expect(company.outageDays).toBe(0);
+  });
+
+  it("does nothing on PaaS: the provider patches it", async () => {
+    const { company: before, next } = await setup("paas");
+    const { company, log } = await next();
+    expect(company.events).toEqual([
+      expect.objectContaining({
+        id: "osPatch",
+        owner: "provider",
+        responsibility: "OS and patching is the provider's job on PaaS.",
+        hit: false,
+      }),
+    ]);
+    // Only PaaS's running costs: £300 a month here, £10 a day.
+    expect(company.cash).toBe(before.cash - 10);
+    expect(log[0]!.entries.filter((e) => e.category).map((e) => e.text)).toEqual([
+      expect.stringContaining("running costs"),
+    ]);
+  });
+
+  it("takes on-prem down in a traffic spike, even fully staffed", async () => {
+    const { next } = await setup("onprem", eventSim.opsNeeded("onprem"));
+    await next();
+    const { company } = await next();
+    expect(company.day).toBe(3);
+    expect(company.events).toEqual([
+      expect.objectContaining({ id: "trafficSpike", layer: "runtime", owner: "you", hit: true }),
+    ]);
+    expect(company.outageDays).toBe(1);
+  });
+
+  it("keeps PaaS up in a traffic spike, charging for the burst", async () => {
+    const { next } = await setup("paas");
+    await next();
+    const { company, log } = await next();
+    expect(company.events).toEqual([
+      expect.objectContaining({ id: "trafficSpike", owner: "provider", hit: false }),
+    ]);
+    expect(company.outageDays).toBe(0);
+    // Scaled to meet the day's load.
+    expect(company.capacity).toBe(company.load);
+    const burst = log[0]!.entries.find((e) => e.text.startsWith("Traffic spike: scaled up"));
+    expect(burst).toMatchObject({ category: "infrastructure" });
+    expect(burst!.cashDelta).toBeLessThan(0);
   });
 });
 

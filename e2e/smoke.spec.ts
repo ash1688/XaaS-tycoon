@@ -348,3 +348,62 @@ test("leaving SaaS warns that add-ons will be lost, then leaves them behind", as
   await expect(features.locator('[data-feature="messaging"]')).toHaveAttribute("data-status", "notStarted");
   await expect(student.getByRole("button", { name: "Build Direct messages" })).toBeEnabled();
 });
+
+test("a scripted event shows a card that names the layer and highlights it in the stack", async ({ browser, request }) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  await teacher.getByRole("button", { name: "Create code" }).click();
+  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+
+  const company = async (name: string, model: string) => {
+    const created = await request.post(`/api/codes/${code}/companies`, { data: { name, productType: "social", model } });
+    return (await created.json()).id as string;
+  };
+  const [onprem, paas] = [await company("Patchy Ltd", "onprem"), await company("Platform Ltd", "paas")];
+
+  // The default config patches the OS on day 3. On-prem needs 2 ops to patch, and a new company has 1.
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${onprem}`);
+  await student.getByRole("button", { name: "Continue" }).click();
+  await expect(student.getByTestId("day")).toContainText("2 of 180");
+  await expect(student.getByTestId("event-card")).toHaveCount(0);
+  await student.getByRole("button", { name: "Continue" }).click();
+  await expect(student.getByTestId("day")).toContainText("3 of 180");
+
+  const card = student.getByTestId("event-card");
+  await expect(card).toBeVisible();
+  await expect(card).toHaveAttribute("data-event", "osPatch");
+  await expect(card.getByRole("strong").first()).toHaveText("OS security patch");
+  await expect(card.getByTestId("event-responsibility")).toHaveText("OS and patching is your job on-prem.");
+  await expect(card.getByTestId("event-outcome")).toContainText("attackers got in");
+  await expect(card.getByTestId("event-tone")).toHaveText("It hurt");
+  // The layer that decided it is highlighted in the stack, and the card links to it.
+  const os = student.getByTestId("stack").locator('[data-layer="os"]');
+  await expect(os).toHaveAttribute("data-event", "osPatch");
+  await expect(os).toContainText("OS security patch");
+  await card.getByRole("button", { name: "See OS and patching in the stack" }).click();
+  await expect(os).toBeFocused();
+  // It's in the day log too, with the outage and clean-up it caused.
+  const dayLog = student.getByTestId("day-log");
+  await expect(dayLog.getByTestId("event")).toContainText("OS and patching is your job on-prem.");
+  await expect(dayLog.getByTestId("outage")).toContainText("OS security patch");
+  await expect(dayLog.locator('[data-category="infrastructure"]')).toContainText("Cleaning up after the break-in");
+
+  // Gone the next day.
+  await student.getByRole("button", { name: "Continue" }).click();
+  await expect(student.getByTestId("day")).toContainText("4 of 180");
+  await expect(student.getByTestId("event-card")).toHaveCount(0);
+  await expect(os).not.toHaveAttribute("data-event", "osPatch");
+
+  // On PaaS the same day's patch is the provider's job: nothing to do.
+  await student.goto(`/play/${code}/${paas}`);
+  await student.getByRole("button", { name: "Continue" }).click();
+  await expect(student.getByTestId("day")).toContainText("2 of 180");
+  await student.getByRole("button", { name: "Continue" }).click();
+  await expect(card).toBeVisible();
+  await expect(card.getByTestId("event-responsibility")).toHaveText("OS and patching is the provider's job on PaaS.");
+  await expect(card.getByTestId("event-tone")).toHaveText("Not your problem");
+  await expect(student.getByTestId("uptime")).toHaveText("100%");
+});

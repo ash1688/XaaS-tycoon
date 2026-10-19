@@ -1,6 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
-import { SPEND_CATEGORIES, type DayLog, type ModelId, type SpendCategory, type StaffPool } from "@xaas/sim";
+import { computed, nextTick, onMounted, ref } from "vue";
+import {
+  SPEND_CATEGORIES,
+  type DayLog,
+  type EventView,
+  type LayerId,
+  type ModelId,
+  type SpendCategory,
+  type StaffPool,
+} from "@xaas/sim";
 import type { ActionBody, CompanyView, MetaView, MigrationQuoteView } from "@xaas/server/api-types";
 import { api, formatCash, formatCount, formatPrice, formatUptime } from "../api";
 
@@ -27,7 +35,34 @@ const loadPercent = computed(() => (company.value ? Math.round((100 * company.va
 const loadLevel = computed(() => (loadPercent.value > 100 ? "over" : loadPercent.value >= 80 ? "high" : "ok"));
 
 const bankrupt = computed(() => company.value?.status === "bankrupt");
-const EVENT_LABELS = { outage: "Outage", bankrupt: "Bankrupt", feature: "Feature", migration: "Migration" } as const;
+const EVENT_LABELS = {
+  outage: "Outage",
+  bankrupt: "Bankrupt",
+  feature: "Feature",
+  migration: "Migration",
+  event: "Event",
+} as const;
+
+// Scripted events on the day just played. Each names the layer of the stack that decided how it hit this model, and
+// that layer is highlighted in the stack until the next day.
+const events = computed(() => company.value?.events ?? []);
+const eventsByLayer = computed(() => {
+  const byLayer = new Map<LayerId, EventView[]>();
+  for (const e of events.value) byLayer.set(e.layer, [...(byLayer.get(e.layer) ?? []), e]);
+  return byLayer;
+});
+const layerName = (id: LayerId) => stack.value.find((l) => l.id === id)?.name ?? id;
+// The event happened on the model it hit; if a migration completed the same day, the stack has already moved on.
+const eventModelNote = (e: EventView) => (e.model !== company.value?.model ? ` (you were on ${modelName(e.model)})` : "");
+const eventTone = (e: EventView) => (e.hit ? "hit" : e.owner === "you" ? "handled" : "covered");
+const EVENT_TONES = { hit: "It hurt", handled: "You handled it", covered: "Not your problem" } as const;
+
+async function showLayer(id: LayerId) {
+  await nextTick();
+  const el = document.getElementById(`layer-${id}`);
+  el?.scrollIntoView({ behavior: "smooth", block: "center" });
+  el?.focus({ preventScroll: true });
+}
 
 // One build at a time, and none on SaaS, where features come as add-ons instead.
 const onSaas = computed(() => company.value?.model === "saas");
@@ -252,6 +287,31 @@ async function continueDay() {
     <button class="continue" :disabled="busy || bankrupt" @click="continueDay">Continue</button>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
 
+    <section
+      v-for="event in events"
+      :key="event.id"
+      :class="['event-card', event.owner, eventTone(event)]"
+      role="status"
+      :aria-labelledby="`event-${event.id}`"
+      data-testid="event-card"
+      :data-event="event.id"
+    >
+      <p class="event-head">
+        <span class="badge">Event</span>
+        <strong :id="`event-${event.id}`" class="event-name">{{ event.name }}</strong>
+        <span class="event-tone" data-testid="event-tone">{{ EVENT_TONES[eventTone(event)] }}</span>
+      </p>
+      <p class="event-description">{{ event.description }}</p>
+      <p class="event-why">
+        <span class="layer-chip">{{ layerName(event.layer) }}</span>
+        <strong data-testid="event-responsibility">{{ event.responsibility }}</strong>{{ eventModelNote(event) }}
+      </p>
+      <p class="event-outcome" data-testid="event-outcome">{{ event.outcome }}</p>
+      <button type="button" class="link-button" @click="showLayer(event.layer)">
+        See {{ layerName(event.layer) }} in the stack
+      </button>
+    </section>
+
     <div v-if="lastDay" class="day-log" data-testid="day-log">
       <div class="row-between">
         <h2>Day {{ lastDay.day }}</h2>
@@ -260,7 +320,7 @@ async function continueDay() {
         </span>
       </div>
       <ul v-if="lastDayEvents.length">
-        <li v-for="(entry, i) in lastDayEvents" :key="i" :class="['event', entry.kind]">
+        <li v-for="(entry, i) in lastDayEvents" :key="i" :class="['event', entry.kind]" :data-kind="entry.kind">
           <span class="badge">{{ EVENT_LABELS[entry.kind ?? "outage"] }}</span>
           <span :data-testid="entry.kind">{{ entry.text }}</span>
         </li>
@@ -653,14 +713,31 @@ async function continueDay() {
     <p v-else-if="previousModel" class="stack-note changed-note" data-testid="stack-note">
       Migration complete: moved from {{ modelName(previousModel) }}. Highlighted layers changed hands.
     </p>
+    <p v-if="events.length" class="stack-note event-note" data-testid="stack-event-note">
+      Today's {{ events.length === 1 ? "event was" : "events were" }} decided by the highlighted
+      {{ eventsByLayer.size === 1 ? "layer" : "layers" }}: whoever owns
+      {{ eventsByLayer.size === 1 ? "it" : "them" }} has to deal with it.
+    </p>
     <ol class="resp-stack" data-testid="stack">
       <li
         v-for="layer in stack"
+        :id="`layer-${layer.id}`"
         :key="layer.id"
-        :class="[layer.owner, { changed: previousModel && previousOwners.get(layer.id) !== layer.owner }]"
+        :class="[
+          layer.owner,
+          {
+            changed: previousModel && previousOwners.get(layer.id) !== layer.owner,
+            'event-layer': eventsByLayer.has(layer.id),
+          },
+        ]"
         :data-layer="layer.id"
+        :data-event="eventsByLayer.get(layer.id)?.map((e) => e.id).join(' ')"
+        tabindex="-1"
       >
-        <span>{{ layer.name }}</span>
+        <span class="layer-name">
+          {{ layer.name }}
+          <small v-for="e in eventsByLayer.get(layer.id)" :key="e.id" class="event-tag">{{ e.name }}</small>
+        </span>
         <span class="owner">
           <small v-if="previousModel && previousOwners.get(layer.id) !== layer.owner" class="was">
             was {{ OWNER_LABELS[previousOwners.get(layer.id)!] }}
