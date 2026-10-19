@@ -48,3 +48,20 @@ export interface StackLayer {
 export function responsibilityStack(model: ModelId): StackLayer[] {
   return LAYER_IDS.map((id) => ({ id, name: LAYER_NAMES[id], owner: OWNERS[model][id] }));
 }
+
+/** How each model is named in a sentence: "OS and patching is your job on IaaS". */
+const ON_MODEL: Record<ModelId, string> = { onprem: "on-prem", iaas: "on IaaS", paas: "on PaaS", saas: "on SaaS" };
+
+const OWNER_PHRASES: Record<Owner, string> = {
+  you: "your job",
+  provider: "the provider's job",
+  shared: "shared between you and the provider",
+};
+
+/** Who looks after a layer on a model, as a sentence for the student: "OS and patching is your job on IaaS." */
+export function layerResponsibility(model: ModelId, layer: LayerId): string {
+  return `${LAYER_NAMES[layer]} is ${OWNER_PHRASES[OWNERS[model][layer]]} ${ON_MODEL[model]}.`;
+}
+
+/** Who looks after a layer on a model. */
+export const layerOwner = (model: ModelId, layer: LayerId): Owner => OWNERS[model][layer];

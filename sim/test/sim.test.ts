@@ -7,11 +7,15 @@ import {
   SPEND_CATEGORIES,
   SimError,
   type Action,
+  type DayLog,
+  type EventConfig,
   type GameConfig,
   type GameState,
   type GameStateV4,
   type GameStateV5,
+  type GameStateV6,
   type LogEntry,
+  type Sim,
 } from "../src/index.ts";
 
 const comparison = { upfrontCost: "", monthlyCost: "", opsNeeded: "", control: "" };
@@ -81,6 +85,8 @@ const config: GameConfig = {
     // Never overruns unless a test says so.
     overrun: { chance: 0, minDays: 2, maxDays: 4 },
   },
+  // No scripted events unless a test adds some.
+  events: [],
 };
 
 const sim = createSim(config);
@@ -520,7 +526,7 @@ describe("state saved before features existed (version 4)", () => {
 
   it("loads with no features started and keeps everything else", () => {
     const state = sim.load(v4());
-    expect(state).toEqual({ ...sim.advance(start(), 4).state, version: 6, features: {} });
+    expect(state).toEqual({ ...sim.advance(start(), 4).state, version: 7, features: {} });
     expect(sim.features(state).every((f) => f.status === "notStarted")).toBe(true);
   });
 
@@ -540,7 +546,7 @@ describe("state saved before staff existed (version 1)", () => {
   it("loads with no staff, starting users and the current version", () => {
     expect(sim.load(v1())).toEqual({
       ...v1(),
-      version: 6,
+      version: 7,
       status: "playing",
       developers: 0,
       ops: 0,
@@ -553,16 +559,18 @@ describe("state saved before staff existed (version 1)", () => {
       features: {},
       migration: null,
       migrations: 0,
+      schedule: [],
+      events: [],
     });
   });
 
   it("still advances, charging only the model's running cost", () => {
     const { state } = sim.advance(v1());
-    expect(state).toMatchObject({ version: 6, day: 6, cash: 900, developers: 0, ops: 0 });
+    expect(state).toMatchObject({ version: 7, day: 6, cash: 900, developers: 0, ops: 0 });
   });
 
   it("accepts actions", () => {
-    expect(sim.applyAction(v1(), { type: "hire", pool: "developers" })).toMatchObject({ version: 6, developers: 1 });
+    expect(sim.applyAction(v1(), { type: "hire", pool: "developers" })).toMatchObject({ version: 7, developers: 1 });
     expect(() => sim.applyAction(v1(), { type: "letGo", pool: "ops" })).toThrow(SimError);
   });
 });
@@ -575,7 +583,7 @@ describe("state saved before users existed (version 2)", () => {
 
   it("keeps its staff and picks up with the product's starting users and full uptime", () => {
     const state = sim.load(v2());
-    expect(state).toMatchObject({ version: 6, developers: 1, ops: 2, users: 1000, load: 5000, outageDays: 0 });
+    expect(state).toMatchObject({ version: 7, developers: 1, ops: 2, users: 1000, load: 5000, outageDays: 0 });
     expect(sim.uptime(state)).toBe(100);
   });
 
@@ -886,7 +894,7 @@ describe("state saved before the ledger existed (version 3)", () => {
 
   it("keeps playing with spend counted from now on", () => {
     const state = sim.load(withoutLedger(v3()));
-    expect(state).toMatchObject({ version: 6, status: "playing", day: 5, cash: 920, spendByDay: [] });
+    expect(state).toMatchObject({ version: 7, status: "playing", day: 5, cash: 920, spendByDay: [] });
     expect(state.spend).toEqual({ staff: 0, infrastructure: 0, addons: 0 });
     expect(sim.advance(state).state).toMatchObject({ cash: 900, spend: { infrastructure: 20 } });
   });
@@ -1523,7 +1531,7 @@ describe("state saved before migration existed (version 5)", () => {
 
   it("can start a migration and advance", () => {
     const state = sim.applyAction(v5(), { type: "startMigration", model: "paas" });
-    expect(sim.advance(state, 14).state).toMatchObject({ version: 6, model: "paas", migrations: 1 });
+    expect(sim.advance(state, 14).state).toMatchObject({ version: 7, model: "paas", migrations: 1 });
   });
 });
 
@@ -1545,5 +1553,285 @@ describe("default migration config", () => {
   it("charges no exit penalty for leaving on-prem, and one for leaving a provider", () => {
     expect(defaultConfig.models.onprem.exitPenalty).toBe(0);
     for (const id of ["iaas", "paas", "saas"] as const) expect(defaultConfig.models[id].exitPenalty).toBeGreaterThan(0);
+  });
+});
+
+describe("scripted events", () => {
+  // A spike so big it overloads any model that can't scale, lasting 2 days from day 3.
+  const spike: EventConfig = {
+    id: "spike",
+    name: "Traffic spike",
+    description: "A flood of visitors.",
+    layer: "runtime",
+    schedule: { type: "fixed", days: [3] },
+    days: 2,
+    load: { multiplier: 2, extra: 1_000_000 },
+    effects: {
+      onprem: { detail: "Your kit can't grow." },
+      iaas: {
+        opsNeeded: 2,
+        scaleCostPerLoad: 0.0001,
+        detail: "Your ops team added VMs.",
+        shortOfOps: { detail: "Nobody to add VMs." },
+      },
+      paas: { scaleCostPerLoad: 0.0002, detail: "The platform scaled." },
+      saas: { scaleCostPerLoad: 0, detail: "The provider absorbed it." },
+    },
+  };
+  const breakIn = { detail: "Attackers got in.", downtimeHours: 6, cost: { amount: 50, text: "Cleaning up" } };
+  // A patch on day 2 that needs ops on on-prem and IaaS, and is the provider's on PaaS and SaaS.
+  const patch: EventConfig = {
+    id: "patch",
+    name: "OS security patch",
+    description: "A hole in the OS.",
+    layer: "os",
+    schedule: { type: "fixed", days: [2] },
+    days: 1,
+    effects: {
+      onprem: { opsNeeded: 2, detail: "Your ops team patched it.", shortOfOps: breakIn },
+      iaas: { opsNeeded: 1, detail: "Your ops team patched it.", shortOfOps: breakIn },
+      paas: { detail: "The provider patched it." },
+      saas: { detail: "The provider patched it." },
+    },
+  };
+  const withEvents = (...events: EventConfig[]) => createSim({ ...config, events });
+  const quiet = withEvents();
+  const begin = (s: Sim, model: string, ops = 0, seed = 42) => ({
+    ...s.newGame({ companyName: "Acme", productType: "social", model, seed }),
+    ops,
+  });
+  const play = (s: Sim, model: string, days: number, ops = 0) => s.advance(begin(s, model, ops), days);
+  const eventDays = (log: DayLog[]) => log.filter((d) => d.entries.some((e) => e.kind === "event")).map((d) => d.day);
+  const charges = (log: DayLog[], text: string) =>
+    log.flatMap((d) => d.entries).filter((e) => e.category === "infrastructure" && e.text.includes(text));
+
+  describe("schedule", () => {
+    it("fires on the fixed days from config, and logs each day it's on", () => {
+      const s = withEvents({ ...patch, schedule: { type: "fixed", days: [2, 5] } });
+      expect(eventDays(play(s, "paas", 9).log)).toEqual([2, 5]);
+      expect(eventDays(play(withEvents(spike), "paas", 9).log)).toEqual([3, 4]);
+    });
+
+    it("lists the events on the day just played, and none on other days", () => {
+      const s = withEvents(patch, spike);
+      const day = (n: number) => s.events(play(s, "paas", n - 1).state).map((e) => e.id);
+      expect([day(2), day(3), day(4), day(5), day(6)]).toEqual([["patch"], ["spike"], ["spike"], [], []]);
+      expect(s.events(begin(s, "paas"))).toEqual([]);
+    });
+
+    it("logs both, in config order, when two are on the same day", () => {
+      const s = withEvents({ ...patch, schedule: { type: "fixed", days: [3] } }, spike);
+      const { state, log } = play(s, "paas", 2);
+      expect(log[1]!.entries.filter((e) => e.kind === "event").map((e) => e.text.split(":")[0])).toEqual([
+        "OS security patch",
+        "Traffic spike",
+      ]);
+      expect(s.events(state).map((e) => e.id)).toEqual(["patch", "spike"]);
+    });
+
+    it("picks seeded days with the game's RNG: different days in range, the same for the same seed", () => {
+      const s = withEvents({ ...patch, schedule: { type: "seeded", count: 3, fromDay: 5, toDay: 40 } });
+      const daysFor = (seed: number) => eventDays(s.advance(begin(s, "paas", 0, seed), 45).log);
+      for (const seed of [1, 2, 3, 42]) {
+        const days = daysFor(seed);
+        expect(days).toHaveLength(3);
+        for (const day of days) expect(day).toBeGreaterThanOrEqual(5);
+        for (const day of days) expect(day).toBeLessThanOrEqual(40);
+        expect(daysFor(seed)).toEqual(days);
+      }
+      expect(new Set([1, 2, 3, 4, 5, 6].map((seed) => daysFor(seed).join())).size).toBeGreaterThan(1);
+    });
+
+    it("is deterministic for the same seed and config", () => {
+      const s = withEvents(patch, { ...spike, schedule: { type: "seeded", count: 2, fromDay: 5, toDay: 25 } });
+      expect(play(s, "iaas", 30, 1)).toEqual(play(s, "iaas", 30, 1));
+    });
+  });
+
+  describe("traffic spike", () => {
+    const s = withEvents(spike);
+
+    it("melts on-prem kit: an outage on every day of the spike, even fully staffed", () => {
+      const { state, log } = play(s, "onprem", 5, s.opsNeeded("onprem"));
+      expect(log.filter((d) => d.entries.some((e) => e.kind === "outage")).map((d) => d.day)).toEqual([3, 4]);
+      expect(state.outageDays).toBe(2);
+      expect(play(quiet, "onprem", 5, 3).state.outageDays).toBe(0);
+      expect(s.events(play(s, "onprem", 2, 3).state)[0]).toMatchObject({ id: "spike", hit: true });
+    });
+
+    it("scales PaaS: it stays up but is charged for the burst, in infrastructure", () => {
+      const { state, log } = play(s, "paas", 5, 1);
+      const without = play(quiet, "paas", 5, 1).state;
+      expect(state.outageDays).toBe(0);
+      const burst = charges(log, "Traffic spike: scaled up");
+      expect(burst.map((e) => log.find((d) => d.entries.includes(e))!.day)).toEqual([3, 4]);
+      const cost = -burst.reduce((sum, e) => sum + e.cashDelta, 0);
+      // About 1,000,000 extra load a day at £0.0002.
+      expect(cost).toBeGreaterThanOrEqual(400);
+      expect(state.spend.infrastructure).toBe(without.spend.infrastructure + cost);
+      expect(state.cash).toBe(without.cash - cost);
+    });
+
+    it("shows PaaS at full capacity on a day it scaled, then back to normal", () => {
+      const scaled = play(s, "paas", 2, 1).state;
+      expect(s.capacity(scaled)).toBe(scaled.load);
+      expect(s.capacity(play(s, "paas", 4, 1).state)).toBe(1_000_000);
+    });
+
+    it("scales IaaS when there are enough ops, and is charged for it", () => {
+      const { state, log } = play(s, "iaas", 5, 2);
+      expect(state.outageDays).toBe(0);
+      expect(charges(log, "scaled up")).toHaveLength(2);
+    });
+
+    it("degrades IaaS short of ops: an outage, and no scaling charge", () => {
+      const { state, log } = play(s, "iaas", 5, 1);
+      expect(state.outageDays).toBe(2);
+      expect(charges(log, "scaled up")).toHaveLength(0);
+      const [event] = s.events(play(s, "iaas", 2, 1).state);
+      expect(event).toMatchObject({ shortOfOps: true, hit: true });
+      expect(event!.outcome).toBe("Nobody to add VMs. You needed 2 ops staff.");
+    });
+
+    it("is the provider's problem on SaaS: no outage and no charge", () => {
+      const { state } = play(s, "saas", 5);
+      const without = play(quiet, "saas", 5).state;
+      expect(state).toMatchObject({ outageDays: 0, cash: without.cash, users: without.users });
+      expect(s.events(play(s, "saas", 2).state)[0]).toMatchObject({ shortOfOps: false, hit: false });
+    });
+  });
+
+  describe("OS security patch", () => {
+    const s = withEvents(patch);
+    const after = (model: string, ops: number) => play(s, model, 1, ops);
+
+    it("is handled by enough ops on on-prem and IaaS, at no cost", () => {
+      for (const [model, ops] of [
+        ["onprem", 2],
+        ["iaas", 1],
+      ] as const) {
+        const { state } = after(model, ops);
+        expect(state).toMatchObject({ outageDays: 0, cash: play(quiet, model, 1, ops).state.cash });
+        expect(s.events(state)[0]).toMatchObject({ shortOfOps: false, hit: false, outcome: "Your ops team patched it." });
+      }
+    });
+
+    it("hits on-prem and IaaS short of ops: downtime and a clean-up charge", () => {
+      for (const [model, ops] of [
+        ["onprem", 1],
+        ["iaas", 0],
+      ] as const) {
+        const { state, log } = after(model, ops);
+        const without = play(quiet, model, 1, ops).state;
+        expect(state).toMatchObject({ outageDays: 1, downtimeHours: 6, cash: without.cash - 50 });
+        expect(charges(log, "OS security patch: Cleaning up")).toHaveLength(1);
+        expect(log[0]!.entries.find((e) => e.kind === "outage")!.text).toBe(
+          "Outage: OS security patch. Down 6 hours; growth slowed.",
+        );
+        expect(s.events(state)[0]).toMatchObject({ shortOfOps: true, hit: true });
+      }
+    });
+
+    it("does nothing on PaaS or SaaS, even with no ops, and says the provider handled it", () => {
+      for (const model of ["paas", "saas"]) {
+        const { state, log } = after(model, 0);
+        const quietRun = play(quiet, model, 1, 0);
+        expect({ ...state, events: [], schedule: [] }).toEqual(quietRun.state);
+        expect(log[0]!.entries.filter((e) => e.kind !== "event")).toEqual(quietRun.log[0]!.entries);
+        expect(s.events(state)[0]).toMatchObject({ hit: false, owner: "provider", outcome: "The provider patched it." });
+      }
+    });
+  });
+
+  describe("explanations", () => {
+    it("name the layer and who owns it on the student's model", () => {
+      const s = withEvents(patch);
+      const explain = (model: string) => s.events(play(s, model, 1, 0).state)[0]!;
+      expect(MODEL_IDS.map((m) => explain(m).responsibility)).toEqual([
+        "OS and patching is your job on-prem.",
+        "OS and patching is your job on IaaS.",
+        "OS and patching is the provider's job on PaaS.",
+        "OS and patching is the provider's job on SaaS.",
+      ]);
+      for (const m of MODEL_IDS) {
+        const event = explain(m);
+        const owner = responsibilityStack(m).find((l) => l.id === "os")!.owner;
+        expect(event).toMatchObject({ layer: "os", owner, model: m, name: "OS security patch" });
+        expect(event.description).toBe("A hole in the OS.");
+      }
+    });
+
+    it("name the layer in the day log", () => {
+      const { log } = play(withEvents(spike), "paas", 2, 1);
+      expect(log[1]!.entries[0]).toEqual({
+        text: "Traffic spike: Runtime and scaling is the provider's job on PaaS. The platform scaled.",
+        cashDelta: 0,
+        kind: "event",
+      });
+    });
+  });
+
+  it("hits the model being left when it lands mid-migration", () => {
+    const s = withEvents(patch);
+    const migrating = s.applyAction(begin(s, "iaas"), { type: "startMigration", model: "paas" });
+    const { state } = s.advance(migrating);
+    expect(state.migration).not.toBeNull();
+    expect(s.events(state)[0]).toMatchObject({ model: "iaas", owner: "you", hit: true });
+    expect(state.outageDays).toBe(1);
+  });
+
+  describe("state saved before events existed (version 6)", () => {
+    const s = withEvents({ ...patch, schedule: { type: "fixed", days: [2, 8] } });
+    const v6 = () => {
+      const saved = JSON.parse(JSON.stringify(quiet.advance(begin(quiet, "paas"), 4).state));
+      const { schedule: _s, events: _e, ...rest } = saved;
+      return { ...rest, version: 6 } as GameStateV6;
+    };
+
+    it("loads with the events still to come, and none on the day just played", () => {
+      expect(s.load(v6())).toMatchObject({ version: 7, day: 5, schedule: [{ event: "patch", day: 8 }], events: [] });
+      expect(s.events(v6())).toEqual([]);
+    });
+
+    it("fires those events as it advances", () => {
+      expect(eventDays(s.advance(v6(), 5).log)).toEqual([8]);
+    });
+  });
+});
+
+describe("default events", () => {
+  const ids = defaultConfig.events.map((e) => e.id);
+  const event = (id: string) => defaultConfig.events.find((e) => e.id === id)!;
+
+  it("include the traffic spike and the OS patch, with unique ids", () => {
+    expect(ids).toEqual(expect.arrayContaining(["trafficSpike", "osPatch"]));
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("make the OS patch the student's job only where they own the OS", () => {
+    const { effects, layer } = event("osPatch");
+    for (const m of MODEL_IDS) {
+      const yours = responsibilityStack(m).find((l) => l.id === layer)!.owner === "you";
+      expect(yours).toBe(m === "onprem" || m === "iaas");
+      expect(effects[m].opsNeeded !== undefined).toBe(yours);
+    }
+    expect(effects.paas).toEqual({ detail: expect.any(String) });
+    expect(effects.saas).toEqual({ detail: expect.any(String) });
+  });
+
+  it("fire an OS patch on day 3, so every game meets an event in its first lesson", () => {
+    const s = createSim(defaultConfig);
+    const state = s.advance(s.newGame({ companyName: "Acme", productType: "social", model: "paas", seed: 7 }), 2).state;
+    expect(s.events(state).map((e) => e.id)).toEqual(["osPatch"]);
+  });
+
+  it("melt on-prem in a spike, but scale PaaS", () => {
+    const s = createSim({ ...defaultConfig, events: [{ ...event("trafficSpike"), schedule: { type: "fixed", days: [10] } }] });
+    const run = (model: (typeof MODEL_IDS)[number]) => {
+      const start = s.newGame({ companyName: "Acme", productType: "social", model, seed: 7 });
+      return s.advance({ ...start, ops: s.opsNeeded(model) }, 9).state;
+    };
+    expect(run("onprem").outageDays).toBeGreaterThan(0);
+    expect(run("paas").outageDays).toBe(0);
   });
 });

@@ -90,6 +90,7 @@ export async function buildApp(opts: AppOptions) {
       features: sim.features(state),
       migration: sim.migration(state),
       migrations: state.migrations,
+      events: sim.events(state),
     };
   }
 

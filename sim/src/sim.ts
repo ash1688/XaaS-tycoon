@@ -5,6 +5,8 @@ import {
   PRODUCT_TYPE_IDS,
   SPEND_CATEGORIES,
   STAFF_POOLS,
+  type EventConfig,
+  type EventOutcome,
   type FeatureConfig,
   type GameConfig,
   type MigrationPhase,
@@ -14,6 +16,7 @@ import {
   type StaffPool,
 } from "./config.ts";
 import { nextRandom, seedRng } from "./rng.ts";
+import { layerOwner, layerResponsibility, type LayerId, type Owner } from "./responsibility.ts";
 import { isNameAllowed } from "./nameFilter.ts";
 
 /** Money spent in each category. */
@@ -52,12 +55,30 @@ export interface Migration {
   overrunDays: number;
 }
 
+/** A day a scripted event fires on, fixed when the game starts. */
+export interface ScheduledEvent {
+  /** The event's id in config. */
+  event: string;
+  day: number;
+}
+
+/** A scripted event that was on during the day just played, and how it played out. */
+export interface EventRecord {
+  event: string;
+  /** The model it hit: the one the company was running on that day, even if a migration completed that evening. */
+  model: ModelId;
+  /** Short of the ops staff needed to deal with it. */
+  shortOfOps: boolean;
+  /** It hurt: it caused downtime or a penalty. */
+  hit: boolean;
+}
+
 /** A bankrupt game is over: it accepts no more actions or advances. */
 export type GameStatus = "playing" | "bankrupt";
 
 /** Plain, JSON-serialisable game state. The server stores it as-is. */
 export interface GameState {
-  version: 6;
+  version: 7;
   status: GameStatus;
   companyName: string;
   productType: ProductTypeId;
@@ -83,10 +104,19 @@ export interface GameState {
   migration: Migration | null;
   /** Migrations completed, for the end-of-game summary. */
   migrations: number;
+  /** When each scripted event fires, in day order. Rolled when the game starts. */
+  schedule: ScheduledEvent[];
+  /** Scripted events that were on during the day just played. */
+  events: EventRecord[];
+}
+
+/** State saved before scripted events existed. */
+export interface GameStateV6 extends Omit<GameState, "version" | "schedule" | "events"> {
+  version: 6;
 }
 
 /** State saved before migration existed. */
-export interface GameStateV5 extends Omit<GameState, "version" | "migration" | "migrations"> {
+export interface GameStateV5 extends Omit<GameStateV6, "version" | "migration" | "migrations"> {
   version: 5;
 }
 
@@ -111,7 +141,7 @@ export interface GameStateV1 extends Omit<GameStateV2, "version" | StaffPool> {
 }
 
 /** Anything the server may have stored. Every Sim method accepts it and upgrades it first. */
-export type SavedState = GameState | GameStateV5 | GameStateV4 | GameStateV3 | GameStateV2 | GameStateV1;
+export type SavedState = GameState | GameStateV6 | GameStateV5 | GameStateV4 | GameStateV3 | GameStateV2 | GameStateV1;
 
 /** Something the player does between days. */
 export type Action =
@@ -189,6 +219,27 @@ export interface LostAddon {
   devDays: number;
 }
 
+/** A scripted event that was on during the day just played, explained for the student. */
+export interface EventView {
+  id: string;
+  name: string;
+  /** What happened, the same on every model. */
+  description: string;
+  /** The model it hit. */
+  model: ModelId;
+  /** The layer of the responsibility stack that decided how it played out, and who owns it on that model. */
+  layer: LayerId;
+  owner: Owner;
+  /** Names the responsible layer and who looks after it: "OS and patching is your job on IaaS." */
+  responsibility: string;
+  /** How it played out on that model, and why. */
+  outcome: string;
+  /** Short of the ops staff needed to deal with it. */
+  shortOfOps: boolean;
+  /** It hurt: it caused downtime or a penalty. */
+  hit: boolean;
+}
+
 export interface NewGameParams {
   companyName: string;
   productType: string;
@@ -202,7 +253,7 @@ export interface LogEntry {
   /** Set on every charge, and only on charges. */
   category?: SpendCategory;
   /** Set on entries that need to stand out, such as an outage or bankruptcy. */
-  kind?: "outage" | "bankrupt" | "feature" | "migration";
+  kind?: "outage" | "bankrupt" | "feature" | "migration" | "event";
 }
 
 export interface DayLog {
@@ -256,6 +307,8 @@ export interface Sim {
    * unknown model, the current one, or any while a migration is running.
    */
   migrationQuote(state: SavedState, target: string): MigrationQuote;
+  /** Scripted events that were on during the day just played, each explained, in config order. */
+  events(state: SavedState): EventView[];
 }
 
 export function isModelId(v: string): v is ModelId {
@@ -291,15 +344,16 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     }
     if (!isProductTypeId(productType)) throw new SimError("unknown_product_type", "Pick a product type from the list.");
     if (!isModelId(model)) throw new SimError("unknown_model", "Pick a deployment model from the list.");
+    const [schedule, rng] = rollSchedule(seedRng(seed), 1);
     const state: GameState = {
-      version: 6,
+      version: 7,
       status: "playing",
       companyName: name,
       productType,
       model,
       day: 1,
       cash: config.startingCash,
-      rng: seedRng(seed),
+      rng,
       developers: config.staff.developers.startingCount,
       ops: config.staff.ops.startingCount,
       ...startingUsers(productType, 1),
@@ -308,6 +362,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       features: {},
       migration: null,
       migrations: 0,
+      schedule,
+      events: [],
     };
     return settle(state, 1, upfrontEntries(model)).state;
   }
@@ -318,7 +374,14 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   }
 
   function load(saved: SavedState): GameState {
-    if (saved.version === 6) return saved;
+    if (saved.version === 7) return saved;
+    const v6 = saved.version === 6 ? saved : loadV5(saved);
+    // Games started before events existed get their schedule now, from the days still to come.
+    const [schedule, rng] = rollSchedule(v6.rng, v6.day);
+    return { ...v6, version: 7, rng, schedule, events: [] };
+  }
+
+  function loadV5(saved: Exclude<SavedState, GameState | GameStateV6>): GameStateV6 {
     const v5 = saved.version === 5 ? saved : loadV4(saved);
     // Games started before migration existed have never migrated.
     return { ...v5, version: 6, migration: null, migrations: 0 };
@@ -741,10 +804,20 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return [unstaffedShare + (1 - unstaffedShare) * staffed];
   }
 
-  function capacity(saved: SavedState): number {
-    const state = load(saved);
+  /** Capacity with the current model and staff, before any event scales it. */
+  function baseCapacity(state: GameState): number {
     const base = config.models[state.model].capacity;
     return Math.round(capacityFactors(state).reduce((c, f) => c * f, base));
+  }
+
+  /** As baseCapacity, but on a day an event scaled the company up, capacity met that day's load. */
+  function capacity(saved: SavedState): number {
+    const state = load(saved);
+    const scaled = state.events.some((r) => {
+      const event = eventConfig(r.event);
+      return event?.load && outcomeFor(event, r.model, r.shortOfOps).scaleCostPerLoad !== undefined;
+    });
+    return scaled ? Math.max(baseCapacity(state), state.load) : baseCapacity(state);
   }
 
   /** Each factor scales the day's growth. Later mechanics (reputation) add their own here. */
@@ -772,17 +845,96 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return [1 + spread * (2 * r - 1), next];
   }
 
+  const eventConfig = (id: string) => config.events.find((e) => e.id === id);
+
+  /**
+   * The days each event fires on, in day order. Fixed days come from config; seeded ones are picked with the RNG,
+   * drawing once per day picked. Only days after afterDay are kept, as the game has already played the rest.
+   */
+  function rollSchedule(rng: number, afterDay: number): [schedule: ScheduledEvent[], next: number] {
+    const schedule: ScheduledEvent[] = [];
+    for (const event of config.events) {
+      const when = event.schedule;
+      let days = when.type === "fixed" ? when.days : [];
+      if (when.type === "seeded") {
+        // A partial shuffle of the days in range, so each pick is a different day.
+        const range = Array.from({ length: Math.max(0, when.toDay - when.fromDay + 1) }, (_, i) => when.fromDay + i);
+        for (let i = 0; i < Math.min(when.count, range.length); i++) {
+          const [r, next] = nextRandom(rng);
+          rng = next;
+          const j = i + Math.floor(r * (range.length - i));
+          [range[i], range[j]] = [range[j]!, range[i]!];
+        }
+        days = range.slice(0, when.count);
+      }
+      schedule.push(...days.filter((day) => day > afterDay).map((day) => ({ event: event.id, day })));
+    }
+    // A stable sort, so events on the same day keep config order.
+    return [schedule.sort((a, b) => a.day - b.day), rng];
+  }
+
+  /** Events on during a day: each one that fired that day or recently enough to last until it. In config order. */
+  function eventsOn(state: GameState, day: number): EventConfig[] {
+    return config.events.filter((e) =>
+      state.schedule.some((s) => s.event === e.id && day >= s.day && day < s.day + e.days),
+    );
+  }
+
+  /** How an event plays out on a model, short of ops or not. */
+  function outcomeFor(event: EventConfig, model: ModelId, shortOfOps: boolean): EventOutcome {
+    const effect = event.effects[model];
+    return shortOfOps && effect.shortOfOps ? effect.shortOfOps : effect;
+  }
+
+  function explain(event: EventConfig, { model, shortOfOps, hit }: Omit<EventRecord, "event">): EventView {
+    const { id, name, description, layer } = event;
+    const needed = event.effects[model].opsNeeded;
+    const { detail } = outcomeFor(event, model, shortOfOps);
+    const outcome = shortOfOps ? `${detail} You needed ${needed} ops staff.` : detail;
+    const owner = layerOwner(model, layer);
+    const responsibility = layerResponsibility(model, layer);
+    return { id, name, description, model, layer, owner, responsibility, outcome, shortOfOps, hit };
+  }
+
+  function events(saved: SavedState): EventView[] {
+    const state = load(saved);
+    // An event taken out of config since the day was played has nothing left to explain it.
+    return state.events.flatMap((r) => {
+      const event = eventConfig(r.event);
+      return event ? [explain(event, r)] : [];
+    });
+  }
+
   function advanceOneDay(state: GameState): AdvanceResult {
     const day = state.day + 1;
     const profile = config.productTypes[state.productType].growth;
 
-    // Today's load comes from the users at the start of the day.
+    // Scripted events on today, and how each plays out on the current model with today's ops.
+    const today = eventsOn(state, day).map((event) => {
+      const needed = event.effects[state.model].opsNeeded;
+      const shortOfOps = needed !== undefined && state.ops < needed;
+      return { event, shortOfOps, outcome: outcomeFor(event, state.model, shortOfOps) };
+    });
+
+    // Today's load comes from the users at the start of the day, plus any an event brings.
     const [loadVariation, afterLoad] = vary(state.rng, profile.loadNoise);
-    const load = Math.round(baseLoad(state.productType, state.users, day) * loadVariation);
-    const cap = capacity(state);
-    const outage = load > cap;
+    let load = Math.round(baseLoad(state.productType, state.users, day) * loadVariation);
+    const scaling: { event: EventConfig; extraLoad: number; costPerLoad: number }[] = [];
+    for (const { event, outcome } of today) {
+      if (!event.load) continue;
+      const before = load;
+      load = Math.round(load * event.load.multiplier + event.load.extra);
+      const costPerLoad = outcome.scaleCostPerLoad;
+      if (costPerLoad !== undefined) scaling.push({ event, extraLoad: load - before, costPerLoad });
+    }
+    // A model that scales grows to meet the load; otherwise the usual capacity rules decide whether there's an outage.
+    const cap = scaling.length ? Math.max(baseCapacity(state), load) : baseCapacity(state);
+    const overloaded = load > cap;
     const { baseHours, hoursPerOverload } = config.outage;
-    const hoursDown = outage ? Math.min(24, Math.ceil(baseHours + hoursPerOverload * (load / cap - 1))) : 0;
+    const overloadHours = overloaded ? Math.ceil(baseHours + hoursPerOverload * (load / cap - 1)) : 0;
+    const eventHours = today.reduce((sum, t) => sum + (t.outcome.downtimeHours ?? 0), 0);
+    const hoursDown = Math.min(24, overloadHours + eventHours);
+    const outage = hoursDown > 0;
 
     // Growth slows as the market fills up, and on an outage day.
     const [growthVariation, rng] = vary(afterLoad, profile.growthNoise);
@@ -804,14 +956,44 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       ...addonEntries(state),
       ...staffEntries(state),
     ];
+    // Charges for scaling up to meet an event, or for the damage it did.
+    for (const { event, extraLoad, costPerLoad } of scaling) {
+      const cost = Math.round(extraLoad * costPerLoad);
+      if (cost > 0) {
+        const text = `${event.name}: scaled up for ${count.format(extraLoad)} extra load`;
+        entries.push({ text, cashDelta: -cost, category: "infrastructure" });
+      }
+    }
+    for (const { event, outcome } of today) {
+      if (outcome.cost) {
+        const text = `${event.name}: ${outcome.cost.text}`;
+        entries.push({ text, cashDelta: -outcome.cost.amount, category: "infrastructure" });
+      }
+    }
     if (outage) {
       const percent = Math.round((100 * load) / cap);
+      const cause = overloaded
+        ? `load hit ${percent}% of capacity`
+        : today.find((t) => t.outcome.downtimeHours)!.event.name;
       entries.unshift({
-        text: `Outage: load hit ${percent}% of capacity. Down ${hoursDown} hours; growth slowed.`,
+        text: `Outage: ${cause}. Down ${hoursDown} hours; growth slowed.`,
         cashDelta: 0,
         kind: "outage",
       });
     }
+    // Each event explains itself first: what happened, whose job it is on this model, and how it played out.
+    const records: EventRecord[] = today.map(({ event, shortOfOps, outcome }) => ({
+      event: event.id,
+      model: state.model,
+      shortOfOps,
+      hit: !!outcome.downtimeHours || !!outcome.cost || (overloaded && !!event.load),
+    }));
+    entries.unshift(
+      ...today.map(({ event }, i): LogEntry => {
+        const { name, responsibility, outcome } = explain(event, records[i]!);
+        return { text: `${name}: ${responsibility} ${outcome}`, cashDelta: 0, kind: "event" };
+      }),
+    );
     const played: GameState = {
       ...state,
       day,
@@ -821,6 +1003,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       outageDays: state.outageDays + (outage ? 1 : 0),
       downtimeHours: state.downtimeHours + hoursDown,
       features: build.features,
+      events: records,
     };
     // The migration moves on after the day is played and billed, so a model switch takes effect from tomorrow.
     const migrated = migrationDay(played);
@@ -859,5 +1042,6 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     features,
     migration,
     migrationQuote,
+    events,
   };
 }

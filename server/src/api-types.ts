@@ -2,6 +2,7 @@
 import type {
   Action,
   DayLog,
+  EventView,
   FeatureView,
   MigrationPhase,
   MigrationQuote,
@@ -85,6 +86,11 @@ export interface CompanyView {
   migration: MigrationView | null;
   /** Migrations completed so far. */
   migrations: number;
+  /**
+   * Scripted events that were on during the day just played, each explained: what happened, the responsibility-stack
+   * layer that decided it and who owns that layer on the model it hit, and how it played out. Empty on other days.
+   */
+  events: EventView[];
 }
 
 
