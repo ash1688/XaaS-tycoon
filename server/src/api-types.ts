@@ -2,6 +2,7 @@
 import type {
   Action,
   DayLog,
+  FeatureView,
   ModelComparison,
   ModelId,
   ProductTypeId,
@@ -63,6 +64,8 @@ export interface CompanyView {
   monthlyInfrastructureCost: number;
   /** Total spent so far in each category. */
   spend: Spend;
+  /** The product's features, with each one's status and build progress. */
+  features: FeatureView[];
 }
 
 
