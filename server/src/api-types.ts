@@ -5,6 +5,7 @@ import type {
   EventView,
   FeatureGapView,
   FeatureView,
+  GameSummary,
   MigrationPhase,
   MigrationQuote,
   MigrationView,
@@ -59,7 +60,10 @@ export interface CompanyView {
   day: number;
   finalDay: number;
   cash: number;
-  /** "active", or "bankrupt" once cash has gone below zero: the game is over and rejects Continue and actions. */
+  /**
+   * "active" while playing. Once the game is over it rejects Continue and actions, and shows its summary: "bankrupt"
+   * if cash went below zero, or "finished" if it played the final day.
+   */
   status: string;
   developers: number;
   ops: number;
@@ -105,6 +109,12 @@ export interface CompanyView {
  * rata, exit penalty, total), the odds of an overrun, and the add-ons lost when leaving SaaS, for the confirm step.
  */
 export type MigrationQuoteView = MigrationQuote;
+
+/**
+ * GET .../summary: how the company did. Final cash, users and uptime, spend by category, migrations, and spend and
+ * cash for each day played. ending is "completed" or "bankrupt", or null for a game still being played.
+ */
+export type SummaryView = GameSummary;
 
 export interface CodeView {
   code: string;

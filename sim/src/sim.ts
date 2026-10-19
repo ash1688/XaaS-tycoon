@@ -82,8 +82,15 @@ export interface FeatureGap {
   model: ModelId;
 }
 
-/** A bankrupt game is over: it accepts no more actions or advances. */
-export type GameStatus = "playing" | "bankrupt";
+/**
+ * A bankrupt game is over, and so is a finished one: one that has played the configured final day. Either way it
+ * accepts no more actions or advances. The final day is the last day played, so a 180-day game plays day 180 in full
+ * (billed, with its events) and finishes at the end of it.
+ */
+export type GameStatus = "playing" | "bankrupt" | "finished";
+
+/** How a game ended, for the summary. */
+export type GameEnding = "completed" | "bankrupt";
 
 /** Plain, JSON-serialisable game state. The server stores it as-is. */
 export interface GameState {
@@ -298,7 +305,7 @@ export interface LogEntry {
   /** Set on every charge, and only on charges. */
   category?: SpendCategory;
   /** Set on entries that need to stand out, such as an outage or bankruptcy. */
-  kind?: "outage" | "bankrupt" | "feature" | "migration" | "event";
+  kind?: "outage" | "bankrupt" | "finished" | "feature" | "migration" | "event";
 }
 
 export interface DayLog {
@@ -309,6 +316,43 @@ export interface DayLog {
 export interface AdvanceResult {
   state: GameState;
   log: DayLog[];
+}
+
+/** What was spent on one day, and the cash left at the end of it. */
+export interface SummaryDay extends DaySpend {
+  cash: number;
+}
+
+/**
+ * How a company did, for the end-of-game summary and the teacher's dashboard. Plain and JSON-serialisable, like state.
+ * Works on a game still being played too, as a summary so far.
+ */
+export interface GameSummary {
+  companyName: string;
+  productType: ProductTypeId;
+  /** The model the company ended on. */
+  model: ModelId;
+  /** How the game ended, or null while it's still being played. */
+  ending: GameEnding | null;
+  /** The last day played. */
+  day: number;
+  finalDay: number;
+  cash: number;
+  users: number;
+  /** Share of time up across every day played, as a percentage. */
+  uptime: number;
+  outageDays: number;
+  /** Everything spent, by category. */
+  spend: Spend;
+  /** The categories added up. */
+  totalSpend: number;
+  /** Migrations completed. One still under way at the end doesn't count. */
+  migrations: number;
+  /**
+   * Spend on each day played and the cash left after it, day 1 (upfront costs) first: the cost-over-time chart.
+   * Games saved before the ledger existed are missing their early days.
+   */
+  days: SummaryDay[];
 }
 
 /** A player or caller asked for something the rules don't allow. */
@@ -356,6 +400,8 @@ export interface Sim {
   events(state: SavedState): EventView[];
   /** Feature gaps still slowing growth, oldest first. Shown every day, not just the day the event fired. */
   featureGaps(state: SavedState): FeatureGapView[];
+  /** How the company did: final figures, spend by category, migrations and spend over time. */
+  summarise(state: SavedState): GameSummary;
 }
 
 export function isModelId(v: string): v is ModelId {
@@ -426,7 +472,16 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return { users, load: Math.round(baseLoad(productType, users, day)), outageDays: 0, downtimeHours: 0 };
   }
 
+  /**
+   * Upgrades saved state, then ends a game that has reached the final day: one saved before games ended, or one
+   * played under a config with more days than this one has.
+   */
   function load(saved: SavedState): GameState {
+    const state = upgrade(saved);
+    return state.status === "playing" && state.day >= config.finalDay ? { ...state, status: "finished" } : state;
+  }
+
+  function upgrade(saved: SavedState): GameState {
     if (saved.version === 8) return saved;
     const v7 = saved.version === 7 ? saved : loadV6(saved);
     // Games started before these events existed keep their schedule, and get these events in the days still to come.
@@ -474,6 +529,12 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const state = load(saved);
     if (state.status === "bankrupt") {
       throw new SimError("bankrupt", `${state.companyName} is bankrupt, so this game is over. Start a new company to play again.`);
+    }
+    if (state.status === "finished") {
+      throw new SimError(
+        "finished",
+        `${state.companyName} has played all ${config.finalDay} days, so this game is over. Start a new company to play again.`,
+      );
     }
     return state;
   }
@@ -845,7 +906,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
 
   /**
    * The ledger. Applies a day's entries to cash, adds each charge to its category's running total and the day's
-   * spend, and ends the game if cash has gone below zero. Returns the entries with any bankruptcy notice added.
+   * spend, and ends the game if cash has gone below zero or this was the final day. Returns the entries with any
+   * notice of the end added. Going bankrupt on the final day counts as bankrupt.
    */
   function settle(state: GameState, day: number, entries: LogEntry[]): { state: GameState; entries: LogEntry[] } {
     const daySpend = noSpend();
@@ -853,16 +915,21 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const spend = noSpend();
     for (const c of SPEND_CATEGORIES) spend[c] = state.spend[c] + daySpend[c];
     const cash = state.cash + entries.reduce((sum, e) => sum + e.cashDelta, 0);
-    if (cash >= 0) {
-      return { state: { ...state, cash, spend, spendByDay: [...state.spendByDay, { day, ...daySpend }] }, entries };
+    const settled: GameState = { ...state, cash, spend, spendByDay: [...state.spendByDay, { day, ...daySpend }] };
+    if (cash < 0) {
+      return {
+        state: { ...settled, status: "bankrupt" },
+        entries: [
+          ...entries,
+          { text: `Cash ran out: ${state.companyName} is bankrupt. Game over.`, cashDelta: 0, kind: "bankrupt" },
+        ],
+      };
     }
-    return {
-      state: { ...state, cash, spend, spendByDay: [...state.spendByDay, { day, ...daySpend }], status: "bankrupt" },
-      entries: [
-        ...entries,
-        { text: `Cash ran out: ${state.companyName} is bankrupt. Game over.`, cashDelta: 0, kind: "bankrupt" },
-      ],
-    };
+    if (day >= config.finalDay) {
+      const text = `Day ${day} was the last: ${state.companyName} made it to the end. See how you did in the summary.`;
+      return { state: { ...settled, status: "finished" }, entries: [...entries, { text, cashDelta: 0, kind: "finished" }] };
+    }
+    return { state: settled, entries };
   }
 
   function dailyStaffCost(saved: SavedState): number {
@@ -1183,13 +1250,44 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return { state: settled.state, log: [{ day, entries: settled.entries }] };
   }
 
+  function summarise(saved: SavedState): GameSummary {
+    const state = load(saved);
+    const total = (s: Spend) => SPEND_CATEGORIES.reduce((sum, c) => sum + s[c], 0);
+    // Only charges move cash (there's no revenue in the alpha), so the cash after each day is today's cash plus
+    // everything spent since. That works for saves whose series is missing its early days, too.
+    let cash = state.cash;
+    const days: SummaryDay[] = [];
+    for (let i = state.spendByDay.length - 1; i >= 0; i--) {
+      const d = state.spendByDay[i]!;
+      days.unshift({ ...d, cash });
+      cash += total(d);
+    }
+    const ending = state.status === "playing" ? null : state.status === "bankrupt" ? "bankrupt" : "completed";
+    return {
+      companyName: state.companyName,
+      productType: state.productType,
+      model: state.model,
+      ending,
+      day: state.day,
+      finalDay: config.finalDay,
+      cash: state.cash,
+      users: state.users,
+      uptime: uptime(state),
+      outageDays: state.outageDays,
+      spend: { ...state.spend },
+      totalSpend: total(state.spend),
+      migrations: state.migrations,
+      days,
+    };
+  }
+
   function advance(saved: SavedState, days = 1): AdvanceResult {
     if (!Number.isInteger(days) || days < 1) {
       throw new SimError("bad_days", "Days to advance must be a whole number of at least 1.");
     }
     let current = loadPlaying(saved);
     const log: DayLog[] = [];
-    // Stops early if the company goes bankrupt part-way through.
+    // Stops early if the game ends part-way through: bankrupt, or the final day played.
     for (let i = 0; i < days && current.status === "playing"; i++) {
       const result = advanceOneDay(current);
       current = result.state;
@@ -1215,5 +1313,6 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     migrationQuote,
     events,
     featureGaps,
+    summarise,
   };
 }

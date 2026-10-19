@@ -34,6 +34,9 @@ Set `TEACHER_PASSWORD` and `SESSION_SECRET` in your environment first; the compo
 
 1. Go to `/staff`, sign in with `TEACHER_PASSWORD`, and create a login code for each student.
 2. Students enter their code on the home page, start a company and press **Continue** to play a day at a time.
+3. The game ends after day 180, or sooner if the company goes bankrupt, and shows a summary: final cash, users and uptime, where the money went, migrations made and a cost-over-time chart. Reopening a finished game from the company list shows its summary again.
+
+To try the end of a game without playing 180 days, set `GAME_FINAL_DAY` (for example `GAME_FINAL_DAY=10` in `.env`). The server reads it at startup; leave it unset for the real 180-day game. The e2e tests run with `GAME_FINAL_DAY=30`.
 
 ## Tests
 

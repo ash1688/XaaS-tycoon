@@ -1162,3 +1162,133 @@ fieldset > p {
   border-radius: 999px;
   color: var(--owner);
 }
+
+/* End of the game */
+.game-end {
+  margin: 0 0 1rem;
+  padding: 0.9rem 1rem;
+  border-radius: 10px;
+  border: 2px solid var(--pos);
+  background: var(--accent-soft);
+  color: var(--pos);
+}
+
+.game-end h2 {
+  margin: 0.5rem 0 0.25rem;
+  color: var(--text);
+}
+
+.game-end p {
+  margin: 0;
+  color: var(--text);
+}
+
+.done-badge {
+  color: var(--pos);
+}
+
+.day-log li.event.finished {
+  background: var(--accent-soft);
+  color: var(--pos);
+}
+
+.summary-subhead {
+  margin: 1.5rem 0 0.25rem;
+  font-size: 1.05rem;
+}
+
+.summary-note {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+/* Plain SVG charts. Colours come from the theme tokens, so they follow light and dark mode. */
+.chart {
+  margin: 0.5rem 0 0;
+}
+
+.chart-canvas {
+  width: 100%;
+}
+
+.chart svg {
+  display: block;
+  overflow: visible;
+}
+
+.chart .grid line {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.chart .axis {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+
+.chart .zero {
+  stroke: var(--neg);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+
+.chart text {
+  font-size: 12px;
+  fill: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart .axis-title {
+  font-weight: 600;
+  fill: var(--text);
+}
+
+.chart .peak-label {
+  font-weight: 700;
+  fill: var(--text);
+}
+
+.chart .bar {
+  fill: var(--cat);
+}
+
+.chart g[data-day]:hover .bar {
+  opacity: 0.75;
+}
+
+.chart .cash-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  list-style: none;
+  padding: 0;
+  margin: 0.4rem 0 0;
+  font-size: 0.9rem;
+}
+
+.chart-legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.chart-legend .swatch {
+  border-color: var(--cat);
+  background: var(--cat);
+}
+
+.summary .stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.summary .stat {
+  min-width: 0;
+}

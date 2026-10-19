@@ -911,6 +911,171 @@ describe("state saved before the ledger existed (version 3)", () => {
   });
 });
 
+describe("game end and summary", () => {
+  // A 30-day game, with cash for two migrations. IaaS costs 20 a day and £100 upfront; PaaS 30 a day.
+  const shortConfig: GameConfig = {
+    ...config,
+    startingCash: 100_000,
+    finalDay: 30,
+    models: { ...config.models, iaas: { ...config.models.iaas, upfrontCost: 100 } },
+  };
+  const s = createSim(shortConfig);
+  const begin = (seed = 42) => s.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed });
+  const charges = (log: DayLog[], category: string) =>
+    log.flatMap((d) => d.entries).filter((e) => e.category === category).reduce((sum, e) => sum - e.cashDelta, 0);
+  const migrate = (model: string): Action => ({ type: "startMigration", model: model as never });
+
+  it("plays the final day in full, then ends the game and says so in the log", () => {
+    const before = s.advance(begin(), 28);
+    expect(before.state).toMatchObject({ day: 29, status: "playing" });
+    const { state, log } = s.advance(before.state);
+    expect(state).toMatchObject({ day: 30, status: "finished" });
+    expect(log[0]!.entries.some((e) => e.category === "infrastructure")).toBe(true);
+    expect(log[0]!.entries.at(-1)).toMatchObject({ kind: "finished", cashDelta: 0 });
+    expect(log[0]!.entries.at(-1)!.text).toMatch(/Day 30 was the last/);
+  });
+
+  it("stops a multi-day advance on the final day", () => {
+    const { state, log } = s.advance(begin(), 100);
+    expect(state).toMatchObject({ day: 30, status: "finished" });
+    expect(log.at(-1)!.day).toBe(30);
+    expect(log).toHaveLength(29);
+  });
+
+  it("rejects advances and actions once finished", () => {
+    const { state } = s.advance(begin(), 29);
+    for (const attempt of [
+      () => s.advance(state),
+      () => s.applyAction(state, { type: "hire", pool: "ops" }),
+      () => s.applyAction(state, migrate("paas")),
+    ]) {
+      expect(attempt).toThrow(SimError);
+      expect(attempt).toThrow(expect.objectContaining({ code: "finished" }));
+    }
+  });
+
+  it("ends a game saved past the final day, such as one played under a longer config", () => {
+    const longer = sim.advance(sim.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1 }), 39);
+    expect(longer.state).toMatchObject({ day: 40, status: "playing" });
+    expect(s.load(longer.state).status).toBe("finished");
+    expect(() => s.advance(longer.state)).toThrow(expect.objectContaining({ code: "finished" }));
+    expect(s.summarise(longer.state).ending).toBe("completed");
+  });
+
+  it("counts going bankrupt on the final day as bankrupt", () => {
+    // 1000 cash at 20 a day on IaaS goes below zero on day 52.
+    const tight = createSim({ ...config, finalDay: 52 });
+    const { state } = tight.advance(tight.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1 }), 100);
+    expect(state).toMatchObject({ day: 52, status: "bankrupt" });
+    expect(tight.summarise(state).ending).toBe("bankrupt");
+  });
+
+  it("summarises a completed game: final figures, and spend totals equal to the sum of daily charges", () => {
+    const hired = s.applyAction(s.applyAction(begin(), { type: "hire", pool: "developers" }), { type: "hire", pool: "ops" });
+    const { state, log } = s.advance(hired, 29);
+    const summary = s.summarise(state);
+    expect(summary).toMatchObject({
+      companyName: "Acme",
+      productType: "ecommerce",
+      model: "iaas",
+      ending: "completed",
+      day: 30,
+      finalDay: 30,
+      cash: state.cash,
+      users: state.users,
+      uptime: s.uptime(state),
+      outageDays: state.outageDays,
+      migrations: 0,
+    });
+    // Day 1's charge is the upfront cost; the log has the rest.
+    expect(summary.spend).toEqual({
+      staff: charges(log, "staff"),
+      infrastructure: 100 + charges(log, "infrastructure"),
+      addons: charges(log, "addons"),
+    });
+    expect(summary.spend.staff).toBe(29 * 10);
+    expect(summary.totalSpend).toBe(SPEND_CATEGORIES.reduce((sum, c) => sum + summary.spend[c], 0));
+    expect(summary.totalSpend).toBe(100_000 - summary.cash);
+    // The series has every day, and each category adds up to its total.
+    expect(summary.days.map((d) => d.day)).toEqual(Array.from({ length: 30 }, (_, i) => i + 1));
+    for (const c of SPEND_CATEGORIES) {
+      expect(summary.days.reduce((sum, d) => sum + d[c], 0)).toBe(summary.spend[c]);
+    }
+    // Each day's charges in the series match that day's log.
+    for (const d of log) {
+      const day = summary.days.find((x) => x.day === d.day)!;
+      for (const c of SPEND_CATEGORIES) expect(day[c]).toBe(charges([d], c));
+    }
+  });
+
+  it("gives the cash left after each day, ending on the final cash", () => {
+    const { state } = s.advance(begin(), 29);
+    const { days, cash } = s.summarise(state);
+    expect(days[0]).toEqual({ day: 1, staff: 0, infrastructure: 100, addons: 0, cash: 99_900 });
+    expect(days.at(-1)!.cash).toBe(cash);
+    for (let i = 1; i < days.length; i++) {
+      const d = days[i]!;
+      expect(days[i - 1]!.cash - d.cash).toBe(d.staff + d.infrastructure + d.addons);
+    }
+  });
+
+  it("counts migrations completed, not one still under way", () => {
+    // A migration takes 14 days: IaaS to PaaS from day 1 completes on day 15, and PaaS to SaaS from then on day 29.
+    const first = s.advance(s.applyAction(begin(), migrate("paas")), 14).state;
+    expect(first).toMatchObject({ day: 15, model: "paas" });
+    const second = s.advance(s.applyAction(first, migrate("saas")), 14).state;
+    expect(second).toMatchObject({ day: 29, model: "saas", status: "playing" });
+    expect(s.summarise(second)).toMatchObject({ migrations: 2, ending: null });
+    // A third, started on the last day, is still under way when the game ends.
+    const end = s.advance(s.applyAction(second, migrate("iaas"))).state;
+    expect(end).toMatchObject({ day: 30, model: "saas", status: "finished" });
+    expect(s.summarise(end)).toMatchObject({ migrations: 2, model: "saas", ending: "completed" });
+  });
+
+  it("shows a migration's upfront cost as a jump in that day's spend", () => {
+    const { state } = s.advance(s.applyAction(s.advance(begin(), 9).state, migrate("onprem")), 5);
+    const pricier = createSim({
+      ...shortConfig,
+      models: { ...shortConfig.models, onprem: { ...shortConfig.models.onprem, upfrontCost: 5000 } },
+    });
+    const migrated = pricier.advance(pricier.applyAction(pricier.advance(begin(), 9).state, migrate("onprem")), 5).state;
+    const day11 = (st: GameState, sm: Sim) => sm.summarise(st).days.find((d) => d.day === 11)!.infrastructure;
+    expect(day11(migrated, pricier) - day11(state, s)).toBe(5000);
+  });
+
+  it("summarises a bankrupt game", () => {
+    const { state, log } = sim.advance(start(), 100);
+    const summary = sim.summarise(state);
+    expect(summary).toMatchObject({ ending: "bankrupt", day: 52, cash: -20, finalDay: 180 });
+    expect(summary.days).toHaveLength(52);
+    expect(summary.days.at(-1)!.cash).toBe(-20);
+    expect(summary.spend.infrastructure).toBe(charges(log, "infrastructure"));
+    expect(summary.totalSpend).toBe(1020);
+  });
+
+  it("summarises a game still being played, with no ending", () => {
+    const summary = s.summarise(s.advance(begin(), 5).state);
+    expect(summary).toMatchObject({ ending: null, day: 6 });
+    expect(summary.days).toHaveLength(6);
+  });
+
+  it("summarises a game saved before the ledger existed with the days it has", () => {
+    const { status: _s, spend: _sp, spendByDay: _d, ...rest } = JSON.parse(JSON.stringify(s.advance(begin(), 4).state));
+    const old = { ...rest, version: 3 } as Parameters<typeof s.load>[0];
+    const { state } = s.advance(old, 3);
+    const summary = s.summarise(state);
+    expect(summary.days.map((d) => d.day)).toEqual([6, 7, 8]);
+    expect(summary.days.at(-1)!.cash).toBe(summary.cash);
+    expect(summary.totalSpend).toBe(60);
+  });
+
+  it("is deterministic and JSON-serialisable", () => {
+    const play = () => s.summarise(s.advance(s.applyAction(begin(7), migrate("saas")), 40).state);
+    expect(play()).toEqual(play());
+    expect(JSON.parse(JSON.stringify(play()))).toEqual(play());
+  });
+});
+
 describe("default config", () => {
   const sim180 = createSim(defaultConfig);
   const run = (productType: string, model: string, ops?: number) => {
@@ -935,7 +1100,7 @@ describe("default config", () => {
     for (const model of MODEL_IDS) {
       for (const p of ["ecommerce", "social", "video"]) {
         const state = run(p, model, sim180.opsNeeded(model));
-        expect(state).toMatchObject({ day: defaultConfig.finalDay, status: "playing" });
+        expect(state).toMatchObject({ day: defaultConfig.finalDay, status: "finished" });
       }
     }
   });
@@ -986,7 +1151,7 @@ describe("default config", () => {
         state = sim180.applyAction(state, { type: "buyAddon", feature: f.id });
       }
       const end = sim180.advance(state, defaultConfig.finalDay - 1).state;
-      expect(end).toMatchObject({ day: defaultConfig.finalDay, status: "playing" });
+      expect(end).toMatchObject({ day: defaultConfig.finalDay, status: "finished" });
       expect(end.spend.addons).toBeGreaterThan(0);
     }
   });
@@ -2105,7 +2270,7 @@ describe("default events", () => {
   it("let a SaaS company that never leaves still reach day 180 with the feature gap", () => {
     const s = createSim(defaultConfig);
     const state = s.advance(s.newGame({ companyName: "Acme", productType: "video", model: "saas", seed: 7 }), 179).state;
-    expect(state).toMatchObject({ day: 180, status: "playing" });
+    expect(state).toMatchObject({ day: 180, status: "finished" });
     expect(s.featureGaps(state)).toHaveLength(1);
   });
 

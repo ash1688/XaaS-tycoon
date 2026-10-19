@@ -2,6 +2,8 @@ import { defineConfig, devices } from "@playwright/test";
 
 const PORT = 3180;
 export const E2E_TEACHER_PASSWORD = "e2e-teacher-password";
+// A short game, so a test can play one to the end. Set on the server through GAME_FINAL_DAY, as anyone can.
+export const E2E_FINAL_DAY = 30;
 export const E2E_DATABASE_URL = process.env.E2E_DATABASE_URL ?? "postgres://xaas:xaas@localhost:5433/xaas_e2e";
 
 export default defineConfig({
@@ -25,6 +27,7 @@ export default defineConfig({
       TEACHER_PASSWORD: E2E_TEACHER_PASSWORD,
       SESSION_SECRET: "e2e-session-secret-at-least-32-characters",
       PORT: String(PORT),
+      GAME_FINAL_DAY: String(E2E_FINAL_DAY),
     },
   },
 });

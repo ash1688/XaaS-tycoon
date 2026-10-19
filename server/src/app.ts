@@ -27,6 +27,7 @@ import type {
   MetaView,
   MigrationQuoteView,
   NewCompanyBody,
+  SummaryView,
   TeacherCodeView,
 } from "./api-types.ts";
 
@@ -42,6 +43,9 @@ export interface AppOptions {
 
 const CODE_PATTERN = /^\d{8}$/;
 
+/** SimError codes for a game that has ended. */
+const GAME_OVER = new Set(["bankrupt", "finished"]);
+
 type CompanyRow = typeof companies.$inferSelect;
 
 function sendError(reply: FastifyReply, status: number, error: string, message: string) {
@@ -56,8 +60,8 @@ export async function buildApp(opts: AppOptions) {
   await app.register(cookie, { secret: opts.sessionSecret });
 
   app.setErrorHandler((err, _req, reply) => {
-    // A bankrupt game is over: the request was fine, but the game can't take it any more.
-    if (err instanceof SimError) return sendError(reply, err.code === "bankrupt" ? 409 : 400, err.code, err.message);
+    // A bankrupt or finished game is over: the request was fine, but the game can't take it any more.
+    if (err instanceof SimError) return sendError(reply, GAME_OVER.has(err.code) ? 409 : 400, err.code, err.message);
     const { statusCode, message } = err as { statusCode?: number; message?: string };
     if (statusCode && statusCode < 500) return sendError(reply, statusCode, "bad_request", message ?? "Bad request.");
     app.log.error(err);
@@ -74,7 +78,7 @@ export async function buildApp(opts: AppOptions) {
       day: state.day,
       finalDay: sim.config.finalDay,
       cash: state.cash,
-      status: state.status === "bankrupt" ? "bankrupt" : row.status,
+      status: state.status === "playing" ? row.status : state.status,
       developers: state.developers,
       ops: state.ops,
       opsNeeded: sim.opsNeeded(state.model),
@@ -99,8 +103,8 @@ export async function buildApp(opts: AppOptions) {
     model: state.model,
     day: state.day,
     cash: state.cash,
-    // Denormalised for the dashboard, like cash.
-    ...(state.status === "bankrupt" && { status: "bankrupt" }),
+    // Denormalised for the dashboard, like cash: "bankrupt" or "finished" once the game is over.
+    ...(state.status !== "playing" && { status: state.status }),
     state,
   });
 
@@ -203,6 +207,13 @@ export async function buildApp(opts: AppOptions) {
       return sim.migrationQuote(row.state, req.query.target) satisfies MigrationQuoteView;
     },
   );
+
+  // How the company did: shown when the game ends, and available any time as a summary so far.
+  app.get<{ Params: { code: string; id: string } }>("/api/codes/:code/companies/:id/summary", async (req, reply) => {
+    const row = await findCompany(req.params.code, req.params.id);
+    if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+    return sim.summarise(row.state) satisfies SummaryView;
+  });
 
   app.post<{ Params: { code: string; id: string } }>("/api/codes/:code/companies/:id/continue", async (req, reply) => {
     const result = await updateCompany(req.params.code, req.params.id, (state) => sim.advance(state, 1));
