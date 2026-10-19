@@ -29,6 +29,9 @@ export const companies = pgTable(
     // The model a migration under way is moving to, or null.
     migratingTo: text("migrating_to"),
     state: jsonb("state").$type<GameState>().notNull(),
+    // Set when the teacher archives the game, which only moves it from the live dashboard to the Archived tab: the
+    // student can keep playing it. Separate from status, which is where the game itself got to.
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

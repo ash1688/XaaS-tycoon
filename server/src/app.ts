@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import Fastify, { type FastifyReply } from "fastify";
 import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
-import { and, asc, count, desc, eq, gte } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
   createSim,
   MIGRATION_PHASES,
@@ -194,7 +194,8 @@ export async function buildApp(opts: AppOptions) {
       if (!code) return sendError(reply, 404, "unknown_code", "That code wasn't recognised. Check it with your teacher.");
       const { name, productType, model } = req.body;
       // Locks the code so two creates at once can't both see room under the limit. Only games still being played
-      // count: finished, bankrupt and retired ones are history.
+      // count: finished, bankrupt and retired ones are history. Archiving is only the teacher's view, so it doesn't
+      // change what counts.
       const row = await db.transaction(async (tx) => {
         await tx.select().from(loginCodes).where(eq(loginCodes.code, code.code)).for("update");
         const [counted] = await tx
@@ -412,55 +413,124 @@ export async function buildApp(opts: AppOptions) {
       return sendError(reply, 500, "code_generation_failed", "Couldn't create a unique code. Try again.");
     });
 
-    // The live dashboard: recent games grouped by code, read from the denormalised columns rather than each state.
-    teacher.get<{ Querystring: { hours?: number } }>(
+    // The live dashboard: recent games grouped by code, read from the denormalised columns rather than each state. With
+    // archived=true, every archived game and code instead, however old.
+    teacher.get<{ Querystring: { hours?: number; archived?: boolean } }>(
       "/api/teacher/games",
       {
         schema: {
           querystring: {
             type: "object",
-            properties: { hours: { type: "integer", minimum: 1, maximum: MAX_DASHBOARD_HOURS } },
+            properties: {
+              hours: { type: "integer", minimum: 1, maximum: MAX_DASHBOARD_HOURS },
+              archived: { type: "boolean" },
+            },
           },
         },
       },
       async (req): Promise<TeacherGamesView> => {
-        const hours = req.query.hours ?? dashboardHours;
-        const since = new Date(Date.now() - hours * 3600 * 1000);
+        const hours = req.query.archived ? null : (req.query.hours ?? dashboardHours);
+        const where = hours
+          ? and(
+              gte(companies.updatedAt, new Date(Date.now() - hours * 3600 * 1000)),
+              isNull(companies.archivedAt),
+              eq(loginCodes.archived, false),
+            )
+          : or(isNotNull(companies.archivedAt), eq(loginCodes.archived, true));
+        // From the codes, so an archived code with no games still shows in the archived view.
         const rows = await db
           .select({
-            code: companies.loginCode,
-            id: companies.id,
-            name: companies.name,
-            productType: companies.productType,
-            model: companies.model,
-            migratingTo: companies.migratingTo,
-            day: companies.day,
-            cash: companies.cash,
-            users: companies.users,
-            uptime: companies.uptime,
-            status: companies.status,
-            updatedAt: companies.updatedAt,
+            code: loginCodes.code,
+            codeArchived: loginCodes.archived,
+            game: {
+              id: companies.id,
+              name: companies.name,
+              productType: companies.productType,
+              model: companies.model,
+              migratingTo: companies.migratingTo,
+              day: companies.day,
+              cash: companies.cash,
+              users: companies.users,
+              uptime: companies.uptime,
+              status: companies.status,
+              updatedAt: companies.updatedAt,
+              archivedAt: companies.archivedAt,
+            },
           })
-          .from(companies)
-          .innerJoin(loginCodes, eq(loginCodes.code, companies.loginCode))
-          .where(and(gte(companies.updatedAt, since), eq(loginCodes.archived, false)))
+          .from(loginCodes)
+          .leftJoin(companies, eq(companies.loginCode, loginCodes.code))
+          .where(where)
           .orderBy(desc(loginCodes.createdAt), asc(companies.createdAt));
-        const codes = new Map<string, TeacherGameView[]>();
-        for (const { code, ...r } of rows) {
-          if (!codes.has(code)) codes.set(code, []);
-          codes.get(code)!.push({
-            ...r,
-            productType: r.productType as TeacherGameView["productType"],
-            model: r.model as TeacherGameView["model"],
-            migratingTo: r.migratingTo as TeacherGameView["migratingTo"],
-            status: r.status as CompanyStatus,
+        const codes = new Map<string, TeacherGamesView["codes"][number]>();
+        for (const { code, codeArchived, game: g } of rows) {
+          if (!codes.has(code)) codes.set(code, { code, archived: codeArchived, companies: [] });
+          if (!g) continue;
+          codes.get(code)!.companies.push({
+            ...g,
+            productType: g.productType as TeacherGameView["productType"],
+            model: g.model as TeacherGameView["model"],
+            migratingTo: g.migratingTo as TeacherGameView["migratingTo"],
+            status: g.status as CompanyStatus,
             finalDay: sim.config.finalDay,
-            updatedAt: r.updatedAt.toISOString(),
+            updatedAt: g.updatedAt.toISOString(),
+            archivedAt: g.archivedAt?.toISOString() ?? null,
           });
         }
-        return { hours, codes: [...codes].map(([code, list]) => ({ code, companies: list })) };
+        return { hours, codes: [...codes.values()] };
       },
     );
+
+    // Archiving only tidies the teacher's view: the game leaves the live dashboard for the Archived tab. The student
+    // sees no change and can keep playing it, and it still counts towards the code's limit.
+    teacher.post<{ Params: { id: string } }>("/api/teacher/companies/:id/archive", async (req, reply) => {
+      if (!(await setGameArchived(req.params.id, true))) {
+        return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      }
+      return { ok: true };
+    });
+
+    // Back to the live dashboard. A game under an archived code stays in the Archived tab until the code comes back.
+    teacher.post<{ Params: { id: string } }>("/api/teacher/companies/:id/unarchive", async (req, reply) => {
+      if (!(await setGameArchived(req.params.id, false))) {
+        return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      }
+      return { ok: true };
+    });
+
+    teacher.delete<{ Params: { id: string } }>("/api/teacher/companies/:id", async (req, reply) => {
+      const { id } = req.params;
+      const [row] = UUID_PATTERN.test(id)
+        ? await db.delete(companies).where(eq(companies.id, id)).returning({ id: companies.id })
+        : [];
+      if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      return { ok: true };
+    });
+
+    // Archiving a code stops students using it, and takes it and all its games off the live dashboard. It leaves each
+    // game's own archived flag alone, so unarchiving the code brings back the games that weren't archived on their own.
+    teacher.post<{ Params: { code: string } }>("/api/teacher/codes/:code/archive", async (req, reply) => {
+      if (!(await setCodeArchived(req.params.code, true))) {
+        return sendError(reply, 404, "unknown_code", "That code wasn't found.");
+      }
+      return { ok: true };
+    });
+
+    teacher.post<{ Params: { code: string } }>("/api/teacher/codes/:code/unarchive", async (req, reply) => {
+      if (!(await setCodeArchived(req.params.code, false))) {
+        return sendError(reply, 404, "unknown_code", "That code wasn't found.");
+      }
+      return { ok: true };
+    });
+
+    // Deletes the code and, through the foreign key, every game under it.
+    teacher.delete<{ Params: { code: string } }>("/api/teacher/codes/:code", async (req, reply) => {
+      const { code } = req.params;
+      const [row] = CODE_PATTERN.test(code)
+        ? await db.delete(loginCodes).where(eq(loginCodes.code, code)).returning({ code: loginCodes.code })
+        : [];
+      if (!row) return sendError(reply, 404, "unknown_code", "That code wasn't found.");
+      return { ok: true };
+    });
 
     // Any company's summary. The teacher picks it from the dashboard, so it goes by id alone.
     teacher.get<{ Params: { id: string } }>("/api/teacher/companies/:id/summary", async (req, reply) => {
@@ -471,6 +541,29 @@ export async function buildApp(opts: AppOptions) {
       return { code: row.loginCode, status, summary: sim.summarise(row.state) } satisfies TeacherSummaryView;
     });
   });
+
+  /** Archives or unarchives one game in the teacher's view. False if there's no such game. */
+  async function setGameArchived(id: string, archived: boolean) {
+    if (!UUID_PATTERN.test(id)) return false;
+    // Keeps the first archive time if it's archived twice.
+    const [row] = await db
+      .update(companies)
+      .set({ archivedAt: archived ? sql`coalesce(${companies.archivedAt}, now())` : null })
+      .where(eq(companies.id, id))
+      .returning({ id: companies.id });
+    return !!row;
+  }
+
+  /** Archives or unarchives a code. False if there's no such code. */
+  async function setCodeArchived(code: string, archived: boolean) {
+    if (!CODE_PATTERN.test(code)) return false;
+    const [row] = await db
+      .update(loginCodes)
+      .set({ archived })
+      .where(eq(loginCodes.code, code))
+      .returning({ code: loginCodes.code });
+    return !!row;
+  }
 
   // --- web client ---
 

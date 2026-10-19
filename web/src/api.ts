@@ -65,6 +65,13 @@ export const api = {
   // Without hours, the server's default window.
   teacherGames: (hours?: number) =>
     request<TeacherGamesView>("GET", `/api/teacher/games${hours === undefined ? "" : `?hours=${hours}`}`),
+  archivedGames: () => request<TeacherGamesView>("GET", "/api/teacher/games?archived=true"),
+  archiveGame: (id: string) => request<{ ok: true }>("POST", `/api/teacher/companies/${enc(id)}/archive`),
+  unarchiveGame: (id: string) => request<{ ok: true }>("POST", `/api/teacher/companies/${enc(id)}/unarchive`),
+  deleteGame: (id: string) => request<{ ok: true }>("DELETE", `/api/teacher/companies/${enc(id)}`),
+  archiveCode: (code: string) => request<{ ok: true }>("POST", `/api/teacher/codes/${enc(code)}/archive`),
+  unarchiveCode: (code: string) => request<{ ok: true }>("POST", `/api/teacher/codes/${enc(code)}/unarchive`),
+  deleteCode: (code: string) => request<{ ok: true }>("DELETE", `/api/teacher/codes/${enc(code)}`),
   teacherSummary: (id: string) => request<TeacherSummaryView>("GET", `/api/teacher/companies/${enc(id)}/summary`),
 };
 

@@ -165,15 +165,25 @@ export interface TeacherGameView {
   uptime: number;
   status: CompanyStatus;
   updatedAt: string;
+  /** When the teacher archived it, or null if it isn't. Only the teacher's view: the student can still play it. */
+  archivedAt: string | null;
 }
 
 /**
  * GET /api/teacher/games?hours=: companies played in the last `hours` hours, grouped by login code. Codes newest first,
  * and each code's companies in the order they were started, so rows stay put as the dashboard refreshes.
+ *
+ * GET /api/teacher/games?archived=true: every archived game however old, and every archived code (with all its games,
+ * or none), grouped the same way. hours is null.
  */
 export interface TeacherGamesView {
-  hours: number;
-  codes: { code: string; companies: TeacherGameView[] }[];
+  hours: number | null;
+  codes: {
+    code: string;
+    /** The code itself is archived: students can't use it, and its games stay here until it's unarchived. */
+    archived: boolean;
+    companies: TeacherGameView[];
+  }[];
 }
 
 /** GET /api/teacher/companies/:id/summary: any company's summary, with what the teacher needs around it. */

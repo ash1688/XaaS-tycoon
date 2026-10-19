@@ -3,8 +3,9 @@ import { onMounted, onUnmounted, ref } from "vue";
 import type { CompanyStatus, MetaView, TeacherGamesView, TeacherGameView } from "@xaas/server/api-types";
 import { api, formatCash, formatCount, formatUptime, RequestError } from "../api";
 
-// Recent games grouped by code, refreshed while the tab is visible so the teacher can watch during a lesson.
-const emit = defineEmits<{ signedOut: [] }>();
+// Recent games grouped by code, refreshed while the tab is visible so the teacher can watch during a lesson. The
+// Archived tab lists games and codes the teacher has put away, where they can be brought back or deleted for good.
+const emit = defineEmits<{ signedOut: []; codesChanged: [] }>();
 
 const REFRESH_MS = 20_000;
 const WINDOWS = [
@@ -22,6 +23,10 @@ const games = ref<TeacherGamesView>();
 const hours = ref<number>();
 const error = ref("");
 const updatedAt = ref<Date>();
+const showArchived = ref(false);
+// A game or code waiting on the teacher to confirm its deletion, shown under its code's table.
+const confirming = ref<{ kind: "game"; id: string } | { kind: "code"; code: string }>();
+const busy = ref(false);
 let timer: ReturnType<typeof setInterval> | undefined;
 
 const STATUS_LABELS = { active: "Active", retired: "Retired", bankrupt: "Bankrupt", finished: "Finished" } as const;
@@ -47,8 +52,12 @@ function playedAgo(iso: string) {
 
 async function load() {
   try {
-    games.value = await api.teacherGames(hours.value);
-    hours.value = games.value.hours;
+    const archived = showArchived.value;
+    const result = archived ? await api.archivedGames() : await api.teacherGames(hours.value);
+    // The teacher switched tabs while this was loading: the other tab's load wins.
+    if (archived !== showArchived.value) return;
+    games.value = result;
+    if (result.hours !== null) hours.value = result.hours;
     updatedAt.value = new Date();
     error.value = "";
   } catch (e) {
@@ -61,6 +70,44 @@ function pickWindow(h: number) {
   hours.value = h;
   load();
 }
+
+function pickTab(archived: boolean) {
+  if (showArchived.value === archived) return;
+  showArchived.value = archived;
+  confirming.value = undefined;
+  games.value = undefined;
+  load();
+}
+
+// Runs an archive, unarchive or delete, then shows the list as it is now.
+async function act(run: () => Promise<unknown>, codesChanged = false) {
+  error.value = "";
+  busy.value = true;
+  try {
+    await run();
+    confirming.value = undefined;
+    if (codesChanged) emit("codesChanged");
+  } catch (e) {
+    if (e instanceof RequestError && e.status === 401) return emit("signedOut");
+    error.value = (e as Error).message;
+  } finally {
+    busy.value = false;
+  }
+  await load();
+}
+
+const archiveGame = (id: string) => act(() => api.archiveGame(id));
+const unarchiveGame = (id: string) => act(() => api.unarchiveGame(id));
+const deleteGame = (id: string) => act(() => api.deleteGame(id));
+const unarchiveCode = (code: string) => act(() => api.unarchiveCode(code), true);
+const deleteCode = (code: string) => act(() => api.deleteCode(code), true);
+
+const confirmingGame = (code: string) => {
+  const c = confirming.value;
+  if (c?.kind !== "game") return undefined;
+  return games.value?.codes.find((g) => g.code === code)?.companies.find((g) => g.id === c.id);
+};
+const confirmingCode = (code: string) => confirming.value?.kind === "code" && confirming.value.code === code;
 
 function start() {
   stop();
@@ -94,41 +141,82 @@ onUnmounted(() => {
   document.removeEventListener("visibilitychange", onVisibility);
 });
 
+// The staff page reloads the dashboard after archiving or deleting a code from its codes table.
+defineExpose({ load });
+
 const formatCode = (code: string) => `${code.slice(0, 4)} ${code.slice(4)}`;
+const companiesLabel = (n: number) => `${n} compan${n === 1 ? "y" : "ies"}`;
 const formatTime = (d: Date) => d.toLocaleTimeString("en-GB", { timeStyle: "short" });
 </script>
 
 <template>
   <section class="card live" aria-labelledby="live-heading" data-testid="live-dashboard">
     <div class="row-between live-head">
-      <h2 id="live-heading">Live games</h2>
-      <div class="windows" role="group" aria-label="Show games played in the last">
-        <button
-          v-for="w in WINDOWS"
-          :key="w.hours"
-          :class="['ghost', { on: hours === w.hours }]"
-          :aria-pressed="hours === w.hours"
-          @click="pickWindow(w.hours)"
-        >
-          {{ w.label }}
-        </button>
+      <h2 id="live-heading">{{ showArchived ? "Archived games" : "Live games" }}</h2>
+      <div class="live-controls">
+        <div v-if="!showArchived" class="windows" role="group" aria-label="Show games played in the last">
+          <button
+            v-for="w in WINDOWS"
+            :key="w.hours"
+            :class="['ghost', { on: hours === w.hours }]"
+            :aria-pressed="hours === w.hours"
+            @click="pickWindow(w.hours)"
+          >
+            {{ w.label }}
+          </button>
+        </div>
+        <div class="windows" role="group" aria-label="Which games">
+          <button :class="['ghost', { on: !showArchived }]" :aria-pressed="!showArchived" @click="pickTab(false)">
+            Live
+          </button>
+          <button :class="['ghost', { on: showArchived }]" :aria-pressed="showArchived" @click="pickTab(true)">
+            Archived
+          </button>
+        </div>
       </div>
     </div>
-    <p v-if="hours" class="muted live-note">
+    <p v-if="showArchived" class="muted live-note">
+      Archived games and codes, however old. Archiving a game only hides it from your live view: the student can still
+      play it. An archived code stops working for students until you unarchive it.
+    </p>
+    <p v-else-if="hours" class="muted live-note">
       Games played in the last {{ hours === 168 ? "7 days" : `${hours} hour${hours === 1 ? "" : "s"}` }}.
       Updates every {{ REFRESH_MS / 1000 }} seconds<template v-if="updatedAt">, last at {{ formatTime(updatedAt) }}</template>.
-      Click a company to see how it's doing.
+      Click a company to see how it's doing. Archive a game to move it off this list.
     </p>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
 
     <template v-if="games">
-      <p v-if="!games.codes.length" class="muted">No games in this window yet.</p>
+      <p v-if="!games.codes.length" class="muted">
+        {{ showArchived ? "Nothing archived yet." : "No games in this window yet." }}
+      </p>
       <section v-for="group in games.codes" :key="group.code" class="live-code" :data-code="group.code">
         <div class="row-between live-code-head">
           <h3 class="mono">{{ formatCode(group.code) }}</h3>
-          <span class="muted">{{ group.companies.length }} compan{{ group.companies.length === 1 ? "y" : "ies" }}</span>
+          <div class="live-code-actions">
+            <span v-if="group.archived" class="badge retired-badge">Code archived</span>
+            <span class="muted">{{ companiesLabel(group.companies.length) }}</span>
+            <template v-if="group.archived">
+              <button
+                class="ghost small"
+                :disabled="busy"
+                :aria-label="`Unarchive code ${formatCode(group.code)}`"
+                @click="unarchiveCode(group.code)"
+              >
+                Unarchive code
+              </button>
+              <button
+                class="ghost small danger"
+                :disabled="busy"
+                :aria-label="`Delete code ${formatCode(group.code)}`"
+                @click="confirming = { kind: 'code', code: group.code }"
+              >
+                Delete code
+              </button>
+            </template>
+          </div>
         </div>
-        <div class="table-scroll">
+        <div v-if="group.companies.length" class="table-scroll">
           <table class="live-table">
             <thead>
               <tr>
@@ -139,6 +227,7 @@ const formatTime = (d: Date) => d.toLocaleTimeString("en-GB", { timeStyle: "shor
                 <th class="num">Users</th>
                 <th class="num">Uptime</th>
                 <th>Status</th>
+                <th><span class="visually-hidden">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -169,9 +258,73 @@ const formatTime = (d: Date) => d.toLocaleTimeString("en-GB", { timeStyle: "shor
                   <span v-else>{{ statusLabel(g.status) }}</span>
                   <small class="muted">{{ playedAgo(g.updatedAt) }}</small>
                 </td>
+                <td class="row-actions">
+                  <button
+                    v-if="!showArchived"
+                    class="ghost small"
+                    :disabled="busy"
+                    :aria-label="`Archive ${g.name}`"
+                    @click="archiveGame(g.id)"
+                  >
+                    Archive
+                  </button>
+                  <button
+                    v-else-if="!group.archived"
+                    class="ghost small"
+                    :disabled="busy"
+                    :aria-label="`Unarchive ${g.name}`"
+                    @click="unarchiveGame(g.id)"
+                  >
+                    Unarchive
+                  </button>
+                  <button
+                    class="ghost small danger"
+                    :disabled="busy"
+                    :aria-label="`Delete ${g.name}`"
+                    @click="confirming = { kind: 'game', id: g.id }"
+                  >
+                    Delete
+                  </button>
+                </td>
               </tr>
             </tbody>
           </table>
+        </div>
+
+        <div
+          v-if="confirmingGame(group.code)"
+          class="retire-confirm"
+          role="group"
+          :aria-label="`Delete ${confirmingGame(group.code)!.name}?`"
+        >
+          <p>
+            Delete <strong>{{ confirmingGame(group.code)!.name }}</strong> permanently? The game and its summary are
+            removed for you and the student. This can't be undone.
+          </p>
+          <div class="retire-actions">
+            <button class="danger-fill" :disabled="busy" @click="deleteGame(confirmingGame(group.code)!.id)">
+              Yes, delete it
+            </button>
+            <button class="ghost" :disabled="busy" @click="confirming = undefined">Cancel</button>
+          </div>
+        </div>
+        <div
+          v-if="confirmingCode(group.code)"
+          class="retire-confirm"
+          role="group"
+          :aria-label="`Delete code ${formatCode(group.code)}?`"
+        >
+          <p>
+            Delete code <strong class="mono">{{ formatCode(group.code) }}</strong> and its
+            {{ companiesLabel(group.companies.length) }} permanently? Students can't use the code again, and every game
+            under it is removed. This can't be undone.
+          </p>
+          <div class="retire-actions">
+            <button class="danger-fill" :disabled="busy" @click="deleteCode(group.code)">
+              Yes, delete the code
+            </button>
+            <button class="ghost" :disabled="busy" @click="confirming = undefined">Cancel</button>
+          </div>
         </div>
       </section>
     </template>

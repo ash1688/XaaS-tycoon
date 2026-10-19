@@ -824,6 +824,177 @@ describe("teacher dashboard", () => {
   });
 });
 
+describe("archiving and deleting", () => {
+  async function teacher(method: "GET" | "POST" | "DELETE", url: string) {
+    return app.inject({ method, url, cookies: await teacherCookie() });
+  }
+  const live = async () => (await teacher("GET", "/api/teacher/games")).json<TeacherGamesView>();
+  const archived = async () => (await teacher("GET", "/api/teacher/games?archived=true")).json<TeacherGamesView>();
+  const ids = (view: TeacherGamesView) => view.codes.flatMap((g) => g.companies.map((c) => c.id));
+
+  it("moves an archived game from the live list to the archived list, and back", async () => {
+    const code = await newCode();
+    const kept = (await newCompany(code, { name: "Kept", productType: "ecommerce", model: "iaas" })).json<CompanyView>();
+    const old = (await newCompany(code, { name: "Old", productType: "ecommerce", model: "iaas" })).json<CompanyView>();
+
+    expect((await teacher("POST", `/api/teacher/companies/${old.id}/archive`)).statusCode).toBe(200);
+    expect(ids(await live())).toEqual([kept.id]);
+    const body = await archived();
+    expect(body.hours).toBeNull();
+    expect(body.codes).toMatchObject([{ code, archived: false, companies: [{ id: old.id, name: "Old" }] }]);
+    expect(body.codes[0]!.companies[0]!.archivedAt).not.toBeNull();
+
+    expect((await teacher("POST", `/api/teacher/companies/${old.id}/unarchive`)).statusCode).toBe(200);
+    expect(ids(await live())).toEqual([kept.id, old.id]);
+    expect((await archived()).codes).toEqual([]);
+  });
+
+  it("lists archived games however long ago they were played", async () => {
+    const code = await newCode();
+    const old = (await newCompany(code)).json<CompanyView>();
+    await testDb.db
+      .update(companies)
+      .set({ updatedAt: new Date(Date.now() - 30 * 24 * 3600 * 1000) })
+      .where(eq(companies.id, old.id));
+    await teacher("POST", `/api/teacher/companies/${old.id}/archive`);
+    expect(ids(await archived())).toEqual([old.id]);
+  });
+
+  it("changes nothing for the student: an archived game can still be played", async () => {
+    const code = await newCode();
+    const { id } = (await newCompany(code)).json<CompanyView>();
+    await teacher("POST", `/api/teacher/companies/${id}/archive`);
+
+    const view = await app.inject({ method: "GET", url: `/api/codes/${code}/companies/${id}` });
+    expect(view.statusCode).toBe(200);
+    expect(view.json<CompanyView>()).toMatchObject({ status: "active", day: 1 });
+    const next = await app.inject({ method: "POST", url: `/api/codes/${code}/companies/${id}/continue` });
+    expect(next.statusCode).toBe(200);
+    expect(next.json<ContinueResult>().company.day).toBe(2);
+    const action = await app.inject({
+      method: "POST",
+      url: `/api/codes/${code}/companies/${id}/actions`,
+      payload: { type: "hire", pool: "developers" },
+    });
+    expect(action.statusCode).toBe(200);
+    // Playing it doesn't bring it back to the live dashboard.
+    expect(ids(await live())).toEqual([]);
+    expect(ids(await archived())).toEqual([id]);
+  });
+
+  it("still counts an archived game towards the code's limit", async () => {
+    const code = await newCode();
+    const games = [];
+    for (let i = 0; i < 3; i++) games.push((await newCompany(code)).json<CompanyView>());
+    await teacher("POST", `/api/teacher/companies/${games[0]!.id}/archive`);
+    const res = await newCompany(code);
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ error: "too_many_active" });
+    // Retiring it as usual makes room.
+    await app.inject({ method: "POST", url: `/api/codes/${code}/companies/${games[0]!.id}/retire` });
+    expect((await newCompany(code)).statusCode).toBe(201);
+  });
+
+  it("deletes a game for good", async () => {
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    const res = await teacher("DELETE", `/api/teacher/companies/${company.id}`);
+    expect(res.statusCode).toBe(200);
+    expect((await teacher("GET", `/api/teacher/companies/${company.id}/summary`)).statusCode).toBe(404);
+    expect((await app.inject({ method: "GET", url: `/api/codes/${code}/companies/${company.id}` })).statusCode).toBe(404);
+    expect(ids(await live())).toEqual([]);
+    expect((await teacher("DELETE", `/api/teacher/companies/${company.id}`)).statusCode).toBe(404);
+  });
+
+  it("archives a whole code with its games, so students can't use it, and unarchives it", async () => {
+    const [code, other] = [await newCode(), await newCode()];
+    const company = (await newCompany(code)).json<CompanyView>();
+    const archivedAlone = (await newCompany(code)).json<CompanyView>();
+    await teacher("POST", `/api/teacher/companies/${archivedAlone.id}/archive`);
+    const empty = await newCode();
+    const elsewhere = (await newCompany(other)).json<CompanyView>();
+
+    expect((await teacher("POST", `/api/teacher/codes/${code}/archive`)).statusCode).toBe(200);
+    expect((await teacher("POST", `/api/teacher/codes/${empty}/archive`)).statusCode).toBe(200);
+    expect((await live()).codes.map((g) => g.code)).toEqual([other]);
+    expect((await archived()).codes).toMatchObject([
+      { code: empty, archived: true, companies: [] },
+      { code, archived: true, companies: [{ id: company.id, archivedAt: null }, { id: archivedAlone.id }] },
+    ]);
+    const codes = (await teacher("GET", "/api/teacher/codes")).json<TeacherCodeView[]>();
+    expect(codes.map((c) => c.code)).toEqual([other]);
+
+    // Archived codes are unknown to students.
+    for (const url of [`/api/codes/${code}`, `/api/codes/${code}/companies/${company.id}`]) {
+      const res = await app.inject({ method: "GET", url });
+      expect(res.statusCode).toBe(404);
+    }
+    expect((await newCompany(code)).statusCode).toBe(404);
+
+    // Unarchiving the code brings back its games, except one the teacher archived on its own.
+    expect((await teacher("POST", `/api/teacher/codes/${code}/unarchive`)).statusCode).toBe(200);
+    expect(ids(await live())).toEqual([elsewhere.id, company.id]);
+    expect(ids(await archived())).toEqual([archivedAlone.id]);
+    expect((await app.inject({ method: "GET", url: `/api/codes/${code}` })).statusCode).toBe(200);
+  });
+
+  it("deletes a code and every game under it", async () => {
+    const [code, other] = [await newCode(), await newCode()];
+    const a = (await newCompany(code)).json<CompanyView>();
+    const b = (await newCompany(code)).json<CompanyView>();
+    const kept = (await newCompany(other)).json<CompanyView>();
+    expect((await teacher("DELETE", `/api/teacher/codes/${code}`)).statusCode).toBe(200);
+    for (const id of [a.id, b.id]) {
+      expect((await teacher("GET", `/api/teacher/companies/${id}/summary`)).statusCode).toBe(404);
+    }
+    expect(ids(await live())).toEqual([kept.id]);
+    expect((await app.inject({ method: "GET", url: `/api/codes/${code}` })).statusCode).toBe(404);
+  });
+
+  it("requires the teacher session", async () => {
+    const code = await newCode();
+    const { id } = (await newCompany(code)).json<CompanyView>();
+    for (const [method, url] of [
+      ["POST", `/api/teacher/companies/${id}/archive`],
+      ["POST", `/api/teacher/companies/${id}/unarchive`],
+      ["DELETE", `/api/teacher/companies/${id}`],
+      ["POST", `/api/teacher/codes/${code}/archive`],
+      ["POST", `/api/teacher/codes/${code}/unarchive`],
+      ["DELETE", `/api/teacher/codes/${code}`],
+      ["GET", "/api/teacher/games?archived=true"],
+    ] as const) {
+      expect((await app.inject({ method, url })).statusCode).toBe(401);
+    }
+    // Nothing changed.
+    expect(ids(await live())).toEqual([id]);
+  });
+
+  it("is 404 for an unknown or malformed id or code", async () => {
+    for (const id of ["00000000-0000-0000-0000-000000000000", "nope"]) {
+      for (const [method, url] of [
+        ["POST", `/api/teacher/companies/${id}/archive`],
+        ["POST", `/api/teacher/companies/${id}/unarchive`],
+        ["DELETE", `/api/teacher/companies/${id}`],
+      ] as const) {
+        const res = await teacher(method, url);
+        expect(res.statusCode).toBe(404);
+        expect(res.json()).toMatchObject({ error: "unknown_company" });
+      }
+    }
+    for (const code of ["12345678", "abc"]) {
+      for (const [method, url] of [
+        ["POST", `/api/teacher/codes/${code}/archive`],
+        ["POST", `/api/teacher/codes/${code}/unarchive`],
+        ["DELETE", `/api/teacher/codes/${code}`],
+      ] as const) {
+        const res = await teacher(method, url);
+        expect(res.statusCode).toBe(404);
+        expect(res.json()).toMatchObject({ error: "unknown_code" });
+      }
+    }
+  });
+});
+
 describe("features", () => {
   async function setup(model = "iaas") {
     const code = await newCode();

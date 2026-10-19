@@ -1394,12 +1394,14 @@ fieldset > p {
 
 .table-scroll {
   overflow-x: auto;
+  /* Keeps visually hidden headers inside the scroll box, so they can't widen the page. */
+  position: relative;
 }
 
 /* Fixed columns, so every code's table lines up with the others. Scrolls sideways on a phone. */
 .live-table {
   width: 100%;
-  min-width: 40rem;
+  min-width: 46rem;
   table-layout: fixed;
   border-collapse: collapse;
   margin-top: 0.5rem;
@@ -1407,21 +1409,108 @@ fieldset > p {
 }
 
 .live-table th:nth-child(1) {
-  width: 27%;
+  width: 20%;
 }
 
 .live-table th:nth-child(2) {
-  width: 16%;
-}
-
-.live-table th:nth-child(3),
-.live-table th:nth-child(5),
-.live-table th:nth-child(6) {
   width: 10%;
 }
 
+.live-table th:nth-child(3) {
+  width: 8%;
+}
+
 .live-table th:nth-child(4) {
-  width: 13%;
+  width: 11%;
+}
+
+.live-table th:nth-child(5),
+.live-table th:nth-child(6) {
+  width: 9%;
+}
+
+.live-table th:nth-child(7) {
+  width: 12%;
+}
+
+.live-table th:nth-child(8) {
+  width: 21%;
+}
+
+.live-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.live-code-head {
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.live-code-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.live-table td.row-actions,
+.codes td.row-actions {
+  text-align: right;
+  white-space: nowrap;
+  overflow: visible;
+  padding-right: 0;
+}
+
+.codes td.mono {
+  white-space: nowrap;
+}
+
+/* On a phone the code's buttons stack and the date goes, so the table fits without scrolling. */
+@media (max-width: 30rem) {
+  .codes th:nth-child(3),
+  .codes td:nth-child(3) {
+    display: none;
+  }
+
+  .codes td.row-actions {
+    white-space: normal;
+  }
+
+  .codes td.row-actions button {
+    display: block;
+    margin: 0 0 0.35rem auto;
+  }
+}
+
+.row-actions button + button {
+  margin-left: 0.35rem;
+}
+
+button.small {
+  padding: 0.3rem 0.65rem;
+  font-size: 0.85rem;
+}
+
+/* Destructive actions: delete, never undone. */
+button.ghost.danger {
+  color: var(--warn);
+}
+
+button.danger-fill {
+  background: var(--warn);
+  border-color: var(--warn);
+  color: var(--surface);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .live-table th,
