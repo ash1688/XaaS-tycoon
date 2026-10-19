@@ -1,11 +1,13 @@
 import {
   defaultConfig,
+  MIGRATION_PHASES,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
   SPEND_CATEGORIES,
   STAFF_POOLS,
   type FeatureConfig,
   type GameConfig,
+  type MigrationPhase,
   type ModelId,
   type ProductTypeId,
   type SpendCategory,
@@ -33,12 +35,29 @@ export interface FeatureProgress {
   progress: number;
 }
 
+/**
+ * A change of deployment model in progress. It moves through the configured phases a day at a time; the company
+ * stays on its current model (and is billed for it) until the last phase ends, then switches to the target.
+ */
+export interface Migration {
+  /** The model being moved to. The model being left is still the state's model. */
+  to: ModelId;
+  phase: MigrationPhase;
+  /** Days done in the current phase. */
+  phaseDaysDone: number;
+  /**
+   * Extra days added to the moving phase by an overrun. Always 0 for now.
+   * TODO(#10): roll a seeded overrun when the migration starts, and show it in the quote.
+   */
+  overrunDays: number;
+}
+
 /** A bankrupt game is over: it accepts no more actions or advances. */
 export type GameStatus = "playing" | "bankrupt";
 
 /** Plain, JSON-serialisable game state. The server stores it as-is. */
 export interface GameState {
-  version: 5;
+  version: 6;
   status: GameStatus;
   companyName: string;
   productType: ProductTypeId;
@@ -60,10 +79,19 @@ export interface GameState {
   spendByDay: DaySpend[];
   /** Features started or built, by feature id. */
   features: Record<string, FeatureProgress>;
+  /** The migration under way, or null if there isn't one. */
+  migration: Migration | null;
+  /** Migrations completed, for the end-of-game summary. */
+  migrations: number;
+}
+
+/** State saved before migration existed. */
+export interface GameStateV5 extends Omit<GameState, "version" | "migration" | "migrations"> {
+  version: 5;
 }
 
 /** State saved before features existed. */
-export interface GameStateV4 extends Omit<GameState, "version" | "features"> {
+export interface GameStateV4 extends Omit<GameStateV5, "version" | "features"> {
   version: 4;
 }
 
@@ -83,7 +111,7 @@ export interface GameStateV1 extends Omit<GameStateV2, "version" | StaffPool> {
 }
 
 /** Anything the server may have stored. Every Sim method accepts it and upgrades it first. */
-export type SavedState = GameState | GameStateV4 | GameStateV3 | GameStateV2 | GameStateV1;
+export type SavedState = GameState | GameStateV5 | GameStateV4 | GameStateV3 | GameStateV2 | GameStateV1;
 
 /** Something the player does between days. */
 export type Action =
@@ -92,7 +120,11 @@ export type Action =
   /** Starts building one of the product's features. One build at a time; not on SaaS. */
   | { type: "buildFeature"; feature: string }
   /** Buys one of the product's features as an add-on, active at once. SaaS only, with a configuration team. */
-  | { type: "buyAddon"; feature: string };
+  | { type: "buyAddon"; feature: string }
+  /** Moves one person from the other pool into this one. Any time, including during a migration. */
+  | { type: "moveStaff"; to: StaffPool }
+  /** Starts a migration to another model. One at a time; it runs in the background. */
+  | { type: "startMigration"; model: ModelId };
 
 export type FeatureStatus = "notStarted" | FeatureProgress["status"];
 
@@ -103,6 +135,19 @@ export interface FeatureView extends FeatureConfig {
   progress: number;
   /** Days until a build finishes at today's developers. Null unless building, or if there are no developers. */
   daysLeft: number | null;
+}
+
+/** Where a migration has got to, for the screen. */
+export interface MigrationView {
+  from: ModelId;
+  to: ModelId;
+  phase: MigrationPhase;
+  /** Days left in the current phase. */
+  phaseDaysLeft: number;
+  /** Days until the model switches. */
+  daysLeft: number;
+  /** Days the whole migration takes, overrun included. */
+  totalDays: number;
 }
 
 export interface NewGameParams {
@@ -118,7 +163,7 @@ export interface LogEntry {
   /** Set on every charge, and only on charges. */
   category?: SpendCategory;
   /** Set on entries that need to stand out, such as an outage or bankruptcy. */
-  kind?: "outage" | "bankrupt" | "feature";
+  kind?: "outage" | "bankrupt" | "feature" | "migration";
 }
 
 export interface DayLog {
@@ -165,6 +210,8 @@ export interface Sim {
   uptime(state: SavedState): number;
   /** The product's features, in config order, with each one's progress. */
   features(state: SavedState): FeatureView[];
+  /** The migration under way, or null. */
+  migration(state: SavedState): MigrationView | null;
 }
 
 export function isModelId(v: string): v is ModelId {
@@ -201,7 +248,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     if (!isProductTypeId(productType)) throw new SimError("unknown_product_type", "Pick a product type from the list.");
     if (!isModelId(model)) throw new SimError("unknown_model", "Pick a deployment model from the list.");
     const state: GameState = {
-      version: 5,
+      version: 6,
       status: "playing",
       companyName: name,
       productType,
@@ -215,6 +262,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       spend: noSpend(),
       spendByDay: [],
       features: {},
+      migration: null,
+      migrations: 0,
     };
     return settle(state, 1, upfrontEntries(model)).state;
   }
@@ -225,7 +274,13 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   }
 
   function load(saved: SavedState): GameState {
-    if (saved.version === 5) return saved;
+    if (saved.version === 6) return saved;
+    const v5 = saved.version === 5 ? saved : loadV4(saved);
+    // Games started before migration existed have never migrated.
+    return { ...v5, version: 6, migration: null, migrations: 0 };
+  }
+
+  function loadV4(saved: GameStateV4 | GameStateV3 | GameStateV2 | GameStateV1): GameStateV5 {
     const v4 = saved.version === 4 ? saved : loadV3(saved);
     // Games started before features existed have none built yet.
     return { ...v4, version: 5, features: {} };
@@ -263,6 +318,10 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         return startBuild(state, action.feature);
       case "buyAddon":
         return buyAddon(state, action.feature);
+      case "moveStaff":
+        return moveStaff(state, action.to);
+      case "startMigration":
+        return startMigration(state, action.model);
       default:
         throw new SimError("unknown_action", "That action isn't recognised.");
     }
@@ -275,6 +334,88 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       throw new SimError("no_staff", `You have no ${config.staff[pool].name.toLowerCase()} to let go.`);
     }
     return { ...state, [pool]: state[pool] - 1 };
+  }
+
+  function moveStaff(state: GameState, to: StaffPool): GameState {
+    if (!isStaffPool(to)) throw new SimError("unknown_pool", "Pick developers or ops.");
+    const from = STAFF_POOLS.find((pool) => pool !== to)!;
+    if (state[from] < 1) {
+      throw new SimError("no_staff", `You have no ${config.staff[from].name.toLowerCase()} to move.`);
+    }
+    return { ...state, [from]: state[from] - 1, [to]: state[to] + 1 };
+  }
+
+  function startMigration(state: GameState, to: string): GameState {
+    if (!isModelId(to)) throw new SimError("unknown_model", "Pick a deployment model from the list.");
+    if (state.migration) {
+      const { name } = config.models[state.migration.to];
+      throw new SimError("migration_running", `You're already migrating to ${name}. Finish that first.`);
+    }
+    if (to === state.model) throw new SimError("same_model", `You're already on ${config.models[to].name}.`);
+    return { ...state, migration: { to, phase: MIGRATION_PHASES[0], phaseDaysDone: 0, overrunDays: 0 } };
+  }
+
+  /** How long a phase of this migration takes: the configured days, plus any overrun on the moving phase. */
+  function phaseLength(m: Migration, phase: MigrationPhase): number {
+    return config.migration.phases[phase].days + (phase === "moving" ? m.overrunDays : 0);
+  }
+
+  function migration(saved: SavedState): MigrationView | null {
+    const state = load(saved);
+    const m = state.migration;
+    if (!m) return null;
+    const later = MIGRATION_PHASES.slice(MIGRATION_PHASES.indexOf(m.phase) + 1);
+    const phaseDaysLeft = phaseLength(m, m.phase) - m.phaseDaysDone;
+    const daysLeft = later.reduce((sum, p) => sum + phaseLength(m, p), phaseDaysLeft);
+    const totalDays = MIGRATION_PHASES.reduce((sum, p) => sum + phaseLength(m, p), 0);
+    return { from: state.model, to: m.to, phase: m.phase, phaseDaysLeft, daysLeft, totalDays };
+  }
+
+  /**
+   * A day's work on the migration, after the day has been played and billed on the current model. Moves to the next
+   * phase when one ends, logging it, and switches the model when the last one ends.
+   */
+  function migrationDay(state: GameState): { state: GameState; entries: LogEntry[] } {
+    const m = state.migration;
+    if (!m) return { state, entries: [] };
+    const toName = config.models[m.to].name;
+    const phaseDaysDone = m.phaseDaysDone + 1;
+    if (phaseDaysDone < phaseLength(m, m.phase)) {
+      return { state: { ...state, migration: { ...m, phaseDaysDone } }, entries: [] };
+    }
+    const done = config.migration.phases[m.phase].name;
+    const next = MIGRATION_PHASES[MIGRATION_PHASES.indexOf(m.phase) + 1];
+    if (next) {
+      const days = phaseLength(m, next);
+      const nextName = config.migration.phases[next].name;
+      const text = `Migration to ${toName}: ${done} done. ${nextName} next, ${days} day${days === 1 ? "" : "s"}.`;
+      return {
+        state: { ...state, migration: { ...m, phase: next, phaseDaysDone: 0 } },
+        entries: [{ text, cashDelta: 0, kind: "migration" }],
+      };
+    }
+    // TODO(#10): charge the exit penalty for the model being left here.
+    const switched: GameState = { ...state, model: m.to, migration: null, migrations: state.migrations + 1 };
+    const needed = opsNeeded(m.to);
+    const entries: LogEntry[] = [
+      {
+        text: `Migration complete: you're now on ${toName}, which needs ${needed} ops staff.`,
+        cashDelta: 0,
+        kind: "migration",
+      },
+    ];
+    // Add-ons belong to the SaaS provider, so they stop (and stop being billed) when you leave it. This is the
+    // minimum that keeps billing right. TODO(#11): make it the lock-in lesson, warning before the migration starts.
+    const lost = state.model === "saas" && m.to !== "saas" ? activeAddons(state) : [];
+    if (lost.length) {
+      const features = { ...state.features };
+      for (const f of lost) delete features[f.id];
+      switched.features = features;
+      const names = lost.map((f) => f.name).join(", ");
+      const text = `Add-ons left behind on SaaS: ${names}. Your developers can rebuild them.`;
+      entries.push({ text, cashDelta: 0, kind: "migration" });
+    }
+    return { state: switched, entries };
   }
 
   const featureList = (state: GameState) => config.productTypes[state.productType].features;
@@ -523,6 +664,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     // Developers work on the current build. A feature finished today helps growth from tomorrow.
     const build = buildDay(state);
 
+    // Billed on the current model until a migration completes. TODO(#10): during a migration, also bill the target
+    // model in full from its first day; the model being left is then billed pro rata up to the day you leave.
     const entries: LogEntry[] = [
       ...build.entries,
       ...infrastructureEntries(state.model, state.users),
@@ -547,7 +690,10 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       downtimeHours: state.downtimeHours + hoursDown,
       features: build.features,
     };
-    const settled = settle(played, day, entries);
+    // The migration moves on after the day is played and billed, so a model switch takes effect from tomorrow.
+    const migrated = migrationDay(played);
+    entries.push(...migrated.entries);
+    const settled = settle(migrated.state, day, entries);
     return { state: settled.state, log: [{ day, entries: settled.entries }] };
   }
 
@@ -579,5 +725,6 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     capacity,
     uptime,
     features,
+    migration,
   };
 }

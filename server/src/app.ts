@@ -6,6 +6,7 @@ import fastifyStatic from "@fastify/static";
 import { and, count, desc, eq } from "drizzle-orm";
 import {
   createSim,
+  MIGRATION_PHASES,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
   responsibilityStack,
@@ -86,6 +87,8 @@ export async function buildApp(opts: AppOptions) {
       monthlyAddonCost: sim.monthlyAddonCost(state),
       spend: state.spend,
       features: sim.features(state),
+      migration: sim.migration(state),
+      migrations: state.migrations,
     };
   }
 
@@ -131,6 +134,7 @@ export async function buildApp(opts: AppOptions) {
         return { id, name, personName, dayRate };
       }),
       minConfigDevelopers: config.addons.minConfigDevelopers,
+      migrationPhases: MIGRATION_PHASES.map((id) => ({ id, ...config.migration.phases[id] })),
     };
   });
 
@@ -192,14 +196,21 @@ export async function buildApp(opts: AppOptions) {
           type: "object",
           required: ["type"],
           properties: {
-            type: { enum: ["hire", "letGo", "buildFeature", "buyAddon"] },
+            type: { enum: ["hire", "letGo", "buildFeature", "buyAddon", "moveStaff", "startMigration"] },
             pool: { enum: [...STAFF_POOLS] },
             // Checked against the product's list by the sim.
             feature: { type: "string", maxLength: 64 },
+            // moveStaff: the pool one person moves into, from the other.
+            to: { enum: [...STAFF_POOLS] },
+            // startMigration: the model to move to.
+            model: { enum: [...MODEL_IDS] },
           },
-          if: { properties: { type: { enum: ["buildFeature", "buyAddon"] } } },
-          then: { required: ["feature"] },
-          else: { required: ["pool"] },
+          allOf: [
+            { if: { properties: { type: { enum: ["hire", "letGo"] } } }, then: { required: ["pool"] } },
+            { if: { properties: { type: { enum: ["buildFeature", "buyAddon"] } } }, then: { required: ["feature"] } },
+            { if: { properties: { type: { const: "moveStaff" } } }, then: { required: ["to"] } },
+            { if: { properties: { type: { const: "startMigration" } } }, then: { required: ["model"] } },
+          ],
           additionalProperties: false,
         },
       },

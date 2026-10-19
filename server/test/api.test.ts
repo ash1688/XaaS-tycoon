@@ -623,7 +623,135 @@ describe("SaaS add-ons", () => {
   });
 });
 
+describe("migration", () => {
+  async function setup() {
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
+    const next = async () => (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    return { code, company, url, act, next };
+  }
+  const toPaas: ActionBody = { type: "startMigration", model: "paas" };
+
+  it("starts with no migration and none made", async () => {
+    const { company } = await setup();
+    expect(company).toMatchObject({ migration: null, migrations: 0 });
+  });
+
+  it("starts a migration, shows its phase and days left, and switches model when it completes", async () => {
+    const { url, act, next } = await setup();
+    const started = await act(toPaas);
+    expect(started.statusCode).toBe(200);
+    expect(started.json<CompanyView>()).toMatchObject({
+      day: 1,
+      cash: 1000,
+      model: "iaas",
+      migration: { from: "iaas", to: "paas", phase: "planning", phaseDaysLeft: 5, daysLeft: 14, totalDays: 14 },
+    });
+    // Kept across reloads.
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>().migration).toMatchObject({ to: "paas" });
+
+    let body: ContinueResult | undefined;
+    for (let day = 1; day <= 5; day++) body = await next();
+    expect(body!.company.migration).toMatchObject({ phase: "testing", phaseDaysLeft: 2, daysLeft: 9 });
+    expect(body!.log[0]!.entries).toContainEqual(
+      expect.objectContaining({ kind: "migration", text: expect.stringContaining("Planning done") }),
+    );
+    for (let day = 6; day <= 13; day++) body = await next();
+    expect(body!.company).toMatchObject({ model: "iaas", opsNeeded: 2, migration: { phase: "moving", daysLeft: 1 } });
+
+    body = await next();
+    expect(body.company).toMatchObject({ day: 15, model: "paas", opsNeeded: 1, migration: null, migrations: 1 });
+    expect(body.company.monthlyInfrastructureCost).toBe(defaultConfig.models.paas.monthlyCost);
+    expect(body.log[0]!.entries).toContainEqual(
+      expect.objectContaining({ kind: "migration", text: expect.stringContaining("Migration complete") }),
+    );
+    // The model column follows, for the dashboard.
+    const [row] = await testDb.db.select().from(companies).where(eq(companies.model, "paas"));
+    expect(row?.day).toBe(15);
+  });
+
+  it("rejects a second start while one is running, and the current model, with 400", async () => {
+    const { url, act, next } = await setup();
+    await act(toPaas);
+    await next();
+    const again = await act({ type: "startMigration", model: "saas" });
+    expect(again.statusCode).toBe(400);
+    expect(again.json()).toMatchObject({ error: "migration_running" });
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>().migration).toMatchObject({
+      to: "paas",
+      daysLeft: 13,
+    });
+
+    const { act: actFresh } = await setup();
+    const same = await actFresh({ type: "startMigration", model: "iaas" });
+    expect(same.statusCode).toBe(400);
+    expect(same.json()).toMatchObject({ error: "same_model" });
+  });
+
+  it("moves staff between pools, mid-migration too", async () => {
+    const { act } = await setup();
+    await act({ type: "hire", pool: "developers" });
+    await act(toPaas);
+    const moved = await act({ type: "moveStaff", to: "ops" });
+    expect(moved.statusCode).toBe(200);
+    expect(moved.json<CompanyView>()).toMatchObject({ developers: 0, ops: 1, migration: { daysLeft: 14 } });
+    const empty = await act({ type: "moveStaff", to: "ops" });
+    expect(empty.statusCode).toBe(400);
+    expect(empty.json()).toMatchObject({ error: "no_staff" });
+  });
+
+  it("validates the body", async () => {
+    const { act } = await setup();
+    const bad = [
+      { type: "startMigration" },
+      { type: "startMigration", model: "mainframe" },
+      { type: "startMigration", pool: "ops" },
+      { type: "moveStaff" },
+      { type: "moveStaff", to: "sales" },
+      { type: "moveStaff", pool: "ops" },
+    ];
+    for (const payload of bad) expect((await act(payload)).statusCode).toBe(400);
+    // Extra fields are stripped, so a client can't skip ahead.
+    const res = await act({ ...toPaas, phase: "moving", phaseDaysDone: 6 });
+    expect(res.json<CompanyView>().migration).toMatchObject({ phase: "planning", daysLeft: 14 });
+  });
+
+  it("returns 404 for another code's company", async () => {
+    const { company, url } = await setup();
+    const other = await newCode();
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/codes/${other}/companies/${company.id}/actions`,
+      payload: toPaas,
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ error: "unknown_company" });
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>().migration).toBeNull();
+  });
+
+  it("shows a game saved before migration existed with none running", async () => {
+    const { company, url } = await setup();
+    const [row] = await testDb.db.select().from(companies).where(eq(companies.id, company.id));
+    const { migration: _m, migrations: _n, ...v5 } = { ...row!.state, version: 5 };
+    await testDb.db.execute(sql`update companies set state = ${JSON.stringify(v5)}::jsonb where id = ${company.id}`);
+    const loaded = (await app.inject({ method: "GET", url })).json<CompanyView>();
+    expect(loaded).toMatchObject({ migration: null, migrations: 0 });
+    expect((await app.inject({ method: "POST", url: `${url}/actions`, payload: toPaas })).statusCode).toBe(200);
+  });
+});
+
 describe("meta", () => {
+  it("includes the migration phases and their lengths", async () => {
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.migrationPhases.map((p) => [p.id, p.days])).toEqual([
+      ["planning", 5],
+      ["testing", 2],
+      ["moving", 7],
+    ]);
+  });
+
   it("includes add-on prices per user and the configuration team needed", async () => {
     const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
     const social = meta.productTypes.find((p) => p.id === "social")!;

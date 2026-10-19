@@ -3,6 +3,8 @@ import type {
   Action,
   DayLog,
   FeatureView,
+  MigrationPhase,
+  MigrationView,
   ModelComparison,
   ModelId,
   ProductTypeId,
@@ -42,6 +44,8 @@ export interface MetaView {
   staff: { id: StaffPool; name: string; personName: string; dayRate: number }[];
   /** Developers a SaaS company needs to configure add-ons before it can buy one. */
   minConfigDevelopers: number;
+  /** A migration's phases in order, and how long each takes before any overrun. */
+  migrationPhases: { id: MigrationPhase; name: string; days: number }[];
 }
 
 export interface CompanyView {
@@ -76,6 +80,10 @@ export interface CompanyView {
   spend: Spend;
   /** The product's features, with each one's status (built, building or a SaaS add-on) and build progress. */
   features: FeatureView[];
+  /** The migration under way (target, phase, days left in the phase and overall), or null. */
+  migration: MigrationView | null;
+  /** Migrations completed so far. */
+  migrations: number;
 }
 
 

@@ -9,6 +9,10 @@ export type ProductTypeId = (typeof PRODUCT_TYPE_IDS)[number];
 export const STAFF_POOLS = ["developers", "ops"] as const;
 export type StaffPool = (typeof STAFF_POOLS)[number];
 
+/** A migration runs through these phases in order. Saved in game state, so don't rename. */
+export const MIGRATION_PHASES = ["planning", "testing", "moving"] as const;
+export type MigrationPhase = (typeof MIGRATION_PHASES)[number];
+
 /** Every charge is tagged with one of these, so students can see where their money goes. */
 export const SPEND_CATEGORIES = ["staff", "infrastructure", "addons"] as const;
 export type SpendCategory = (typeof SPEND_CATEGORIES)[number];
@@ -139,6 +143,21 @@ export interface AddonConfig {
   minConfigDevelopers: number;
 }
 
+export interface MigrationPhaseConfig {
+  /** Shown on screen: "Moving infrastructure". */
+  name: string;
+  /** Days the phase takes before any overrun. */
+  days: number;
+}
+
+/**
+ * Changing deployment model. The same phases and lengths in every direction. It runs in the background: staff are
+ * never tied up, and the model switches when the last phase ends.
+ */
+export interface MigrationConfig {
+  phases: Record<MigrationPhase, MigrationPhaseConfig>;
+}
+
 export interface GameConfig {
   startingCash: number;
   finalDay: number;
@@ -150,6 +169,7 @@ export interface GameConfig {
   outage: OutageConfig;
   billing: BillingConfig;
   addons: AddonConfig;
+  migration: MigrationConfig;
 }
 
 export const defaultConfig: GameConfig = {
@@ -348,4 +368,11 @@ export const defaultConfig: GameConfig = {
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25 },
   billing: { daysPerMonth: 30 },
   addons: { minConfigDevelopers: 2 },
+  migration: {
+    phases: {
+      planning: { name: "Planning", days: 5 },
+      testing: { name: "Testing", days: 2 },
+      moving: { name: "Moving infrastructure", days: 7 },
+    },
+  },
 };

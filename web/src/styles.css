@@ -782,3 +782,128 @@ fieldset > p {
 .warn-text {
   color: var(--warn);
 }
+
+.day-log li.event.migration {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.day-log li.event.migration .badge {
+  color: var(--accent);
+}
+
+.move-staff {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.95rem;
+}
+
+.move-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.migration-route {
+  margin: 0.5rem 0 0.75rem;
+}
+
+.phases {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.75rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.5rem;
+}
+
+.phases li {
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.phases li.current {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.phases li.done {
+  background: var(--provider-soft);
+}
+
+.phases li.done .muted {
+  color: var(--provider);
+}
+
+.migration-status {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+  margin: 0.5rem 0;
+}
+
+.migration-note {
+  margin: 0.5rem 0 0.75rem;
+}
+
+.confirm {
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  border: 2px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent-soft);
+}
+
+.confirm h3 {
+  margin: 0 0 0.5rem;
+}
+
+.confirm ul {
+  margin: 0 0 0.75rem;
+  padding-left: 1.2rem;
+}
+
+.confirm-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.plan-migration {
+  margin-top: 0.75rem;
+}
+
+.stack-note {
+  margin: 0 0 0.75rem;
+}
+
+.changed-note {
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  border-left: 4px solid var(--accent);
+}
+
+.resp-stack li.changed {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.resp-stack .owner {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+
+.resp-stack .was {
+  color: var(--muted);
+}
