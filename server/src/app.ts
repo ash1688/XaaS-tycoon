@@ -22,6 +22,7 @@ import type {
   ActionBody,
   ApiError,
   CodeView,
+  CompanyStatus,
   CompanyView,
   ContinueResult,
   MetaView,
@@ -39,12 +40,16 @@ export interface AppOptions {
   /** Built web client to serve. Skipped if missing (dev uses the Vite server). */
   webDist?: string;
   logger?: boolean;
+  /** Companies still being played that one login code can have at once. Defaults to 3. */
+  maxActiveCompanies?: number;
 }
+
+export const DEFAULT_MAX_ACTIVE_COMPANIES = 3;
 
 const CODE_PATTERN = /^\d{8}$/;
 
-/** SimError codes for a game that has ended. */
-const GAME_OVER = new Set(["bankrupt", "finished"]);
+/** SimError codes for a game that has ended, or that the student retired. */
+const GAME_OVER = new Set(["bankrupt", "finished", "retired"]);
 
 type CompanyRow = typeof companies.$inferSelect;
 
@@ -55,6 +60,7 @@ function sendError(reply: FastifyReply, status: number, error: string, message: 
 export async function buildApp(opts: AppOptions) {
   const { db } = opts;
   const sim = opts.sim ?? createSim();
+  const maxActiveCompanies = opts.maxActiveCompanies ?? DEFAULT_MAX_ACTIVE_COMPANIES;
   const app = Fastify({ logger: opts.logger ?? false });
 
   await app.register(cookie, { secret: opts.sessionSecret });
@@ -78,7 +84,7 @@ export async function buildApp(opts: AppOptions) {
       day: state.day,
       finalDay: sim.config.finalDay,
       cash: state.cash,
-      status: state.status === "playing" ? row.status : state.status,
+      status: (state.status === "playing" ? row.status : state.status) as CompanyStatus,
       developers: state.developers,
       ops: state.ops,
       opsNeeded: sim.opsNeeded(state.model),
@@ -122,6 +128,7 @@ export async function buildApp(opts: AppOptions) {
       startingCash: config.startingCash,
       finalDay: config.finalDay,
       maxCompanyNameLength: config.maxCompanyNameLength,
+      maxActiveCompanies,
       productTypes: PRODUCT_TYPE_IDS.map((id) => {
         const { name, profile, features } = config.productTypes[id];
         return {
@@ -174,12 +181,31 @@ export async function buildApp(opts: AppOptions) {
       const code = await findCode(req.params.code);
       if (!code) return sendError(reply, 404, "unknown_code", "That code wasn't recognised. Check it with your teacher.");
       const { name, productType, model } = req.body;
-      const state = sim.newGame({ companyName: name, productType, model, seed: randomInt(2 ** 31) });
-      const [row] = await db
-        .insert(companies)
-        .values({ loginCode: code.code, name: state.companyName, productType: state.productType, ...columnsFor(state) })
-        .returning();
-      return reply.code(201).send(view(row!));
+      // Locks the code so two creates at once can't both see room under the limit. Only games still being played
+      // count: finished, bankrupt and retired ones are history.
+      const row = await db.transaction(async (tx) => {
+        await tx.select().from(loginCodes).where(eq(loginCodes.code, code.code)).for("update");
+        const [counted] = await tx
+          .select({ active: count() })
+          .from(companies)
+          .where(and(eq(companies.loginCode, code.code), eq(companies.status, "active")));
+        if (counted!.active >= maxActiveCompanies) return undefined;
+        const state = sim.newGame({ companyName: name, productType, model, seed: randomInt(2 ** 31) });
+        const [inserted] = await tx
+          .insert(companies)
+          .values({ loginCode: code.code, name: state.companyName, productType: state.productType, ...columnsFor(state) })
+          .returning();
+        return inserted!;
+      });
+      if (!row) {
+        return sendError(
+          reply,
+          409,
+          "too_many_active",
+          `You already have ${maxActiveCompanies} active companies, the most you can have at once. Retire one to start another.`,
+        );
+      }
+      return reply.code(201).send(view(row));
     },
   );
 
@@ -257,6 +283,30 @@ export async function buildApp(opts: AppOptions) {
     },
   );
 
+  // Moves an active company to history: it can still be viewed, with its summary, but not played.
+  app.post<{ Params: { code: string; id: string } }>("/api/codes/:code/companies/:id/retire", async (req, reply) => {
+    const { code, id } = req.params;
+    if (!UUID_PATTERN.test(id) || !(await findCode(code))) {
+      return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+    }
+    // Locks the row so a Continue in another tab can't finish the game while it's being retired.
+    const row = await db.transaction(async (tx) => {
+      const [current] = await tx.select().from(companies).where(companyWhere(code, id)).for("update");
+      if (current?.status !== "active") return current;
+      const [updated] = await tx
+        .update(companies)
+        .set({ status: "retired", updatedAt: new Date() })
+        .where(eq(companies.id, current.id))
+        .returning();
+      return updated;
+    });
+    if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+    if (row.status !== "retired") {
+      return sendError(reply, 409, "not_active", `${row.name} has already ended, so it's in your history.`);
+    }
+    return view(row);
+  });
+
   /**
    * Runs a sim step against a company's saved state and stores the result.
    * Locks the row so two tabs can't both change it from the same starting point.
@@ -271,6 +321,9 @@ export async function buildApp(opts: AppOptions) {
     return db.transaction(async (tx) => {
       const [row] = await tx.select().from(companies).where(companyWhere(code, id)).for("update");
       if (!row) return undefined;
+      if (row.status === "retired") {
+        throw new SimError("retired", `${row.name} was retired, so this game is over. Start a new company to play again.`);
+      }
       const result = step(sim.load(row.state));
       const [updated] = await tx
         .update(companies)

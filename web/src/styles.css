@@ -237,6 +237,52 @@ fieldset > p {
   border-color: var(--accent);
 }
 
+.company-item-main {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.company-item-main .company-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.company-item-main button {
+  align-self: center;
+  flex-shrink: 0;
+}
+
+.retire-confirm {
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  border: 2px solid var(--warn);
+  border-radius: 10px;
+  background: var(--warn-soft);
+}
+
+.retire-confirm p {
+  margin: 0 0 0.5rem;
+}
+
+.retire-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.retired-badge {
+  color: var(--muted);
+}
+
+.limit-note h2 {
+  margin-top: 0;
+}
+
+.limit-note p {
+  margin-bottom: 0;
+}
+
 .stats {
   display: flex;
   flex-wrap: wrap;
@@ -1185,6 +1231,12 @@ fieldset > p {
 
 .done-badge {
   color: var(--pos);
+}
+
+.game-end.retired {
+  border-color: var(--border);
+  background: var(--bg);
+  color: var(--muted);
 }
 
 .day-log li.event.finished {

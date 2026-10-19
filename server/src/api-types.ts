@@ -26,6 +26,8 @@ export interface MetaView {
   startingCash: number;
   finalDay: number;
   maxCompanyNameLength: number;
+  /** Companies still being played (status "active") that one login code can have at once. */
+  maxActiveCompanies: number;
   productTypes: {
     id: ProductTypeId;
     name: string;
@@ -52,6 +54,13 @@ export interface MetaView {
   migrationPhases: { id: MigrationPhase; name: string; days: number }[];
 }
 
+/**
+ * Where a game is. Only "active" games are still being played and count towards the code's limit; the others are its
+ * history. "retired" is a game the student stopped playing, "bankrupt" one that ran out of cash, and "finished" one
+ * that played the final day. All of them can still be viewed, with their summary.
+ */
+export type CompanyStatus = "active" | "retired" | "bankrupt" | "finished";
+
 export interface CompanyView {
   id: string;
   name: string;
@@ -62,9 +71,9 @@ export interface CompanyView {
   cash: number;
   /**
    * "active" while playing. Once the game is over it rejects Continue and actions, and shows its summary: "bankrupt"
-   * if cash went below zero, or "finished" if it played the final day.
+   * if cash went below zero, "finished" if it played the final day, or "retired" if the student retired it.
    */
-  status: string;
+  status: CompanyStatus;
   developers: number;
   ops: number;
   /** Ops staff the current model needs. */
