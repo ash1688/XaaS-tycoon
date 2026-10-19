@@ -21,12 +21,18 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await student.getByLabel("Login code").fill(code!);
   await student.getByRole("button", { name: "Go" }).click();
   await student.getByLabel("Company name").fill("Playwright Ltd");
+  await expect(student.getByRole("table")).toContainText("Ops staff needed");
   await student.getByText("Social network").click();
-  await student.getByText("Rent VMs (IaaS)").click();
+  await student.locator("label.choice", { hasText: "Rent VMs (IaaS)" }).click();
   await student.getByRole("button", { name: "Start company" }).click();
 
   await expect(student.getByRole("heading", { name: "Playwright Ltd" })).toBeVisible();
   await expect(student.getByTestId("day")).toContainText("1 of 180");
+  await expect(student.getByText("You're the customer of the layer below.")).toBeVisible();
+  const stack = student.getByTestId("stack");
+  await expect(stack.locator('[data-layer="os"]')).toContainText("OS and patching");
+  await expect(stack.locator('[data-layer="os"]')).toContainText("You");
+  await expect(stack.locator('[data-layer="hardware"]')).toContainText("Provider");
   const startCash = await student.getByTestId("cash").textContent();
 
   await student.getByRole("button", { name: "Continue" }).click();

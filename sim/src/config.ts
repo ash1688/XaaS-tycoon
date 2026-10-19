@@ -6,10 +6,19 @@ export type ModelId = (typeof MODEL_IDS)[number];
 export const PRODUCT_TYPE_IDS = ["ecommerce", "social", "video"] as const;
 export type ProductTypeId = (typeof PRODUCT_TYPE_IDS)[number];
 
+/** How a model compares, shown in the table when choosing one. Words, not numbers, for now. */
+export interface ModelComparison {
+  upfrontCost: string;
+  monthlyCost: string;
+  opsNeeded: string;
+  control: string;
+}
+
 export interface ModelConfig {
   name: string;
   /** One-line description shown when choosing a model. */
   blurb: string;
+  comparison: ModelComparison;
   /** Placeholder running cost per day until the full ledger lands. */
   dailyCost: number;
 }
@@ -33,12 +42,28 @@ export const defaultConfig: GameConfig = {
   finalDay: 180,
   maxCompanyNameLength: 40,
   models: {
-    onprem: { name: "Own servers (on-prem)", blurb: "Buy and run your own kit.", dailyCost: 150 },
-    iaas: { name: "Rent VMs (IaaS)", blurb: "Rent virtual machines and run everything on them.", dailyCost: 200 },
-    paas: { name: "Deploy to a platform (PaaS)", blurb: "Hand over your code; the platform runs it.", dailyCost: 250 },
+    onprem: {
+      name: "Own servers (on-prem)",
+      blurb: "Buy and run your own kit.",
+      comparison: { upfrontCost: "High", monthlyCost: "Low–medium", opsNeeded: "High", control: "Full" },
+      dailyCost: 150,
+    },
+    iaas: {
+      name: "Rent VMs (IaaS)",
+      blurb: "Rent virtual machines and run everything on them.",
+      comparison: { upfrontCost: "Low", monthlyCost: "Medium", opsNeeded: "Medium", control: "High" },
+      dailyCost: 200,
+    },
+    paas: {
+      name: "Deploy to a platform (PaaS)",
+      blurb: "Hand over your code; the platform runs it.",
+      comparison: { upfrontCost: "Low", monthlyCost: "Medium–high", opsNeeded: "Low", control: "Medium" },
+      dailyCost: 250,
+    },
     saas: {
       name: "Build on a SaaS platform (SaaS)",
       blurb: "Build inside someone else's SaaS platform, like a shop on Shopify.",
+      comparison: { upfrontCost: "Low", monthlyCost: "Per user, plus add-ons", opsNeeded: "None", control: "Low" },
       dailyCost: 120,
     },
   },

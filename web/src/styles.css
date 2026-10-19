@@ -10,6 +10,13 @@
   --error: #b42318;
   --pos: #137a3a;
   --neg: #b42318;
+  /* Responsibility stack owners */
+  --you: #c2410c;
+  --you-soft: #fff1e6;
+  --provider: #0f766e;
+  --provider-soft: #e3f6f3;
+  --shared: #7c3aed;
+  --shared-soft: #f1eafe;
   color-scheme: light;
 }
 
@@ -26,6 +33,12 @@
     --error: #ff8a80;
     --pos: #6fd39a;
     --neg: #ff8a80;
+    --you: #fb923c;
+    --you-soft: #3a2416;
+    --provider: #2dd4bf;
+    --provider-soft: #12302d;
+    --shared: #b794f6;
+    --shared-soft: #2a2140;
     color-scheme: dark;
   }
 }
@@ -151,6 +164,7 @@ fieldset {
   border: 0;
   padding: 0;
   margin: 0.5rem 0 0;
+  min-width: 0; /* let wide tables scroll instead of stretching the page */
 }
 
 legend {
@@ -316,4 +330,109 @@ fieldset > p {
 .back {
   text-align: left;
   margin: 0 0 1rem;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  margin-bottom: 0.75rem;
+}
+
+.compare {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.compare th,
+.compare td {
+  text-align: left;
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.compare thead th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.compare tbody th {
+  font-weight: 600;
+}
+
+.compare tr.on {
+  background: var(--accent-soft);
+}
+
+.teaching-line {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border-left: 4px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0 8px 8px 0;
+  font-weight: 600;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.75rem;
+}
+
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.swatch {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 4px;
+  border: 2px solid;
+}
+
+.resp-stack {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.resp-stack li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.6rem 0.9rem;
+  border-left: 6px solid;
+  border-radius: 8px;
+}
+
+.you {
+  --owner: var(--you);
+  --owner-soft: var(--you-soft);
+}
+
+.provider {
+  --owner: var(--provider);
+  --owner-soft: var(--provider-soft);
+}
+
+.shared {
+  --owner: var(--shared);
+  --owner-soft: var(--shared-soft);
+}
+
+.resp-stack li,
+.swatch {
+  border-color: var(--owner);
+  background: var(--owner-soft);
+}
+
+.resp-stack strong {
+  color: var(--owner);
 }

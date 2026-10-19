@@ -90,6 +90,28 @@ async function start() {
         <fieldset>
           <legend>How will you deploy it?</legend>
           <p class="muted">You can change this later by migrating.</p>
+          <div class="table-scroll">
+            <table class="compare">
+              <thead>
+                <tr>
+                  <th scope="col">Model</th>
+                  <th scope="col">Upfront cost</th>
+                  <th scope="col">Monthly cost</th>
+                  <th scope="col">Ops staff needed</th>
+                  <th scope="col">Control</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="m in meta.models" :key="m.id" :class="{ on: model === m.id }">
+                  <th scope="row">{{ m.name }}</th>
+                  <td>{{ m.comparison.upfrontCost }}</td>
+                  <td>{{ m.comparison.monthlyCost }}</td>
+                  <td>{{ m.comparison.opsNeeded }}</td>
+                  <td>{{ m.comparison.control }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
           <div class="choices">
             <label v-for="m in meta.models" :key="m.id" class="choice" :class="{ on: model === m.id }">
               <input type="radio" name="model" :value="m.id" v-model="model" />
