@@ -1344,3 +1344,127 @@ fieldset > p {
 .summary .stat {
   min-width: 0;
 }
+
+/* Teacher's live dashboard */
+
+.staff-head {
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.staff-head h1 {
+  margin: 0;
+}
+
+.live-head {
+  flex-wrap: wrap;
+}
+
+.live-head h2 {
+  margin: 0;
+}
+
+.live-note {
+  margin: 0.5rem 0 0;
+}
+
+.windows {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.windows button {
+  padding: 0.4rem 0.8rem;
+}
+
+.windows button.on {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.live-code {
+  margin-top: 1.5rem;
+}
+
+.live-code-head h3 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+/* Fixed columns, so every code's table lines up with the others. Scrolls sideways on a phone. */
+.live-table {
+  width: 100%;
+  min-width: 40rem;
+  table-layout: fixed;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-table th:nth-child(1) {
+  width: 27%;
+}
+
+.live-table th:nth-child(2) {
+  width: 16%;
+}
+
+.live-table th:nth-child(3),
+.live-table th:nth-child(5),
+.live-table th:nth-child(6) {
+  width: 10%;
+}
+
+.live-table th:nth-child(4) {
+  width: 13%;
+}
+
+.live-table th,
+.live-table td {
+  text-align: left;
+  padding: 0.55rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-table th {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+/* The company stays in view when the table scrolls sideways on a phone. */
+.live-table th:first-child,
+.live-table td:first-child {
+  position: sticky;
+  left: 0;
+  background: var(--surface);
+}
+
+.live-table .num {
+  text-align: right;
+}
+
+.live-table td small {
+  display: block;
+  font-size: 0.8rem;
+}
+
+.live-name {
+  font-weight: 700;
+}
+
+.migrating-badge {
+  color: var(--accent);
+  margin-left: 0.25rem;
+}
+
+.staff-company-code {
+  margin: 0 0 1rem;
+}

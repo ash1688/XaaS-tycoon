@@ -148,3 +148,37 @@ export interface TeacherCodeView {
   createdAt: string;
   companyCount: number;
 }
+
+/** One company on the teacher's live dashboard: enough to spot who's struggling, without its full state. */
+export interface TeacherGameView {
+  id: string;
+  name: string;
+  productType: ProductTypeId;
+  model: ModelId;
+  /** The model a migration under way is moving to, or null. */
+  migratingTo: ModelId | null;
+  day: number;
+  finalDay: number;
+  cash: number;
+  users: number;
+  /** Percentage of time up across every day played. */
+  uptime: number;
+  status: CompanyStatus;
+  updatedAt: string;
+}
+
+/**
+ * GET /api/teacher/games?hours=: companies played in the last `hours` hours, grouped by login code. Codes newest first,
+ * and each code's companies in the order they were started, so rows stay put as the dashboard refreshes.
+ */
+export interface TeacherGamesView {
+  hours: number;
+  codes: { code: string; companies: TeacherGameView[] }[];
+}
+
+/** GET /api/teacher/companies/:id/summary: any company's summary, with what the teacher needs around it. */
+export interface TeacherSummaryView {
+  code: string;
+  status: CompanyStatus;
+  summary: SummaryView;
+}
