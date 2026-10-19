@@ -25,6 +25,7 @@ import type {
   CompanyView,
   ContinueResult,
   MetaView,
+  MigrationQuoteView,
   NewCompanyBody,
   TeacherCodeView,
 } from "./api-types.ts";
@@ -181,6 +182,25 @@ export async function buildApp(opts: AppOptions) {
     if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
     return view(row);
   });
+
+  // What migrating to the target would cost, for the confirm step. Changes nothing.
+  app.get<{ Params: { code: string; id: string }; Querystring: { target: string } }>(
+    "/api/codes/:code/companies/:id/migration-quote",
+    {
+      schema: {
+        querystring: {
+          type: "object",
+          required: ["target"],
+          properties: { target: { enum: [...MODEL_IDS] } },
+        },
+      },
+    },
+    async (req, reply) => {
+      const row = await findCompany(req.params.code, req.params.id);
+      if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      return sim.migrationQuote(row.state, req.query.target) satisfies MigrationQuoteView;
+    },
+  );
 
   app.post<{ Params: { code: string; id: string } }>("/api/codes/:code/companies/:id/continue", async (req, reply) => {
     const result = await updateCompany(req.params.code, req.params.id, (state) => sim.advance(state, 1));

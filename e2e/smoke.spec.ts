@@ -207,13 +207,25 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
   await expect(panel).toContainText("0 completed");
   await expect(stack.locator('[data-layer="os"]')).toContainText("You");
 
-  // Pick a target, then confirm before anything starts.
+  // Pick a target, see the quote, then confirm before anything starts.
   await expect(student.getByRole("button", { name: "Plan migration" })).toBeDisabled();
   await panel.locator("label.choice", { hasText: "Deploy to a platform (PaaS)" }).click();
   await student.getByRole("button", { name: "Plan migration" }).click();
   await expect(panel.getByRole("heading", { name: "Migrate to Deploy to a platform (PaaS)?" })).toBeVisible();
-  await expect(panel).toContainText("Takes 14 days. You switch on day 15.");
+  const quote = student.getByTestId("migration-quote");
+  await expect(quote).toContainText("You switch on day 15");
+  await expect(student.getByTestId("quote-days")).toHaveText("14 days");
+  // Default config: PaaS is £1,000 upfront and £300 a day; IaaS £200 a day and £3,000 to leave.
+  await expect(student.getByTestId("quote-upfront")).toHaveText("£1,000");
+  await expect(student.getByTestId("quote-double")).toHaveText("£4,200");
+  await expect(student.getByTestId("quote-pro-rata")).toHaveText("£2,800");
+  await expect(student.getByTestId("quote-exit")).toHaveText("£3,000");
+  await expect(student.getByTestId("quote-total")).toHaveText("£11,000");
+  await expect(student.getByTestId("quote-overrun")).toContainText("chance of 2–5 extra days");
+  // Nothing has started or been charged yet.
+  await expect(student.getByTestId("spend-infrastructure")).toHaveText("£2,000");
   await student.getByRole("button", { name: "Start migration" }).click();
+  await expect(quote).toHaveCount(0);
 
   await expect(student.getByTestId("migration-target")).toHaveText("Deploy to a platform (PaaS)");
   await expect(student.getByTestId("migration-phase")).toHaveText("Planning");
@@ -237,14 +249,52 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
   await expect(student.getByTestId("migration-days-left")).toHaveText("9 days");
   await expect(student.getByTestId("day-log")).toContainText("Planning done. Testing next, 2 days.");
   await expect(panel.locator('[data-phase="planning"]')).toContainText("Done");
-  // Still on IaaS, and billed for it, until the move completes.
+  // Still on IaaS, and billed for it, until the move completes; PaaS is billed in full on top.
   await expect(student.getByTestId("ops-needed")).toContainText("needs 2 ops staff");
+  const infrastructure = student.getByTestId("day-log").locator('[data-category="infrastructure"]');
+  await expect(infrastructure).toContainText("Rent VMs (IaaS) running costs");
+  await expect(infrastructure).toContainText("Double billing: Deploy to a platform (PaaS) running costs");
 
-  for (let day = 7; day <= 15; day++) await continueTo(day);
+  // Moving starts on day 8. Seeds are random here, so it may overrun: if so, the panel shows the extra days.
+  for (let day = 7; day <= 8; day++) await continueTo(day);
+  const daysLeft = Number((await student.getByTestId("migration-days-left").textContent())!.split(" ")[0]);
+  if (daysLeft > 7) await expect(student.getByTestId("migration-overrun")).toContainText(`${daysLeft - 7} days`);
+  else await expect(student.getByTestId("migration-overrun")).toHaveCount(0);
+  for (let day = 9; day <= 8 + daysLeft; day++) await continueTo(day);
   await expect(student.getByTestId("day-log")).toContainText("Migration complete");
   await expect(panel).toContainText("1 completed");
   await expect(student.getByTestId("ops-needed")).toContainText("needs 1 ops staff");
   await expect(stack.locator('[data-layer="os"]')).toContainText("Provider");
   await expect(stack.locator('[data-layer="os"]')).toContainText("was You");
   await expect(student.getByTestId("model-costs")).toContainText("£9,000 a month");
+  await expect(student.getByTestId("day-log")).toContainText("Exit penalty: leaving Rent VMs (IaaS)");
+});
+
+test("a migration that overruns shows the extra days", async ({ browser, request }) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  await teacher.getByRole("button", { name: "Create code" }).click();
+  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+
+  const created = await request.post(`/api/codes/${code}/companies`, {
+    data: { name: "Slippers Ltd", productType: "social", model: "iaas" },
+  });
+  const { id } = await created.json();
+  await request.post(`/api/codes/${code}/companies/${id}/actions`, { data: { type: "startMigration", model: "paas" } });
+
+  // Seeds are random, so force a 3-day overrun in the test database, as if the roll had come up.
+  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
+  try {
+    await sql`update companies set state = jsonb_set(state, '{migration,overrunDays}', '3') where id = ${id}`;
+  } finally {
+    await sql.end();
+  }
+
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${id}`);
+  await expect(student.getByTestId("migration-overrun")).toContainText("3 days longer than planned");
+  await expect(student.getByTestId("migration-days-left")).toHaveText("17 days");
+  await expect(student.getByTestId("migration-panel").locator('[data-phase="moving"]')).toContainText("10 days");
 });

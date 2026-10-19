@@ -4,6 +4,7 @@ import type {
   DayLog,
   FeatureView,
   MigrationPhase,
+  MigrationQuote,
   MigrationView,
   ModelComparison,
   ModelId,
@@ -86,6 +87,12 @@ export interface CompanyView {
   migrations: number;
 }
 
+
+/**
+ * GET .../migration-quote?target=: what migrating to the target would cost (duration, upfront, double billing, pro
+ * rata, exit penalty, total) and the odds of an overrun, for the confirm step.
+ */
+export type MigrationQuoteView = MigrationQuote;
 
 export interface CodeView {
   code: string;
