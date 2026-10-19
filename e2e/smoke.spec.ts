@@ -186,3 +186,65 @@ test("a SaaS company buys an add-on and pays for it per user", async ({ browser,
   );
   await expect(student.getByTestId("spend-addons")).toHaveText("£3");
 });
+
+test("a company migrates from IaaS to PaaS in the background while staff keep working", async ({ browser, request }) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  await teacher.getByRole("button", { name: "Create code" }).click();
+  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+
+  const created = await request.post(`/api/codes/${code}/companies`, {
+    data: { name: "Movers Ltd", productType: "social", model: "iaas" },
+  });
+  const { id } = await created.json();
+
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${id}`);
+  const panel = student.getByTestId("migration-panel");
+  const stack = student.getByTestId("stack");
+  await expect(panel).toContainText("0 completed");
+  await expect(stack.locator('[data-layer="os"]')).toContainText("You");
+
+  // Pick a target, then confirm before anything starts.
+  await expect(student.getByRole("button", { name: "Plan migration" })).toBeDisabled();
+  await panel.locator("label.choice", { hasText: "Deploy to a platform (PaaS)" }).click();
+  await student.getByRole("button", { name: "Plan migration" }).click();
+  await expect(panel.getByRole("heading", { name: "Migrate to Deploy to a platform (PaaS)?" })).toBeVisible();
+  await expect(panel).toContainText("Takes 14 days. You switch on day 15.");
+  await student.getByRole("button", { name: "Start migration" }).click();
+
+  await expect(student.getByTestId("migration-target")).toHaveText("Deploy to a platform (PaaS)");
+  await expect(student.getByTestId("migration-phase")).toHaveText("Planning");
+  await expect(student.getByTestId("migration-phase-days")).toHaveText("5 days left");
+  await expect(student.getByTestId("migration-days-left")).toHaveText("14 days");
+  await expect(student.getByTestId("stack-note")).toContainText("changes to Deploy to a platform (PaaS)");
+
+  // Staff aren't tied up: move a developer into ops mid-migration.
+  await expect(student.getByTestId("developers-count")).toHaveText("2");
+  await student.getByRole("button", { name: "Move one developer to ops staff" }).click();
+  await expect(student.getByTestId("developers-count")).toHaveText("1");
+  await expect(student.getByTestId("ops-count")).toHaveText("2");
+
+  const continueTo = async (day: number) => {
+    await student.getByRole("button", { name: "Continue" }).click();
+    await expect(student.getByTestId("day")).toContainText(`${day} of 180`);
+  };
+  for (let day = 2; day <= 6; day++) await continueTo(day);
+  await expect(student.getByTestId("migration-phase")).toHaveText("Testing");
+  await expect(student.getByTestId("migration-phase-days")).toHaveText("2 days left");
+  await expect(student.getByTestId("migration-days-left")).toHaveText("9 days");
+  await expect(student.getByTestId("day-log")).toContainText("Planning done. Testing next, 2 days.");
+  await expect(panel.locator('[data-phase="planning"]')).toContainText("Done");
+  // Still on IaaS, and billed for it, until the move completes.
+  await expect(student.getByTestId("ops-needed")).toContainText("needs 2 ops staff");
+
+  for (let day = 7; day <= 15; day++) await continueTo(day);
+  await expect(student.getByTestId("day-log")).toContainText("Migration complete");
+  await expect(panel).toContainText("1 completed");
+  await expect(student.getByTestId("ops-needed")).toContainText("needs 1 ops staff");
+  await expect(stack.locator('[data-layer="os"]')).toContainText("Provider");
+  await expect(stack.locator('[data-layer="os"]')).toContainText("was You");
+  await expect(student.getByTestId("model-costs")).toContainText("£9,000 a month");
+});

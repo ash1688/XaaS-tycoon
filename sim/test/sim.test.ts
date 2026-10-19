@@ -3,11 +3,13 @@ import {
   createSim,
   defaultConfig,
   MODEL_IDS,
+  responsibilityStack,
   SPEND_CATEGORIES,
   SimError,
   type Action,
   type GameConfig,
   type GameStateV4,
+  type GameStateV5,
   type LogEntry,
 } from "../src/index.ts";
 
@@ -68,6 +70,13 @@ const config: GameConfig = {
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25 },
   billing: { daysPerMonth: 30 },
   addons: { minConfigDevelopers: 1 },
+  migration: {
+    phases: {
+      planning: { name: "Planning", days: 5 },
+      testing: { name: "Testing", days: 2 },
+      moving: { name: "Moving infrastructure", days: 7 },
+    },
+  },
 };
 
 const sim = createSim(config);
@@ -507,7 +516,7 @@ describe("state saved before features existed (version 4)", () => {
 
   it("loads with no features started and keeps everything else", () => {
     const state = sim.load(v4());
-    expect(state).toEqual({ ...sim.advance(start(), 4).state, version: 5, features: {} });
+    expect(state).toEqual({ ...sim.advance(start(), 4).state, version: 6, features: {} });
     expect(sim.features(state).every((f) => f.status === "notStarted")).toBe(true);
   });
 
@@ -527,7 +536,7 @@ describe("state saved before staff existed (version 1)", () => {
   it("loads with no staff, starting users and the current version", () => {
     expect(sim.load(v1())).toEqual({
       ...v1(),
-      version: 5,
+      version: 6,
       status: "playing",
       developers: 0,
       ops: 0,
@@ -538,16 +547,18 @@ describe("state saved before staff existed (version 1)", () => {
       spend: { staff: 0, infrastructure: 0, addons: 0 },
       spendByDay: [],
       features: {},
+      migration: null,
+      migrations: 0,
     });
   });
 
   it("still advances, charging only the model's running cost", () => {
     const { state } = sim.advance(v1());
-    expect(state).toMatchObject({ version: 5, day: 6, cash: 900, developers: 0, ops: 0 });
+    expect(state).toMatchObject({ version: 6, day: 6, cash: 900, developers: 0, ops: 0 });
   });
 
   it("accepts actions", () => {
-    expect(sim.applyAction(v1(), { type: "hire", pool: "developers" })).toMatchObject({ version: 5, developers: 1 });
+    expect(sim.applyAction(v1(), { type: "hire", pool: "developers" })).toMatchObject({ version: 6, developers: 1 });
     expect(() => sim.applyAction(v1(), { type: "letGo", pool: "ops" })).toThrow(SimError);
   });
 });
@@ -560,7 +571,7 @@ describe("state saved before users existed (version 2)", () => {
 
   it("keeps its staff and picks up with the product's starting users and full uptime", () => {
     const state = sim.load(v2());
-    expect(state).toMatchObject({ version: 5, developers: 1, ops: 2, users: 1000, load: 5000, outageDays: 0 });
+    expect(state).toMatchObject({ version: 6, developers: 1, ops: 2, users: 1000, load: 5000, outageDays: 0 });
     expect(sim.uptime(state)).toBe(100);
   });
 
@@ -871,7 +882,7 @@ describe("state saved before the ledger existed (version 3)", () => {
 
   it("keeps playing with spend counted from now on", () => {
     const state = sim.load(withoutLedger(v3()));
-    expect(state).toMatchObject({ version: 5, status: "playing", day: 5, cash: 920, spendByDay: [] });
+    expect(state).toMatchObject({ version: 6, status: "playing", day: 5, cash: 920, spendByDay: [] });
     expect(state.spend).toEqual({ staff: 0, infrastructure: 0, addons: 0 });
     expect(sim.advance(state).state).toMatchObject({ cash: 900, spend: { infrastructure: 20 } });
   });
@@ -966,5 +977,233 @@ describe("default config", () => {
     const upfront = (m: (typeof MODEL_IDS)[number]) => defaultConfig.models[m].upfrontCost;
     for (const m of ["iaas", "paas", "saas"] as const) expect(upfront("onprem")).toBeGreaterThan(upfront(m) * 10);
     expect(MODEL_IDS.filter((m) => defaultConfig.models[m].monthlyCostPerUser > 0)).toEqual(["saas"]);
+  });
+});
+
+describe("migration", () => {
+  const migrate = (model: string): Action => ({ type: "startMigration", model: model as never });
+  const moveTo = (to: "developers" | "ops"): Action => ({ type: "moveStaff", to });
+  // On IaaS with a developer and an ops person, migrating to PaaS from day 1.
+  const migrating = () => sim.applyAction({ ...start(), developers: 1, ops: 1 }, migrate("paas"));
+  const charges = (entries: LogEntry[]) => entries.filter((e) => e.category === "infrastructure").map((e) => e.text);
+
+  it("starts in planning without moving time on, touching cash or staff", () => {
+    const before = { ...start(), developers: 1, ops: 1 };
+    const state = sim.applyAction(before, migrate("paas"));
+    expect(state).toMatchObject({ day: 1, cash: before.cash, model: "iaas", developers: 1, ops: 1, migrations: 0 });
+    expect(sim.migration(state)).toEqual({
+      from: "iaas",
+      to: "paas",
+      phase: "planning",
+      phaseDaysLeft: 5,
+      daysLeft: 14,
+      totalDays: 14,
+    });
+  });
+
+  it("has no migration on a new game", () => {
+    expect(sim.migration(start())).toBeNull();
+    expect(start()).toMatchObject({ migration: null, migrations: 0 });
+  });
+
+  it("rejects migrating to the current model", () => {
+    expect(() => sim.applyAction(start(), migrate("iaas"))).toThrow(expect.objectContaining({ code: "same_model" }));
+  });
+
+  it("rejects a second migration while one is running, even to another model", () => {
+    for (const model of ["onprem", "paas", "saas"]) {
+      expect(() => sim.applyAction(migrating(), migrate(model))).toThrow(
+        expect.objectContaining({ code: "migration_running" }),
+      );
+    }
+    // Still rejected part-way through.
+    expect(() => sim.applyAction(sim.advance(migrating(), 9).state, migrate("saas"))).toThrow(SimError);
+  });
+
+  it("rejects an unknown model", () => {
+    expect(() => sim.applyAction(start(), migrate("mainframe"))).toThrow(
+      expect.objectContaining({ code: "unknown_model" }),
+    );
+  });
+
+  it("does not mutate the input state", () => {
+    const state = start();
+    const copy = structuredClone(state);
+    sim.applyAction(state, migrate("paas"));
+    expect(state).toEqual(copy);
+  });
+
+  it("advances through the phases on the configured days and completes after 14", () => {
+    const at = (days: number) => sim.migration(sim.advance(migrating(), days).state);
+    expect(at(4)).toMatchObject({ phase: "planning", phaseDaysLeft: 1, daysLeft: 10 });
+    expect(at(5)).toMatchObject({ phase: "testing", phaseDaysLeft: 2, daysLeft: 9 });
+    expect(at(6)).toMatchObject({ phase: "testing", phaseDaysLeft: 1, daysLeft: 8 });
+    expect(at(7)).toMatchObject({ phase: "moving", phaseDaysLeft: 7, daysLeft: 7 });
+    expect(at(13)).toMatchObject({ phase: "moving", phaseDaysLeft: 1, daysLeft: 1 });
+    expect(sim.advance(migrating(), 13).state.model).toBe("iaas");
+
+    const done = sim.advance(migrating(), 14).state;
+    expect(done).toMatchObject({ day: 15, model: "paas", migration: null, migrations: 1 });
+    expect(sim.migration(done)).toBeNull();
+  });
+
+  it("takes its phase lengths from config", () => {
+    const phases = { planning: { name: "P", days: 1 }, testing: { name: "T", days: 1 }, moving: { name: "M", days: 2 } };
+    const quick = createSim({ ...config, migration: { phases } });
+    const state = quick.applyAction(start(), migrate("paas"));
+    expect(quick.migration(state)).toMatchObject({ daysLeft: 4, totalDays: 4 });
+    expect(quick.advance(state, 3).state.model).toBe("iaas");
+    expect(quick.advance(state, 4).state.model).toBe("paas");
+  });
+
+  it("adds any overrun days to the moving phase", () => {
+    const state = migrating();
+    const overrun = { ...state, migration: { ...state.migration!, overrunDays: 3 } };
+    expect(sim.migration(overrun)).toMatchObject({ daysLeft: 17, totalDays: 17 });
+    expect(sim.migration(sim.advance(overrun, 7).state)).toMatchObject({ phase: "moving", phaseDaysLeft: 10 });
+    expect(sim.advance(overrun, 16).state.model).toBe("iaas");
+    expect(sim.advance(overrun, 17).state.model).toBe("paas");
+  });
+
+  it("logs each phase change and the completion in the day log", () => {
+    const { log } = sim.advance(migrating(), 14);
+    const events = log.flatMap((d) => d.entries.filter((e) => e.kind === "migration").map((e) => [d.day, e.text]));
+    expect(events).toEqual([
+      [6, "Migration to PaaS: Planning done. Testing next, 2 days."],
+      [8, "Migration to PaaS: Testing done. Moving infrastructure next, 7 days."],
+      [15, "Migration complete: you're now on PaaS, which needs 1 ops staff."],
+    ]);
+  });
+
+  it("never locks staff: hiring, letting go, moving and building all work mid-migration", () => {
+    let state = sim.advance(migrating(), 3).state;
+    state = sim.applyAction(state, { type: "hire", pool: "developers" });
+    state = sim.applyAction(state, { type: "letGo", pool: "ops" });
+    state = sim.applyAction(state, { type: "hire", pool: "ops" });
+    state = sim.applyAction(state, moveTo("ops"));
+    state = sim.applyAction(state, moveTo("developers"));
+    state = sim.applyAction(state, { type: "buildFeature", feature: "checkout" });
+    expect(state).toMatchObject({ developers: 2, ops: 1 });
+    // The migration carries on where it was.
+    expect(sim.migration(state)).toMatchObject({ phase: "planning", daysLeft: 11 });
+    const next = sim.advance(state).state;
+    expect(next.features.checkout).toEqual({ status: "building", progress: 2 });
+    expect(sim.migration(next)).toMatchObject({ daysLeft: 10 });
+  });
+
+  it("keeps billing the current model until the migration completes, then the new one", () => {
+    const { log } = sim.advance(migrating(), 15);
+    for (const day of log.slice(0, 14)) expect(charges(day.entries)).toEqual(["IaaS running costs (£600 a month)"]);
+    expect(charges(log[14]!.entries)).toEqual(["PaaS running costs (£900 a month)"]);
+    expect(sim.monthlyInfrastructureCost(sim.advance(migrating(), 14).state)).toBe(900);
+  });
+
+  it("switches the stack, ops needed and capacity to the new model on completion", () => {
+    const s = createSim({
+      ...config,
+      models: {
+        ...config.models,
+        iaas: { ...config.models.iaas, capacity: 3000 },
+        paas: { ...config.models.paas, capacity: 5000 },
+      },
+    });
+    const before = s.applyAction({ ...start(), ops: 1 }, migrate("paas"));
+    // IaaS needs 2 ops: with 1, capacity is 40% + 60% × ½ of 3,000.
+    expect(s.capacity(before)).toBe(2100);
+    expect(s.capacity(s.advance(before, 13).state)).toBe(2100);
+    const done = s.advance(before, 14).state;
+    expect(responsibilityStack(done.model)).toEqual(responsibilityStack("paas"));
+    expect(s.opsNeeded(done.model)).toBe(1);
+    // PaaS needs 1 ops, so the same team now runs it fully staffed.
+    expect(s.capacity(done)).toBe(5000);
+  });
+
+  it("follows the new model's feature rules: SaaS sells add-ons, other models build", () => {
+    const onPaas = sim.advance(migrating(), 14).state;
+    const onSaas = sim.advance(sim.applyAction(onPaas, migrate("saas")), 14).state;
+    expect(onSaas.model).toBe("saas");
+    expect(() => sim.applyAction(onSaas, { type: "buildFeature", feature: "reviews" })).toThrow(
+      expect.objectContaining({ code: "saas_features" }),
+    );
+    expect(sim.applyAction(onSaas, { type: "buyAddon", feature: "reviews" }).features.reviews?.status).toBe("addon");
+    // Not on SaaS yet while still migrating to it.
+    const halfway = sim.advance(sim.applyAction(onPaas, migrate("saas")), 7).state;
+    expect(() => sim.applyAction(halfway, { type: "buyAddon", feature: "reviews" })).toThrow(
+      expect.objectContaining({ code: "not_saas" }),
+    );
+  });
+
+  it("leaves SaaS add-ons behind on leaving SaaS, and stops billing them", () => {
+    const saasGame = sim.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 42 });
+    const onSaas = { ...saasGame, developers: 1 };
+    const bought = sim.applyAction(onSaas, { type: "buyAddon", feature: "checkout" });
+    const { state, log } = sim.advance(sim.applyAction(bought, migrate("iaas")), 15);
+    const last = log[13]!.entries;
+    expect(last.some((e) => e.category === "addons")).toBe(true);
+    expect(last).toContainEqual(
+      expect.objectContaining({ kind: "migration", text: expect.stringContaining("Checkout") }),
+    );
+    expect(log[14]!.entries.some((e) => e.category === "addons")).toBe(false);
+    expect(sim.features(state).find((f) => f.id === "checkout")!.status).toBe("notStarted");
+  });
+
+  it("counts each completed migration, and can migrate again once one is done", () => {
+    let state = migrating();
+    expect(sim.advance(state, 13).state.migrations).toBe(0);
+    state = sim.advance(state, 14).state;
+    state = sim.advance(sim.applyAction(state, migrate("iaas")), 14).state;
+    expect(state).toMatchObject({ model: "iaas", migrations: 2 });
+  });
+
+  it("is deterministic and resumes identically after a JSON round trip", () => {
+    expect(sim.advance(migrating(), 20)).toEqual(sim.advance(migrating(), 20));
+    const saved = JSON.parse(JSON.stringify(sim.advance(migrating(), 6).state));
+    expect(sim.advance(saved, 14).state).toEqual(sim.advance(migrating(), 20).state);
+  });
+});
+
+describe("moving staff between pools", () => {
+  const moveTo = (to: "developers" | "ops"): Action => ({ type: "moveStaff", to });
+
+  it("moves one person into the pool, without moving time on or touching cash", () => {
+    const state = { ...start(), developers: 2, ops: 1 };
+    expect(sim.applyAction(state, moveTo("ops"))).toMatchObject({ developers: 1, ops: 2, day: 1, cash: state.cash });
+    expect(sim.applyAction(state, moveTo("developers"))).toMatchObject({ developers: 3, ops: 0 });
+  });
+
+  it("rejects a move from an empty pool, and unknown pools", () => {
+    expect(() => sim.applyAction(start(), moveTo("ops"))).toThrow(expect.objectContaining({ code: "no_staff" }));
+    expect(() => sim.applyAction(start(), { type: "moveStaff", to: "sales" as never })).toThrow(
+      expect.objectContaining({ code: "unknown_pool" }),
+    );
+  });
+
+  it("pays each person their new pool's day rate", () => {
+    const { log } = sim.advance(sim.applyAction({ ...start(), developers: 2 }, moveTo("ops")));
+    expect(log[0]!.entries.filter((e) => e.category === "staff").map((e) => e.cashDelta)).toEqual([-7, -3]);
+  });
+});
+
+describe("state saved before migration existed (version 5)", () => {
+  const v5 = () => {
+    const { migration: _m, migrations: _n, ...rest } = JSON.parse(JSON.stringify(sim.advance(start(), 4).state));
+    return { ...rest, version: 5 } as GameStateV5;
+  };
+
+  it("loads with no migration and none made, and keeps everything else", () => {
+    expect(sim.load(v5())).toEqual(sim.advance(start(), 4).state);
+    expect(sim.migration(v5())).toBeNull();
+  });
+
+  it("can start a migration and advance", () => {
+    const state = sim.applyAction(v5(), { type: "startMigration", model: "paas" });
+    expect(sim.advance(state, 14).state).toMatchObject({ version: 6, model: "paas", migrations: 1 });
+  });
+});
+
+describe("default migration config", () => {
+  it("takes 2 weeks: 5 days planning, 2 testing and 7 moving", () => {
+    const { phases } = defaultConfig.migration;
+    expect([phases.planning.days, phases.testing.days, phases.moving.days]).toEqual([5, 2, 7]);
   });
 });

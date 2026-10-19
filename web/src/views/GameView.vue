@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { SPEND_CATEGORIES, type DayLog, type SpendCategory } from "@xaas/sim";
+import { SPEND_CATEGORIES, type DayLog, type ModelId, type SpendCategory, type StaffPool } from "@xaas/sim";
 import type { ActionBody, CompanyView, MetaView } from "@xaas/server/api-types";
 import { api, formatCash, formatCount, formatPrice, formatUptime } from "../api";
 
@@ -15,7 +15,11 @@ const busy = ref(false);
 const productName = (id: string) => meta.value?.productTypes.find((p) => p.id === id)?.name ?? id;
 const modelName = (id: string) => meta.value?.models.find((m) => m.id === id)?.name ?? id;
 // Top layer first, so the stack reads like the diagram: your data on top, the building at the bottom.
-const stack = computed(() => meta.value?.models.find((m) => m.id === company.value?.model)?.stack.toReversed() ?? []);
+const stackFor = (id: ModelId | undefined) => meta.value?.models.find((m) => m.id === id)?.stack.toReversed() ?? [];
+const stack = computed(() => stackFor(company.value?.model));
+// After a migration completes, the layers whose owner changed are highlighted until the next day.
+const previousModel = ref<ModelId>();
+const previousOwners = computed(() => new Map(stackFor(previousModel.value).map((l) => [l.id, l.owner])));
 const OWNER_LABELS = { you: "You", provider: "Provider", shared: "Shared" } as const;
 const understaffed = computed(() => !!company.value && company.value.ops < company.value.opsNeeded);
 const loadPercent = computed(() => (company.value ? Math.round((100 * company.value.load) / company.value.capacity) : 0));
@@ -23,7 +27,7 @@ const loadPercent = computed(() => (company.value ? Math.round((100 * company.va
 const loadLevel = computed(() => (loadPercent.value > 100 ? "over" : loadPercent.value >= 80 ? "high" : "ok"));
 
 const bankrupt = computed(() => company.value?.status === "bankrupt");
-const EVENT_LABELS = { outage: "Outage", bankrupt: "Bankrupt", feature: "Feature" } as const;
+const EVENT_LABELS = { outage: "Outage", bankrupt: "Bankrupt", feature: "Feature", migration: "Migration" } as const;
 
 // One build at a time, and none on SaaS, where features come as add-ons instead.
 const onSaas = computed(() => company.value?.model === "saas");
@@ -37,6 +41,39 @@ const activeCount = computed(
 const configTeamNeeded = computed(() => meta.value?.minConfigDevelopers ?? 0);
 const configTeamShort = computed(() => (company.value ? Math.max(0, configTeamNeeded.value - company.value.developers) : 0));
 const currentModel = computed(() => meta.value?.models.find((m) => m.id === company.value?.model));
+
+// Migration: pick a target, confirm, then it runs in the background while you keep playing.
+const migration = computed(() => company.value?.migration ?? null);
+const migrationTarget = ref<ModelId>();
+const confirmingMigration = ref(false);
+const migrationTargets = computed(() => meta.value?.models.filter((m) => m.id !== company.value?.model) ?? []);
+const targetModel = computed(() => meta.value?.models.find((m) => m.id === migrationTarget.value));
+const migrationDays = computed(() => meta.value?.migrationPhases.reduce((sum, p) => sum + p.days, 0) ?? 0);
+const phaseName = (id: string) => meta.value?.migrationPhases.find((p) => p.id === id)?.name ?? id;
+const phaseIndex = computed(() => meta.value?.migrationPhases.findIndex((p) => p.id === migration.value?.phase) ?? -1);
+const phaseState = (i: number) => (i < phaseIndex.value ? "done" : i === phaseIndex.value ? "current" : "next");
+const days = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
+// Add-ons are the SaaS provider's, so leaving SaaS leaves them behind.
+const addonsLost = computed(() =>
+  onSaas.value ? (company.value?.features.filter((f) => f.status === "addon") ?? []) : [],
+);
+
+function pickTarget(id: ModelId) {
+  migrationTarget.value = id;
+  confirmingMigration.value = false;
+}
+
+async function startMigration() {
+  if (!migrationTarget.value) return;
+  await act({ type: "startMigration", model: migrationTarget.value });
+  if (migration.value) {
+    migrationTarget.value = undefined;
+    confirmingMigration.value = false;
+  }
+}
+
+const otherPool = (pool: StaffPool): StaffPool => (pool === "developers" ? "ops" : "developers");
+const personName = (pool: StaffPool) => meta.value?.staff.find((s) => s.id === pool)?.personName ?? pool;
 
 const CATEGORY_LABELS: Record<SpendCategory, string> = {
   staff: "Staff",
@@ -83,7 +120,9 @@ async function continueDay() {
   busy.value = true;
   error.value = "";
   try {
+    const before = company.value?.model;
     const result = await api.continueDay(props.code, props.id);
+    previousModel.value = before !== result.company.model ? before : undefined;
     company.value = result.company;
     lastDay.value = result.log.at(-1);
   } catch (e) {
@@ -259,12 +298,131 @@ async function continueDay() {
         </div>
       </li>
     </ul>
+    <div class="move-staff" data-testid="move-staff">
+      <span class="muted">Retrain someone into the other team (no cost, any time):</span>
+      <div class="move-buttons">
+        <button
+          v-for="pool in meta.staff"
+          :key="pool.id"
+          class="ghost"
+          :disabled="busy || bankrupt || company[otherPool(pool.id)] < 1"
+          :aria-label="`Move one ${personName(otherPool(pool.id))} to ${pool.name.toLowerCase()}`"
+          @click="act({ type: 'moveStaff', to: pool.id })"
+        >
+          {{ personName(otherPool(pool.id)) }} → {{ pool.name.toLowerCase() }}
+        </button>
+      </div>
+    </div>
     <p :class="['ops-needed', { warn: understaffed }]" data-testid="ops-needed">
       <span>{{ modelName(company.model) }} needs <strong>{{ company.opsNeeded }}</strong> ops staff.</span>
       <span v-if="understaffed" class="badge">
         Understaffed: {{ company.opsNeeded - company.ops }} short, capacity cut
       </span>
     </p>
+  </section>
+
+  <section v-if="company && meta" class="card" aria-labelledby="migration-heading" data-testid="migration-panel">
+    <div class="row-between">
+      <h2 id="migration-heading">Migration</h2>
+      <span class="muted" data-testid="migration-count">
+        {{ company.migrations }} completed
+      </span>
+    </div>
+    <template v-if="migration">
+      <p class="migration-route">
+        Moving from <strong>{{ modelName(migration.from) }}</strong> to
+        <strong data-testid="migration-target">{{ modelName(migration.to) }}</strong>
+      </p>
+      <ol class="phases" aria-label="Migration phases">
+        <li
+          v-for="(phase, i) in meta.migrationPhases"
+          :key="phase.id"
+          :class="phaseState(i)"
+          :data-phase="phase.id"
+          :aria-current="phaseState(i) === 'current' ? 'step' : undefined"
+        >
+          <strong>{{ phase.name }}</strong>
+          <span class="muted">{{ phaseState(i) === "done" ? "Done" : days(phase.days) }}</span>
+        </li>
+      </ol>
+      <div
+        class="meter"
+        role="progressbar"
+        aria-labelledby="migration-heading"
+        aria-valuemin="0"
+        :aria-valuemax="migration.totalDays"
+        :aria-valuenow="migration.totalDays - migration.daysLeft"
+        :aria-valuetext="`${migration.totalDays - migration.daysLeft} of ${migration.totalDays} days`"
+      >
+        <div
+          class="meter-fill building"
+          :style="{ width: `${(100 * (migration.totalDays - migration.daysLeft)) / migration.totalDays}%` }"
+        ></div>
+      </div>
+      <p class="migration-status" data-testid="migration-status">
+        <span>
+          <strong data-testid="migration-phase">{{ phaseName(migration.phase) }}</strong>:
+          <span data-testid="migration-phase-days">{{ days(migration.phaseDaysLeft) }} left</span> in this phase
+        </span>
+        <span>
+          Switch to {{ modelName(migration.to) }} in
+          <strong data-testid="migration-days-left">{{ days(migration.daysLeft) }}</strong>
+        </span>
+      </p>
+      <p class="muted migration-note">
+        It runs in the background: your staff aren't tied up. You stay on {{ modelName(migration.from) }}, and keep
+        paying for it, until the move completes.
+      </p>
+    </template>
+    <template v-else>
+      <p class="muted migration-note">
+        Change deployment model at any time. A migration takes {{ days(migrationDays) }}
+        ({{ meta.migrationPhases.map((p) => `${p.name.toLowerCase()} ${p.days}`).join(", ") }}) and runs in the
+        background, so your staff stay free. Your product stays the same.
+      </p>
+      <fieldset :disabled="busy || bankrupt">
+        <legend>Migrate to</legend>
+        <div class="choices">
+          <label v-for="m in migrationTargets" :key="m.id" :class="['choice', { on: migrationTarget === m.id }]">
+            <input
+              type="radio"
+              name="migration-target"
+              :value="m.id"
+              :checked="migrationTarget === m.id"
+              @change="pickTarget(m.id)"
+            />
+            <strong>{{ m.name }}</strong>
+            <span class="muted">Needs {{ m.opsNeeded }} ops staff · {{ m.comparison.control }} control</span>
+          </label>
+        </div>
+      </fieldset>
+      <button
+        v-if="!confirmingMigration"
+        class="plan-migration"
+        :disabled="busy || bankrupt || !targetModel"
+        @click="confirmingMigration = true"
+      >
+        Plan migration
+      </button>
+      <div v-else-if="targetModel" class="confirm" role="group" aria-labelledby="confirm-migration-heading">
+        <h3 id="confirm-migration-heading">Migrate to {{ targetModel.name }}?</h3>
+        <ul>
+          <li>Takes {{ days(migrationDays) }}. You switch on day {{ company.day + migrationDays }}.</li>
+          <li>You stay on {{ modelName(company.model) }}, and keep paying for it, until then.</li>
+          <li>
+            Then {{ targetModel.name }} needs <strong>{{ targetModel.opsNeeded }}</strong> ops staff. You have
+            {{ company.ops }}.
+          </li>
+          <li v-if="addonsLost.length" class="warn-text" data-testid="addons-lost">
+            Your add-ons stay behind on SaaS: {{ addonsLost.map((f) => f.name).join(", ") }}.
+          </li>
+        </ul>
+        <div class="confirm-buttons">
+          <button :disabled="busy || bankrupt" @click="startMigration">Start migration</button>
+          <button class="ghost" :disabled="busy" @click="confirmingMigration = false">Cancel</button>
+        </div>
+      </div>
+    </template>
   </section>
 
   <section v-if="company" class="card" aria-labelledby="features-heading" data-testid="features">
@@ -372,10 +530,26 @@ async function continueDay() {
     <ul class="legend" aria-label="Key">
       <li v-for="(label, owner) in OWNER_LABELS" :key="owner"><span :class="['swatch', owner]"></span>{{ label }}</li>
     </ul>
+    <p v-if="migration" class="muted stack-note" data-testid="stack-note">
+      This changes to {{ modelName(migration.to) }} when your migration completes.
+    </p>
+    <p v-else-if="previousModel" class="stack-note changed-note" data-testid="stack-note">
+      Migration complete: moved from {{ modelName(previousModel) }}. Highlighted layers changed hands.
+    </p>
     <ol class="resp-stack" data-testid="stack">
-      <li v-for="layer in stack" :key="layer.id" :class="layer.owner" :data-layer="layer.id">
+      <li
+        v-for="layer in stack"
+        :key="layer.id"
+        :class="[layer.owner, { changed: previousModel && previousOwners.get(layer.id) !== layer.owner }]"
+        :data-layer="layer.id"
+      >
         <span>{{ layer.name }}</span>
-        <strong>{{ OWNER_LABELS[layer.owner] }}</strong>
+        <span class="owner">
+          <small v-if="previousModel && previousOwners.get(layer.id) !== layer.owner" class="was">
+            was {{ OWNER_LABELS[previousOwners.get(layer.id)!] }}
+          </small>
+          <strong>{{ OWNER_LABELS[layer.owner] }}</strong>
+        </span>
       </li>
     </ol>
   </section>
