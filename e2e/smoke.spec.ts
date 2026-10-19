@@ -33,11 +33,21 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await expect(stack.locator('[data-layer="os"]')).toContainText("OS and patching");
   await expect(stack.locator('[data-layer="os"]')).toContainText("You");
   await expect(stack.locator('[data-layer="hardware"]')).toContainText("Provider");
-  const startCash = await student.getByTestId("cash").textContent();
+  await expect(student.getByTestId("cash")).toHaveText("£50,000");
+
+  // Staff: IaaS needs 2 ops and a new company starts with 1, so it's understaffed.
+  await expect(student.getByTestId("developers-count")).toHaveText("2");
+  await expect(student.getByTestId("ops-needed")).toContainText("needs 2 ops staff");
+  await expect(student.getByTestId("ops-needed")).toContainText("Understaffed");
+  await student.getByRole("button", { name: "Hire one developer" }).click();
+  await expect(student.getByTestId("developers-count")).toHaveText("3");
+  await expect(student.getByTestId("staff-cost")).toHaveText("£620");
 
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).toContainText("2 of 180");
-  await expect(student.getByTestId("cash")).not.toHaveText(startCash!);
+  // £200 IaaS running costs + 3 developers × £160 + 1 ops × £140.
+  await expect(student.getByTestId("cash")).toHaveText("£49,180");
+  await expect(student.getByText("Developers pay (3)")).toBeVisible();
 
   // Resume in a fresh browser: the server kept the game.
   const elsewhere = await (await browser.newContext()).newPage();
@@ -46,6 +56,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await elsewhere.getByRole("button", { name: "Go" }).click();
   await elsewhere.getByRole("link", { name: /Playwright Ltd/ }).click();
   await expect(elsewhere.getByTestId("day")).toContainText("2 of 180");
+  await expect(elsewhere.getByTestId("developers-count")).toHaveText("3");
 
   // Teacher sees the company counted against the code.
   await teacher.reload();
