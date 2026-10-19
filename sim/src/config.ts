@@ -259,6 +259,7 @@ export interface EventConfig {
 
 export interface GameConfig {
   startingCash: number;
+  /** The last day played. The game ends once it has been played, so day finalDay is played in full. */
   finalDay: number;
   maxCompanyNameLength: number;
   models: Record<ModelId, ModelConfig>;

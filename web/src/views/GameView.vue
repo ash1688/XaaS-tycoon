@@ -10,8 +10,9 @@ import {
   type SpendCategory,
   type StaffPool,
 } from "@xaas/sim";
-import type { ActionBody, CompanyView, MetaView, MigrationQuoteView } from "@xaas/server/api-types";
+import type { ActionBody, CompanyView, MetaView, MigrationQuoteView, SummaryView } from "@xaas/server/api-types";
 import { api, formatCash, formatCount, formatPrice, formatUptime } from "../api";
+import SummaryPanel from "../components/SummaryPanel.vue";
 
 const props = defineProps<{ code: string; id: string }>();
 
@@ -36,9 +37,14 @@ const loadPercent = computed(() => (company.value ? Math.round((100 * company.va
 const loadLevel = computed(() => (loadPercent.value > 100 ? "over" : loadPercent.value >= 80 ? "high" : "ok"));
 
 const bankrupt = computed(() => company.value?.status === "bankrupt");
+const finished = computed(() => company.value?.status === "finished");
+// Once the game is over, bankrupt or played to the end, the screen shows its summary instead of the controls.
+const over = computed(() => bankrupt.value || finished.value);
+const summary = ref<SummaryView>();
 const EVENT_LABELS = {
   outage: "Outage",
   bankrupt: "Bankrupt",
+  finished: "The end",
   feature: "Feature",
   migration: "Migration",
   event: "Event",
@@ -197,10 +203,15 @@ const lastDayTotal = computed(() => lastDay.value?.entries.reduce((sum, e) => su
 onMounted(async () => {
   try {
     [meta.value, company.value] = await Promise.all([api.meta(), api.company(props.code, props.id)]);
+    if (over.value) await loadSummary();
   } catch (e) {
     error.value = (e as Error).message;
   }
 });
+
+async function loadSummary() {
+  summary.value = await api.summary(props.code, props.id);
+}
 
 async function act(action: ActionBody) {
   busy.value = true;
@@ -227,6 +238,7 @@ async function continueDay() {
       .map((a) => a.name);
     company.value = result.company;
     lastDay.value = result.log.at(-1);
+    if (over.value) await loadSummary();
   } catch (e) {
     error.value = (e as Error).message;
   } finally {
@@ -252,101 +264,113 @@ async function continueDay() {
       </p>
     </div>
 
-    <div class="stats">
-      <div class="stat">
-        <span class="label">Day</span>
-        <span class="value" data-testid="day">{{ company.day }} <small>of {{ company.finalDay }}</small></span>
-      </div>
-      <div class="stat">
-        <span class="label">Cash</span>
-        <span :class="['value', { neg: company.cash < 0 }]" data-testid="cash">{{ formatCash(company.cash) }}</span>
-      </div>
-      <div class="stat">
-        <span class="label">Users</span>
-        <span class="value" data-testid="users">{{ formatCount(company.users) }}</span>
-      </div>
-      <div class="stat">
-        <span class="label">Uptime</span>
-        <span class="value" data-testid="uptime">{{ formatUptime(company.uptime) }}</span>
-        <small v-if="company.outageDays">{{ company.outageDays }} outage day{{ company.outageDays === 1 ? "" : "s" }}</small>
-      </div>
-    </div>
-
-    <div class="capacity" data-testid="capacity">
-      <div class="row-between">
-        <span id="capacity-label" class="label">Load vs capacity</span>
-        <span class="figures">{{ formatCount(company.load) }} / {{ formatCount(company.capacity) }}</span>
-      </div>
-      <div
-        class="meter"
-        role="meter"
-        aria-labelledby="capacity-label"
-        aria-valuemin="0"
-        :aria-valuemax="company.capacity"
-        :aria-valuenow="company.load"
-        :aria-valuetext="`${loadPercent}% of capacity`"
-      >
-        <div :class="['meter-fill', loadLevel]" :style="{ width: `${Math.min(100, loadPercent)}%` }"></div>
-      </div>
-      <p :class="['capacity-note', loadLevel]">
-        <strong>{{ loadPercent }}%</strong> of capacity used.
-        <template v-if="loadLevel === 'over'">Over capacity: expect outages.</template>
-        <template v-else-if="loadLevel === 'high'">Getting close: an outage is coming if load keeps rising.</template>
-        <template v-else>Load over 100% causes an outage.</template>
-      </p>
-    </div>
-
-    <button class="continue" :disabled="busy || bankrupt" @click="continueDay">Continue</button>
-    <p v-if="error" class="error" role="alert">{{ error }}</p>
-
-    <section
-      v-for="event in events"
-      :key="event.id"
-      :class="['event-card', event.owner, eventTone(event)]"
-      role="status"
-      :aria-labelledby="`event-${event.id}`"
-      data-testid="event-card"
-      :data-event="event.id"
-    >
-      <p class="event-head">
-        <span class="badge">Event</span>
-        <strong :id="`event-${event.id}`" class="event-name">{{ event.name }}</strong>
-        <span class="event-tone" data-testid="event-tone">{{ EVENT_TONES[eventTone(event)] }}</span>
-      </p>
-      <p class="event-description">{{ event.description }}</p>
-      <p class="event-why">
-        <span class="layer-chip">{{ layerName(event.layer) }}</span>
-        <strong data-testid="event-responsibility">{{ event.responsibility }}</strong>{{ eventModelNote(event) }}
-      </p>
-      <p class="event-outcome" data-testid="event-outcome">{{ event.outcome }}</p>
-      <button type="button" class="link-button" @click="showLayer(event.layer)">
-        See {{ layerName(event.layer) }} in the stack
-      </button>
-    </section>
-
-    <section
-      v-for="gap in openGaps"
-      :key="gap.id"
-      :class="['feature-gap', gap.owner]"
-      role="status"
-      :aria-labelledby="`gap-${gap.id}`"
-      data-testid="feature-gap"
-      :data-event="gap.id"
-    >
-      <p class="event-head">
-        <span class="badge">Feature gap</span>
-        <strong :id="`gap-${gap.id}`" class="event-name">{{ gap.name }}</strong>
-        <span class="event-tone">Still slowing you down</span>
-      </p>
+    <div v-else-if="finished" class="game-end" role="status" data-testid="finished-screen">
+      <span class="badge">Finished</span>
+      <h2>You made it to day {{ company.finalDay }}</h2>
       <p>
-        Your customers want <strong>{{ gap.feature }}</strong>, and no add-on offers it. Growth is
-        <strong>{{ slowerBy(gap.growthMultiplier) }} slower</strong> every day until you migrate to another model and
-        build it yourself.
+        {{ company.name }} kept going for the whole game. Look at how you did below: where your money went, and the days
+        when spending jumped. Then <RouterLink :to="`/play/${code}`">start a new company</RouterLink> and try a different
+        plan.
       </p>
-      <button type="button" class="link-button" @click="showLayer(gap.layer)">
-        See {{ layerName(gap.layer) }} in the stack
-      </button>
-    </section>
+    </div>
+
+    <template v-if="!over">
+      <div class="stats">
+        <div class="stat">
+          <span class="label">Day</span>
+          <span class="value" data-testid="day">{{ company.day }} <small>of {{ company.finalDay }}</small></span>
+        </div>
+        <div class="stat">
+          <span class="label">Cash</span>
+          <span :class="['value', { neg: company.cash < 0 }]" data-testid="cash">{{ formatCash(company.cash) }}</span>
+        </div>
+        <div class="stat">
+          <span class="label">Users</span>
+          <span class="value" data-testid="users">{{ formatCount(company.users) }}</span>
+        </div>
+        <div class="stat">
+          <span class="label">Uptime</span>
+          <span class="value" data-testid="uptime">{{ formatUptime(company.uptime) }}</span>
+          <small v-if="company.outageDays">{{ company.outageDays }} outage day{{ company.outageDays === 1 ? "" : "s" }}</small>
+        </div>
+      </div>
+
+      <div class="capacity" data-testid="capacity">
+        <div class="row-between">
+          <span id="capacity-label" class="label">Load vs capacity</span>
+          <span class="figures">{{ formatCount(company.load) }} / {{ formatCount(company.capacity) }}</span>
+        </div>
+        <div
+          class="meter"
+          role="meter"
+          aria-labelledby="capacity-label"
+          aria-valuemin="0"
+          :aria-valuemax="company.capacity"
+          :aria-valuenow="company.load"
+          :aria-valuetext="`${loadPercent}% of capacity`"
+        >
+          <div :class="['meter-fill', loadLevel]" :style="{ width: `${Math.min(100, loadPercent)}%` }"></div>
+        </div>
+        <p :class="['capacity-note', loadLevel]">
+          <strong>{{ loadPercent }}%</strong> of capacity used.
+          <template v-if="loadLevel === 'over'">Over capacity: expect outages.</template>
+          <template v-else-if="loadLevel === 'high'">Getting close: an outage is coming if load keeps rising.</template>
+          <template v-else>Load over 100% causes an outage.</template>
+        </p>
+      </div>
+
+      <button class="continue" :disabled="busy || bankrupt" @click="continueDay">Continue</button>
+      <p v-if="error" class="error" role="alert">{{ error }}</p>
+
+      <section
+        v-for="event in events"
+        :key="event.id"
+        :class="['event-card', event.owner, eventTone(event)]"
+        role="status"
+        :aria-labelledby="`event-${event.id}`"
+        data-testid="event-card"
+        :data-event="event.id"
+      >
+        <p class="event-head">
+          <span class="badge">Event</span>
+          <strong :id="`event-${event.id}`" class="event-name">{{ event.name }}</strong>
+          <span class="event-tone" data-testid="event-tone">{{ EVENT_TONES[eventTone(event)] }}</span>
+        </p>
+        <p class="event-description">{{ event.description }}</p>
+        <p class="event-why">
+          <span class="layer-chip">{{ layerName(event.layer) }}</span>
+          <strong data-testid="event-responsibility">{{ event.responsibility }}</strong>{{ eventModelNote(event) }}
+        </p>
+        <p class="event-outcome" data-testid="event-outcome">{{ event.outcome }}</p>
+        <button type="button" class="link-button" @click="showLayer(event.layer)">
+          See {{ layerName(event.layer) }} in the stack
+        </button>
+      </section>
+
+      <section
+        v-for="gap in openGaps"
+        :key="gap.id"
+        :class="['feature-gap', gap.owner]"
+        role="status"
+        :aria-labelledby="`gap-${gap.id}`"
+        data-testid="feature-gap"
+        :data-event="gap.id"
+      >
+        <p class="event-head">
+          <span class="badge">Feature gap</span>
+          <strong :id="`gap-${gap.id}`" class="event-name">{{ gap.name }}</strong>
+          <span class="event-tone">Still slowing you down</span>
+        </p>
+        <p>
+          Your customers want <strong>{{ gap.feature }}</strong>, and no add-on offers it. Growth is
+          <strong>{{ slowerBy(gap.growthMultiplier) }} slower</strong> every day until you migrate to another model and
+          build it yourself.
+        </p>
+        <button type="button" class="link-button" @click="showLayer(gap.layer)">
+          See {{ layerName(gap.layer) }} in the stack
+        </button>
+      </section>
+    </template>
 
     <div v-if="lastDay" class="day-log" data-testid="day-log">
       <div class="row-between">
@@ -381,7 +405,9 @@ async function continueDay() {
     </div>
   </section>
 
-  <section v-if="company" class="card" aria-labelledby="spend-heading" data-testid="spend">
+  <SummaryPanel v-if="over && summary" :summary="summary" :model-name="modelName(summary.model)" />
+
+  <section v-if="company && !over" class="card" aria-labelledby="spend-heading" data-testid="spend">
     <div class="row-between">
       <h2 id="spend-heading">Spend so far</h2>
       <span class="muted">
@@ -415,7 +441,7 @@ async function continueDay() {
     </p>
   </section>
 
-  <section v-if="company && meta" class="card" aria-labelledby="staff-heading">
+  <section v-if="!over && company && meta" class="card" aria-labelledby="staff-heading">
     <div class="row-between">
       <h2 id="staff-heading">Staff</h2>
       <span class="muted">
@@ -472,7 +498,7 @@ async function continueDay() {
     </p>
   </section>
 
-  <section v-if="company && meta" class="card" aria-labelledby="migration-heading" data-testid="migration-panel">
+  <section v-if="!over && company && meta" class="card" aria-labelledby="migration-heading" data-testid="migration-panel">
     <div class="row-between">
       <h2 id="migration-heading">Migration</h2>
       <span class="muted" data-testid="migration-count">
@@ -630,7 +656,7 @@ async function continueDay() {
     </template>
   </section>
 
-  <section v-if="company" class="card" aria-labelledby="features-heading" data-testid="features">
+  <section v-if="!over && company" class="card" aria-labelledby="features-heading" data-testid="features">
     <div class="row-between">
       <h2 id="features-heading">{{ onSaas ? "Add-on shop" : "Features" }}</h2>
       <span class="muted">
@@ -739,7 +765,7 @@ async function continueDay() {
     <p class="error" role="alert">{{ error }}</p>
   </section>
 
-  <section v-if="company && stack.length" class="card">
+  <section v-if="!over && company && stack.length" class="card">
     <h2>Who looks after what</h2>
     <p class="teaching-line">
       Whatever you pick, your customers get your product as SaaS. You're the customer of the layer below.

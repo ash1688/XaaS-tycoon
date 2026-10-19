@@ -9,6 +9,7 @@ import type {
   ContinueResult,
   MetaView,
   MigrationQuoteView,
+  SummaryView,
   TeacherCodeView,
 } from "../src/api-types.ts";
 import { setupTestDb } from "./testDb.ts";
@@ -478,6 +479,113 @@ describe("ledger and bankruptcy", () => {
     const body = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
     expect(body.company).toMatchObject({ cash: 0, status: "active" });
     expect((await app.inject({ method: "POST", url: `${url}/continue` })).statusCode).toBe(200);
+  });
+});
+
+describe("game end and summary", () => {
+  // A 5-day game: continue plays days 2 to 5, then the game is over.
+  const short = createSim({ ...sim.config, finalDay: 5 });
+  let shortApp: Awaited<ReturnType<typeof buildApp>>;
+
+  beforeAll(async () => {
+    shortApp = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), sim: short });
+  });
+
+  afterAll(async () => {
+    await shortApp?.close();
+  });
+
+  async function setup() {
+    const code = await newCode();
+    const res = await shortApp.inject({
+      method: "POST",
+      url: `/api/codes/${code}/companies`,
+      payload: { name: "Acme", productType: "ecommerce", model: "iaas" },
+    });
+    const url = `/api/codes/${code}/companies/${res.json<CompanyView>().id}`;
+    return { code, url, id: res.json<CompanyView>().id };
+  }
+
+  it("finishes after the final day, then rejects continue and actions with 409", async () => {
+    const { id, url } = await setup();
+    await shortApp.inject({ method: "POST", url: `${url}/actions`, payload: { type: "hire", pool: "ops" } });
+    const logs: ContinueResult["log"] = [];
+    let body: ContinueResult | undefined;
+    for (let day = 2; day <= 5; day++) {
+      const res = await shortApp.inject({ method: "POST", url: `${url}/continue` });
+      expect(res.statusCode).toBe(200);
+      body = res.json<ContinueResult>();
+      logs.push(...body.log);
+      expect(body.company).toMatchObject({ day, status: day < 5 ? "active" : "finished" });
+    }
+    expect(body!.log[0]!.entries.at(-1)).toMatchObject({ kind: "finished" });
+
+    for (const attempt of [
+      shortApp.inject({ method: "POST", url: `${url}/continue` }),
+      shortApp.inject({ method: "POST", url: `${url}/actions`, payload: { type: "hire", pool: "ops" } }),
+    ]) {
+      const rejected = await attempt;
+      expect(rejected.statusCode).toBe(409);
+      expect(rejected.json()).toMatchObject({ error: "finished", message: expect.stringContaining("game is over") });
+    }
+
+    // Nothing changed, and the game still shows as finished after a reload and in the company list.
+    expect((await shortApp.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({
+      day: 5,
+      ops: 1,
+      status: "finished",
+    });
+    const [row] = await testDb.db.select().from(companies).where(eq(companies.id, id));
+    expect(row!.status).toBe("finished");
+
+    // The summary's totals: 4 days of IaaS at 25 and 1 ops person at 4, matching the day logs.
+    const res = await shortApp.inject({ method: "GET", url: `${url}/summary` });
+    expect(res.statusCode).toBe(200);
+    const summary = res.json<SummaryView>();
+    expect(summary).toMatchObject({
+      companyName: "Acme",
+      ending: "completed",
+      day: 5,
+      finalDay: 5,
+      cash: 1000 - 116,
+      uptime: 100,
+      migrations: 0,
+      spend: { staff: 16, infrastructure: 100, addons: 0 },
+      totalSpend: 116,
+    });
+    expect(summary.users).toBeGreaterThan(0);
+    const logged = (category: string) =>
+      logs.flatMap((d) => d.entries).filter((e) => e.category === category).reduce((sum, e) => sum - e.cashDelta, 0);
+    expect(summary.spend).toEqual({ staff: logged("staff"), infrastructure: logged("infrastructure"), addons: 0 });
+    expect(summary.days.map((d) => [d.day, d.staff, d.infrastructure, d.cash])).toEqual([
+      [1, 0, 0, 1000],
+      [2, 4, 25, 971],
+      [3, 4, 25, 942],
+      [4, 4, 25, 913],
+      [5, 4, 25, 884],
+    ]);
+  });
+
+  it("summarises a bankrupt game", async () => {
+    const { id, url } = await setup();
+    await testDb.db.execute(sql`update companies set state = jsonb_set(state, '{cash}', '10'::jsonb) where id = ${id}`);
+    await shortApp.inject({ method: "POST", url: `${url}/continue` });
+    const summary = (await shortApp.inject({ method: "GET", url: `${url}/summary` })).json<SummaryView>();
+    expect(summary).toMatchObject({ ending: "bankrupt", day: 2, cash: -15 });
+  });
+
+  it("gives a summary so far for a game still being played", async () => {
+    const { url } = await setup();
+    await shortApp.inject({ method: "POST", url: `${url}/continue` });
+    const summary = (await shortApp.inject({ method: "GET", url: `${url}/summary` })).json<SummaryView>();
+    expect(summary).toMatchObject({ ending: null, day: 2, totalSpend: 25 });
+  });
+
+  it("is 404 for a company under another code", async () => {
+    const { url } = await setup();
+    const other = await newCode();
+    const res = await shortApp.inject({ method: "GET", url: url.replace(/codes\/\d+/, `codes/${other}`) + "/summary" });
+    expect(res.statusCode).toBe(404);
   });
 });
 

@@ -69,6 +69,7 @@ async function start() {
             <span class="muted">{{ productName(c.productType) }} · {{ modelName(c.model) }}</span>
             <span>Day {{ c.day }} of {{ c.finalDay }} · {{ formatCash(c.cash) }}</span>
             <span v-if="c.status === 'bankrupt'" class="badge warn-badge">Bankrupt</span>
+            <span v-else-if="c.status === 'finished'" class="badge done-badge">Finished: see summary</span>
           </RouterLink>
         </li>
       </ul>

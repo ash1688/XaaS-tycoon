@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import postgres from "postgres";
-import { E2E_DATABASE_URL, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
+import { E2E_DATABASE_URL, E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
 
 test("teacher creates a code, student starts a game and presses Continue", async ({ browser }) => {
   // Teacher
@@ -33,7 +33,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await student.getByRole("button", { name: "Start company" }).click();
 
   await expect(student.getByRole("heading", { name: "Playwright Ltd" })).toBeVisible();
-  await expect(student.getByTestId("day")).toContainText("1 of 180");
+  await expect(student.getByTestId("day")).toContainText(`1 of ${E2E_FINAL_DAY}`);
   await expect(student.getByText("You're the customer of the layer below.")).toBeVisible();
   const stack = student.getByTestId("stack");
   await expect(stack.locator('[data-layer="os"]')).toContainText("OS and patching");
@@ -68,7 +68,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await expect(student.getByRole("button", { name: "Build Groups" })).toBeDisabled();
 
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText("2 of 180");
+  await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
   // £200 IaaS running costs (£6,000 a month ÷ 30) + 3 developers × £160 + 1 ops × £140.
   await expect(student.getByTestId("cash")).toHaveText("£247,180");
   const dayLog = student.getByTestId("day-log");
@@ -95,7 +95,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await elsewhere.getByLabel("Login code").fill(code!);
   await elsewhere.getByRole("button", { name: "Go" }).click();
   await elsewhere.getByRole("link", { name: /Playwright Ltd/ }).click();
-  await expect(elsewhere.getByTestId("day")).toContainText("2 of 180");
+  await expect(elsewhere.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
   await expect(elsewhere.getByTestId("developers-count")).toHaveText("3");
   await expect(elsewhere.getByTestId("users")).not.toHaveText("1,000");
   await expect(elsewhere.getByTestId("feature-progress-photos")).toContainText("3 of 16 developer-days");
@@ -133,13 +133,18 @@ test("a company that runs out of cash goes bankrupt and can't continue", async (
 
   await expect(student.getByTestId("bankrupt-screen")).toContainText("Game over");
   await expect(student.getByTestId("day-log").getByTestId("bankrupt")).toContainText("Broke Ltd is bankrupt");
-  await expect(student.getByRole("button", { name: "Continue" })).toBeDisabled();
-  await expect(student.getByRole("button", { name: "Hire one developer" })).toBeDisabled();
+  // The game is over, so the controls give way to the summary.
+  await expect(student.getByRole("button", { name: "Continue" })).toHaveCount(0);
+  await expect(student.getByRole("button", { name: "Hire one developer" })).toHaveCount(0);
+  const summary = student.getByTestId("summary");
+  await expect(summary).toContainText("Ran out of cash on day 2");
+  await expect(student.getByTestId("summary-cash")).toHaveText(/^-£/);
 
-  // Still bankrupt after a reload, and the API refuses to carry on.
+  // Still bankrupt after a reload, with its summary, and the API refuses to carry on.
   await student.reload();
   await expect(student.getByTestId("bankrupt-screen")).toBeVisible();
-  await expect(student.getByRole("button", { name: "Continue" })).toBeDisabled();
+  await expect(summary).toBeVisible();
+  await expect(student.getByRole("button", { name: "Continue" })).toHaveCount(0);
   const again = await request.post(`/api/codes/${code}/companies/${id}/continue`);
   expect(again.status()).toBe(409);
 });
@@ -180,7 +185,7 @@ test("a SaaS company buys an add-on and pays for it per user", async ({ browser,
 
   // A day's share of the add-on bill: £80 ÷ 30, rounded to £3, tagged add-ons.
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText("2 of 180");
+  await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
   await expect(student.getByTestId("day-log").locator('[data-category="addons"]')).toContainText(
     "Add-on: Direct messages (1,000 users at £0.08 a month)",
   );
@@ -241,7 +246,7 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
 
   const continueTo = async (day: number) => {
     await student.getByRole("button", { name: "Continue" }).click();
-    await expect(student.getByTestId("day")).toContainText(`${day} of 180`);
+    await expect(student.getByTestId("day")).toContainText(`${day} of ${E2E_FINAL_DAY}`);
   };
   for (let day = 2; day <= 6; day++) await continueTo(day);
   await expect(student.getByTestId("migration-phase")).toHaveText("Testing");
@@ -367,10 +372,10 @@ test("a scripted event shows a card that names the layer and highlights it in th
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${onprem}`);
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText("2 of 180");
+  await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
   await expect(student.getByTestId("event-card")).toHaveCount(0);
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText("3 of 180");
+  await expect(student.getByTestId("day")).toContainText(`3 of ${E2E_FINAL_DAY}`);
 
   const card = student.getByTestId("event-card");
   await expect(card).toBeVisible();
@@ -393,14 +398,14 @@ test("a scripted event shows a card that names the layer and highlights it in th
 
   // Gone the next day.
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText("4 of 180");
+  await expect(student.getByTestId("day")).toContainText(`4 of ${E2E_FINAL_DAY}`);
   await expect(student.getByTestId("event-card")).toHaveCount(0);
   await expect(os).not.toHaveAttribute("data-event", "osPatch");
 
   // On PaaS the same day's patch is the provider's job: nothing to do.
   await student.goto(`/play/${code}/${paas}`);
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText("2 of 180");
+  await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(card).toBeVisible();
   await expect(card.getByTestId("event-responsibility")).toHaveText("OS and patching is the provider's job on PaaS.");
@@ -426,7 +431,7 @@ test("on SaaS, a feature the platform can't provide shows a card, then stays on 
   await student.goto(`/play/${code}/${id}`);
   for (let day = 2; day <= 6; day++) {
     await student.getByRole("button", { name: "Continue" }).click();
-    await expect(student.getByTestId("day")).toContainText(`${day} of 180`);
+    await expect(student.getByTestId("day")).toContainText(`${day} of ${E2E_FINAL_DAY}`);
   }
 
   const card = student.getByTestId("event-card").and(student.locator('[data-event="saasFeatureGap"]'));
@@ -443,7 +448,7 @@ test("on SaaS, a feature the platform can't provide shows a card, then stays on 
 
   // The next day the card has gone, but the gap is still on screen, in the stack and in the add-on shop.
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText("7 of 180");
+  await expect(student.getByTestId("day")).toContainText(`7 of ${E2E_FINAL_DAY}`);
   await expect(card).toHaveCount(0);
   const gap = student.getByTestId("feature-gap");
   await expect(gap).toBeVisible();
@@ -453,4 +458,80 @@ test("on SaaS, a feature the platform can't provide shows a card, then stays on 
   await expect(student.getByTestId("gap-shop-note")).toContainText("a feed that ranks posts your way");
   await gap.getByRole("button", { name: "See Application / features in the stack" }).click();
   await expect(application).toBeFocused();
+});
+
+test("a company plays to the final day and sees its summary, again when reopened", async ({ browser, request }) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  await teacher.getByRole("button", { name: "Create code" }).click();
+  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+
+  const created = await request.post(`/api/codes/${code}/companies`, {
+    data: { name: "Finishers Ltd", productType: "social", model: "iaas" },
+  });
+  const { id } = await created.json();
+  // Hire the ops IaaS needs, so the game runs smoothly to the end.
+  await request.post(`/api/codes/${code}/companies/${id}/actions`, { data: { type: "hire", pool: "ops" } });
+
+  // The e2e server runs a short game. Play every day of it.
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${id}`);
+  for (let day = 2; day <= E2E_FINAL_DAY; day++) {
+    await student.getByRole("button", { name: "Continue" }).click();
+    if (day < E2E_FINAL_DAY) await expect(student.getByTestId("day")).toContainText(`${day} of ${E2E_FINAL_DAY}`);
+  }
+
+  // The end: a banner, the last day's log, and the summary in place of the controls.
+  await expect(student.getByTestId("finished-screen")).toContainText(`You made it to day ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("day-log").getByTestId("finished")).toContainText(`Day ${E2E_FINAL_DAY} was the last`);
+  await expect(student.getByRole("button", { name: "Continue" })).toHaveCount(0);
+  const summary = student.getByTestId("summary");
+  await expect(summary).toContainText(`Played all ${E2E_FINAL_DAY} days`);
+  await expect(student.getByTestId("summary-migrations")).toHaveText("0");
+  await expect(student.getByTestId("summary-users")).toHaveText(/^\d{1,3}(,\d{3})*$/);
+  await expect(student.getByTestId("summary-uptime")).toHaveText(/%$/);
+
+  // The figures agree with the API's summary, and the spend split adds up.
+  const api = await (await request.get(`/api/codes/${code}/companies/${id}/summary`)).json();
+  expect(api).toMatchObject({ ending: "completed", day: E2E_FINAL_DAY, migrations: 0 });
+  const money = (n: number) => n.toLocaleString("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 });
+  await expect(student.getByTestId("summary-cash")).toHaveText(money(api.cash));
+  await expect(student.getByTestId("summary-spend-total")).toHaveText(money(api.totalSpend));
+  for (const c of ["staff", "infrastructure", "addons"]) {
+    await expect(student.getByTestId(`summary-spend-${c}`)).toHaveText(money(api.spend[c]));
+  }
+  expect(api.spend.staff + api.spend.infrastructure + api.spend.addons).toBe(api.totalSpend);
+
+  // The cost-over-time chart: a bar for every day, with the costliest day labelled. Day 1 has the £2,000 IaaS upfront
+  // cost, but a scripted event can cost more.
+  const chart = student.getByTestId("cost-chart");
+  await expect(chart.getByRole("img", { name: "Spend each day" })).toBeVisible();
+  await expect(chart.locator("g[data-day]")).toHaveCount(E2E_FINAL_DAY);
+  type Day = { day: number; staff: number; infrastructure: number; addons: number };
+  const spent = (d: Day) => d.staff + d.infrastructure + d.addons;
+  expect(spent(api.days[0])).toBeGreaterThanOrEqual(2000);
+  const peak = (api.days as Day[]).reduce((a, b) => (spent(b) > spent(a) ? b : a));
+  await expect(student.getByTestId("cost-peak")).toHaveText(`Day ${peak.day}: ${money(spent(peak))}`);
+  await expect(chart.getByRole("list", { name: "Key" })).toContainText("Infrastructure");
+  await expect(student.getByTestId("cash-chart")).toBeVisible();
+
+  // The API refuses to carry on.
+  const again = await request.post(`/api/codes/${code}/companies/${id}/continue`);
+  expect(again.status()).toBe(409);
+  expect((await again.json()).error).toBe("finished");
+
+  // Reopened from the company list, it goes straight to the summary.
+  const elsewhere = await (await browser.newContext()).newPage();
+  await elsewhere.goto("/");
+  await elsewhere.getByLabel("Login code").fill(code!);
+  await elsewhere.getByRole("button", { name: "Go" }).click();
+  const row = elsewhere.getByRole("link", { name: /Finishers Ltd/ });
+  await expect(row).toContainText("Finished");
+  await row.click();
+  await expect(elsewhere.getByTestId("finished-screen")).toBeVisible();
+  await expect(elsewhere.getByTestId("summary")).toContainText(`Played all ${E2E_FINAL_DAY} days`);
+  await expect(elsewhere.getByTestId("summary-cash")).toHaveText(money(api.cash));
+  await expect(elsewhere.getByRole("button", { name: "Continue" })).toHaveCount(0);
 });
