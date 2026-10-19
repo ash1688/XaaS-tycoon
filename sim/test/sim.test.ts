@@ -8,6 +8,7 @@ import {
   SimError,
   type Action,
   type GameConfig,
+  type GameState,
   type GameStateV4,
   type GameStateV5,
   type LogEntry,
@@ -1318,6 +1319,7 @@ describe("migration costs", () => {
         exitPenalty: 250,
         total: 1050,
         overrun: { chance: 0, minDays: 2, maxDays: 4 },
+        lostAddons: [],
       });
     });
 
@@ -1349,6 +1351,140 @@ describe("migration costs", () => {
       const { migration: _m, migrations: _n, ...rest } = start();
       expect(s.migrationQuote({ ...rest, version: 5 } as GameStateV5, "paas").total).toBe(1050);
     });
+  });
+});
+
+describe("leaving SaaS (vendor lock-in)", () => {
+  const migrate = (model: string): Action => ({ type: "startMigration", model: model as never });
+  const buy = (feature: string): Action => ({ type: "buyAddon", feature });
+  const build = (feature: string): Action => ({ type: "buildFeature", feature });
+  // On SaaS with a configuration team of 1 and cash for paying two providers.
+  const onSaas = () => ({
+    ...sim.newGame({ companyName: "Acme", productType: "ecommerce", model: "saas", seed: 42 }),
+    cash: 100_000,
+    developers: 1,
+  });
+  const withAddons = () => sim.applyAction(sim.applyAction(onSaas(), buy("checkout")), buy("reviews"));
+  const status = (state: GameState, id: string) => sim.features(state).find((f) => f.id === id)!.status;
+  const addonCharges = (entries: LogEntry[]) => entries.filter((e) => e.category === "addons").map((e) => e.text);
+  // Leaves SaaS for IaaS: the 14-day migration completes at the end of the 14th day.
+  const leave = (state = withAddons(), days = 14) => sim.advance(sim.applyAction(state, migrate("iaas")), days);
+
+  it("quotes the add-ons that will be lost, with the developer-days to rebuild each, for any move off SaaS", () => {
+    for (const target of ["onprem", "iaas", "paas"]) {
+      expect(sim.migrationQuote(withAddons(), target).lostAddons).toEqual([
+        { id: "checkout", name: "Checkout", devDays: 6 },
+        { id: "reviews", name: "Reviews", devDays: 5 },
+      ]);
+    }
+  });
+
+  it("quotes no lost add-ons for any other move, or from SaaS with none bought", () => {
+    expect(sim.migrationQuote(onSaas(), "iaas").lostAddons).toEqual([]);
+    for (const target of ["onprem", "paas", "saas"]) expect(sim.migrationQuote(start(), target).lostAddons).toEqual([]);
+    // A feature built on IaaS isn't an add-on, so moving to SaaS loses nothing.
+    const built = { ...start(), features: { checkout: { status: "built" as const, progress: 6 } } };
+    expect(sim.migrationQuote(built, "saas").lostAddons).toEqual([]);
+  });
+
+  it("keeps add-ons active and billed for the whole migration, as you're still on SaaS", () => {
+    const { state, log } = leave(withAddons(), 13);
+    for (const day of log) expect(addonCharges(day.entries)).toHaveLength(2);
+    expect(state.model).toBe("saas");
+    expect(sim.features(state).map((f) => f.status)).toEqual(["addon", "addon", "notStarted"]);
+  });
+
+  it("removes the add-ons on completion, logs the loss, and stops add-on billing", () => {
+    const { state, log } = leave(withAddons(), 15);
+    const leavingDay = log[13]!;
+    // Billed up to and including the day you leave, then never again.
+    expect(addonCharges(leavingDay.entries)).toHaveLength(2);
+    expect(leavingDay.entries).toContainEqual({
+      text:
+        "Vendor lock-in: your add-ons stayed with the SaaS provider (Checkout, Reviews). " +
+        "Rebuild them in developer-days to get them back: 11 in all.",
+      cashDelta: 0,
+      kind: "migration",
+    });
+    expect(addonCharges(log[14]!.entries)).toEqual([]);
+    expect(state.model).toBe("iaas");
+    expect(sim.monthlyAddonCost(state)).toBe(0);
+    const spent = state.spend.addons;
+    expect(sim.advance(state, 10).state.spend.addons).toBe(spent);
+  });
+
+  it("also leaves behind add-ons bought during the migration", () => {
+    const midway = sim.advance(sim.applyAction(onSaas(), migrate("iaas")), 7).state;
+    const { state, log } = sim.advance(sim.applyAction(midway, buy("search")), 7);
+    expect(log[6]!.entries).toContainEqual(expect.objectContaining({ text: expect.stringContaining("(Search)") }));
+    expect(status(state, "search")).toBe("notStarted");
+  });
+
+  it("makes the lost features buildable in developer-days from zero, and only then gives back their effect", () => {
+    const left = leave().state;
+    expect(sim.features(left).map((f) => [f.id, f.status, f.progress])).toEqual([
+      ["checkout", "notStarted", 0],
+      ["reviews", "notStarted", 0],
+      ["search", "notStarted", 0],
+    ]);
+    // Their growth effect is gone: the same day with Checkout built would grow faster.
+    const builtCheckout = { ...left, features: { checkout: { status: "built" as const, progress: 6 } } };
+    expect(sim.advance(builtCheckout).state.users).toBeGreaterThan(sim.advance(left).state.users);
+    expect(() => sim.applyAction(left, buy("checkout"))).toThrow(expect.objectContaining({ code: "not_saas" }));
+
+    // Rebuild Checkout with the one developer: 6 developer-days.
+    const started = sim.applyAction(left, build("checkout"));
+    expect(sim.features(started)[0]).toMatchObject({ status: "building", progress: 0, daysLeft: 6 });
+    expect(status(sim.advance(started, 5).state, "checkout")).toBe("building");
+    const rebuilt = sim.advance(started, 6).state;
+    expect(status(rebuilt, "checkout")).toBe("built");
+    // Now it boosts growth again, and costs nothing per user.
+    expect(sim.advance(rebuilt).state.users).toBeGreaterThan(sim.advance({ ...rebuilt, features: {} }).state.users);
+    expect(sim.monthlyAddonCost(rebuilt)).toBe(0);
+  });
+
+  it("keeps built features when moving onto SaaS, still active, and loses nothing", () => {
+    const built = { ...start(), cash: 100_000, features: { checkout: { status: "built" as const, progress: 6 } } };
+    const { state, log } = sim.advance(sim.applyAction(built, migrate("saas")), 14);
+    expect(state.model).toBe("saas");
+    expect(state.features).toEqual(built.features);
+    expect(log.flatMap((d) => d.entries).some((e) => e.text.startsWith("Vendor lock-in"))).toBe(false);
+    // Still boosting growth on SaaS, with no add-on bill for it.
+    expect(sim.advance(state).state.users).toBeGreaterThan(sim.advance({ ...state, features: {} }).state.users);
+    expect(sim.monthlyAddonCost(state)).toBe(0);
+  });
+
+  it("pauses a build under way when moving onto SaaS, and carries it on after leaving", () => {
+    // Checkout takes 6 developer-days with 1 developer: started 11 days in, 3 are done by the switch.
+    const before = sim.applyAction({ ...start(), cash: 100_000, developers: 1 }, migrate("saas"));
+    const midway = sim.advance(before, 11).state;
+    const { state: switched, log } = sim.advance(sim.applyAction(midway, build("checkout")), 3);
+    expect(switched.model).toBe("saas");
+    expect(log[2]!.entries).toContainEqual({
+      text: "Checkout build paused: on SaaS you buy features as add-ons. It carries on if you leave SaaS.",
+      cashDelta: 0,
+      kind: "feature",
+    });
+    const paused = sim.advance(switched, 5);
+    expect(sim.features(paused.state)[0]).toMatchObject({ status: "building", progress: 3, daysLeft: null });
+    expect(paused.log.flatMap((d) => d.entries).some((e) => e.kind === "feature")).toBe(false);
+
+    const back = sim.advance(sim.applyAction(paused.state, migrate("iaas")), 14).state;
+    expect(sim.features(back)[0]).toMatchObject({ status: "building", progress: 3, daysLeft: 3 });
+    expect(status(sim.advance(back, 3).state, "checkout")).toBe("built");
+  });
+
+  it("is deterministic and resumes identically after a JSON round trip", () => {
+    expect(leave(withAddons(), 20)).toEqual(leave(withAddons(), 20));
+    const saved = JSON.parse(JSON.stringify(leave(withAddons(), 9).state));
+    expect(sim.advance(saved, 11).state).toEqual(leave(withAddons(), 20).state);
+  });
+
+  it("quotes and loses add-ons from state saved before migration existed (version 5)", () => {
+    const { migration: _m, migrations: _n, ...rest } = withAddons();
+    const v5 = { ...rest, version: 5 } as GameStateV5;
+    expect(sim.migrationQuote(v5, "paas").lostAddons.map((a) => a.id)).toEqual(["checkout", "reviews"]);
+    expect(leave(sim.load(v5)).state.features).toEqual({});
   });
 });
 

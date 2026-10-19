@@ -791,6 +791,7 @@ describe("migration quote", () => {
       exitPenalty: 200,
       total: 100 + 140 + 350 + 200,
       overrun: { chance: 0, minDays: 2, maxDays: 5 },
+      lostAddons: [],
     });
     expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({ cash: 1000, migration: null });
   });
@@ -833,6 +834,74 @@ describe("migration quote", () => {
       url: `/api/codes/${other}/companies/${company.id}/migration-quote?target=paas`,
     });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("leaving SaaS (vendor lock-in)", () => {
+  // Starting staff is 0 here, so the company hires its configuration team, then buys two add-ons.
+  const { minConfigDevelopers } = defaultConfig.addons;
+  const [checkout, reviews] = defaultConfig.productTypes.ecommerce.features;
+
+  async function setup() {
+    const code = await newCode();
+    const company = (await newCompany(code, { name: "Acme", productType: "ecommerce", model: "saas" })).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
+    for (let i = 0; i < minConfigDevelopers; i++) await act({ type: "hire", pool: "developers" });
+    for (const f of [checkout!, reviews!]) await act({ type: "buyAddon", feature: f.id });
+    // Enough cash to pay both providers and the exit penalty.
+    await testDb.db.execute(
+      sql`update companies set state = jsonb_set(state, '{cash}', '1000000') where id = ${company.id}`,
+    );
+    const quote = (target: string) => app.inject({ method: "GET", url: `${url}/migration-quote?target=${target}` });
+    return { url, act, quote };
+  }
+
+  it("quotes the add-ons that will be lost when leaving SaaS", async () => {
+    const { quote } = await setup();
+    const res = await quote("iaas");
+    expect(res.statusCode).toBe(200);
+    expect(res.json<MigrationQuoteView>()).toMatchObject({
+      from: "saas",
+      to: "iaas",
+      lostAddons: [
+        { id: checkout!.id, name: checkout!.name, devDays: checkout!.devDays },
+        { id: reviews!.id, name: reviews!.name, devDays: reviews!.devDays },
+      ],
+    });
+  });
+
+  it("removes the add-ons after a SaaS to IaaS migration, stops their bill and makes them buildable", async () => {
+    const { url, act } = await setup();
+    await act({ type: "startMigration", model: "iaas" });
+    let body: ContinueResult | undefined;
+    for (let day = 1; day <= 14; day++) {
+      body = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    }
+    expect(body!.company).toMatchObject({ model: "iaas", migration: null, monthlyAddonCost: 0 });
+    expect(body!.log[0]!.entries).toContainEqual(
+      expect.objectContaining({ kind: "migration", text: expect.stringContaining("Vendor lock-in") }),
+    );
+    const statuses = (c: CompanyView) => c.features.map((f) => f.status);
+    expect(statuses(body!.company)).toEqual(body!.company.features.map(() => "notStarted"));
+
+    // No more add-on charges, and the lost feature can be built in developer-days.
+    const next = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    expect(next.log[0]!.entries.some((e) => e.category === "addons")).toBe(false);
+    const built = await act({ type: "buildFeature", feature: checkout!.id });
+    expect(built.statusCode).toBe(200);
+    const feature = built.json<CompanyView>().features.find((f) => f.id === checkout!.id);
+    expect(feature).toMatchObject({ status: "building", progress: 0 });
+  });
+
+  it("quotes no lost add-ons for other moves", async () => {
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/codes/${code}/companies/${company.id}/migration-quote?target=saas`,
+    });
+    expect(res.json<MigrationQuoteView>().lostAddons).toEqual([]);
   });
 });
 

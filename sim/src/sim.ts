@@ -27,7 +27,10 @@ export interface DaySpend extends Spend {
 /**
  * How far a feature has got. Features not started have no entry. A built feature or an add-on is active: its effect
  * applies. Add-ons are bought on SaaS rather than built, and billed per user; leaving SaaS removes them (delete the
- * entry), so the feature is not started again and can be rebuilt in developer-days.
+ * entry), so the feature is not started again and can be rebuilt in developer-days from zero.
+ *
+ * Moving onto SaaS keeps built features: they're your own work, and stay active. A build under way pauses, since on
+ * SaaS developers configure add-ons rather than build; it keeps its progress and carries on if you leave SaaS.
  */
 export interface FeatureProgress {
   status: "building" | "built" | "addon";
@@ -130,7 +133,7 @@ export interface FeatureView extends FeatureConfig {
   status: FeatureStatus;
   /** Developer-days done so far. */
   progress: number;
-  /** Days until a build finishes at today's developers. Null unless building, or if there are no developers. */
+  /** Days until a build finishes at today's developers. Null unless building, with no developers, or paused on SaaS. */
   daysLeft: number | null;
 }
 
@@ -171,6 +174,19 @@ export interface MigrationQuote {
   total: number;
   /** The odds of an overrun and how many extra days it can add. Both providers bill for those days too. */
   overrun: { chance: number; minDays: number; maxDays: number };
+  /**
+   * Vendor lock-in: the add-ons you'd leave behind with the SaaS provider, in config order, and the developer-days
+   * each takes to rebuild. Empty unless leaving SaaS. These are today's; any bought before you leave go too.
+   */
+  lostAddons: LostAddon[];
+}
+
+/** An add-on that won't come with you when you leave SaaS. */
+export interface LostAddon {
+  id: string;
+  name: string;
+  /** Developer-days to build it yourself on the new model. */
+  devDays: number;
 }
 
 export interface NewGameParams {
@@ -403,6 +419,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const proRata = days * dailyInfrastructure(state.model, state.users);
     const exitPenalty = config.models[state.model].exitPenalty;
     const { chance, minDays, maxDays } = config.migration.overrun;
+    const lostAddons = addonsLeftBehind(state, to).map(({ id, name, devDays }) => ({ id, name, devDays }));
     return {
       from: state.model,
       to,
@@ -413,6 +430,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       exitPenalty,
       total: upfrontCost + doubleBilling + proRata + exitPenalty,
       overrun: { chance, minDays, maxDays },
+      lostAddons,
     };
   }
 
@@ -500,16 +518,26 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       const text = `Exit penalty: leaving ${left.name}`;
       entries.push({ text, cashDelta: -left.exitPenalty, category: "infrastructure" });
     }
-    // Add-ons belong to the SaaS provider, so they stop (and stop being billed) when you leave it. This is the
-    // minimum that keeps billing right. TODO(#11): make it the lock-in lesson, warning before the migration starts.
-    const lost = state.model === "saas" && m.to !== "saas" ? activeAddons(state) : [];
+    // Vendor lock-in. Add-ons belong to the SaaS provider, so they stay active and billed for the whole migration
+    // (you're still on SaaS, paying for both setups) and are left behind on the day you leave: billing and their
+    // growth effect stop, and they're not started again, ready to rebuild in developer-days from zero.
+    const lost = addonsLeftBehind(state, m.to);
     if (lost.length) {
       const features = { ...state.features };
       for (const f of lost) delete features[f.id];
       switched.features = features;
       const names = lost.map((f) => f.name).join(", ");
-      const text = `Add-ons left behind on SaaS: ${names}. Your developers can rebuild them.`;
+      const devDays = lost.reduce((sum, f) => sum + f.devDays, 0);
+      const text =
+        `Vendor lock-in: your add-ons stayed with the SaaS provider (${names}). ` +
+        `Rebuild them in developer-days to get them back: ${devDays} in all.`;
       entries.push({ text, cashDelta: 0, kind: "migration" });
+    }
+    // Onto SaaS, a build under way pauses: developers there configure add-ons rather than build.
+    const paused = m.to === "saas" ? currentBuild(state) : undefined;
+    if (paused) {
+      const text = `${paused.name} build paused: on SaaS you buy features as add-ons. It carries on if you leave SaaS.`;
+      entries.push({ text, cashDelta: 0, kind: "feature" });
     }
     return { state: switched, entries };
   }
@@ -562,10 +590,13 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return { ...state, features: { ...state.features, [id]: { status: "addon", progress: 0 } } };
   }
 
-  /** A day's work on the current build: one developer-day per developer. Logs progress, or completion. */
+  /**
+   * A day's work on the current build: one developer-day per developer. Logs progress, or completion. A build is
+   * paused on SaaS (it only gets there by migrating mid-build).
+   */
   function buildDay(state: GameState): { features: GameState["features"]; entries: LogEntry[] } {
     const feature = currentBuild(state);
-    if (!feature) return { features: state.features, entries: [] };
+    if (!feature || state.model === "saas") return { features: state.features, entries: [] };
     if (state.developers === 0) {
       const text = `${feature.name}: no developers, so no progress today.`;
       return { features: state.features, entries: [{ text, cashDelta: 0, kind: "feature" }] };
@@ -587,7 +618,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return featureList(state).map((f) => {
       const { status, progress } = state.features[f.id] ?? { status: "notStarted" as const, progress: 0 };
       const daysLeft =
-        status === "building" && state.developers > 0 ? Math.ceil((f.devDays - progress) / state.developers) : null;
+        status === "building" && state.developers > 0 && state.model !== "saas" ? Math.ceil((f.devDays - progress) / state.developers) : null;
       return { ...f, status, progress, daysLeft };
     });
   }
@@ -634,6 +665,10 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   }
 
   const activeAddons = (state: GameState) => featureList(state).filter((f) => state.features[f.id]?.status === "addon");
+
+  /** The add-ons a migration to this model would leave behind: all of them when leaving SaaS, none otherwise. */
+  const addonsLeftBehind = (state: GameState, to: ModelId) =>
+    state.model === "saas" && to !== "saas" ? activeAddons(state) : [];
 
   /** Each active add-on's per-user price on the given users, billed like the model's per-user fee. */
   function addonEntries(state: GameState, days = 1): LogEntry[] {

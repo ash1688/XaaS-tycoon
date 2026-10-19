@@ -298,3 +298,53 @@ test("a migration that overruns shows the extra days", async ({ browser, request
   await expect(student.getByTestId("migration-days-left")).toHaveText("17 days");
   await expect(student.getByTestId("migration-panel").locator('[data-phase="moving"]')).toContainText("10 days");
 });
+
+test("leaving SaaS warns that add-ons will be lost, then leaves them behind", async ({ browser, request }) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  await teacher.getByRole("button", { name: "Create code" }).click();
+  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+
+  const created = await request.post(`/api/codes/${code}/companies`, {
+    data: { name: "Locked In Ltd", productType: "social", model: "saas" },
+  });
+  const { id } = await created.json();
+
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${id}`);
+  await student.getByRole("button", { name: "Buy Direct messages add-on" }).click();
+  await expect(student.getByTestId("features").locator('[data-feature="messaging"]')).toHaveAttribute(
+    "data-status",
+    "addon",
+  );
+
+  // The confirm step for IaaS warns, by name, which add-ons stay behind and why.
+  const panel = student.getByTestId("migration-panel");
+  await panel.locator("label.choice", { hasText: "Rent VMs (IaaS)" }).click();
+  await student.getByRole("button", { name: "Plan migration" }).click();
+  const warning = student.getByTestId("lockin-warning");
+  await expect(warning).toContainText("Vendor lock-in");
+  await expect(warning).toContainText("You'll lose 1 add-on");
+  await expect(warning.locator('[data-addon="messaging"]')).toContainText("Direct messages");
+  await expect(warning).toContainText("Add-ons belong to the SaaS provider");
+  await student.getByRole("button", { name: "Start migration" }).click();
+  await expect(student.getByTestId("addons-at-risk")).toContainText("Direct messages");
+
+  // Skip to the migration's last day, with cash to pay for it, then finish it.
+  const sql = postgres(E2E_DATABASE_URL);
+  try {
+    await sql`update companies set state = jsonb_set(jsonb_set(state, '{migration,phase}', '"moving"'),
+      '{migration,phaseDaysDone}', '6') || '{"cash": 1000000}'::jsonb where id = ${id}`;
+  } finally {
+    await sql.end();
+  }
+  await student.reload();
+  await student.getByRole("button", { name: "Continue" }).click();
+  const features = student.getByTestId("features");
+  await expect(features.getByRole("heading", { name: "Features" })).toBeVisible();
+  await expect(student.getByTestId("addons-left-behind")).toContainText("Direct messages stayed with the SaaS provider");
+  await expect(features.locator('[data-feature="messaging"]')).toHaveAttribute("data-status", "notStarted");
+  await expect(student.getByRole("button", { name: "Build Direct messages" })).toBeEnabled();
+});
