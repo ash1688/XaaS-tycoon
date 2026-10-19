@@ -4,6 +4,7 @@ import {
   PRODUCT_TYPE_IDS,
   SPEND_CATEGORIES,
   STAFF_POOLS,
+  type FeatureConfig,
   type GameConfig,
   type ModelId,
   type ProductTypeId,
@@ -20,12 +21,22 @@ export interface DaySpend extends Spend {
   day: number;
 }
 
+/**
+ * How far a feature has got. Features not started have no entry. A built feature is active: its effect applies.
+ * SaaS add-ons (bought, not built) will be active features too, and leaving SaaS removes them to be rebuilt.
+ */
+export interface FeatureProgress {
+  status: "building" | "built";
+  /** Developer-days of work done so far. Equals the feature's cost once built. */
+  progress: number;
+}
+
 /** A bankrupt game is over: it accepts no more actions or advances. */
 export type GameStatus = "playing" | "bankrupt";
 
 /** Plain, JSON-serialisable game state. The server stores it as-is. */
 export interface GameState {
-  version: 4;
+  version: 5;
   status: GameStatus;
   companyName: string;
   productType: ProductTypeId;
@@ -45,10 +56,17 @@ export interface GameState {
   spend: Spend;
   /** Spend on each day played, day 1 (upfront costs) first. Days before the ledger existed are missing. */
   spendByDay: DaySpend[];
+  /** Features started or built, by feature id. */
+  features: Record<string, FeatureProgress>;
+}
+
+/** State saved before features existed. */
+export interface GameStateV4 extends Omit<GameState, "version" | "features"> {
+  version: 4;
 }
 
 /** State saved before the ledger existed. */
-export interface GameStateV3 extends Omit<GameState, "version" | "status" | "spend" | "spendByDay"> {
+export interface GameStateV3 extends Omit<GameStateV4, "version" | "status" | "spend" | "spendByDay"> {
   version: 3;
 }
 
@@ -63,10 +81,25 @@ export interface GameStateV1 extends Omit<GameStateV2, "version" | StaffPool> {
 }
 
 /** Anything the server may have stored. Every Sim method accepts it and upgrades it first. */
-export type SavedState = GameState | GameStateV3 | GameStateV2 | GameStateV1;
+export type SavedState = GameState | GameStateV4 | GameStateV3 | GameStateV2 | GameStateV1;
 
 /** Something the player does between days. */
-export type Action = { type: "hire"; pool: StaffPool } | { type: "letGo"; pool: StaffPool };
+export type Action =
+  | { type: "hire"; pool: StaffPool }
+  | { type: "letGo"; pool: StaffPool }
+  /** Starts building one of the product's features. One build at a time; not on SaaS. */
+  | { type: "buildFeature"; feature: string };
+
+export type FeatureStatus = "notStarted" | FeatureProgress["status"];
+
+/** A feature on the product's list, and how far it has got. */
+export interface FeatureView extends FeatureConfig {
+  status: FeatureStatus;
+  /** Developer-days done so far. */
+  progress: number;
+  /** Days until a build finishes at today's developers. Null unless building, or if there are no developers. */
+  daysLeft: number | null;
+}
 
 export interface NewGameParams {
   companyName: string;
@@ -81,7 +114,7 @@ export interface LogEntry {
   /** Set on every charge, and only on charges. */
   category?: SpendCategory;
   /** Set on entries that need to stand out, such as an outage or bankruptcy. */
-  kind?: "outage" | "bankrupt";
+  kind?: "outage" | "bankrupt" | "feature";
 }
 
 export interface DayLog {
@@ -124,6 +157,8 @@ export interface Sim {
   capacity(state: SavedState): number;
   /** Share of time up across every day played, as a percentage. 100 before the first day. */
   uptime(state: SavedState): number;
+  /** The product's features, in config order, with each one's progress. */
+  features(state: SavedState): FeatureView[];
 }
 
 export function isModelId(v: string): v is ModelId {
@@ -157,7 +192,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     if (!isProductTypeId(productType)) throw new SimError("unknown_product_type", "Pick a product type from the list.");
     if (!isModelId(model)) throw new SimError("unknown_model", "Pick a deployment model from the list.");
     const state: GameState = {
-      version: 4,
+      version: 5,
       status: "playing",
       companyName: name,
       productType,
@@ -170,6 +205,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       ...startingUsers(productType, 1),
       spend: noSpend(),
       spendByDay: [],
+      features: {},
     };
     return settle(state, 1, upfrontEntries(model)).state;
   }
@@ -180,7 +216,13 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   }
 
   function load(saved: SavedState): GameState {
-    if (saved.version === 4) return saved;
+    if (saved.version === 5) return saved;
+    const v4 = saved.version === 4 ? saved : loadV3(saved);
+    // Games started before features existed have none built yet.
+    return { ...v4, version: 5, features: {} };
+  }
+
+  function loadV3(saved: GameStateV3 | GameStateV2 | GameStateV1): GameStateV4 {
     const v3 = saved.version === 3 ? saved : loadV2(saved);
     // Games started before the ledger existed count spend from now on. One already in debt is bankrupt.
     return { ...v3, version: 4, status: v3.cash < 0 ? "bankrupt" : "playing", spend: noSpend(), spendByDay: [] };
@@ -204,19 +246,80 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
 
   function applyAction(saved: SavedState, action: Action): GameState {
     const state = loadPlaying(saved);
-    if (!isStaffPool(action.pool)) throw new SimError("unknown_pool", "Pick developers or ops.");
-    const { pool } = action;
     switch (action.type) {
       case "hire":
-        return { ...state, [pool]: state[pool] + 1 };
       case "letGo":
-        if (state[pool] < 1) {
-          throw new SimError("no_staff", `You have no ${config.staff[pool].name.toLowerCase()} to let go.`);
-        }
-        return { ...state, [pool]: state[pool] - 1 };
+        return changeStaff(state, action.type, action.pool);
+      case "buildFeature":
+        return startBuild(state, action.feature);
       default:
         throw new SimError("unknown_action", "That action isn't recognised.");
     }
+  }
+
+  function changeStaff(state: GameState, type: "hire" | "letGo", pool: StaffPool): GameState {
+    if (!isStaffPool(pool)) throw new SimError("unknown_pool", "Pick developers or ops.");
+    if (type === "hire") return { ...state, [pool]: state[pool] + 1 };
+    if (state[pool] < 1) {
+      throw new SimError("no_staff", `You have no ${config.staff[pool].name.toLowerCase()} to let go.`);
+    }
+    return { ...state, [pool]: state[pool] - 1 };
+  }
+
+  const featureList = (state: GameState) => config.productTypes[state.productType].features;
+
+  /** The feature being built, if any. Only one is built at a time. */
+  function currentBuild(state: GameState): FeatureConfig | undefined {
+    return featureList(state).find((f) => state.features[f.id]?.status === "building");
+  }
+
+  function startBuild(state: GameState, id: string): GameState {
+    if (state.model === "saas") {
+      throw new SimError(
+        "saas_features",
+        "On SaaS you don't build features yourself: they come as add-ons from the provider.",
+      );
+    }
+    const feature = featureList(state).find((f) => f.id === id);
+    if (!feature) throw new SimError("unknown_feature", "Pick a feature from your product's list.");
+    const existing = state.features[id];
+    if (existing?.status === "built") throw new SimError("feature_built", `${feature.name} is already built.`);
+    if (existing) throw new SimError("feature_building", `${feature.name} is already being built.`);
+    const building = currentBuild(state);
+    if (building) {
+      throw new SimError("build_in_progress", `Your developers are busy building ${building.name}. Finish that first.`);
+    }
+    return { ...state, features: { ...state.features, [id]: { status: "building", progress: 0 } } };
+  }
+
+  /** A day's work on the current build: one developer-day per developer. Logs progress, or completion. */
+  function buildDay(state: GameState): { features: GameState["features"]; entries: LogEntry[] } {
+    const feature = currentBuild(state);
+    if (!feature) return { features: state.features, entries: [] };
+    if (state.developers === 0) {
+      const text = `${feature.name}: no developers, so no progress today.`;
+      return { features: state.features, entries: [{ text, cashDelta: 0, kind: "feature" }] };
+    }
+    const progress = Math.min(feature.devDays, state.features[feature.id]!.progress + state.developers);
+    const built = progress === feature.devDays;
+    const percent = Math.round(100 * (feature.growthMultiplier - 1));
+    const text = built
+      ? `Feature built: ${feature.name}. Growth up ${percent}% from now on.`
+      : `Building ${feature.name}: ${progress} of ${feature.devDays} developer-days done.`;
+    return {
+      features: { ...state.features, [feature.id]: { status: built ? "built" : "building", progress } },
+      entries: [{ text, cashDelta: 0, kind: "feature" }],
+    };
+  }
+
+  function features(saved: SavedState): FeatureView[] {
+    const state = load(saved);
+    return featureList(state).map((f) => {
+      const { status, progress } = state.features[f.id] ?? { status: "notStarted" as const, progress: 0 };
+      const daysLeft =
+        status === "building" && state.developers > 0 ? Math.ceil((f.devDays - progress) / state.developers) : null;
+      return { ...f, status, progress, daysLeft };
+    });
   }
 
   const opsNeeded = (model: ModelId) => config.models[model].opsNeeded;
@@ -322,12 +425,16 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return Math.round(capacityFactors(state).reduce((c, f) => c * f, base));
   }
 
-  /** Each factor scales the day's growth. Later mechanics (features, reputation) add their own here. */
+  /** Each factor scales the day's growth. Later mechanics (reputation) add their own here. */
   function growthFactors(state: GameState, day: number, outage: boolean): number[] {
     const spike = config.productTypes[state.productType].growth.seasonalSpike;
     return [
       spike && inSpike(state.productType, day) ? spike.growthMultiplier : 1,
       outage ? config.outage.growthMultiplier : 1,
+      // Each feature built before today.
+      ...featureList(state)
+        .filter((f) => state.features[f.id]?.status === "built")
+        .map((f) => f.growthMultiplier),
     ];
   }
 
@@ -363,7 +470,14 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     );
     const users = Math.max(0, state.users + Math.round(state.users * rate));
 
-    const entries: LogEntry[] = [...infrastructureEntries(state.model, state.users), ...staffEntries(state)];
+    // Developers work on the current build. A feature finished today helps growth from tomorrow.
+    const build = buildDay(state);
+
+    const entries: LogEntry[] = [
+      ...build.entries,
+      ...infrastructureEntries(state.model, state.users),
+      ...staffEntries(state),
+    ];
     if (outage) {
       const percent = Math.round((100 * load) / cap);
       entries.unshift({
@@ -380,6 +494,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       load,
       outageDays: state.outageDays + (outage ? 1 : 0),
       downtimeHours: state.downtimeHours + hoursDown,
+      features: build.features,
     };
     const settled = settle(played, day, entries);
     return { state: settled.state, log: [{ day, entries: settled.entries }] };
@@ -411,5 +526,6 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     monthlyInfrastructureCost,
     capacity,
     uptime,
+    features,
   };
 }

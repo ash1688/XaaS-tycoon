@@ -453,6 +453,96 @@ describe("ledger and bankruptcy", () => {
   });
 });
 
+describe("features", () => {
+  async function setup(model = "iaas") {
+    const code = await newCode();
+    const company = (await newCompany(code, { name: "Acme", productType: "ecommerce", model })).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
+    return { code, company, url, act };
+  }
+  // The cheapest feature, so builds finish in a few days.
+  const [cheapest] = defaultConfig.productTypes.ecommerce.features.toSorted((a, b) => a.devDays - b.devDays);
+  const statusOf = (company: CompanyView, id = cheapest!.id) => company.features.find((f) => f.id === id)!;
+
+  it("lists the product's features from config, none started", async () => {
+    const { company } = await setup();
+    expect(company.features.map((f) => f.id)).toEqual(defaultConfig.productTypes.ecommerce.features.map((f) => f.id));
+    expect(company.features.every((f) => f.status === "notStarted" && f.progress === 0)).toBe(true);
+  });
+
+  it("starts a build, progresses with developers on continue and completes at its cost", async () => {
+    const { url, act } = await setup();
+    for (let i = 0; i < 3; i++) await act({ type: "hire", pool: "developers" });
+    const building: ActionBody = { type: "buildFeature", feature: cheapest!.id };
+    const started = await act(building);
+    expect(started.statusCode).toBe(200);
+    const daysNeeded = Math.ceil(cheapest!.devDays / 3);
+    expect(statusOf(started.json<CompanyView>())).toMatchObject({ status: "building", progress: 0, daysLeft: daysNeeded });
+
+    let body: ContinueResult | undefined;
+    for (let day = 1; day <= daysNeeded; day++) {
+      body = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+      const expected = day < daysNeeded ? { status: "building", progress: 3 * day } : { status: "built" };
+      expect(statusOf(body.company)).toMatchObject(expected);
+    }
+    expect(body!.log[0]!.entries[0]).toMatchObject({ kind: "feature", text: expect.stringContaining("Feature built") });
+
+    // Kept across reloads, and can't be built twice.
+    expect(statusOf((await app.inject({ method: "GET", url })).json<CompanyView>())).toMatchObject({
+      status: "built",
+      progress: cheapest!.devDays,
+    });
+    const again = await act(building);
+    expect(again.statusCode).toBe(400);
+    expect(again.json()).toMatchObject({ error: "feature_built" });
+  });
+
+  it("rejects a build on SaaS with 400 and changes nothing", async () => {
+    const { url, act } = await setup("saas");
+    const res = await act({ type: "buildFeature", feature: cheapest!.id });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: "saas_features", message: expect.stringContaining("add-ons") });
+    expect(statusOf((await app.inject({ method: "GET", url })).json<CompanyView>()).status).toBe("notStarted");
+  });
+
+  it("rejects unknown features and validates the body", async () => {
+    const { act } = await setup();
+    const unknown = await act({ type: "buildFeature", feature: "teleport" });
+    expect(unknown.statusCode).toBe(400);
+    expect(unknown.json()).toMatchObject({ error: "unknown_feature" });
+    const bad = [{ type: "buildFeature" }, { type: "buildFeature", feature: 5 }, { type: "buildFeature", pool: "ops" }];
+    for (const payload of bad) {
+      expect((await act(payload)).statusCode).toBe(400);
+    }
+    // Extra fields are stripped, so a client can't set progress directly.
+    const res = await act({ type: "buildFeature", feature: cheapest!.id, progress: 999 });
+    expect(statusOf(res.json<CompanyView>())).toMatchObject({ status: "building", progress: 0 });
+  });
+
+  it("returns 404 for another code's company", async () => {
+    const { company } = await setup();
+    const other = await newCode();
+    const res = await app.inject({
+      method: "POST",
+      url: `/api/codes/${other}/companies/${company.id}/actions`,
+      payload: { type: "buildFeature", feature: cheapest!.id },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ error: "unknown_company" });
+  });
+
+  it("shows a game saved before features existed with none started", async () => {
+    const { company, url } = await setup();
+    const [row] = await testDb.db.select().from(companies).where(eq(companies.id, company.id));
+    const { features: _f, ...v4 } = { ...row!.state, version: 4 };
+    await testDb.db.execute(sql`update companies set state = ${JSON.stringify(v4)}::jsonb where id = ${company.id}`);
+    const loaded = (await app.inject({ method: "GET", url })).json<CompanyView>();
+    expect(loaded.features.every((f) => f.status === "notStarted")).toBe(true);
+    expect((await app.inject({ method: "POST", url: `${url}/continue` })).statusCode).toBe(200);
+  });
+});
+
 describe("meta", () => {
   it("includes staff day rates and ops needed per model", async () => {
     const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();

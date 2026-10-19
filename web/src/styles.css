@@ -690,3 +690,86 @@ fieldset > p {
   border: 2px solid currentColor;
   border-radius: 999px;
 }
+
+.day-log li.event.feature {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.day-log li.event.feature .badge {
+  color: var(--accent);
+}
+
+.features-intro,
+.features-note {
+  margin: 0 0 0.75rem;
+}
+
+.features-note {
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  background: var(--shared-soft);
+  border-left: 4px solid var(--shared);
+}
+
+.features {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.features li {
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.features li.building {
+  border-color: var(--accent);
+}
+
+.features li.built {
+  background: var(--provider-soft);
+}
+
+.feature-head {
+  align-items: flex-start;
+}
+
+.feature-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.feature-info .muted {
+  font-size: 0.9rem;
+}
+
+.feature-head > button,
+.feature-head > .badge {
+  flex-shrink: 0;
+}
+
+.built-badge {
+  color: var(--provider);
+}
+
+.feature-progress {
+  margin-top: 0.5rem;
+}
+
+.feature-progress p {
+  margin: 0.35rem 0 0;
+  font-size: 0.9rem;
+}
+
+.meter-fill.building {
+  background: var(--accent);
+}
+
+.warn-text {
+  color: var(--warn);
+}

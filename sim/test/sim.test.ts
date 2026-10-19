@@ -7,6 +7,7 @@ import {
   SimError,
   type Action,
   type GameConfig,
+  type GameStateV4,
   type LogEntry,
 } from "../src/index.ts";
 
@@ -19,6 +20,13 @@ const growth = {
   loadPerUser: 1,
   loadNoise: 0.1,
 };
+
+// Small costs and a big growth boost, so builds finish quickly and their effect is easy to see.
+const features = [
+  { id: "checkout", name: "Checkout", blurb: "", devDays: 6, growthMultiplier: 1.5 },
+  { id: "reviews", name: "Reviews", blurb: "", devDays: 5, growthMultiplier: 1.2 },
+  { id: "search", name: "Search", blurb: "", devDays: 4, growthMultiplier: 1.1 },
+];
 
 function costs(monthlyCost: number) {
   return { upfrontCost: 0, monthlyCost, monthlyCostPerUser: 0 };
@@ -45,9 +53,10 @@ const config: GameConfig = {
         dailyGrowth: 0.02,
         seasonalSpike: { firstDay: 10, every: 10, length: 3, loadMultiplier: 3, growthMultiplier: 3 },
       },
+      features,
     },
-    social: { name: "Social", profile: "", growth: { ...growth, dailyGrowth: 0.06 } },
-    video: { name: "Video", profile: "", growth: { ...growth, dailyGrowth: 0.02, loadPerUser: 5 } },
+    social: { name: "Social", profile: "", growth: { ...growth, dailyGrowth: 0.06 }, features },
+    video: { name: "Video", profile: "", growth: { ...growth, dailyGrowth: 0.02, loadPerUser: 5 }, features },
   },
   // No starting staff, so the model's running cost is the only charge unless a test hires someone.
   staff: {
@@ -225,6 +234,158 @@ describe("staff", () => {
   });
 });
 
+describe("features", () => {
+  const build = (feature: string): Action => ({ type: "buildFeature", feature });
+  const startOn = (model = "iaas", developers = 1) => ({
+    ...sim.newGame({ companyName: "Acme", productType: "social", model, seed: 42 }),
+    developers,
+  });
+  const feature = (state: Parameters<typeof sim.features>[0], id: string) => sim.features(state).find((f) => f.id === id)!;
+
+  it("lists the product's features from config, none started", () => {
+    expect(sim.features(startOn())).toEqual(
+      features.map((f) => ({ ...f, status: "notStarted", progress: 0, daysLeft: null })),
+    );
+  });
+
+  it("starts a build without moving time on or touching cash", () => {
+    const state = sim.applyAction(startOn(), build("checkout"));
+    expect(state).toMatchObject({ day: 1, cash: 1000 });
+    expect(feature(state, "checkout")).toMatchObject({ status: "building", progress: 0, daysLeft: 6 });
+  });
+
+  it.each([1, 2, 3])("makes a day's progress equal to the developers (%i)", (developers) => {
+    const { state } = sim.advance(sim.applyAction(startOn("iaas", developers), build("checkout")));
+    expect(feature(state, "checkout")).toMatchObject({ status: "building", progress: developers });
+  });
+
+  it("completes after exactly its developer-day cost", () => {
+    const building = sim.applyAction(startOn("iaas", 1), build("checkout"));
+    expect(feature(sim.advance(building, 5).state, "checkout")).toMatchObject({ status: "building", progress: 5 });
+    const { state, log } = sim.advance(building, 6);
+    expect(feature(state, "checkout")).toMatchObject({ status: "built", progress: 6, daysLeft: null });
+    expect(log.at(-1)!.entries[0]).toEqual({
+      text: "Feature built: Checkout. Growth up 50% from now on.",
+      cashDelta: 0,
+      kind: "feature",
+    });
+  });
+
+  it("finishes sooner with more developers, without counting work past the cost", () => {
+    const building = sim.applyAction(startOn("iaas", 4), build("checkout"));
+    expect(feature(building, "checkout").daysLeft).toBe(2);
+    expect(feature(sim.advance(building, 2).state, "checkout")).toMatchObject({ status: "built", progress: 6 });
+  });
+
+  it("logs progress each day, and makes none with no developers", () => {
+    const { log } = sim.advance(sim.applyAction(startOn("iaas", 2), build("checkout")));
+    expect(log[0]!.entries[0]).toEqual({
+      text: "Building Checkout: 2 of 6 developer-days done.",
+      cashDelta: 0,
+      kind: "feature",
+    });
+    const idle = sim.advance(sim.applyAction(startOn("iaas", 0), build("checkout")));
+    expect(feature(idle.state, "checkout")).toMatchObject({ status: "building", progress: 0, daysLeft: null });
+    expect(idle.log[0]!.entries[0]!.text).toContain("no developers");
+  });
+
+  it.each(["onprem", "iaas", "paas"])("can be built on %s", (model) => {
+    const { state } = sim.advance(sim.applyAction(startOn(model, 6), build("checkout")));
+    expect(feature(state, "checkout").status).toBe("built");
+  });
+
+  it("rejects a build on SaaS, where features are add-ons", () => {
+    expect(() => sim.applyAction(startOn("saas"), build("checkout"))).toThrow(
+      expect.objectContaining({ code: "saas_features" }),
+    );
+  });
+
+  it("rejects a feature already built or being built", () => {
+    const building = sim.applyAction(startOn("iaas", 6), build("checkout"));
+    expect(() => sim.applyAction(building, build("checkout"))).toThrow(
+      expect.objectContaining({ code: "feature_building" }),
+    );
+    const built = sim.advance(building).state;
+    expect(() => sim.applyAction(built, build("checkout"))).toThrow(expect.objectContaining({ code: "feature_built" }));
+  });
+
+  it("rejects a feature not on the product's list", () => {
+    for (const id of ["teleport", "toString", ""]) {
+      expect(() => sim.applyAction(startOn(), build(id))).toThrow(expect.objectContaining({ code: "unknown_feature" }));
+    }
+  });
+
+  it("builds one feature at a time", () => {
+    const building = sim.applyAction(startOn("iaas", 1), build("checkout"));
+    expect(() => sim.applyAction(building, build("reviews"))).toThrow(
+      expect.objectContaining({ code: "build_in_progress" }),
+    );
+    const built = sim.advance(building, 6).state;
+    expect(feature(sim.applyAction(built, build("reviews")), "reviews").status).toBe("building");
+  });
+
+  it("raises growth once built, compared with the same run without it", () => {
+    const base = startOn("iaas", 6);
+    const withFeature = sim.advance(sim.applyAction(base, build("checkout")), 30).state;
+    const without = sim.advance(base, 30).state;
+    expect(feature(withFeature, "checkout").status).toBe("built");
+    expect(withFeature.users).toBeGreaterThan(without.users);
+    // The same seed and days, so the build is the only difference: growth is the same until it's done.
+    expect(sim.advance(sim.applyAction(base, build("checkout")), 1).state.users).toBe(sim.advance(base, 1).state.users);
+  });
+
+  it("takes each feature's growth boost from config", () => {
+    const weaker = createSim({
+      ...config,
+      productTypes: {
+        ...config.productTypes,
+        social: { ...config.productTypes.social, features: [{ ...features[0]!, growthMultiplier: 1.1 }] },
+      },
+    });
+    const play = (s: ReturnType<typeof createSim>) => {
+      const base = { ...s.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 42 }), developers: 6 };
+      return s.advance(s.applyAction(base, build("checkout")), 30).state.users;
+    };
+    expect(play(sim)).toBeGreaterThan(play(weaker));
+  });
+
+  it("does not mutate the input state", () => {
+    const before = startOn();
+    const copy = structuredClone(before);
+    sim.advance(sim.applyAction(before, build("checkout")), 3);
+    expect(before).toEqual(copy);
+  });
+
+  it("is deterministic", () => {
+    const run = () => sim.advance(sim.applyAction(startOn("iaas", 2), build("checkout")), 30);
+    expect(run()).toEqual(run());
+  });
+
+  it("resumes a build identically after a JSON round trip", () => {
+    const building = sim.applyAction(startOn("iaas", 1), build("checkout"));
+    const saved = JSON.parse(JSON.stringify(sim.advance(building, 3).state));
+    expect(sim.advance(saved, 10).state).toEqual(sim.advance(building, 13).state);
+  });
+});
+
+describe("state saved before features existed (version 4)", () => {
+  const v4 = () => {
+    const { features: _f, ...rest } = JSON.parse(JSON.stringify(sim.advance(start(), 4).state));
+    return { ...rest, version: 4 } as GameStateV4;
+  };
+
+  it("loads with no features started and keeps everything else", () => {
+    const state = sim.load(v4());
+    expect(state).toEqual({ ...sim.advance(start(), 4).state, version: 5, features: {} });
+    expect(sim.features(state).every((f) => f.status === "notStarted")).toBe(true);
+  });
+
+  it("can start a build and advance", () => {
+    const state = sim.applyAction({ ...v4(), developers: 6 }, { type: "buildFeature", feature: "checkout" });
+    expect(sim.advance(state).state.features).toEqual({ checkout: { status: "built", progress: 6 } });
+  });
+});
+
 describe("state saved before staff existed (version 1)", () => {
   // A version 1 save, exactly as the server stored it before this change.
   const v1 = () =>
@@ -235,7 +396,7 @@ describe("state saved before staff existed (version 1)", () => {
   it("loads with no staff, starting users and the current version", () => {
     expect(sim.load(v1())).toEqual({
       ...v1(),
-      version: 4,
+      version: 5,
       status: "playing",
       developers: 0,
       ops: 0,
@@ -245,16 +406,17 @@ describe("state saved before staff existed (version 1)", () => {
       downtimeHours: 0,
       spend: { staff: 0, infrastructure: 0, addons: 0 },
       spendByDay: [],
+      features: {},
     });
   });
 
   it("still advances, charging only the model's running cost", () => {
     const { state } = sim.advance(v1());
-    expect(state).toMatchObject({ version: 4, day: 6, cash: 900, developers: 0, ops: 0 });
+    expect(state).toMatchObject({ version: 5, day: 6, cash: 900, developers: 0, ops: 0 });
   });
 
   it("accepts actions", () => {
-    expect(sim.applyAction(v1(), { type: "hire", pool: "developers" })).toMatchObject({ version: 4, developers: 1 });
+    expect(sim.applyAction(v1(), { type: "hire", pool: "developers" })).toMatchObject({ version: 5, developers: 1 });
     expect(() => sim.applyAction(v1(), { type: "letGo", pool: "ops" })).toThrow(SimError);
   });
 });
@@ -267,7 +429,7 @@ describe("state saved before users existed (version 2)", () => {
 
   it("keeps its staff and picks up with the product's starting users and full uptime", () => {
     const state = sim.load(v2());
-    expect(state).toMatchObject({ version: 4, developers: 1, ops: 2, users: 1000, load: 5000, outageDays: 0 });
+    expect(state).toMatchObject({ version: 5, developers: 1, ops: 2, users: 1000, load: 5000, outageDays: 0 });
     expect(sim.uptime(state)).toBe(100);
   });
 
@@ -578,7 +740,7 @@ describe("state saved before the ledger existed (version 3)", () => {
 
   it("keeps playing with spend counted from now on", () => {
     const state = sim.load(withoutLedger(v3()));
-    expect(state).toMatchObject({ version: 4, status: "playing", day: 5, cash: 920, spendByDay: [] });
+    expect(state).toMatchObject({ version: 5, status: "playing", day: 5, cash: 920, spendByDay: [] });
     expect(state.spend).toEqual({ staff: 0, infrastructure: 0, addons: 0 });
     expect(sim.advance(state).state).toMatchObject({ cash: 900, spend: { infrastructure: 20 } });
   });
@@ -623,6 +785,26 @@ describe("default config", () => {
     const state = sim180.advance({ ...start, developers: 12, ops: 2 }, defaultConfig.finalDay - 1).state;
     expect(state.status).toBe("bankrupt");
     expect(state.day).toBeLessThan(defaultConfig.finalDay);
+  });
+
+  it("gives every product 3–5 features with unique ids, each costing developer-days and boosting growth", () => {
+    for (const { features } of Object.values(defaultConfig.productTypes)) {
+      expect(features.length).toBeGreaterThanOrEqual(3);
+      expect(features.length).toBeLessThanOrEqual(5);
+      expect(new Set(features.map((f) => f.id)).size).toBe(features.length);
+      for (const f of features) {
+        expect(f.devDays).toBeGreaterThan(0);
+        expect(f.growthMultiplier).toBeGreaterThan(1);
+      }
+    }
+  });
+
+  it("lets starting developers build every feature well within the game", () => {
+    const { developers } = defaultConfig.staff;
+    for (const { features } of Object.values(defaultConfig.productTypes)) {
+      const days = features.reduce((sum, f) => sum + Math.ceil(f.devDays / developers.startingCount), 0);
+      expect(days).toBeLessThan(defaultConfig.finalDay / 2);
+    }
   });
 
   it("makes on-prem's upfront cost the highest, and only SaaS charge per user", () => {

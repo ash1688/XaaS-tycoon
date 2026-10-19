@@ -54,6 +54,14 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await expect(student.getByTestId("developers-count")).toHaveText("3");
   await expect(student.getByTestId("staff-cost")).toHaveText("£620");
 
+  // Features: IaaS builds them in developer-days, one at a time.
+  const features = student.getByTestId("features");
+  await expect(features.locator('[data-feature="photos"]')).toHaveAttribute("data-status", "notStarted");
+  await student.getByRole("button", { name: "Build Photo sharing" }).click();
+  await expect(features.locator('[data-feature="photos"]')).toHaveAttribute("data-status", "building");
+  await expect(student.getByTestId("feature-progress-photos")).toContainText("0 of 16 developer-days");
+  await expect(student.getByRole("button", { name: "Build Groups" })).toBeDisabled();
+
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).toContainText("2 of 180");
   // £200 IaaS running costs (£6,000 a month ÷ 30) + 3 developers × £160 + 1 ops × £140.
@@ -70,6 +78,11 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await expect(student.getByTestId("users")).not.toHaveText("1,000");
   await expect(student.getByTestId("users")).toHaveText(/^1,\d{3}$/);
   await expect(student.getByTestId("uptime")).toHaveText("100%");
+  // 3 developers did 3 developer-days on the build; 13 left at 3 a day is 5 days.
+  await expect(student.getByTestId("feature-progress-photos")).toContainText("3 of 16 developer-days");
+  await expect(student.getByTestId("feature-progress-photos")).toContainText("5 days left with 3 developers");
+  await expect(student.getByRole("progressbar", { name: "Photo sharing" })).toHaveAttribute("aria-valuenow", "3");
+  await expect(dayLog).toContainText("Building Photo sharing: 3 of 16 developer-days done.");
 
   // Resume in a fresh browser: the server kept the game.
   const elsewhere = await (await browser.newContext()).newPage();
@@ -80,6 +93,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await expect(elsewhere.getByTestId("day")).toContainText("2 of 180");
   await expect(elsewhere.getByTestId("developers-count")).toHaveText("3");
   await expect(elsewhere.getByTestId("users")).not.toHaveText("1,000");
+  await expect(elsewhere.getByTestId("feature-progress-photos")).toContainText("3 of 16 developer-days");
 
   // Teacher sees the company counted against the code.
   await teacher.reload();

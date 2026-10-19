@@ -23,6 +23,12 @@ const loadPercent = computed(() => (company.value ? Math.round((100 * company.va
 const loadLevel = computed(() => (loadPercent.value > 100 ? "over" : loadPercent.value >= 80 ? "high" : "ok"));
 
 const bankrupt = computed(() => company.value?.status === "bankrupt");
+const EVENT_LABELS = { outage: "Outage", bankrupt: "Bankrupt", feature: "Feature" } as const;
+
+// One build at a time, and none on SaaS, where features come as add-ons instead.
+const onSaas = computed(() => company.value?.model === "saas");
+const building = computed(() => company.value?.features.find((f) => f.status === "building"));
+const growthBoost = (multiplier: number) => `+${Math.round(100 * (multiplier - 1))}% growth`;
 const currentModel = computed(() => meta.value?.models.find((m) => m.id === company.value?.model));
 
 const CATEGORY_LABELS: Record<SpendCategory, string> = {
@@ -154,7 +160,7 @@ async function continueDay() {
       </div>
       <ul v-if="lastDayEvents.length">
         <li v-for="(entry, i) in lastDayEvents" :key="i" :class="['event', entry.kind]">
-          <span class="badge">{{ entry.kind === "bankrupt" ? "Bankrupt" : "Outage" }}</span>
+          <span class="badge">{{ EVENT_LABELS[entry.kind ?? "outage"] }}</span>
           <span :data-testid="entry.kind">{{ entry.text }}</span>
         </li>
       </ul>
@@ -250,6 +256,73 @@ async function continueDay() {
         Understaffed: {{ company.opsNeeded - company.ops }} short, capacity cut
       </span>
     </p>
+  </section>
+
+  <section v-if="company" class="card" aria-labelledby="features-heading" data-testid="features">
+    <div class="row-between">
+      <h2 id="features-heading">Features</h2>
+      <span class="muted">
+        {{ company.features.filter((f) => f.status === "built").length }} of {{ company.features.length }} built
+      </span>
+    </div>
+    <p v-if="onSaas" class="features-note" data-testid="features-saas-note">
+      On SaaS you don't build features yourself: they come as paid add-ons from the provider. Add-ons are coming
+      soon.
+    </p>
+    <p v-else class="muted features-intro">
+      Your developers build features, one at a time. Each developer does one developer-day of work a day.
+    </p>
+    <ul class="features">
+      <li
+        v-for="feature in company.features"
+        :key="feature.id"
+        :class="feature.status"
+        :data-feature="feature.id"
+        :data-status="feature.status"
+      >
+        <div class="row-between feature-head">
+          <div class="feature-info">
+            <strong :id="`feature-${feature.id}`">{{ feature.name }}</strong>
+            <span class="muted">{{ feature.blurb }}</span>
+            <span class="muted feature-cost">
+              {{ feature.devDays }} developer-days · {{ growthBoost(feature.growthMultiplier) }}
+            </span>
+          </div>
+          <span v-if="feature.status === 'built'" class="badge built-badge">Built</span>
+          <button
+            v-else-if="feature.status === 'notStarted' && !onSaas"
+            class="ghost"
+            :disabled="busy || bankrupt || !!building"
+            :aria-label="`Build ${feature.name}`"
+            :title="building ? `Your developers are busy building ${building.name}` : undefined"
+            @click="act({ type: 'buildFeature', feature: feature.id })"
+          >
+            Build
+          </button>
+        </div>
+        <div v-if="feature.status === 'building'" class="feature-progress">
+          <div
+            class="meter"
+            role="progressbar"
+            :aria-labelledby="`feature-${feature.id}`"
+            aria-valuemin="0"
+            :aria-valuemax="feature.devDays"
+            :aria-valuenow="feature.progress"
+            :aria-valuetext="`${feature.progress} of ${feature.devDays} developer-days`"
+          >
+            <div class="meter-fill building" :style="{ width: `${(100 * feature.progress) / feature.devDays}%` }"></div>
+          </div>
+          <p class="muted" :data-testid="`feature-progress-${feature.id}`">
+            {{ feature.progress }} of {{ feature.devDays }} developer-days.
+            <template v-if="feature.daysLeft !== null">
+              {{ feature.daysLeft }} day{{ feature.daysLeft === 1 ? "" : "s" }} left with {{ company.developers }}
+              developer{{ company.developers === 1 ? "" : "s" }}.
+            </template>
+            <strong v-else class="warn-text">No developers: hire some to carry on.</strong>
+          </p>
+        </div>
+      </li>
+    </ul>
   </section>
 
   <section v-else-if="error" class="card narrow">

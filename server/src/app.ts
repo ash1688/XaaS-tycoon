@@ -84,6 +84,7 @@ export async function buildApp(opts: AppOptions) {
       outageDays: state.outageDays,
       monthlyInfrastructureCost: sim.monthlyInfrastructureCost(state),
       spend: state.spend,
+      features: sim.features(state),
     };
   }
 
@@ -179,8 +180,16 @@ export async function buildApp(opts: AppOptions) {
       schema: {
         body: {
           type: "object",
-          required: ["type", "pool"],
-          properties: { type: { enum: ["hire", "letGo"] }, pool: { enum: [...STAFF_POOLS] } },
+          required: ["type"],
+          properties: {
+            type: { enum: ["hire", "letGo", "buildFeature"] },
+            pool: { enum: [...STAFF_POOLS] },
+            // Checked against the product's list by the sim.
+            feature: { type: "string", maxLength: 64 },
+          },
+          if: { properties: { type: { const: "buildFeature" } } },
+          then: { required: ["feature"] },
+          else: { required: ["pool"] },
           additionalProperties: false,
         },
       },
