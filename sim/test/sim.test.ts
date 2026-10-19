@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { createSim, SimError, type GameConfig } from "../src/index.ts";
 
+const comparison = { upfrontCost: "", monthlyCost: "", opsNeeded: "", control: "" };
+
 const config: GameConfig = {
   startingCash: 1000,
   finalDay: 180,
   maxCompanyNameLength: 20,
   models: {
-    onprem: { name: "On-prem", blurb: "", dailyCost: 10 },
-    iaas: { name: "IaaS", blurb: "", dailyCost: 20 },
-    paas: { name: "PaaS", blurb: "", dailyCost: 30 },
-    saas: { name: "SaaS", blurb: "", dailyCost: 5 },
+    onprem: { name: "On-prem", blurb: "", comparison, dailyCost: 10 },
+    iaas: { name: "IaaS", blurb: "", comparison, dailyCost: 20 },
+    paas: { name: "PaaS", blurb: "", comparison, dailyCost: 30 },
+    saas: { name: "SaaS", blurb: "", comparison, dailyCost: 5 },
   },
   productTypes: {
     ecommerce: { name: "Shop", profile: "" },
