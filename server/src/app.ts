@@ -76,6 +76,11 @@ export async function buildApp(opts: AppOptions) {
       ops: state.ops,
       opsNeeded: sim.opsNeeded(state.model),
       dailyStaffCost: sim.dailyStaffCost(state),
+      users: state.users,
+      load: state.load,
+      capacity: sim.capacity(state),
+      uptime: sim.uptime(state),
+      outageDays: state.outageDays,
     };
   }
 

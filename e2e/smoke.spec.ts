@@ -35,6 +35,13 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await expect(stack.locator('[data-layer="hardware"]')).toContainText("Provider");
   await expect(student.getByTestId("cash")).toHaveText("£50,000");
 
+  // Users, uptime and load vs capacity. A social network starts with 1,000 users.
+  await expect(student.getByTestId("users")).toHaveText("1,000");
+  await expect(student.getByTestId("uptime")).toHaveText("100%");
+  await expect(student.getByRole("meter", { name: "Load vs capacity" })).toBeVisible();
+  // IaaS is 1 ops short, so its capacity is cut.
+  await expect(student.getByTestId("capacity")).toContainText("1,500 / 63,000");
+
   // Staff: IaaS needs 2 ops and a new company starts with 1, so it's understaffed.
   await expect(student.getByTestId("developers-count")).toHaveText("2");
   await expect(student.getByTestId("ops-needed")).toContainText("needs 2 ops staff");
@@ -48,6 +55,10 @@ test("teacher creates a code, student starts a game and presses Continue", async
   // £200 IaaS running costs + 3 developers × £160 + 1 ops × £140.
   await expect(student.getByTestId("cash")).toHaveText("£49,180");
   await expect(student.getByText("Developers pay (3)")).toBeVisible();
+  // Users grow each day; load stays well under capacity, so uptime stays at 100%.
+  await expect(student.getByTestId("users")).not.toHaveText("1,000");
+  await expect(student.getByTestId("users")).toHaveText(/^1,\d{3}$/);
+  await expect(student.getByTestId("uptime")).toHaveText("100%");
 
   // Resume in a fresh browser: the server kept the game.
   const elsewhere = await (await browser.newContext()).newPage();
@@ -57,6 +68,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await elsewhere.getByRole("link", { name: /Playwright Ltd/ }).click();
   await expect(elsewhere.getByTestId("day")).toContainText("2 of 180");
   await expect(elsewhere.getByTestId("developers-count")).toHaveText("3");
+  await expect(elsewhere.getByTestId("users")).not.toHaveText("1,000");
 
   // Teacher sees the company counted against the code.
   await teacher.reload();

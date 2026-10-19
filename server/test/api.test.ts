@@ -267,6 +267,100 @@ describe("staff actions", () => {
   });
 });
 
+describe("users, capacity and uptime", () => {
+  async function setup() {
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    return { code, company, url };
+  }
+
+  it("starts with the product's users, full uptime and capacity cut for missing ops", async () => {
+    const { company } = await setup();
+    const { startingUsers, loadPerUser } = defaultConfig.productTypes.ecommerce.growth;
+    expect(company).toMatchObject({
+      users: startingUsers,
+      load: startingUsers * loadPerUser,
+      uptime: 100,
+      outageDays: 0,
+      // IaaS needs 2 ops and the test config starts with none.
+      capacity: Math.round(defaultConfig.models.iaas.capacity * defaultConfig.capacity.unstaffedShare),
+    });
+  });
+
+  it("grows users on continue and keeps them across reloads", async () => {
+    const { company, url } = await setup();
+    let latest = company;
+    for (let i = 0; i < 3; i++) {
+      latest = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>().company;
+    }
+    expect(latest.users).toBeGreaterThan(company.users);
+    expect(latest.load).not.toBe(company.load);
+    expect(latest.uptime).toBe(100);
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({
+      users: latest.users,
+      load: latest.load,
+      uptime: 100,
+    });
+  });
+
+  it("raises capacity when ops are hired", async () => {
+    const { company, url } = await setup();
+    const res = await app.inject({ method: "POST", url: `${url}/actions`, payload: { type: "hire", pool: "ops" } });
+    expect(res.json<CompanyView>().capacity).toBeGreaterThan(company.capacity);
+  });
+
+  it("logs an outage and saves the lower uptime when load is over capacity", async () => {
+    const tight = createSim({
+      ...sim.config,
+      models: { ...sim.config.models, iaas: { ...sim.config.models.iaas, capacity: 100 } },
+    });
+    const tightApp = await buildApp({
+      db: testDb.db,
+      teacherPassword: PASSWORD,
+      sessionSecret: "x".repeat(32),
+      sim: tight,
+    });
+    try {
+      const { url } = await setup();
+      const body = (await tightApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+      expect(body.company.outageDays).toBe(1);
+      expect(body.company.uptime).toBeLessThan(100);
+      expect(body.log[0]!.entries[0]).toMatchObject({ kind: "outage" });
+      expect((await tightApp.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({
+        outageDays: 1,
+        uptime: body.company.uptime,
+      });
+    } finally {
+      await tightApp.close();
+    }
+  });
+
+  it("shows a game saved before users existed with the product's starting users", async () => {
+    const { company, url } = await setup();
+    const v2 = {
+      version: 2,
+      companyName: "Acme",
+      productType: "social",
+      model: "iaas",
+      day: 3,
+      cash: 950,
+      rng: 1,
+      developers: 0,
+      ops: 2,
+    };
+    await testDb.db.execute(sql`update companies set state = ${JSON.stringify(v2)}::jsonb where id = ${company.id}`);
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({
+      day: 3,
+      ops: 2,
+      users: defaultConfig.productTypes.social.growth.startingUsers,
+      uptime: 100,
+    });
+    const res = await app.inject({ method: "POST", url: `${url}/continue` });
+    expect(res.json<ContinueResult>().company.day).toBe(4);
+  });
+});
+
 describe("meta", () => {
   it("includes staff day rates and ops needed per model", async () => {
     const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();

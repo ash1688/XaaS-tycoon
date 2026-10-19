@@ -38,6 +38,14 @@ export interface CompanyView {
   opsNeeded: number;
   /** What the current headcount costs per day. */
   dailyStaffCost: number;
+  users: number;
+  /** Load on the day just played. */
+  load: number;
+  /** Load the company can serve in a day with its current model and staff. */
+  capacity: number;
+  /** Percentage of time up across every day played. */
+  uptime: number;
+  outageDays: number;
 }
 
 export interface CodeView {
