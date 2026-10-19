@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import type { DayLog } from "@xaas/sim";
+import { SPEND_CATEGORIES, type DayLog, type SpendCategory } from "@xaas/sim";
 import type { ActionBody, CompanyView, MetaView } from "@xaas/server/api-types";
-import { api, formatCash, formatCount, formatUptime } from "../api";
+import { api, formatCash, formatCount, formatPrice, formatUptime } from "../api";
 
 const props = defineProps<{ code: string; id: string }>();
 
@@ -21,6 +21,30 @@ const understaffed = computed(() => !!company.value && company.value.ops < compa
 const loadPercent = computed(() => (company.value ? Math.round((100 * company.value.load) / company.value.capacity) : 0));
 // Over 100% is an outage; close to it is a warning that one is coming.
 const loadLevel = computed(() => (loadPercent.value > 100 ? "over" : loadPercent.value >= 80 ? "high" : "ok"));
+
+const bankrupt = computed(() => company.value?.status === "bankrupt");
+const currentModel = computed(() => meta.value?.models.find((m) => m.id === company.value?.model));
+
+const CATEGORY_LABELS: Record<SpendCategory, string> = {
+  staff: "Staff",
+  infrastructure: "Infrastructure",
+  addons: "Add-ons",
+};
+const spendTotal = computed(() =>
+  company.value ? SPEND_CATEGORIES.reduce((sum, c) => sum + company.value!.spend[c], 0) : 0,
+);
+const spendShare = (c: SpendCategory) =>
+  spendTotal.value ? Math.round((100 * company.value!.spend[c]) / spendTotal.value) : 0;
+
+// The day's events (outage, bankruptcy) first, then its charges grouped by category.
+const lastDayEvents = computed(() => lastDay.value?.entries.filter((e) => !e.category) ?? []);
+const lastDayGroups = computed(() =>
+  SPEND_CATEGORIES.map((category) => {
+    const entries = lastDay.value?.entries.filter((e) => e.category === category) ?? [];
+    return { category, entries, total: entries.reduce((sum, e) => sum + e.cashDelta, 0) };
+  }).filter((g) => g.entries.length),
+);
+const lastDayTotal = computed(() => lastDay.value?.entries.reduce((sum, e) => sum + e.cashDelta, 0) ?? 0);
 
 onMounted(async () => {
   try {
@@ -64,6 +88,16 @@ async function continueDay() {
     <h1>{{ company.name }}</h1>
     <p class="muted">{{ productName(company.productType) }} · {{ modelName(company.model) }}</p>
 
+    <div v-if="bankrupt" class="bankrupt" role="alert" data-testid="bankrupt-screen">
+      <span class="badge">Bankrupt</span>
+      <h2>Game over: you ran out of cash</h2>
+      <p>
+        {{ company.name }} went below £0 on day {{ company.day }}, so the game has ended. You can't continue or change
+        staff. Look at where your money went below, then
+        <RouterLink :to="`/play/${code}`">start a new company</RouterLink> and try a different plan.
+      </p>
+    </div>
+
     <div class="stats">
       <div class="stat">
         <span class="label">Day</span>
@@ -71,7 +105,7 @@ async function continueDay() {
       </div>
       <div class="stat">
         <span class="label">Cash</span>
-        <span class="value" data-testid="cash">{{ formatCash(company.cash) }}</span>
+        <span :class="['value', { neg: company.cash < 0 }]" data-testid="cash">{{ formatCash(company.cash) }}</span>
       </div>
       <div class="stat">
         <span class="label">Users</span>
@@ -108,24 +142,72 @@ async function continueDay() {
       </p>
     </div>
 
-    <button class="continue" :disabled="busy" @click="continueDay">Continue</button>
+    <button class="continue" :disabled="busy || bankrupt" @click="continueDay">Continue</button>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
 
-    <div v-if="lastDay" class="day-log">
-      <h2>Day {{ lastDay.day }}</h2>
-      <ul>
-        <li v-for="(entry, i) in lastDay.entries" :key="i" :class="{ outage: entry.kind === 'outage' }">
-          <template v-if="entry.kind === 'outage'">
-            <span class="badge">Outage</span>
-            <span data-testid="outage">{{ entry.text }}</span>
-          </template>
-          <template v-else>
-            <span>{{ entry.text }}</span>
-            <span :class="entry.cashDelta < 0 ? 'neg' : 'pos'">{{ formatCash(entry.cashDelta) }}</span>
-          </template>
+    <div v-if="lastDay" class="day-log" data-testid="day-log">
+      <div class="row-between">
+        <h2>Day {{ lastDay.day }}</h2>
+        <span class="muted">
+          Total <strong :class="lastDayTotal < 0 ? 'neg' : 'pos'">{{ formatCash(lastDayTotal) }}</strong>
+        </span>
+      </div>
+      <ul v-if="lastDayEvents.length">
+        <li v-for="(entry, i) in lastDayEvents" :key="i" :class="['event', entry.kind]">
+          <span class="badge">{{ entry.kind === "bankrupt" ? "Bankrupt" : "Outage" }}</span>
+          <span :data-testid="entry.kind">{{ entry.text }}</span>
         </li>
       </ul>
+      <section
+        v-for="group in lastDayGroups"
+        :key="group.category"
+        :class="['log-group', `cat-${group.category}`]"
+        :data-category="group.category"
+      >
+        <h3 class="row-between">
+          <span>{{ CATEGORY_LABELS[group.category] }}</span>
+          <span class="neg">{{ formatCash(group.total) }}</span>
+        </h3>
+        <ul>
+          <li v-for="(entry, i) in group.entries" :key="i">
+            <span>{{ entry.text }}</span>
+            <span :class="entry.cashDelta < 0 ? 'neg' : 'pos'">{{ formatCash(entry.cashDelta) }}</span>
+          </li>
+        </ul>
+      </section>
     </div>
+  </section>
+
+  <section v-if="company" class="card" aria-labelledby="spend-heading" data-testid="spend">
+    <div class="row-between">
+      <h2 id="spend-heading">Spend so far</h2>
+      <span class="muted">
+        Total <strong data-testid="spend-total">{{ formatCash(spendTotal) }}</strong>
+      </span>
+    </div>
+    <div v-if="spendTotal" class="spend-bar" aria-hidden="true">
+      <span
+        v-for="c in SPEND_CATEGORIES"
+        :key="c"
+        :class="`cat-${c}`"
+        :style="{ width: `${(100 * company.spend[c]) / spendTotal}%` }"
+      ></span>
+    </div>
+    <ul class="spend-list">
+      <li v-for="c in SPEND_CATEGORIES" :key="c" :class="`cat-${c}`">
+        <span class="swatch"></span>
+        <span class="spend-name">{{ CATEGORY_LABELS[c] }}</span>
+        <span class="muted">{{ spendShare(c) }}%</span>
+        <strong :data-testid="`spend-${c}`">{{ formatCash(company.spend[c]) }}</strong>
+      </li>
+    </ul>
+    <p v-if="currentModel" class="muted model-costs" data-testid="model-costs">
+      {{ currentModel.name }}: {{ formatCash(currentModel.upfrontCost) }} upfront when you start, then
+      {{ formatCash(currentModel.monthlyCost) }} a month<template v-if="currentModel.monthlyCostPerUser">
+        plus {{ formatPrice(currentModel.monthlyCostPerUser) }} per user</template
+      >, billed a day at a time. At today's users that's
+      <strong>{{ formatCash(company.monthlyInfrastructureCost) }}</strong> a month.
+    </p>
   </section>
 
   <section v-if="company && meta" class="card" aria-labelledby="staff-heading">
@@ -144,7 +226,7 @@ async function continueDay() {
         <div class="counter">
           <button
             class="ghost"
-            :disabled="busy || company[pool.id] < 1"
+            :disabled="busy || bankrupt || company[pool.id] < 1"
             :aria-label="`Let go one ${pool.personName}`"
             @click="act({ type: 'letGo', pool: pool.id })"
           >
@@ -153,7 +235,7 @@ async function continueDay() {
           <output :data-testid="`${pool.id}-count`" aria-live="polite">{{ company[pool.id] }}</output>
           <button
             class="ghost"
-            :disabled="busy"
+            :disabled="busy || bankrupt"
             :aria-label="`Hire one ${pool.personName}`"
             @click="act({ type: 'hire', pool: pool.id })"
           >

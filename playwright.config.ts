@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 const PORT = 3180;
 export const E2E_TEACHER_PASSWORD = "e2e-teacher-password";
+export const E2E_DATABASE_URL = process.env.E2E_DATABASE_URL ?? "postgres://xaas:xaas@localhost:5433/xaas_e2e";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -20,7 +21,7 @@ export default defineConfig({
     reuseExistingServer: false,
     timeout: 120_000,
     env: {
-      DATABASE_URL: process.env.E2E_DATABASE_URL ?? "postgres://xaas:xaas@localhost:5433/xaas_e2e",
+      DATABASE_URL: E2E_DATABASE_URL,
       TEACHER_PASSWORD: E2E_TEACHER_PASSWORD,
       SESSION_SECRET: "e2e-session-secret-at-least-32-characters",
       PORT: String(PORT),

@@ -54,7 +54,8 @@ export async function buildApp(opts: AppOptions) {
   await app.register(cookie, { secret: opts.sessionSecret });
 
   app.setErrorHandler((err, _req, reply) => {
-    if (err instanceof SimError) return sendError(reply, 400, err.code, err.message);
+    // A bankrupt game is over: the request was fine, but the game can't take it any more.
+    if (err instanceof SimError) return sendError(reply, err.code === "bankrupt" ? 409 : 400, err.code, err.message);
     const { statusCode, message } = err as { statusCode?: number; message?: string };
     if (statusCode && statusCode < 500) return sendError(reply, statusCode, "bad_request", message ?? "Bad request.");
     app.log.error(err);
@@ -71,7 +72,7 @@ export async function buildApp(opts: AppOptions) {
       day: state.day,
       finalDay: sim.config.finalDay,
       cash: state.cash,
-      status: row.status,
+      status: state.status === "bankrupt" ? "bankrupt" : row.status,
       developers: state.developers,
       ops: state.ops,
       opsNeeded: sim.opsNeeded(state.model),
@@ -81,10 +82,19 @@ export async function buildApp(opts: AppOptions) {
       capacity: sim.capacity(state),
       uptime: sim.uptime(state),
       outageDays: state.outageDays,
+      monthlyInfrastructureCost: sim.monthlyInfrastructureCost(state),
+      spend: state.spend,
     };
   }
 
-  const columnsFor = (state: GameState) => ({ model: state.model, day: state.day, cash: state.cash, state });
+  const columnsFor = (state: GameState) => ({
+    model: state.model,
+    day: state.day,
+    cash: state.cash,
+    // Denormalised for the dashboard, like cash.
+    ...(state.status === "bankrupt" && { status: "bankrupt" }),
+    state,
+  });
 
   async function findCode(code: string) {
     if (!CODE_PATTERN.test(code)) return undefined;
@@ -102,8 +112,9 @@ export async function buildApp(opts: AppOptions) {
       maxCompanyNameLength: config.maxCompanyNameLength,
       productTypes: PRODUCT_TYPE_IDS.map((id) => ({ id, ...config.productTypes[id] })),
       models: MODEL_IDS.map((id) => {
-        const { name, blurb, comparison, opsNeeded } = config.models[id];
-        return { id, name, blurb, comparison, stack: responsibilityStack(id), opsNeeded };
+        const { name, blurb, comparison, opsNeeded, upfrontCost, monthlyCost, monthlyCostPerUser } = config.models[id];
+        const stack = responsibilityStack(id);
+        return { id, name, blurb, comparison, stack, opsNeeded, upfrontCost, monthlyCost, monthlyCostPerUser };
       }),
       staff: STAFF_POOLS.map((id) => {
         const { name, personName, dayRate } = config.staff[id];

@@ -53,6 +53,9 @@ export const api = {
 
 const money = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 });
 export const formatCash = (n: number) => money.format(n);
+// For prices under a pound, such as a per-user fee: shows pence only when there are some.
+const price = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", minimumFractionDigits: 2 });
+export const formatPrice = (n: number) => (Number.isInteger(n) ? money.format(n) : price.format(n));
 
 const count = new Intl.NumberFormat("en-GB");
 export const formatCount = (n: number) => count.format(n);

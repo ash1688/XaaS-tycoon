@@ -9,6 +9,10 @@ export type ProductTypeId = (typeof PRODUCT_TYPE_IDS)[number];
 export const STAFF_POOLS = ["developers", "ops"] as const;
 export type StaffPool = (typeof STAFF_POOLS)[number];
 
+/** Every charge is tagged with one of these, so students can see where their money goes. */
+export const SPEND_CATEGORIES = ["staff", "infrastructure", "addons"] as const;
+export type SpendCategory = (typeof SPEND_CATEGORIES)[number];
+
 /** How a model compares, shown in the table when choosing one. Words, not numbers, for now. */
 export interface ModelComparison {
   upfrontCost: string;
@@ -22,8 +26,12 @@ export interface ModelConfig {
   /** One-line description shown when choosing a model. */
   blurb: string;
   comparison: ModelComparison;
-  /** Placeholder running cost per day until the full ledger lands. */
-  dailyCost: number;
+  /** Charged once when a company adopts this model, such as buying servers (capex). */
+  upfrontCost: number;
+  /** Fixed provider bill (or power and upkeep on-prem) per month, billed as a daily share (opex). */
+  monthlyCost: number;
+  /** Extra per user per month, billed as a daily share on that day's users. SaaS charges per user. */
+  monthlyCostPerUser: number;
   /** Ops/sysadmins this model needs to keep running. Fewer as the provider manages more layers. */
   opsNeeded: number;
   /** Load the model can serve in a day when fully staffed. */
@@ -93,6 +101,15 @@ export interface CapacityConfig {
   unstaffedShare: number;
 }
 
+/**
+ * How monthly costs are billed. Each day is charged its share of the month: monthly cost × days ÷ daysPerMonth,
+ * rounded to the pound. Students see the same line every day rather than a lump once a month, and a model can be
+ * billed for part of a month (say when leaving it) with the same rule.
+ */
+export interface BillingConfig {
+  daysPerMonth: number;
+}
+
 export interface GameConfig {
   startingCash: number;
   finalDay: number;
@@ -102,10 +119,12 @@ export interface GameConfig {
   staff: Record<StaffPool, StaffPoolConfig>;
   capacity: CapacityConfig;
   outage: OutageConfig;
+  billing: BillingConfig;
 }
 
 export const defaultConfig: GameConfig = {
-  startingCash: 50_000,
+  // There's no revenue in the alpha, so this has to carry a sensible setup to day 180 with room for mistakes.
+  startingCash: 250_000,
   finalDay: 180,
   maxCompanyNameLength: 40,
   models: {
@@ -113,7 +132,9 @@ export const defaultConfig: GameConfig = {
       name: "Own servers (on-prem)",
       blurb: "Buy and run your own kit.",
       comparison: { upfrontCost: "High", monthlyCost: "Low–medium", opsNeeded: "High", control: "Full" },
-      dailyCost: 150,
+      upfrontCost: 40_000,
+      monthlyCost: 1_500,
+      monthlyCostPerUser: 0,
       opsNeeded: 3,
       capacity: 80_000,
     },
@@ -121,7 +142,9 @@ export const defaultConfig: GameConfig = {
       name: "Rent VMs (IaaS)",
       blurb: "Rent virtual machines and run everything on them.",
       comparison: { upfrontCost: "Low", monthlyCost: "Medium", opsNeeded: "Medium", control: "High" },
-      dailyCost: 200,
+      upfrontCost: 2_000,
+      monthlyCost: 6_000,
+      monthlyCostPerUser: 0,
       opsNeeded: 2,
       capacity: 90_000,
     },
@@ -129,7 +152,9 @@ export const defaultConfig: GameConfig = {
       name: "Deploy to a platform (PaaS)",
       blurb: "Hand over your code; the platform runs it.",
       comparison: { upfrontCost: "Low", monthlyCost: "Medium–high", opsNeeded: "Low", control: "Medium" },
-      dailyCost: 250,
+      upfrontCost: 1_000,
+      monthlyCost: 9_000,
+      monthlyCostPerUser: 0,
       opsNeeded: 1,
       capacity: 100_000,
     },
@@ -137,7 +162,9 @@ export const defaultConfig: GameConfig = {
       name: "Build on a SaaS platform (SaaS)",
       blurb: "Build inside someone else's SaaS platform, like a shop on Shopify.",
       comparison: { upfrontCost: "Low", monthlyCost: "Per user, plus add-ons", opsNeeded: "None", control: "Low" },
-      dailyCost: 120,
+      upfrontCost: 500,
+      monthlyCost: 1_500,
+      monthlyCostPerUser: 0.5,
       opsNeeded: 0,
       capacity: 100_000,
     },
@@ -187,4 +214,5 @@ export const defaultConfig: GameConfig = {
   },
   capacity: { unstaffedShare: 0.4 },
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25 },
+  billing: { daysPerMonth: 30 },
 };

@@ -1,5 +1,14 @@
 // Shapes the API sends and receives. Type-only, so the web client can import it.
-import type { Action, DayLog, ModelComparison, ModelId, ProductTypeId, StackLayer, StaffPool } from "@xaas/sim";
+import type {
+  Action,
+  DayLog,
+  ModelComparison,
+  ModelId,
+  ProductTypeId,
+  Spend,
+  StackLayer,
+  StaffPool,
+} from "@xaas/sim";
 
 export interface ApiError {
   error: string;
@@ -19,6 +28,9 @@ export interface MetaView {
     /** Responsibility stack, bottom layer first. */
     stack: StackLayer[];
     opsNeeded: number;
+    upfrontCost: number;
+    monthlyCost: number;
+    monthlyCostPerUser: number;
   }[];
   staff: { id: StaffPool; name: string; personName: string; dayRate: number }[];
 }
@@ -31,6 +43,7 @@ export interface CompanyView {
   day: number;
   finalDay: number;
   cash: number;
+  /** "active", or "bankrupt" once cash has gone below zero: the game is over and rejects Continue and actions. */
   status: string;
   developers: number;
   ops: number;
@@ -46,7 +59,12 @@ export interface CompanyView {
   /** Percentage of time up across every day played. */
   uptime: number;
   outageDays: number;
+  /** What the current model costs per month at today's users. */
+  monthlyInfrastructureCost: number;
+  /** Total spent so far in each category. */
+  spend: Spend;
 }
+
 
 export interface CodeView {
   code: string;

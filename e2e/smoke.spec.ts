@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
+import postgres from "postgres";
+import { E2E_DATABASE_URL, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
 
 test("teacher creates a code, student starts a game and presses Continue", async ({ browser }) => {
   // Teacher
@@ -33,7 +34,10 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await expect(stack.locator('[data-layer="os"]')).toContainText("OS and patching");
   await expect(stack.locator('[data-layer="os"]')).toContainText("You");
   await expect(stack.locator('[data-layer="hardware"]')).toContainText("Provider");
-  await expect(student.getByTestId("cash")).toHaveText("£50,000");
+  // £250,000 starting cash less IaaS's £2,000 upfront cost.
+  await expect(student.getByTestId("cash")).toHaveText("£248,000");
+  await expect(student.getByTestId("spend-infrastructure")).toHaveText("£2,000");
+  await expect(student.getByTestId("model-costs")).toContainText("£6,000 a month");
 
   // Users, uptime and load vs capacity. A social network starts with 1,000 users.
   await expect(student.getByTestId("users")).toHaveText("1,000");
@@ -52,9 +56,16 @@ test("teacher creates a code, student starts a game and presses Continue", async
 
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).toContainText("2 of 180");
-  // £200 IaaS running costs + 3 developers × £160 + 1 ops × £140.
-  await expect(student.getByTestId("cash")).toHaveText("£49,180");
-  await expect(student.getByText("Developers pay (3)")).toBeVisible();
+  // £200 IaaS running costs (£6,000 a month ÷ 30) + 3 developers × £160 + 1 ops × £140.
+  await expect(student.getByTestId("cash")).toHaveText("£247,180");
+  const dayLog = student.getByTestId("day-log");
+  await expect(dayLog.locator('[data-category="staff"]')).toContainText("Developers pay (3)");
+  await expect(dayLog.locator('[data-category="infrastructure"]')).toContainText("running costs");
+  // Spend so far, split by category.
+  await expect(student.getByTestId("spend-staff")).toHaveText("£620");
+  await expect(student.getByTestId("spend-infrastructure")).toHaveText("£2,200");
+  await expect(student.getByTestId("spend-addons")).toHaveText("£0");
+  await expect(student.getByTestId("spend-total")).toHaveText("£2,820");
   // Users grow each day; load stays well under capacity, so uptime stays at 100%.
   await expect(student.getByTestId("users")).not.toHaveText("1,000");
   await expect(student.getByTestId("users")).toHaveText(/^1,\d{3}$/);
@@ -73,4 +84,43 @@ test("teacher creates a code, student starts a game and presses Continue", async
   // Teacher sees the company counted against the code.
   await teacher.reload();
   await expect(teacher.locator(`tr:has(td[data-code="${code}"]) td`).nth(1)).toHaveText("1");
+});
+
+test("a company that runs out of cash goes bankrupt and can't continue", async ({ browser, request }) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  await teacher.getByRole("button", { name: "Create code" }).click();
+  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+
+  const created = await request.post(`/api/codes/${code}/companies`, {
+    data: { name: "Broke Ltd", productType: "social", model: "iaas" },
+  });
+  const { id } = await created.json();
+
+  // Run the company down to its last £100 in the test database, as if it had overspent for months.
+  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
+  try {
+    await sql`update companies set state = jsonb_set(state, '{cash}', '100') where id = ${id}`;
+  } finally {
+    await sql.end();
+  }
+
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${id}`);
+  await expect(student.getByTestId("cash")).toHaveText("£100");
+  await student.getByRole("button", { name: "Continue" }).click();
+
+  await expect(student.getByTestId("bankrupt-screen")).toContainText("Game over");
+  await expect(student.getByTestId("day-log").getByTestId("bankrupt")).toContainText("Broke Ltd is bankrupt");
+  await expect(student.getByRole("button", { name: "Continue" })).toBeDisabled();
+  await expect(student.getByRole("button", { name: "Hire one developer" })).toBeDisabled();
+
+  // Still bankrupt after a reload, and the API refuses to carry on.
+  await student.reload();
+  await expect(student.getByTestId("bankrupt-screen")).toBeVisible();
+  await expect(student.getByRole("button", { name: "Continue" })).toBeDisabled();
+  const again = await request.post(`/api/codes/${code}/companies/${id}/continue`);
+  expect(again.status()).toBe(409);
 });

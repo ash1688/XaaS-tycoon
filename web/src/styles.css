@@ -293,7 +293,7 @@ fieldset > p {
   border-bottom: 1px solid var(--border);
 }
 
-.day-log li.outage {
+.day-log li.event {
   justify-content: flex-start;
   align-items: center;
   padding: 0.5rem 0.75rem;
@@ -304,8 +304,115 @@ fieldset > p {
   color: var(--warn);
 }
 
-.day-log li.outage .badge {
+.day-log li.event .badge {
   flex-shrink: 0;
+}
+
+.log-group li span:last-child,
+.log-group h3 span:last-child {
+  white-space: nowrap;
+}
+
+.day-log h3 {
+  margin: 0.9rem 0 0.15rem;
+  padding-left: 0.6rem;
+  border-left: 4px solid var(--cat);
+  font-size: 0.95rem;
+}
+
+/* Spend categories borrow the stack's colours: staff are yours, infrastructure is the provider's,
+   and add-ons are the shared layer. */
+.cat-staff {
+  --cat: var(--you);
+  --cat-soft: var(--you-soft);
+}
+
+.cat-infrastructure {
+  --cat: var(--provider);
+  --cat-soft: var(--provider-soft);
+}
+
+.cat-addons {
+  --cat: var(--shared);
+  --cat-soft: var(--shared-soft);
+}
+
+.spend-bar {
+  display: flex;
+  height: 0.9rem;
+  margin: 0.75rem 0;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.spend-bar span {
+  background: var(--cat);
+}
+
+.spend-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.75rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.spend-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 8px;
+  background: var(--cat-soft);
+}
+
+.spend-list .swatch {
+  border-color: var(--cat);
+  background: var(--cat);
+}
+
+.spend-list .spend-name {
+  flex: 1;
+}
+
+.spend-list strong {
+  min-width: 6ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-costs {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.bankrupt {
+  margin: 0 0 1rem;
+  padding: 0.9rem 1rem;
+  border-radius: 10px;
+  border: 2px solid var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.bankrupt h2 {
+  margin: 0.5rem 0 0.25rem;
+}
+
+.bankrupt p {
+  margin: 0;
+  color: var(--text);
+}
+
+.warn-badge {
+  color: var(--warn);
+}
+
+.compare .price {
+  display: block;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .capacity {
