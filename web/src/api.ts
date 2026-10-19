@@ -9,6 +9,8 @@ import type {
   NewCompanyBody,
   SummaryView,
   TeacherCodeView,
+  TeacherGamesView,
+  TeacherSummaryView,
 } from "@xaas/server/api-types";
 
 export class RequestError extends Error {
@@ -60,6 +62,10 @@ export const api = {
   teacherMe: () => request<{ ok: true }>("GET", "/api/teacher/me"),
   teacherCodes: () => request<TeacherCodeView[]>("GET", "/api/teacher/codes"),
   createCode: () => request<TeacherCodeView>("POST", "/api/teacher/codes"),
+  // Without hours, the server's default window.
+  teacherGames: (hours?: number) =>
+    request<TeacherGamesView>("GET", `/api/teacher/games${hours === undefined ? "" : `?hours=${hours}`}`),
+  teacherSummary: (id: string) => request<TeacherSummaryView>("GET", `/api/teacher/companies/${enc(id)}/summary`),
 };
 
 const money = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 });

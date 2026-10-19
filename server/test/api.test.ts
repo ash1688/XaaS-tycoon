@@ -11,6 +11,8 @@ import type {
   MigrationQuoteView,
   SummaryView,
   TeacherCodeView,
+  TeacherGamesView,
+  TeacherSummaryView,
 } from "../src/api-types.ts";
 import { setupTestDb } from "./testDb.ts";
 
@@ -711,6 +713,114 @@ describe("game end and summary", () => {
     const other = await newCode();
     const res = await shortApp.inject({ method: "GET", url: url.replace(/codes\/\d+/, `codes/${other}`) + "/summary" });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("teacher dashboard", () => {
+  async function games(query = "") {
+    return app.inject({ method: "GET", url: `/api/teacher/games${query}`, cookies: await teacherCookie() });
+  }
+
+  async function lastPlayed(id: string, hoursAgo: number) {
+    await testDb.db
+      .update(companies)
+      .set({ updatedAt: new Date(Date.now() - hoursAgo * 3600 * 1000) })
+      .where(eq(companies.id, id));
+  }
+
+  it("requires the teacher session", async () => {
+    expect((await app.inject({ method: "GET", url: "/api/teacher/games" })).statusCode).toBe(401);
+    const id = "00000000-0000-0000-0000-000000000000";
+    expect((await app.inject({ method: "GET", url: `/api/teacher/companies/${id}/summary` })).statusCode).toBe(401);
+  });
+
+  it("groups games by code, with model, day, cash, users, uptime and status", async () => {
+    const [first, second] = [await newCode(), await newCode()];
+    const a = (await newCompany(first, { name: "Alpha", productType: "ecommerce", model: "iaas" })).json<CompanyView>();
+    const b = (await newCompany(first, { name: "Beta", productType: "social", model: "paas" })).json<CompanyView>();
+    const c = (await newCompany(second)).json<CompanyView>();
+    await app.inject({ method: "POST", url: `/api/codes/${first}/companies/${a.id}/continue` });
+    await app.inject({
+      method: "POST",
+      url: `/api/codes/${first}/companies/${a.id}/actions`,
+      payload: { type: "startMigration", model: "paas" },
+    });
+    await app.inject({ method: "POST", url: `/api/codes/${second}/companies/${c.id}/retire` });
+    const played = (await app.inject({ method: "GET", url: `/api/codes/${first}/companies/${a.id}` })).json<CompanyView>();
+
+    const res = await games();
+    expect(res.statusCode).toBe(200);
+    const body = res.json<TeacherGamesView>();
+    // Newest code first; each code's companies in the order they started.
+    expect(body.codes.map((g) => g.code)).toEqual([second, first]);
+    expect(body.codes[1]!.companies.map((g) => g.name)).toEqual(["Alpha", "Beta"]);
+    expect(body.codes[1]!.companies[0]).toMatchObject({
+      id: a.id,
+      productType: "ecommerce",
+      model: "iaas",
+      migratingTo: "paas",
+      day: 2,
+      finalDay: sim.config.finalDay,
+      cash: played.cash,
+      users: played.users,
+      uptime: played.uptime,
+      status: "active",
+    });
+    expect(body.codes[1]!.companies[1]).toMatchObject({ id: b.id, model: "paas", migratingTo: null, day: 1 });
+    expect(body.codes[0]!.companies).toMatchObject([{ id: c.id, status: "retired" }]);
+  });
+
+  it("shows the last 3 hours by default", async () => {
+    const code = await newCode();
+    const recent = (await newCompany(code, { name: "Recent", productType: "ecommerce", model: "iaas" })).json<CompanyView>();
+    const old = (await newCompany(code, { name: "Old", productType: "ecommerce", model: "iaas" })).json<CompanyView>();
+    await lastPlayed(recent.id, 2.5);
+    await lastPlayed(old.id, 3.5);
+    const body = (await games()).json<TeacherGamesView>();
+    expect(body.hours).toBe(3);
+    expect(body.codes).toMatchObject([{ code, companies: [{ name: "Recent" }] }]);
+    expect(body.codes[0]!.companies).toHaveLength(1);
+  });
+
+  it("takes a custom window, leaving out older games and codes with none", async () => {
+    const [kept, dropped] = [await newCode(), await newCode()];
+    const a = (await newCompany(kept)).json<CompanyView>();
+    const b = (await newCompany(dropped)).json<CompanyView>();
+    await lastPlayed(a.id, 20);
+    await lastPlayed(b.id, 30);
+    const body = (await games("?hours=24")).json<TeacherGamesView>();
+    expect(body.hours).toBe(24);
+    expect(body.codes.map((g) => g.code)).toEqual([kept]);
+    expect((await games("?hours=1")).json<TeacherGamesView>().codes).toEqual([]);
+  });
+
+  it("rejects an unreasonable window", async () => {
+    for (const hours of ["0", "-1", "169", "1.5", "lots"]) {
+      expect((await games(`?hours=${hours}`)).statusCode).toBe(400);
+    }
+  });
+
+  it("gives any company's summary by id", async () => {
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    await app.inject({ method: "POST", url: `/api/codes/${code}/companies/${company.id}/continue` });
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/teacher/companies/${company.id}/summary`,
+      cookies: await teacherCookie(),
+    });
+    expect(res.statusCode).toBe(200);
+    const student = (await app.inject({ method: "GET", url: `/api/codes/${code}/companies/${company.id}/summary` })).json();
+    expect(res.json<TeacherSummaryView>()).toEqual({ code, status: "active", summary: student });
+  });
+
+  it("is 404 for an unknown or malformed company id", async () => {
+    const cookies = await teacherCookie();
+    for (const id of ["00000000-0000-0000-0000-000000000000", "nope"]) {
+      const res = await app.inject({ method: "GET", url: `/api/teacher/companies/${id}/summary`, cookies });
+      expect(res.statusCode).toBe(404);
+      expect(res.json()).toMatchObject({ error: "unknown_company" });
+    }
   });
 });
 

@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import Fastify, { type FastifyReply } from "fastify";
 import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
-import { and, count, desc, eq } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte } from "drizzle-orm";
 import {
   createSim,
   MIGRATION_PHASES,
@@ -30,6 +30,9 @@ import type {
   NewCompanyBody,
   SummaryView,
   TeacherCodeView,
+  TeacherGamesView,
+  TeacherGameView,
+  TeacherSummaryView,
 } from "./api-types.ts";
 
 export interface AppOptions {
@@ -42,9 +45,14 @@ export interface AppOptions {
   logger?: boolean;
   /** Companies still being played that one login code can have at once. Defaults to 3. */
   maxActiveCompanies?: number;
+  /** How far back, in hours, the teacher's dashboard looks unless the teacher picks another window. Defaults to 3. */
+  dashboardHours?: number;
 }
 
 export const DEFAULT_MAX_ACTIVE_COMPANIES = 3;
+export const DEFAULT_DASHBOARD_HOURS = 3;
+/** The widest window the dashboard can ask for: a week. */
+export const MAX_DASHBOARD_HOURS = 7 * 24;
 
 const CODE_PATTERN = /^\d{8}$/;
 
@@ -61,6 +69,7 @@ export async function buildApp(opts: AppOptions) {
   const { db } = opts;
   const sim = opts.sim ?? createSim();
   const maxActiveCompanies = opts.maxActiveCompanies ?? DEFAULT_MAX_ACTIVE_COMPANIES;
+  const dashboardHours = opts.dashboardHours ?? DEFAULT_DASHBOARD_HOURS;
   const app = Fastify({ logger: opts.logger ?? false });
 
   await app.register(cookie, { secret: opts.sessionSecret });
@@ -109,6 +118,9 @@ export async function buildApp(opts: AppOptions) {
     model: state.model,
     day: state.day,
     cash: state.cash,
+    users: state.users,
+    uptime: sim.uptime(state),
+    migratingTo: state.migration?.to ?? null,
     // Denormalised for the dashboard, like cash: "bankrupt" or "finished" once the game is over.
     ...(state.status !== "playing" && { status: state.status }),
     state,
@@ -398,6 +410,65 @@ export async function buildApp(opts: AppOptions) {
         }
       }
       return sendError(reply, 500, "code_generation_failed", "Couldn't create a unique code. Try again.");
+    });
+
+    // The live dashboard: recent games grouped by code, read from the denormalised columns rather than each state.
+    teacher.get<{ Querystring: { hours?: number } }>(
+      "/api/teacher/games",
+      {
+        schema: {
+          querystring: {
+            type: "object",
+            properties: { hours: { type: "integer", minimum: 1, maximum: MAX_DASHBOARD_HOURS } },
+          },
+        },
+      },
+      async (req): Promise<TeacherGamesView> => {
+        const hours = req.query.hours ?? dashboardHours;
+        const since = new Date(Date.now() - hours * 3600 * 1000);
+        const rows = await db
+          .select({
+            code: companies.loginCode,
+            id: companies.id,
+            name: companies.name,
+            productType: companies.productType,
+            model: companies.model,
+            migratingTo: companies.migratingTo,
+            day: companies.day,
+            cash: companies.cash,
+            users: companies.users,
+            uptime: companies.uptime,
+            status: companies.status,
+            updatedAt: companies.updatedAt,
+          })
+          .from(companies)
+          .innerJoin(loginCodes, eq(loginCodes.code, companies.loginCode))
+          .where(and(gte(companies.updatedAt, since), eq(loginCodes.archived, false)))
+          .orderBy(desc(loginCodes.createdAt), asc(companies.createdAt));
+        const codes = new Map<string, TeacherGameView[]>();
+        for (const { code, ...r } of rows) {
+          if (!codes.has(code)) codes.set(code, []);
+          codes.get(code)!.push({
+            ...r,
+            productType: r.productType as TeacherGameView["productType"],
+            model: r.model as TeacherGameView["model"],
+            migratingTo: r.migratingTo as TeacherGameView["migratingTo"],
+            status: r.status as CompanyStatus,
+            finalDay: sim.config.finalDay,
+            updatedAt: r.updatedAt.toISOString(),
+          });
+        }
+        return { hours, codes: [...codes].map(([code, list]) => ({ code, companies: list })) };
+      },
+    );
+
+    // Any company's summary. The teacher picks it from the dashboard, so it goes by id alone.
+    teacher.get<{ Params: { id: string } }>("/api/teacher/companies/:id/summary", async (req, reply) => {
+      const { id } = req.params;
+      const [row] = UUID_PATTERN.test(id) ? await db.select().from(companies).where(eq(companies.id, id)) : [];
+      if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      const status = row.status as CompanyStatus;
+      return { code: row.loginCode, status, summary: sim.summarise(row.state) } satisfies TeacherSummaryView;
     });
   });
 

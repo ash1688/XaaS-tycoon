@@ -5,6 +5,8 @@ import { E2E_DATABASE_URL, E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwr
 test("teacher creates a code, student starts a game and presses Continue", async ({ browser }) => {
   // Teacher
   const teacher = await (await browser.newContext()).newPage();
+  // A controllable clock, so the live dashboard's refresh can be run on without waiting for it.
+  await teacher.clock.install();
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
@@ -100,9 +102,27 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await expect(elsewhere.getByTestId("users")).not.toHaveText("1,000");
   await expect(elsewhere.getByTestId("feature-progress-photos")).toContainText("3 of 16 developer-days");
 
+  // The teacher's live dashboard picks the game up on its next refresh, without a reload, under its code.
+  const live = teacher.getByTestId("live-dashboard");
+  await expect(live).toContainText("No games in this window yet.");
+  await teacher.clock.runFor(20_000);
+  const row = live.locator(`[data-code="${code}"] tr`, { hasText: "Playwright Ltd" });
+  await expect(row.getByTestId("live-day")).toHaveText(`2/${E2E_FINAL_DAY}`);
+  await expect(row).toContainText("IaaS");
+  await expect(row).toContainText("£247,180");
+  await expect(row).toContainText("Active");
+
   // Teacher sees the company counted against the code.
   await teacher.reload();
   await expect(teacher.locator(`tr:has(td[data-code="${code}"]) td`).nth(1)).toHaveText("1");
+
+  // The teacher opens the company's summary from the dashboard.
+  await teacher.getByRole("link", { name: "Playwright Ltd" }).click();
+  await expect(teacher.getByRole("heading", { name: "How Playwright Ltd did" })).toBeVisible();
+  await expect(teacher.getByTestId("summary")).toContainText(`So far: day 2 of ${E2E_FINAL_DAY}`);
+  await expect(teacher.getByTestId("summary-cash")).toHaveText("£247,180");
+  await teacher.getByRole("link", { name: "← Staff dashboard" }).click();
+  await expect(teacher.getByTestId("live-dashboard")).toBeVisible();
 });
 
 test("a company that runs out of cash goes bankrupt and can't continue", async ({ browser, request }) => {

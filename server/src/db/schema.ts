@@ -1,4 +1,4 @@
-import { boolean, index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, doublePrecision, index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import type { GameState } from "@xaas/sim";
 
 export const loginCodes = pgTable("login_codes", {
@@ -23,6 +23,11 @@ export const companies = pgTable(
     model: text("model").notNull(),
     day: integer("day").notNull(),
     cash: integer("cash").notNull(),
+    users: integer("users").notNull().default(0),
+    // Percentage, as the sim works it out.
+    uptime: doublePrecision("uptime").notNull().default(100),
+    // The model a migration under way is moving to, or null.
+    migratingTo: text("migrating_to"),
     state: jsonb("state").$type<GameState>().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

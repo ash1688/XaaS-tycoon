@@ -2,6 +2,7 @@
 import { onMounted, ref } from "vue";
 import type { TeacherCodeView } from "@xaas/server/api-types";
 import { api, RequestError } from "../api";
+import LiveDashboard from "../components/LiveDashboard.vue";
 
 const signedIn = ref<boolean>();
 const password = ref("");
@@ -74,29 +75,33 @@ const formatDate = (iso: string) =>
     </form>
   </section>
 
-  <section v-else-if="signedIn" class="card">
-    <div class="row-between">
+  <template v-else-if="signedIn">
+    <div class="row-between staff-head">
       <h1>Staff dashboard</h1>
       <button class="ghost" @click="signOut">Sign out</button>
     </div>
 
-    <h2>Login codes</h2>
-    <p class="muted">Give each student a code. It takes them to their companies.</p>
-    <button :disabled="busy" @click="createCode">Create code</button>
-    <p v-if="error" class="error" role="alert">{{ error }}</p>
+    <LiveDashboard @signed-out="signedIn = false" />
 
-    <table v-if="codes.length" class="codes">
-      <thead>
-        <tr><th>Code</th><th>Companies</th><th>Created</th></tr>
-      </thead>
-      <tbody>
-        <tr v-for="c in codes" :key="c.code">
-          <td class="mono" :data-code="c.code">{{ formatCode(c.code) }}</td>
-          <td>{{ c.companyCount }}</td>
-          <td>{{ formatDate(c.createdAt) }}</td>
-        </tr>
-      </tbody>
-    </table>
-    <p v-else class="muted">No codes yet.</p>
-  </section>
+    <section class="card">
+      <h2>Login codes</h2>
+      <p class="muted">Give each student a code. It takes them to their companies.</p>
+      <button :disabled="busy" @click="createCode">Create code</button>
+      <p v-if="error" class="error" role="alert">{{ error }}</p>
+
+      <table v-if="codes.length" class="codes">
+        <thead>
+          <tr><th>Code</th><th>Companies</th><th>Created</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="c in codes" :key="c.code">
+            <td class="mono" :data-code="c.code">{{ formatCode(c.code) }}</td>
+            <td>{{ c.companyCount }}</td>
+            <td>{{ formatDate(c.createdAt) }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="muted">No codes yet.</p>
+    </section>
+  </template>
 </template>
