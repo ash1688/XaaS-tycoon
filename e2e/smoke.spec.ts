@@ -143,3 +143,46 @@ test("a company that runs out of cash goes bankrupt and can't continue", async (
   const again = await request.post(`/api/codes/${code}/companies/${id}/continue`);
   expect(again.status()).toBe(409);
 });
+
+test("a SaaS company buys an add-on and pays for it per user", async ({ browser, request }) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  await teacher.getByRole("button", { name: "Create code" }).click();
+  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+
+  const created = await request.post(`/api/codes/${code}/companies`, {
+    data: { name: "Shopfront Ltd", productType: "social", model: "saas" },
+  });
+  const { id } = await created.json();
+
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${id}`);
+  const shop = student.getByTestId("features");
+  await expect(shop.getByRole("heading", { name: "Add-on shop" })).toBeVisible();
+  await expect(student.getByTestId("addon-price-messaging")).toContainText("£0.08 per user a month");
+  await expect(student.getByTestId("addon-bill")).toContainText("£0 a month");
+
+  // Add-ons need a configuration team of 2 developers: with 1, they can't be bought.
+  await expect(student.getByTestId("config-team")).toContainText("at least 2 developers");
+  await student.getByRole("button", { name: "Let go one developer" }).click();
+  await expect(student.getByTestId("config-team")).toContainText("Hire 1 more to buy add-ons");
+  await expect(student.getByRole("button", { name: "Buy Direct messages add-on" })).toBeDisabled();
+  await student.getByRole("button", { name: "Hire one developer" }).click();
+
+  // Bought add-ons are active at once. 1,000 users at £0.08 is £80 a month.
+  await student.getByRole("button", { name: "Buy Direct messages add-on" }).click();
+  await expect(shop.locator('[data-feature="messaging"]')).toHaveAttribute("data-status", "addon");
+  await expect(shop.locator('[data-feature="messaging"]')).toContainText("Active");
+  await expect(student.getByTestId("addon-bill")).toContainText("£80 a month");
+  await expect(student.getByTestId("model-costs")).toContainText("£80 a month for add-ons");
+
+  // A day's share of the add-on bill: £80 ÷ 30, rounded to £3, tagged add-ons.
+  await student.getByRole("button", { name: "Continue" }).click();
+  await expect(student.getByTestId("day")).toContainText("2 of 180");
+  await expect(student.getByTestId("day-log").locator('[data-category="addons"]')).toContainText(
+    "Add-on: Direct messages (1,000 users at £0.08 a month)",
+  );
+  await expect(student.getByTestId("spend-addons")).toHaveText("£3");
+});

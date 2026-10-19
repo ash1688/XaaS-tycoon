@@ -730,8 +730,17 @@ fieldset > p {
   border-color: var(--accent);
 }
 
-.features li.built {
+.features li.built,
+.features li.addon {
   background: var(--provider-soft);
+}
+
+.config-team {
+  margin-bottom: 0.75rem;
+}
+
+.addon-bill {
+  margin: 0 0 0.75rem;
 }
 
 .feature-head {

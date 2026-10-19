@@ -83,6 +83,7 @@ export async function buildApp(opts: AppOptions) {
       uptime: sim.uptime(state),
       outageDays: state.outageDays,
       monthlyInfrastructureCost: sim.monthlyInfrastructureCost(state),
+      monthlyAddonCost: sim.monthlyAddonCost(state),
       spend: state.spend,
       features: sim.features(state),
     };
@@ -111,7 +112,15 @@ export async function buildApp(opts: AppOptions) {
       startingCash: config.startingCash,
       finalDay: config.finalDay,
       maxCompanyNameLength: config.maxCompanyNameLength,
-      productTypes: PRODUCT_TYPE_IDS.map((id) => ({ id, ...config.productTypes[id] })),
+      productTypes: PRODUCT_TYPE_IDS.map((id) => {
+        const { name, profile, features } = config.productTypes[id];
+        return {
+          id,
+          name,
+          profile,
+          features: features.map((f) => ({ id: f.id, name: f.name, addonPricePerUser: f.addonPricePerUser })),
+        };
+      }),
       models: MODEL_IDS.map((id) => {
         const { name, blurb, comparison, opsNeeded, upfrontCost, monthlyCost, monthlyCostPerUser } = config.models[id];
         const stack = responsibilityStack(id);
@@ -121,6 +130,7 @@ export async function buildApp(opts: AppOptions) {
         const { name, personName, dayRate } = config.staff[id];
         return { id, name, personName, dayRate };
       }),
+      minConfigDevelopers: config.addons.minConfigDevelopers,
     };
   });
 
@@ -182,12 +192,12 @@ export async function buildApp(opts: AppOptions) {
           type: "object",
           required: ["type"],
           properties: {
-            type: { enum: ["hire", "letGo", "buildFeature"] },
+            type: { enum: ["hire", "letGo", "buildFeature", "buyAddon"] },
             pool: { enum: [...STAFF_POOLS] },
             // Checked against the product's list by the sim.
             feature: { type: "string", maxLength: 64 },
           },
-          if: { properties: { type: { const: "buildFeature" } } },
+          if: { properties: { type: { enum: ["buildFeature", "buyAddon"] } } },
           then: { required: ["feature"] },
           else: { required: ["pool"] },
           additionalProperties: false,

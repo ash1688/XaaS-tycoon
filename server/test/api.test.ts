@@ -551,7 +551,88 @@ describe("features", () => {
   });
 });
 
+describe("SaaS add-ons", () => {
+  // Starting staff is 0 here, so a company hires the configuration team itself.
+  const { minConfigDevelopers } = defaultConfig.addons;
+  const [addon] = defaultConfig.productTypes.ecommerce.features;
+
+  async function setup(model = "saas", developers = minConfigDevelopers) {
+    const code = await newCode();
+    const company = (await newCompany(code, { name: "Acme", productType: "ecommerce", model })).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
+    for (let i = 0; i < developers; i++) await act({ type: "hire", pool: "developers" });
+    return { company, url, act };
+  }
+  const buy: ActionBody = { type: "buyAddon", feature: addon!.id };
+  const statusOf = (company: CompanyView) => company.features.find((f) => f.id === addon!.id)!.status;
+
+  it("buys an add-on on SaaS, active at once, and shows its monthly bill", async () => {
+    const { company, url, act } = await setup();
+    expect(company.monthlyAddonCost).toBe(0);
+    const res = await act(buy);
+    expect(res.statusCode).toBe(200);
+    const bought = res.json<CompanyView>();
+    expect(statusOf(bought)).toBe("addon");
+    expect(bought).toMatchObject({ day: 1, cash: company.cash });
+    expect(bought.monthlyAddonCost).toBe(Math.round(bought.users * addon!.addonPricePerUser));
+    // Kept across reloads, and can't be bought twice.
+    expect(statusOf((await app.inject({ method: "GET", url })).json<CompanyView>())).toBe("addon");
+    const again = await act(buy);
+    expect(again.statusCode).toBe(400);
+    expect(again.json()).toMatchObject({ error: "addon_active" });
+  });
+
+  it("bills the add-on per user on continue, as add-ons spend", async () => {
+    const { act, url } = await setup();
+    const bought = (await act(buy)).json<CompanyView>();
+    const res = await app.inject({ method: "POST", url: `${url}/continue` });
+    const { company, log } = res.json<ContinueResult>();
+    const charge = Math.round((bought.users * addon!.addonPricePerUser) / defaultConfig.billing.daysPerMonth);
+    expect(log[0]!.entries.filter((e) => e.category === "addons")).toEqual([
+      { text: expect.stringContaining(addon!.name), cashDelta: -charge, category: "addons" },
+    ]);
+    expect(company.spend.addons).toBe(charge);
+    const reloaded = (await app.inject({ method: "GET", url })).json<CompanyView>();
+    expect(reloaded.spend.addons).toBe(charge);
+  });
+
+  it("rejects buying on IaaS with 400 and changes nothing", async () => {
+    const { act, url } = await setup("iaas");
+    const res = await act(buy);
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: "not_saas" });
+    expect(statusOf((await app.inject({ method: "GET", url })).json<CompanyView>())).toBe("notStarted");
+  });
+
+  it("rejects buying without the configuration team, explaining why", async () => {
+    const { act } = await setup("saas", minConfigDevelopers - 1);
+    const res = await act(buy);
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: "config_team", message: expect.stringContaining("developer") });
+  });
+
+  it("rejects unknown features and validates the body", async () => {
+    const { act } = await setup();
+    const unknown = await act({ type: "buyAddon", feature: "teleport" });
+    expect(unknown.statusCode).toBe(400);
+    expect(unknown.json()).toMatchObject({ error: "unknown_feature" });
+    for (const payload of [{ type: "buyAddon" }, { type: "buyAddon", feature: 5 }, { type: "buyAddon", pool: "ops" }]) {
+      expect((await act(payload)).statusCode).toBe(400);
+    }
+  });
+});
+
 describe("meta", () => {
+  it("includes add-on prices per user and the configuration team needed", async () => {
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    const social = meta.productTypes.find((p) => p.id === "social")!;
+    expect(social.features).toEqual(
+      defaultConfig.productTypes.social.features.map(({ id, name, addonPricePerUser }) => ({ id, name, addonPricePerUser })),
+    );
+    expect(meta.minConfigDevelopers).toBe(defaultConfig.addons.minConfigDevelopers);
+  });
+
   it("includes staff day rates and ops needed per model", async () => {
     const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
     expect(meta.staff.map((s) => [s.id, s.dayRate])).toEqual([

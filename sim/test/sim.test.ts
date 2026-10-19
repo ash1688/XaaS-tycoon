@@ -22,10 +22,11 @@ const growth = {
 };
 
 // Small costs and a big growth boost, so builds finish quickly and their effect is easy to see.
+// Add-on prices are per user per month: 1,000 users at £0.30 is £300 a month, £10 a day.
 const features = [
-  { id: "checkout", name: "Checkout", blurb: "", devDays: 6, growthMultiplier: 1.5 },
-  { id: "reviews", name: "Reviews", blurb: "", devDays: 5, growthMultiplier: 1.2 },
-  { id: "search", name: "Search", blurb: "", devDays: 4, growthMultiplier: 1.1 },
+  { id: "checkout", name: "Checkout", blurb: "", devDays: 6, growthMultiplier: 1.5, addonPricePerUser: 0.3 },
+  { id: "reviews", name: "Reviews", blurb: "", devDays: 5, growthMultiplier: 1.2, addonPricePerUser: 0.15 },
+  { id: "search", name: "Search", blurb: "", devDays: 4, growthMultiplier: 1.1, addonPricePerUser: 0.06 },
 ];
 
 function costs(monthlyCost: number) {
@@ -66,6 +67,7 @@ const config: GameConfig = {
   capacity: { unstaffedShare: 0.4 },
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25 },
   billing: { daysPerMonth: 30 },
+  addons: { minConfigDevelopers: 1 },
 };
 
 const sim = createSim(config);
@@ -365,6 +367,135 @@ describe("features", () => {
     const building = sim.applyAction(startOn("iaas", 1), build("checkout"));
     const saved = JSON.parse(JSON.stringify(sim.advance(building, 3).state));
     expect(sim.advance(saved, 10).state).toEqual(sim.advance(building, 13).state);
+  });
+});
+
+describe("SaaS add-ons", () => {
+  const buy = (feature: string): Action => ({ type: "buyAddon", feature });
+  const startOn = (model = "saas", developers = 1) => ({
+    ...sim.newGame({ companyName: "Acme", productType: "social", model, seed: 42 }),
+    developers,
+  });
+  const feature = (state: Parameters<typeof sim.features>[0], id: string) => sim.features(state).find((f) => f.id === id)!;
+  const addonCharges = (log: { entries: LogEntry[] }[]) =>
+    log.map((d) => d.entries.filter((e) => e.category === "addons").reduce((sum, e) => sum - e.cashDelta, 0));
+
+  it("makes the feature active at once, without moving time on or touching cash", () => {
+    const state = sim.applyAction(startOn(), buy("checkout"));
+    expect(state).toMatchObject({ day: 1, cash: 1000 });
+    expect(feature(state, "checkout")).toMatchObject({ status: "addon", progress: 0, daysLeft: null });
+  });
+
+  it("raises growth from the very next day, unlike a build", () => {
+    const base = startOn();
+    const withAddon = sim.advance(sim.applyAction(base, buy("checkout"))).state;
+    expect(withAddon.users).toBeGreaterThan(sim.advance(base).state.users);
+  });
+
+  it.each(["onprem", "iaas", "paas"])("is rejected on %s, where features are built", (model) => {
+    expect(() => sim.applyAction(startOn(model), buy("checkout"))).toThrow(
+      expect.objectContaining({ code: "not_saas" }),
+    );
+  });
+
+  it("rejects an add-on already active", () => {
+    const bought = sim.applyAction(startOn(), buy("checkout"));
+    expect(() => sim.applyAction(bought, buy("checkout"))).toThrow(expect.objectContaining({ code: "addon_active" }));
+  });
+
+  it("rejects a feature not on the product's list", () => {
+    for (const id of ["teleport", "toString", ""]) {
+      expect(() => sim.applyAction(startOn(), buy(id))).toThrow(expect.objectContaining({ code: "unknown_feature" }));
+    }
+  });
+
+  it("can buy several at once, with no waiting for builds", () => {
+    let state = startOn();
+    for (const f of features) state = sim.applyAction(state, buy(f.id));
+    expect(sim.features(state).map((f) => f.status)).toEqual(["addon", "addon", "addon"]);
+  });
+
+  it("needs the configuration team from config to buy one", () => {
+    const strict = createSim({ ...config, addons: { minConfigDevelopers: 2 } });
+    const state = (developers: number) => ({
+      ...strict.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 42 }),
+      developers,
+    });
+    for (const developers of [0, 1]) {
+      expect(() => strict.applyAction(state(developers), buy("checkout"))).toThrow(
+        expect.objectContaining({ code: "config_team", message: expect.stringContaining("at least 2 developers") }),
+      );
+    }
+    expect(strict.features(strict.applyAction(state(2), buy("checkout")))[0]!.status).toBe("addon");
+  });
+
+  it("keeps add-ons already bought working if the team shrinks later", () => {
+    const bought = sim.applyAction(startOn(), buy("checkout"));
+    const after = sim.advance(sim.applyAction(bought, { type: "letGo", pool: "developers" }), 5);
+    expect(feature(after.state, "checkout").status).toBe("addon");
+    expect(addonCharges(after.log).every((c) => c > 0)).toBe(true);
+  });
+
+  it("bills each add-on per user per month, a day at a time, tagged add-ons", () => {
+    const state = sim.applyAction(sim.applyAction(startOn(), buy("checkout")), buy("reviews"));
+    expect(sim.monthlyAddonCost(state)).toBe(450);
+    const charges = sim.advance(state).log[0]!.entries.filter((e) => e.category === "addons");
+    expect(charges).toEqual([
+      { text: "Add-on: Checkout (1,000 users at £0.30 a month)", cashDelta: -10, category: "addons" },
+      { text: "Add-on: Reviews (1,000 users at £0.15 a month)", cashDelta: -5, category: "addons" },
+    ]);
+  });
+
+  it("charges nothing for add-ons until one is bought", () => {
+    const { state, log } = sim.advance(startOn(), 10);
+    expect(sim.monthlyAddonCost(state)).toBe(0);
+    expect(state.spend.addons).toBe(0);
+    expect(addonCharges(log).every((c) => c === 0)).toBe(true);
+  });
+
+  it("grows the add-on bill as users grow", () => {
+    const state = sim.applyAction(startOn(), buy("checkout"));
+    const { state: later, log } = sim.advance(state, 40);
+    const daily = addonCharges(log);
+    expect(later.users).toBeGreaterThan(state.users * 2);
+    expect(daily.at(-1)).toBeGreaterThan(daily[0]! * 2);
+    expect(sim.monthlyAddonCost(later)).toBeGreaterThan(sim.monthlyAddonCost(state) * 2);
+  });
+
+  it("keeps category totals equal to the tagged log entries and the cash spent", () => {
+    const opening = sim.applyAction(sim.applyAction(startOn(), buy("checkout")), { type: "hire", pool: "developers" });
+    const { state, log } = sim.advance(opening, 20);
+    expect(state.spend.addons).toBeGreaterThan(0);
+    for (const c of SPEND_CATEGORIES) {
+      const logged = log
+        .flatMap((d) => d.entries)
+        .filter((e) => e.category === c)
+        .reduce((sum, e) => sum - e.cashDelta, 0);
+      expect(state.spend[c] - opening.spend[c]).toBe(logged);
+      expect(state.spendByDay.reduce((sum, d) => sum + d[c], 0)).toBe(state.spend[c]);
+    }
+    expect(state.cash).toBe(1000 - SPEND_CATEGORIES.reduce((sum, c) => sum + state.spend[c], 0));
+  });
+
+  it("is deterministic and resumes identically after a JSON round trip", () => {
+    const run = () => sim.advance(sim.applyAction(startOn(), buy("reviews")), 30);
+    expect(run()).toEqual(run());
+    const bought = sim.applyAction(startOn(), buy("reviews"));
+    const saved = JSON.parse(JSON.stringify(sim.advance(bought, 3).state));
+    expect(sim.advance(saved, 10).state).toEqual(sim.advance(bought, 13).state);
+  });
+
+  it("does not mutate the input state", () => {
+    const before = startOn();
+    const copy = structuredClone(before);
+    sim.advance(sim.applyAction(before, buy("checkout")), 3);
+    expect(before).toEqual(copy);
+  });
+
+  it("can buy add-ons on a game saved before features existed", () => {
+    const { features: _, ...rest } = startOn();
+    const v4: GameStateV4 = { ...rest, version: 4 };
+    expect(feature(sim.applyAction(v4, buy("checkout")), "checkout").status).toBe("addon");
   });
 });
 
@@ -804,6 +935,30 @@ describe("default config", () => {
     for (const { features } of Object.values(defaultConfig.productTypes)) {
       const days = features.reduce((sum, f) => sum + Math.ceil(f.devDays / developers.startingCount), 0);
       expect(days).toBeLessThan(defaultConfig.finalDay / 2);
+    }
+  });
+
+  it("prices every add-on per user, dearer for a bigger growth boost", () => {
+    for (const { features } of Object.values(defaultConfig.productTypes)) {
+      for (const f of features) expect(f.addonPricePerUser).toBeGreaterThan(0);
+      const byBoost = features.toSorted((a, b) => a.growthMultiplier - b.growthMultiplier);
+      for (let i = 1; i < byBoost.length; i++) {
+        expect(byBoost[i]!.addonPricePerUser).toBeGreaterThanOrEqual(byBoost[i - 1]!.addonPricePerUser);
+      }
+    }
+  });
+
+  it("lets a SaaS company that buys every add-on on day 1 reach day 180 with its starting developers", () => {
+    const { addons, staff } = defaultConfig;
+    expect(staff.developers.startingCount).toBeGreaterThanOrEqual(addons.minConfigDevelopers);
+    for (const p of ["ecommerce", "social", "video"] as const) {
+      let state = sim180.newGame({ companyName: "Acme", productType: p, model: "saas", seed: 7 });
+      for (const f of defaultConfig.productTypes[p].features) {
+        state = sim180.applyAction(state, { type: "buyAddon", feature: f.id });
+      }
+      const end = sim180.advance(state, defaultConfig.finalDay - 1).state;
+      expect(end).toMatchObject({ day: defaultConfig.finalDay, status: "playing" });
+      expect(end.spend.addons).toBeGreaterThan(0);
     }
   });
 

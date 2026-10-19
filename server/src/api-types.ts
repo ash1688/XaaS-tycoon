@@ -20,7 +20,13 @@ export interface MetaView {
   startingCash: number;
   finalDay: number;
   maxCompanyNameLength: number;
-  productTypes: { id: ProductTypeId; name: string; profile: string }[];
+  productTypes: {
+    id: ProductTypeId;
+    name: string;
+    profile: string;
+    /** On SaaS, each feature is an add-on at this price per user per month. */
+    features: { id: string; name: string; addonPricePerUser: number }[];
+  }[];
   models: {
     id: ModelId;
     name: string;
@@ -34,6 +40,8 @@ export interface MetaView {
     monthlyCostPerUser: number;
   }[];
   staff: { id: StaffPool; name: string; personName: string; dayRate: number }[];
+  /** Developers a SaaS company needs to configure add-ons before it can buy one. */
+  minConfigDevelopers: number;
 }
 
 export interface CompanyView {
@@ -62,9 +70,11 @@ export interface CompanyView {
   outageDays: number;
   /** What the current model costs per month at today's users. */
   monthlyInfrastructureCost: number;
+  /** What the active add-ons cost per month at today's users. */
+  monthlyAddonCost: number;
   /** Total spent so far in each category. */
   spend: Spend;
-  /** The product's features, with each one's status and build progress. */
+  /** The product's features, with each one's status (built, building or a SaaS add-on) and build progress. */
   features: FeatureView[];
 }
 
