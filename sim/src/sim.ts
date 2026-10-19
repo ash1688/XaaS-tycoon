@@ -8,11 +8,11 @@ import {
   type ProductTypeId,
   type StaffPool,
 } from "./config.ts";
-import { seedRng } from "./rng.ts";
+import { nextRandom, seedRng } from "./rng.ts";
 
 /** Plain, JSON-serialisable game state. The server stores it as-is. */
 export interface GameState {
-  version: 2;
+  version: 3;
   companyName: string;
   productType: ProductTypeId;
   model: ModelId;
@@ -21,15 +21,26 @@ export interface GameState {
   rng: number;
   developers: number;
   ops: number;
+  users: number;
+  /** Load on the day just played. */
+  load: number;
+  outageDays: number;
+  /** Total hours down across every day played, for uptime. */
+  downtimeHours: number;
+}
+
+/** State saved before users and capacity existed. */
+export interface GameStateV2 extends Omit<GameState, "version" | "users" | "load" | "outageDays" | "downtimeHours"> {
+  version: 2;
 }
 
 /** State saved before staff existed. */
-export interface GameStateV1 extends Omit<GameState, "version" | StaffPool> {
+export interface GameStateV1 extends Omit<GameStateV2, "version" | StaffPool> {
   version: 1;
 }
 
 /** Anything the server may have stored. Every Sim method accepts it and upgrades it first. */
-export type SavedState = GameState | GameStateV1;
+export type SavedState = GameState | GameStateV2 | GameStateV1;
 
 /** Something the player does between days. */
 export type Action = { type: "hire"; pool: StaffPool } | { type: "letGo"; pool: StaffPool };
@@ -44,6 +55,8 @@ export interface NewGameParams {
 export interface LogEntry {
   text: string;
   cashDelta: number;
+  /** Set on entries that need to stand out, such as an outage. */
+  kind?: "outage";
 }
 
 export interface DayLog {
@@ -80,6 +93,10 @@ export interface Sim {
   opsNeeded(model: ModelId): number;
   /** What the current headcount costs per day. */
   dailyStaffCost(state: SavedState): number;
+  /** Load the company can serve in a day with its current model and staff. */
+  capacity(state: SavedState): number;
+  /** Share of time up across every day played, as a percentage. 100 before the first day. */
+  uptime(state: SavedState): number;
 }
 
 export function isModelId(v: string): v is ModelId {
@@ -104,7 +121,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     if (!isProductTypeId(productType)) throw new SimError("unknown_product_type", "Pick a product type from the list.");
     if (!isModelId(model)) throw new SimError("unknown_model", "Pick a deployment model from the list.");
     return {
-      version: 2,
+      version: 3,
       companyName: name,
       productType,
       model,
@@ -113,13 +130,21 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       rng: seedRng(seed),
       developers: config.staff.developers.startingCount,
       ops: config.staff.ops.startingCount,
+      ...startingUsers(productType, 1),
     };
   }
 
+  function startingUsers(productType: ProductTypeId, day: number) {
+    const users = config.productTypes[productType].growth.startingUsers;
+    return { users, load: Math.round(baseLoad(productType, users, day)), outageDays: 0, downtimeHours: 0 };
+  }
+
   function load(saved: SavedState): GameState {
-    if (saved.version === 2) return saved;
+    if (saved.version === 3) return saved;
     // Games started before staff existed keep going with no staff, rather than suddenly paying for some.
-    return { ...saved, version: 2, developers: 0, ops: 0 };
+    const v2: GameStateV2 = saved.version === 2 ? saved : { ...saved, version: 2, developers: 0, ops: 0 };
+    // Games started before users existed pick up with the product's starting users and a clean record.
+    return { ...v2, version: 3, ...startingUsers(v2.productType, v2.day) };
   }
 
   function applyAction(saved: SavedState, action: Action): GameState {
@@ -153,15 +178,103 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return STAFF_POOLS.reduce((sum, pool) => sum + state[pool] * config.staff[pool].dayRate, 0);
   }
 
+  function inSpike(productType: ProductTypeId, day: number): boolean {
+    const spike = config.productTypes[productType].growth.seasonalSpike;
+    return !!spike && day >= spike.firstDay && (day - spike.firstDay) % spike.every < spike.length;
+  }
+
+  /** Load from a product's users on a given day, before random variation. */
+  function baseLoad(productType: ProductTypeId, users: number, day: number): number {
+    const { loadPerUser, seasonalSpike } = config.productTypes[productType].growth;
+    const spike = seasonalSpike && inSpike(productType, day) ? seasonalSpike.loadMultiplier : 1;
+    return users * loadPerUser * spike;
+  }
+
+  /**
+   * Each factor scales capacity. Models that need ops lose capacity in step with missing ops.
+   * Later mechanics (traffic events, scaling up) add their own factors here.
+   */
+  function capacityFactors(state: GameState): number[] {
+    const needed = opsNeeded(state.model);
+    const staffed = needed === 0 ? 1 : Math.min(state.ops, needed) / needed;
+    const { unstaffedShare } = config.capacity;
+    return [unstaffedShare + (1 - unstaffedShare) * staffed];
+  }
+
+  function capacity(saved: SavedState): number {
+    const state = load(saved);
+    const base = config.models[state.model].capacity;
+    return Math.round(capacityFactors(state).reduce((c, f) => c * f, base));
+  }
+
+  /** Each factor scales the day's growth. Later mechanics (features, reputation) add their own here. */
+  function growthFactors(state: GameState, day: number, outage: boolean): number[] {
+    const spike = config.productTypes[state.productType].growth.seasonalSpike;
+    return [
+      spike && inSpike(state.productType, day) ? spike.growthMultiplier : 1,
+      outage ? config.outage.growthMultiplier : 1,
+    ];
+  }
+
+  function uptime(saved: SavedState): number {
+    const state = load(saved);
+    const hoursPlayed = (state.day - 1) * 24;
+    return hoursPlayed === 0 ? 100 : (100 * (hoursPlayed - state.downtimeHours)) / hoursPlayed;
+  }
+
+  /** A random factor of 1 ± spread, and the next RNG state. */
+  function vary(rng: number, spread: number): [factor: number, next: number] {
+    const [r, next] = nextRandom(rng);
+    return [1 + spread * (2 * r - 1), next];
+  }
+
   function advanceOneDay(state: GameState): AdvanceResult {
     const day = state.day + 1;
     const model = config.models[state.model];
+    const profile = config.productTypes[state.productType].growth;
+
+    // Today's load comes from the users at the start of the day.
+    const [loadVariation, afterLoad] = vary(state.rng, profile.loadNoise);
+    const load = Math.round(baseLoad(state.productType, state.users, day) * loadVariation);
+    const cap = capacity(state);
+    const outage = load > cap;
+    const { baseHours, hoursPerOverload } = config.outage;
+    const hoursDown = outage ? Math.min(24, Math.ceil(baseHours + hoursPerOverload * (load / cap - 1))) : 0;
+
+    // Growth slows as the market fills up, and on an outage day.
+    const [growthVariation, rng] = vary(afterLoad, profile.growthNoise);
+    const rate = growthFactors(state, day, outage).reduce(
+      (r, f) => r * f,
+      profile.dailyGrowth * (1 - state.users / profile.marketSize) * growthVariation,
+    );
+    const users = Math.max(0, state.users + Math.round(state.users * rate));
+
     const entries: LogEntry[] = [
       { text: `${model.name} running costs`, cashDelta: -model.dailyCost },
       ...staffEntries(state),
     ];
+    if (outage) {
+      const percent = Math.round((100 * load) / cap);
+      entries.unshift({
+        text: `Outage: load hit ${percent}% of capacity. Down ${hoursDown} hours; growth slowed.`,
+        cashDelta: 0,
+        kind: "outage",
+      });
+    }
     const cash = state.cash + entries.reduce((sum, e) => sum + e.cashDelta, 0);
-    return { state: { ...state, day, cash }, log: [{ day, entries }] };
+    return {
+      state: {
+        ...state,
+        day,
+        cash,
+        rng,
+        users,
+        load,
+        outageDays: state.outageDays + (outage ? 1 : 0),
+        downtimeHours: state.downtimeHours + hoursDown,
+      },
+      log: [{ day, entries }],
+    };
   }
 
   function advance(saved: SavedState, days = 1): AdvanceResult {
@@ -178,5 +291,5 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return { state: current, log };
   }
 
-  return { config, newGame, load, applyAction, advance, opsNeeded, dailyStaffCost };
+  return { config, newGame, load, applyAction, advance, opsNeeded, dailyStaffCost, capacity, uptime };
 }

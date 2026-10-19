@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import type { DayLog } from "@xaas/sim";
 import type { ActionBody, CompanyView, MetaView } from "@xaas/server/api-types";
-import { api, formatCash } from "../api";
+import { api, formatCash, formatCount, formatUptime } from "../api";
 
 const props = defineProps<{ code: string; id: string }>();
 
@@ -18,6 +18,9 @@ const modelName = (id: string) => meta.value?.models.find((m) => m.id === id)?.n
 const stack = computed(() => meta.value?.models.find((m) => m.id === company.value?.model)?.stack.toReversed() ?? []);
 const OWNER_LABELS = { you: "You", provider: "Provider", shared: "Shared" } as const;
 const understaffed = computed(() => !!company.value && company.value.ops < company.value.opsNeeded);
+const loadPercent = computed(() => (company.value ? Math.round((100 * company.value.load) / company.value.capacity) : 0));
+// Over 100% is an outage; close to it is a warning that one is coming.
+const loadLevel = computed(() => (loadPercent.value > 100 ? "over" : loadPercent.value >= 80 ? "high" : "ok"));
 
 onMounted(async () => {
   try {
@@ -70,6 +73,39 @@ async function continueDay() {
         <span class="label">Cash</span>
         <span class="value" data-testid="cash">{{ formatCash(company.cash) }}</span>
       </div>
+      <div class="stat">
+        <span class="label">Users</span>
+        <span class="value" data-testid="users">{{ formatCount(company.users) }}</span>
+      </div>
+      <div class="stat">
+        <span class="label">Uptime</span>
+        <span class="value" data-testid="uptime">{{ formatUptime(company.uptime) }}</span>
+        <small v-if="company.outageDays">{{ company.outageDays }} outage day{{ company.outageDays === 1 ? "" : "s" }}</small>
+      </div>
+    </div>
+
+    <div class="capacity" data-testid="capacity">
+      <div class="row-between">
+        <span id="capacity-label" class="label">Load vs capacity</span>
+        <span class="figures">{{ formatCount(company.load) }} / {{ formatCount(company.capacity) }}</span>
+      </div>
+      <div
+        class="meter"
+        role="meter"
+        aria-labelledby="capacity-label"
+        aria-valuemin="0"
+        :aria-valuemax="company.capacity"
+        :aria-valuenow="company.load"
+        :aria-valuetext="`${loadPercent}% of capacity`"
+      >
+        <div :class="['meter-fill', loadLevel]" :style="{ width: `${Math.min(100, loadPercent)}%` }"></div>
+      </div>
+      <p :class="['capacity-note', loadLevel]">
+        <strong>{{ loadPercent }}%</strong> of capacity used.
+        <template v-if="loadLevel === 'over'">Over capacity: expect outages.</template>
+        <template v-else-if="loadLevel === 'high'">Getting close: an outage is coming if load keeps rising.</template>
+        <template v-else>Load over 100% causes an outage.</template>
+      </p>
     </div>
 
     <button class="continue" :disabled="busy" @click="continueDay">Continue</button>
@@ -78,9 +114,15 @@ async function continueDay() {
     <div v-if="lastDay" class="day-log">
       <h2>Day {{ lastDay.day }}</h2>
       <ul>
-        <li v-for="(entry, i) in lastDay.entries" :key="i">
-          <span>{{ entry.text }}</span>
-          <span :class="entry.cashDelta < 0 ? 'neg' : 'pos'">{{ formatCash(entry.cashDelta) }}</span>
+        <li v-for="(entry, i) in lastDay.entries" :key="i" :class="{ outage: entry.kind === 'outage' }">
+          <template v-if="entry.kind === 'outage'">
+            <span class="badge">Outage</span>
+            <span data-testid="outage">{{ entry.text }}</span>
+          </template>
+          <template v-else>
+            <span>{{ entry.text }}</span>
+            <span :class="entry.cashDelta < 0 ? 'neg' : 'pos'">{{ formatCash(entry.cashDelta) }}</span>
+          </template>
         </li>
       </ul>
     </div>
@@ -122,7 +164,9 @@ async function continueDay() {
     </ul>
     <p :class="['ops-needed', { warn: understaffed }]" data-testid="ops-needed">
       <span>{{ modelName(company.model) }} needs <strong>{{ company.opsNeeded }}</strong> ops staff.</span>
-      <span v-if="understaffed" class="badge">Understaffed: {{ company.opsNeeded - company.ops }} short</span>
+      <span v-if="understaffed" class="badge">
+        Understaffed: {{ company.opsNeeded - company.ops }} short, capacity cut
+      </span>
     </p>
   </section>
 

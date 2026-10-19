@@ -53,3 +53,8 @@ export const api = {
 
 const money = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 });
 export const formatCash = (n: number) => money.format(n);
+
+const count = new Intl.NumberFormat("en-GB");
+export const formatCount = (n: number) => count.format(n);
+// Rounds down, so a single outage never shows as 100%.
+export const formatUptime = (pct: number) => (pct >= 100 ? "100%" : `${(Math.floor(pct * 10) / 10).toFixed(1)}%`);
