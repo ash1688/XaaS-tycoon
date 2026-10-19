@@ -22,12 +22,20 @@ export interface ApiError {
   message: string;
 }
 
+/** Timed flow: when enabled, the game page has Play/Pause and plays a day every `seconds`. */
+export interface TimedFlowView {
+  enabled: boolean;
+  seconds: number;
+}
+
 export interface MetaView {
   startingCash: number;
   finalDay: number;
   maxCompanyNameLength: number;
   /** Companies still being played (status "active") that one login code can have at once. */
   maxActiveCompanies: number;
+  /** Whether the game page plays days on a timer, and how often. Off by default. */
+  timedFlow: TimedFlowView;
   productTypes: {
     id: ProductTypeId;
     name: string;

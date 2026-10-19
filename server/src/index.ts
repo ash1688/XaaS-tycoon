@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { createSim, defaultConfig } from "@xaas/sim";
-import { buildApp } from "./app.ts";
+import { buildApp, DEFAULT_TIMED_FLOW_SECONDS } from "./app.ts";
 import { createDb, runMigrations } from "./db/client.ts";
 
 function required(name: string) {
@@ -28,6 +28,16 @@ if (process.env.GAME_FINAL_DAY) {
   }
 }
 
+// Optional: timed flow, a day every TIMED_FLOW_SECONDS with Play/Pause. Off unless TIMED_FLOW=on.
+const timedFlow = { enabled: process.env.TIMED_FLOW === "on", seconds: DEFAULT_TIMED_FLOW_SECONDS };
+if (process.env.TIMED_FLOW_SECONDS) {
+  timedFlow.seconds = Number(process.env.TIMED_FLOW_SECONDS);
+  if (!Number.isFinite(timedFlow.seconds) || timedFlow.seconds < 1) {
+    console.error("TIMED_FLOW_SECONDS must be a number of at least 1.");
+    process.exit(1);
+  }
+}
+
 const { db } = createDb(required("DATABASE_URL"));
 await runMigrations(db);
 
@@ -36,6 +46,7 @@ const app = await buildApp({
   teacherPassword: required("TEACHER_PASSWORD"),
   sessionSecret,
   sim: createSim({ ...defaultConfig, finalDay }),
+  timedFlow,
   webDist: fileURLToPath(new URL("../../web/dist", import.meta.url)),
   logger: true,
 });

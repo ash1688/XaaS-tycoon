@@ -1638,6 +1638,27 @@ describe("provider and SaaS events", () => {
 });
 
 describe("meta", () => {
+  it("reports timed flow as off by default, with the default interval", async () => {
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.timedFlow).toEqual({ enabled: false, seconds: 15 });
+  });
+
+  it("reports timed flow and its interval when the server turns it on", async () => {
+    const timed = await buildApp({
+      db: testDb.db,
+      teacherPassword: PASSWORD,
+      sessionSecret: "x".repeat(32),
+      sim,
+      timedFlow: { enabled: true, seconds: 5 },
+    });
+    try {
+      const meta = (await timed.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+      expect(meta.timedFlow).toEqual({ enabled: true, seconds: 5 });
+    } finally {
+      await timed.close();
+    }
+  });
+
   it("includes the migration phases and their lengths", async () => {
     const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
     expect(meta.migrationPhases.map((p) => [p.id, p.days])).toEqual([

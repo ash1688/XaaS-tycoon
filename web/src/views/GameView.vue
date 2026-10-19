@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   SPEND_CATEGORIES,
   type DayLog,
@@ -246,6 +246,74 @@ async function continueDay() {
     busy.value = false;
   }
 }
+
+// Timed flow, off unless the server turns it on: plays a day every few seconds through the same continue as the
+// button. The next day is only scheduled once the last one has come back, so requests never overlap.
+const timedFlow = computed(() => (meta.value?.timedFlow.enabled ? meta.value.timedFlow : undefined));
+const playing = ref(false);
+const secondsLeft = ref(0);
+let deadline = 0;
+let timer: number | undefined;
+// A timed day's request is in flight.
+let ticking = false;
+// Paused because the tab was hidden, so it carries on when the student comes back.
+let hiddenWhilePlaying = false;
+
+function schedule() {
+  deadline = Date.now() + timedFlow.value!.seconds * 1000;
+  secondsLeft.value = Math.ceil(timedFlow.value!.seconds);
+  timer = window.setInterval(tick, 250);
+}
+
+function clearTimer() {
+  window.clearInterval(timer);
+  timer = undefined;
+}
+
+async function tick() {
+  const left = deadline - Date.now();
+  secondsLeft.value = Math.max(0, Math.ceil(left / 1000));
+  // Waits for any action still in flight, such as a hire, rather than overlapping it.
+  if (left > 0 || busy.value) return;
+  clearTimer();
+  ticking = true;
+  try {
+    await continueDay();
+  } finally {
+    ticking = false;
+  }
+  // Stops when the game ends or the day failed (its message stays on screen).
+  if (over.value || error.value) pause();
+  else if (playing.value && !timer) schedule();
+}
+
+function play() {
+  if (!timedFlow.value || over.value) return;
+  playing.value = true;
+  if (!timer && !ticking) schedule();
+}
+
+function pause() {
+  playing.value = false;
+  clearTimer();
+}
+
+function onVisibilityChange() {
+  if (document.hidden && playing.value) {
+    hiddenWhilePlaying = true;
+    pause();
+  } else if (!document.hidden && hiddenWhilePlaying) {
+    hiddenWhilePlaying = false;
+    play();
+  }
+}
+
+watch(over, (isOver) => isOver && pause());
+document.addEventListener("visibilitychange", onVisibilityChange);
+onUnmounted(() => {
+  pause();
+  document.removeEventListener("visibilitychange", onVisibilityChange);
+});
 </script>
 
 <template>
@@ -329,7 +397,16 @@ async function continueDay() {
         </p>
       </div>
 
-      <button class="continue" :disabled="busy || bankrupt" @click="continueDay">Continue</button>
+      <div v-if="timedFlow" class="timed-flow" data-testid="timed-flow">
+        <!-- One button whose label changes, so keyboard focus stays on it. -->
+        <button class="continue" @click="playing ? pause() : play()">{{ playing ? "Pause" : "Play" }}</button>
+        <button class="ghost" :disabled="busy || bankrupt || playing" @click="continueDay">Continue</button>
+        <p class="muted" data-testid="timed-status">
+          <span v-if="playing" role="timer">Next day in {{ secondsLeft }}s</span>
+          <template v-else>Paused. A day plays every {{ timedFlow.seconds }}s.</template>
+        </p>
+      </div>
+      <button v-else class="continue" :disabled="busy || bankrupt" @click="continueDay">Continue</button>
       <p v-if="error" class="error" role="alert">{{ error }}</p>
 
       <section
