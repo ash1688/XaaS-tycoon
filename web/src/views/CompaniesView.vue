@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import type { CompanyView, MetaView } from "@xaas/server/api-types";
-import { api, formatCash, formatPrice } from "../api";
+import { api, formatCash, formatPrice, RequestError } from "../api";
 
 const props = defineProps<{ code: string }>();
 const router = useRouter();
@@ -15,6 +15,7 @@ const name = ref("");
 const productType = ref("");
 const model = ref("");
 const formError = ref("");
+const nameError = ref("");
 const busy = ref(false);
 
 const productName = (id: string) => meta.value?.productTypes.find((p) => p.id === id)?.name ?? id;
@@ -33,6 +34,7 @@ onMounted(async () => {
 
 async function start() {
   formError.value = "";
+  nameError.value = "";
   busy.value = true;
   try {
     const company = await api.createCompany(props.code, {
@@ -42,7 +44,9 @@ async function start() {
     });
     await router.push(`/play/${props.code}/${company.id}`);
   } catch (e) {
-    formError.value = (e as Error).message;
+    // Name problems show by the name field; anything else above the button.
+    if (e instanceof RequestError && e.code.startsWith("name_")) nameError.value = e.message;
+    else formError.value = (e as Error).message;
   } finally {
     busy.value = false;
   }
@@ -74,7 +78,16 @@ async function start() {
       <h2>Start a new company</h2>
       <form @submit.prevent="start" class="stack">
         <label for="name">Company name</label>
-        <input id="name" v-model="name" :maxlength="meta.maxCompanyNameLength" autocomplete="off" />
+        <input
+          id="name"
+          v-model="name"
+          :maxlength="meta.maxCompanyNameLength"
+          autocomplete="off"
+          :aria-invalid="!!nameError"
+          :aria-describedby="nameError ? 'name-error' : undefined"
+          @input="nameError = ''"
+        />
+        <p v-if="nameError" id="name-error" class="error" role="alert">{{ nameError }}</p>
 
         <fieldset>
           <legend>What are you building?</legend>

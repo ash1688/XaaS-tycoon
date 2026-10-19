@@ -12,6 +12,7 @@ import {
   type StaffPool,
 } from "./config.ts";
 import { nextRandom, seedRng } from "./rng.ts";
+import { isNameAllowed } from "./nameFilter.ts";
 
 /** Money spent in each category. */
 export type Spend = Record<SpendCategory, number>;
@@ -188,6 +189,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     if (!name) throw new SimError("name_required", "Enter a company name.");
     if (name.length > config.maxCompanyNameLength) {
       throw new SimError("name_too_long", `Company names can be up to ${config.maxCompanyNameLength} characters.`);
+    }
+    if (!isNameAllowed(name)) {
+      throw new SimError("name_not_allowed", "That name isn't allowed here. Please choose another company name.");
     }
     if (!isProductTypeId(productType)) throw new SimError("unknown_product_type", "Pick a product type from the list.");
     if (!isModelId(model)) throw new SimError("unknown_model", "Pick a deployment model from the list.");

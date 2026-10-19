@@ -133,6 +133,14 @@ describe("companies", () => {
     });
   });
 
+  it("rejects a profane name and creates nothing", async () => {
+    const code = await newCode();
+    const res = await newCompany(code, { name: "Big Arse Ltd", productType: "social", model: "iaas" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: "name_not_allowed", message: expect.stringContaining("another") });
+    expect(await testDb.db.select().from(companies).where(eq(companies.loginCode, code))).toHaveLength(0);
+  });
+
   it("does not accept client-supplied state", async () => {
     const code = await newCode();
     const res = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "iaas", cash: 1_000_000, day: 99 });
