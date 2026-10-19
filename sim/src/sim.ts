@@ -23,12 +23,13 @@ export interface DaySpend extends Spend {
 }
 
 /**
- * How far a feature has got. Features not started have no entry. A built feature is active: its effect applies.
- * SaaS add-ons (bought, not built) will be active features too, and leaving SaaS removes them to be rebuilt.
+ * How far a feature has got. Features not started have no entry. A built feature or an add-on is active: its effect
+ * applies. Add-ons are bought on SaaS rather than built, and billed per user; leaving SaaS removes them (delete the
+ * entry), so the feature is not started again and can be rebuilt in developer-days.
  */
 export interface FeatureProgress {
-  status: "building" | "built";
-  /** Developer-days of work done so far. Equals the feature's cost once built. */
+  status: "building" | "built" | "addon";
+  /** Developer-days of work done so far. Equals the feature's cost once built; 0 for an add-on. */
   progress: number;
 }
 
@@ -89,7 +90,9 @@ export type Action =
   | { type: "hire"; pool: StaffPool }
   | { type: "letGo"; pool: StaffPool }
   /** Starts building one of the product's features. One build at a time; not on SaaS. */
-  | { type: "buildFeature"; feature: string };
+  | { type: "buildFeature"; feature: string }
+  /** Buys one of the product's features as an add-on, active at once. SaaS only, with a configuration team. */
+  | { type: "buyAddon"; feature: string };
 
 export type FeatureStatus = "notStarted" | FeatureProgress["status"];
 
@@ -154,6 +157,8 @@ export interface Sim {
   dailyStaffCost(state: SavedState): number;
   /** What the current model costs per month at today's users. */
   monthlyInfrastructureCost(state: SavedState): number;
+  /** What the active add-ons cost per month at today's users. */
+  monthlyAddonCost(state: SavedState): number;
   /** Load the company can serve in a day with its current model and staff. */
   capacity(state: SavedState): number;
   /** Share of time up across every day played, as a percentage. 100 before the first day. */
@@ -256,6 +261,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         return changeStaff(state, action.type, action.pool);
       case "buildFeature":
         return startBuild(state, action.feature);
+      case "buyAddon":
+        return buyAddon(state, action.feature);
       default:
         throw new SimError("unknown_action", "That action isn't recognised.");
     }
@@ -272,6 +279,11 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
 
   const featureList = (state: GameState) => config.productTypes[state.productType].features;
 
+  const isActive = (state: GameState, id: string) => {
+    const status = state.features[id]?.status;
+    return status === "built" || status === "addon";
+  };
+
   /** The feature being built, if any. Only one is built at a time. */
   function currentBuild(state: GameState): FeatureConfig | undefined {
     return featureList(state).find((f) => state.features[f.id]?.status === "building");
@@ -287,13 +299,30 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const feature = featureList(state).find((f) => f.id === id);
     if (!feature) throw new SimError("unknown_feature", "Pick a feature from your product's list.");
     const existing = state.features[id];
-    if (existing?.status === "built") throw new SimError("feature_built", `${feature.name} is already built.`);
+    if (isActive(state, id)) throw new SimError("feature_built", `${feature.name} is already built.`);
     if (existing) throw new SimError("feature_building", `${feature.name} is already being built.`);
     const building = currentBuild(state);
     if (building) {
       throw new SimError("build_in_progress", `Your developers are busy building ${building.name}. Finish that first.`);
     }
     return { ...state, features: { ...state.features, [id]: { status: "building", progress: 0 } } };
+  }
+
+  function buyAddon(state: GameState, id: string): GameState {
+    if (state.model !== "saas") {
+      throw new SimError("not_saas", "Add-ons are only sold on SaaS. On your model, your developers build features.");
+    }
+    const feature = featureList(state).find((f) => f.id === id);
+    if (!feature) throw new SimError("unknown_feature", "Pick a feature from your product's list.");
+    if (isActive(state, id)) throw new SimError("addon_active", `${feature.name} is already active.`);
+    const needed = config.addons.minConfigDevelopers;
+    if (state.developers < needed) {
+      throw new SimError(
+        "config_team",
+        `Add-ons still need configuring: hire at least ${needed} developer${needed === 1 ? "" : "s"} first.`,
+      );
+    }
+    return { ...state, features: { ...state.features, [id]: { status: "addon", progress: 0 } } };
   }
 
   /** A day's work on the current build: one developer-day per developer. Logs progress, or completion. */
@@ -367,6 +396,23 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return entries;
   }
 
+  const activeAddons = (state: GameState) => featureList(state).filter((f) => state.features[f.id]?.status === "addon");
+
+  /** Each active add-on's per-user price on the given users, billed like the model's per-user fee. */
+  function addonEntries(state: GameState, days = 1): LogEntry[] {
+    const share = days / config.billing.daysPerMonth;
+    return activeAddons(state).map((f) => ({
+      text: `Add-on: ${f.name} (${count.format(state.users)} users at ${pounds(f.addonPricePerUser)} a month)`,
+      cashDelta: -Math.round(state.users * f.addonPricePerUser * share),
+      category: "addons",
+    }));
+  }
+
+  function monthlyAddonCost(saved: SavedState): number {
+    const state = load(saved);
+    return Math.round(activeAddons(state).reduce((sum, f) => sum + state.users * f.addonPricePerUser, 0));
+  }
+
   function monthlyInfrastructureCost(saved: SavedState): number {
     const state = load(saved);
     const { monthlyCost, monthlyCostPerUser } = config.models[state.model];
@@ -435,9 +481,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return [
       spike && inSpike(state.productType, day) ? spike.growthMultiplier : 1,
       outage ? config.outage.growthMultiplier : 1,
-      // Each feature built before today.
+      // Each feature built before today, and each add-on bought.
       ...featureList(state)
-        .filter((f) => state.features[f.id]?.status === "built")
+        .filter((f) => isActive(state, f.id))
         .map((f) => f.growthMultiplier),
     ];
   }
@@ -480,6 +526,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const entries: LogEntry[] = [
       ...build.entries,
       ...infrastructureEntries(state.model, state.users),
+      ...addonEntries(state),
       ...staffEntries(state),
     ];
     if (outage) {
@@ -528,6 +575,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     opsNeeded,
     dailyStaffCost,
     monthlyInfrastructureCost,
+    monthlyAddonCost,
     capacity,
     uptime,
     features,

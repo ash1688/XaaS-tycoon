@@ -81,7 +81,7 @@ export interface GrowthProfile {
 
 /**
  * Something the product can do, such as checkout on a shop. Built in developer-days on on-prem, IaaS and PaaS.
- * The same list will be offered as paid add-ons on SaaS.
+ * The same list is offered as paid add-ons on SaaS.
  */
 export interface FeatureConfig {
   /** Unique within its product type. Saved in game state, so don't rename. */
@@ -93,6 +93,8 @@ export interface FeatureConfig {
   devDays: number;
   /** Once active, the day's growth is multiplied by this (1.1 = 10% faster). */
   growthMultiplier: number;
+  /** On SaaS, the add-on's price per user per month, billed a day at a time like the model's per-user fee. */
+  addonPricePerUser: number;
 }
 
 export interface ProductTypeConfig {
@@ -128,6 +130,15 @@ export interface BillingConfig {
   daysPerMonth: number;
 }
 
+/** SaaS add-ons: bought from the provider instead of built. */
+export interface AddonConfig {
+  /**
+   * Developers needed to configure add-ons. SaaS isn't zero staff: with fewer, add-ons can't be bought.
+   * Add-ons already bought keep working, as the provider runs them.
+   */
+  minConfigDevelopers: number;
+}
+
 export interface GameConfig {
   startingCash: number;
   finalDay: number;
@@ -138,6 +149,7 @@ export interface GameConfig {
   capacity: CapacityConfig;
   outage: OutageConfig;
   billing: BillingConfig;
+  addons: AddonConfig;
 }
 
 export const defaultConfig: GameConfig = {
@@ -207,6 +219,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Customers pay without filling in a long form.",
           devDays: 20,
           growthMultiplier: 1.15,
+          addonPricePerUser: 0.08,
         },
         {
           id: "reviews",
@@ -214,6 +227,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Shoppers trust what other customers say.",
           devDays: 12,
           growthMultiplier: 1.1,
+          addonPricePerUser: 0.05,
         },
         {
           id: "recommendations",
@@ -221,6 +235,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Suggests products each shopper is likely to want.",
           devDays: 30,
           growthMultiplier: 1.2,
+          addonPricePerUser: 0.1,
         },
         {
           id: "wishlists",
@@ -228,6 +243,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Shoppers save items and come back for them.",
           devDays: 10,
           growthMultiplier: 1.05,
+          addonPricePerUser: 0.03,
         },
       ],
     },
@@ -249,6 +265,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Users chat privately with friends.",
           devDays: 20,
           growthMultiplier: 1.15,
+          addonPricePerUser: 0.08,
         },
         {
           id: "photos",
@@ -256,6 +273,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Users post photos to their feed.",
           devDays: 16,
           growthMultiplier: 1.12,
+          addonPricePerUser: 0.06,
         },
         {
           id: "groups",
@@ -263,6 +281,7 @@ export const defaultConfig: GameConfig = {
           blurb: "People with shared interests gather in one place.",
           devDays: 24,
           growthMultiplier: 1.15,
+          addonPricePerUser: 0.08,
         },
         {
           id: "notifications",
@@ -270,6 +289,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Brings users back when something happens.",
           devDays: 10,
           growthMultiplier: 1.05,
+          addonPricePerUser: 0.03,
         },
       ],
     },
@@ -291,6 +311,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Videos play in sharp high definition.",
           devDays: 20,
           growthMultiplier: 1.12,
+          addonPricePerUser: 0.06,
         },
         {
           id: "comments",
@@ -298,6 +319,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Viewers talk about what they watched.",
           devDays: 10,
           growthMultiplier: 1.05,
+          addonPricePerUser: 0.03,
         },
         {
           id: "recommendations",
@@ -305,6 +327,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Suggests the next video to keep viewers watching.",
           devDays: 30,
           growthMultiplier: 1.2,
+          addonPricePerUser: 0.1,
         },
         {
           id: "live",
@@ -312,6 +335,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Creators broadcast live to their followers.",
           devDays: 36,
           growthMultiplier: 1.2,
+          addonPricePerUser: 0.1,
         },
       ],
     },
@@ -323,4 +347,5 @@ export const defaultConfig: GameConfig = {
   capacity: { unstaffedShare: 0.4 },
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25 },
   billing: { daysPerMonth: 30 },
+  addons: { minConfigDevelopers: 2 },
 };

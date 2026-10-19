@@ -29,6 +29,13 @@ const EVENT_LABELS = { outage: "Outage", bankrupt: "Bankrupt", feature: "Feature
 const onSaas = computed(() => company.value?.model === "saas");
 const building = computed(() => company.value?.features.find((f) => f.status === "building"));
 const growthBoost = (multiplier: number) => `+${Math.round(100 * (multiplier - 1))}% growth`;
+// Built features, or add-ons bought on SaaS.
+const activeCount = computed(
+  () => company.value?.features.filter((f) => f.status === "built" || f.status === "addon").length ?? 0,
+);
+// SaaS still needs a few developers to configure add-ons; without them, add-ons can't be bought.
+const configTeamNeeded = computed(() => meta.value?.minConfigDevelopers ?? 0);
+const configTeamShort = computed(() => (company.value ? Math.max(0, configTeamNeeded.value - company.value.developers) : 0));
 const currentModel = computed(() => meta.value?.models.find((m) => m.id === company.value?.model));
 
 const CATEGORY_LABELS: Record<SpendCategory, string> = {
@@ -212,7 +219,9 @@ async function continueDay() {
       {{ formatCash(currentModel.monthlyCost) }} a month<template v-if="currentModel.monthlyCostPerUser">
         plus {{ formatPrice(currentModel.monthlyCostPerUser) }} per user</template
       >, billed a day at a time. At today's users that's
-      <strong>{{ formatCash(company.monthlyInfrastructureCost) }}</strong> a month.
+      <strong>{{ formatCash(company.monthlyInfrastructureCost) }}</strong> a month<template v-if="onSaas"
+        >, plus <strong>{{ formatCash(company.monthlyAddonCost) }}</strong> a month for add-ons</template
+      >.
     </p>
   </section>
 
@@ -260,15 +269,27 @@ async function continueDay() {
 
   <section v-if="company" class="card" aria-labelledby="features-heading" data-testid="features">
     <div class="row-between">
-      <h2 id="features-heading">Features</h2>
+      <h2 id="features-heading">{{ onSaas ? "Add-on shop" : "Features" }}</h2>
       <span class="muted">
-        {{ company.features.filter((f) => f.status === "built").length }} of {{ company.features.length }} built
+        {{ activeCount }} of {{ company.features.length }} {{ onSaas ? "active" : "built" }}
       </span>
     </div>
-    <p v-if="onSaas" class="features-note" data-testid="features-saas-note">
-      On SaaS you don't build features yourself: they come as paid add-ons from the provider. Add-ons are coming
-      soon.
-    </p>
+    <template v-if="onSaas">
+      <p class="features-note" data-testid="features-saas-note">
+        On SaaS you don't build features yourself: you buy them as add-ons from the provider. They work straight away,
+        but each one is billed <strong>per user, every month</strong>, so the bill grows as your users grow.
+      </p>
+      <p :class="['ops-needed', 'config-team', { warn: configTeamShort }]" data-testid="config-team">
+        <span>
+          Add-ons still need a configuration team of at least <strong>{{ configTeamNeeded }}</strong>
+          developer{{ configTeamNeeded === 1 ? "" : "s" }}. You have {{ company.developers }}.
+        </span>
+        <span v-if="configTeamShort" class="badge">Hire {{ configTeamShort }} more to buy add-ons</span>
+      </p>
+      <p class="addon-bill" data-testid="addon-bill">
+        Add-on bill at today's users: <strong>{{ formatCash(company.monthlyAddonCost) }}</strong> a month
+      </p>
+    </template>
     <p v-else class="muted features-intro">
       Your developers build features, one at a time. Each developer does one developer-day of work a day.
     </p>
@@ -284,11 +305,25 @@ async function continueDay() {
           <div class="feature-info">
             <strong :id="`feature-${feature.id}`">{{ feature.name }}</strong>
             <span class="muted">{{ feature.blurb }}</span>
-            <span class="muted feature-cost">
+            <span v-if="onSaas" class="muted feature-cost" :data-testid="`addon-price-${feature.id}`">
+              {{ formatPrice(feature.addonPricePerUser) }} per user a month · {{ growthBoost(feature.growthMultiplier) }}
+            </span>
+            <span v-else class="muted feature-cost">
               {{ feature.devDays }} developer-days · {{ growthBoost(feature.growthMultiplier) }}
             </span>
           </div>
           <span v-if="feature.status === 'built'" class="badge built-badge">Built</span>
+          <span v-else-if="feature.status === 'addon'" class="badge built-badge">Active</span>
+          <button
+            v-else-if="feature.status === 'notStarted' && onSaas"
+            class="ghost"
+            :disabled="busy || bankrupt || configTeamShort > 0"
+            :aria-label="`Buy ${feature.name} add-on`"
+            :title="configTeamShort ? `Hire ${configTeamShort} more developers to configure add-ons` : undefined"
+            @click="act({ type: 'buyAddon', feature: feature.id })"
+          >
+            Buy
+          </button>
           <button
             v-else-if="feature.status === 'notStarted' && !onSaas"
             class="ghost"
