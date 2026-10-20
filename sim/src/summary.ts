@@ -2,7 +2,7 @@ import { SPEND_CATEGORIES, type GameConfig, type ModelId, type ProductTypeId } f
 import type { Infrastructure } from "./infrastructure.ts";
 import type { DaySpend, GameEnding, GameState, Spend } from "./state.ts";
 
-/** What was spent on one day, and the cash left at the end of it. */
+/** What was spent and earned on one day, and the cash left at the end of it. */
 export interface SummaryDay extends DaySpend {
   cash: number;
 }
@@ -23,6 +23,12 @@ export interface GameSummary {
   finalDay: number;
   cash: number;
   users: number;
+  /** Of the users, those paying. The rest are free. */
+  paidUsers: number;
+  /** Everything paying users paid. */
+  income: number;
+  /** Income − total spend: below 0 is a loss. */
+  profit: number;
   /** Share of time up across every day played, as a percentage. */
   uptime: number;
   outageDays: number;
@@ -32,7 +38,10 @@ export interface GameSummary {
   totalSpend: number;
   /** Migrations completed. One still under way at the end doesn't count. */
   migrations: number;
-  /** Spend on each day played and the cash left after it, day 1 (upfront costs) first: the cost-over-time chart. */
+  /**
+   * Spend and income on each day played and the cash left after it, day 1 (upfront costs) first: the cost-over-time
+   * and cash charts.
+   */
   days: SummaryDay[];
 }
 
@@ -40,14 +49,14 @@ export interface GameSummary {
 export function createSummary(config: GameConfig, infra: Infrastructure) {
   function summarise(state: GameState): GameSummary {
     const total = (s: Spend) => SPEND_CATEGORIES.reduce((sum, c) => sum + s[c], 0);
-    // Only charges move cash (there's no revenue in the alpha), so the cash after each day is today's cash plus
-    // everything spent since.
+    // Only charges and income move cash, so the cash after each day is today's cash plus everything spent since, less
+    // everything earned since.
     let cash = state.cash;
     const days: SummaryDay[] = [];
     for (let i = state.spendByDay.length - 1; i >= 0; i--) {
       const d = state.spendByDay[i]!;
       days.unshift({ ...d, cash });
-      cash += total(d);
+      cash += total(d) - d.income;
     }
     const ending = state.status === "playing" ? null : state.status === "bankrupt" ? "bankrupt" : "completed";
     return {
@@ -59,6 +68,9 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
       finalDay: config.finalDay,
       cash: state.cash,
       users: state.users,
+      paidUsers: state.paidUsers,
+      income: state.income,
+      profit: state.income - total(state.spend),
       uptime: infra.uptime(state),
       outageDays: state.outageDays,
       spend: { ...state.spend },

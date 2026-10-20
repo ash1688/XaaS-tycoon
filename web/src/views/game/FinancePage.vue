@@ -3,9 +3,10 @@ import { watch } from "vue";
 import { formatCash } from "../../api";
 import { useGame } from "../../game";
 import CashChart from "../../components/CashChart.vue";
+import BalanceSheet from "../../panels/BalanceSheet.vue";
 import SpendPanel from "../../panels/SpendPanel.vue";
 
-// Finance: cash, where the money went, and cash over time. The chart's figures come from the summary so far, fetched
+// Finance: cash, the balance sheet of income against costs, where the money went, and cash over time. The chart's figures come from the summary so far, fetched
 // again only once a new day has been played.
 const game = useGame();
 watch(
@@ -27,6 +28,10 @@ watch(
           </span>
         </div>
         <div class="stat">
+          <span class="label">Income a day</span>
+          <span class="value pos" data-testid="finance-daily-income">{{ formatCash(game.company.dailyIncome) }}</span>
+        </div>
+        <div class="stat">
           <span class="label">Staff a day</span>
           <span class="value">{{ formatCash(game.company.dailyStaffCost) }}</span>
         </div>
@@ -37,6 +42,7 @@ watch(
       </div>
       <p class="muted">Below £0 the company is bankrupt and the game ends.</p>
     </section>
+    <BalanceSheet />
     <SpendPanel />
     <section class="card" aria-labelledby="cash-chart-heading">
       <h2 id="cash-chart-heading">Cash over time</h2>

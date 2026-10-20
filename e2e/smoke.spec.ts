@@ -112,8 +112,9 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await expect(student.getByTestId("cash-chart")).toBeVisible();
 
   await goTo(student, "Home");
-  // £200 IaaS running costs (£6,000 a month ÷ 30) + 3 developers × £160 + 1 ops × £140.
-  await expect(student.getByTestId("cash")).toHaveText("£247,180");
+  // £200 IaaS running costs (£6,000 a month ÷ 30) + 3 developers × £160 + 1 ops × £140 out, and £40 in: 200 of the
+  // social network's 1,000 users pay £6 a month.
+  await expect(student.getByTestId("cash")).toHaveText("£247,220");
   // Users grow each day; load stays well under capacity, so uptime stays at 100%.
   await expect(student.getByTestId("users")).not.toHaveText("1,000");
   await expect(student.getByTestId("users")).toHaveText(/^1,\d{3}$/);
@@ -148,7 +149,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   const row = live.locator(`[data-code="${code}"] tr`, { hasText: "Playwright Ltd" });
   await expect(row.getByTestId("live-day")).toHaveText(`2/${E2E_FINAL_DAY}`);
   await expect(row).toContainText("IaaS");
-  await expect(row).toContainText("£247,180");
+  await expect(row).toContainText("£247,220");
   await expect(row).toContainText("Active");
 
   // Teacher sees the company counted against the code.
@@ -159,7 +160,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await teacher.getByRole("link", { name: "Playwright Ltd" }).click();
   await expect(teacher.getByRole("heading", { name: "How Playwright Ltd did" })).toBeVisible();
   await expect(teacher.getByTestId("summary")).toContainText(`So far: day 2 of ${E2E_FINAL_DAY}`);
-  await expect(teacher.getByTestId("summary-cash")).toHaveText("£247,180");
+  await expect(teacher.getByTestId("summary-cash")).toHaveText("£247,220");
   await teacher.getByRole("link", { name: "← Staff dashboard" }).click();
   await expect(teacher.getByTestId("live-dashboard")).toBeVisible();
 });
@@ -792,4 +793,60 @@ test("a Home card opens an accessible modal with its controls, and Continue work
   await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
   await expect(student).toHaveURL(new RegExp(`/play/${code}/${id}/finance$`));
   await expect(student.getByTestId("spend-staff")).toHaveText("£600");
+});
+
+test("a student sets a price, plays a day and sees the income on Finance", async ({ browser, request }) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  await teacher.getByRole("button", { name: "Create code" }).click();
+  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+
+  const created = await request.post(`/api/codes/${code}/companies`, {
+    data: { name: "Pricey Ltd", productType: "social", model: "iaas" },
+  });
+  const { id } = await created.json();
+
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${id}`);
+  // A social network starts with 1,000 users, 80% of them free, at its fair price of £6 a month: 200 × £6 ÷ 30.
+  await expect(student.getByTestId("home-income")).toContainText("£40");
+  await expect(student.getByTestId("home-paid-free")).toContainText("200 paying, 800 free");
+
+  await goTo(student, "Customers");
+  await expect(student.getByTestId("paid-users")).toHaveText("200");
+  await expect(student.getByTestId("free-users")).toHaveText("800");
+
+  // The price is set in a modal on Product, with the fair price as a hint.
+  await goTo(student, "Product");
+  await expect(student.getByTestId("price")).toHaveText("£6");
+  await student.getByRole("button", { name: "Change price" }).click();
+  const dialog = student.getByRole("dialog", { name: "Set your price" });
+  await expect(dialog.getByTestId("fair-price-hint")).toContainText("£6");
+  const input = dialog.getByLabel("Monthly price per paying user (£)");
+  // Out of range is turned away before it's sent.
+  await input.fill("0");
+  await dialog.getByRole("button", { name: "Set price" }).click();
+  await expect(dialog.getByRole("alert")).toContainText("above £0");
+  await input.fill("30");
+  await expect(dialog).toContainText("£200 a day");
+  await dialog.getByRole("button", { name: "Set price" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(student.getByTestId("price")).toHaveText("£30");
+  await expect(student.getByTestId("daily-income")).toHaveText("£200");
+
+  // It applies from the next day: 200 paying users at £30 a month bring in £200.
+  await student.getByRole("button", { name: "Continue" }).click();
+  await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
+  await goTo(student, "Finance");
+  const sheet = student.getByTestId("balance-sheet");
+  await expect(sheet).toContainText("Day 2");
+  await expect(student.getByTestId("balance-day-income")).toHaveText("£200");
+  await expect(student.getByTestId("balance-income")).toHaveText("£200");
+  // £200 in, against IaaS's £2,000 upfront and £200 a day, and 2 developers and 1 ops person.
+  await expect(student.getByTestId("balance-profit")).toHaveText("−£2,460");
+  await expect(student.getByTestId("balance-day-profit")).toHaveText("−£460");
+  await expect(student.getByTestId("cash-chart")).toBeVisible();
+  await expect((await openDayLog(student)).getByTestId("log-income")).toHaveText("+£200");
 });

@@ -61,6 +61,8 @@ export interface MetaView {
   staff: { id: StaffPool; name: string; personName: string; dayRate: number }[];
   /** Developers a SaaS company needs to configure add-ons before it can buy one. */
   minConfigDevelopers: number;
+  /** The highest monthly price a company can set. */
+  maxPrice: number;
   /** A migration's phases in order, and how long each takes before any overrun. */
   migrationPhases: { id: MigrationPhase; name: string; days: number }[];
 }
@@ -91,7 +93,20 @@ export interface CompanyView {
   opsNeeded: number;
   /** What the current headcount costs per day. */
   dailyStaffCost: number;
+  /** Every user, paying or free. */
   users: number;
+  /** Of the users, those who pay. */
+  paidUsers: number;
+  /** Of the users, those on the free tier. They pay nothing, but add load and, on SaaS, per-user fees. */
+  freeUsers: number;
+  /** The monthly price each paying user pays. A change applies from the next day played. */
+  price: number;
+  /** The monthly price users think the product is worth. Above it growth slows and fewer new users pay. */
+  fairPrice: number;
+  /** What paying users pay per day at today's paid users and price: paid users × price ÷ 30. */
+  dailyIncome: number;
+  /** Everything paying users have paid so far. */
+  income: number;
   /** Load on the day just played. */
   load: number;
   /** Load the company can serve in a day with its current model and staff. */

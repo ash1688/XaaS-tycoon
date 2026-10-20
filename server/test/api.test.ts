@@ -45,6 +45,10 @@ const sim = createSim({
   },
   // No scripted events, so continue charges and outages are only the ones a test sets up.
   events: [],
+  // Everyone on the free tier, so continue brings in no income unless a test's config says otherwise.
+  productTypes: Object.fromEntries(
+    Object.entries(defaultConfig.productTypes).map(([id, p]) => [id, { ...p, pricing: { ...p.pricing, freeShare: 1 } }]),
+  ) as typeof defaultConfig.productTypes,
 });
 
 let testDb: Awaited<ReturnType<typeof setupTestDb>>;
@@ -1708,6 +1712,89 @@ describe("meta", () => {
     expect(owner("saas", "application")).toBe("shared");
     expect(owner("iaas", "os")).toBe("you");
     expect(meta.models.find((m: { id: string }) => m.id === "saas").comparison.opsNeeded).toBe("None");
+  });
+});
+
+describe("pricing and income", () => {
+  async function setup(overrides?: object) {
+    // A teacher's overrides apply to new games, so a test that needs paying users sets the free share that way.
+    if (overrides) {
+      const saved = await app.inject({
+        method: "PUT",
+        url: "/api/teacher/config",
+        payload: { overrides },
+        cookies: await teacherCookie(),
+      });
+      expect(saved.statusCode).toBe(200);
+    }
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
+    const next = async () => (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    return { company, url, act, next };
+  }
+  const fairPrice = sim.config.productTypes.ecommerce.pricing.fairPrice;
+
+  it("starts at the product's fair price, with paid and free users and no income yet", async () => {
+    const { company } = await setup({ "productTypes.ecommerce.pricing.freeShare": 0.25 });
+    expect(company).toMatchObject({
+      users: 2000,
+      paidUsers: 1500,
+      freeUsers: 500,
+      price: fairPrice,
+      fairPrice,
+      dailyIncome: Math.round((1500 * fairPrice) / 30),
+      income: 0,
+    });
+  });
+
+  it("sets the price, keeps it across reloads, and pays paid users × price ÷ 30 on continue", async () => {
+    const { url, act, next } = await setup({ "productTypes.ecommerce.pricing.freeShare": 0.5 });
+    const set = await act({ type: "setPrice", price: 30 });
+    expect(set.statusCode).toBe(200);
+    // 1,000 paying users at £30 a month: £1,000 a day. Nothing is paid until the day is played.
+    expect(set.json<CompanyView>()).toMatchObject({ price: 30, paidUsers: 1000, dailyIncome: 1000, income: 0, cash: 1000 });
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>().price).toBe(30);
+
+    const { company, log } = await next();
+    expect(log[0]!.entries).toContainEqual({
+      text: "Income: 1,000 paying users at £30 a month",
+      cashDelta: 1000,
+      kind: "income",
+    });
+    // £1,000 in, £25 of IaaS out.
+    expect(company).toMatchObject({ day: 2, income: 1000, cash: 1975 });
+    expect(company.paidUsers + company.freeUsers).toBe(company.users);
+    const summary = (await app.inject({ method: "GET", url: `${url}/summary` })).json<SummaryView>();
+    expect(summary).toMatchObject({ income: 1000, profit: 975 });
+    expect(summary.days.at(-1)).toMatchObject({ day: 2, income: 1000, cash: 1975 });
+  });
+
+  it("validates the price: a positive number, at most the game's highest price", async () => {
+    const { url, act } = await setup();
+    for (const payload of [
+      { type: "setPrice" },
+      { type: "setPrice", price: 0 },
+      { type: "setPrice", price: -5 },
+      { type: "setPrice", price: "lots" },
+      { type: "setPrice", pool: "ops" },
+    ]) {
+      expect((await act(payload)).statusCode).toBe(400);
+    }
+    const tooHigh = await act({ type: "setPrice", price: sim.config.pricing.maxPrice + 1 });
+    expect(tooHigh.statusCode).toBe(400);
+    expect(tooHigh.json()).toMatchObject({ error: "price_too_high" });
+    // Nothing changed.
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>().price).toBe(fairPrice);
+    expect((await act({ type: "setPrice", price: sim.config.pricing.maxPrice })).statusCode).toBe(200);
+  });
+
+  it("uses the highest price from the game's config, shown in its meta", async () => {
+    const { url, act } = await setup({ "pricing.maxPrice": 40 });
+    expect((await app.inject({ method: "GET", url: `${url}/meta` })).json<MetaView>().maxPrice).toBe(40);
+    expect((await act({ type: "setPrice", price: 41 })).json()).toMatchObject({ error: "price_too_high" });
+    expect((await act({ type: "setPrice", price: 40 })).statusCode).toBe(200);
   });
 });
 

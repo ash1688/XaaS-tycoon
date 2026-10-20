@@ -223,6 +223,12 @@ export async function buildApp(opts: AppOptions) {
       opsNeeded: sim.opsNeeded(state.model),
       dailyStaffCost: sim.dailyStaffCost(state),
       users: state.users,
+      paidUsers: state.paidUsers,
+      freeUsers: state.users - state.paidUsers,
+      price: state.price,
+      fairPrice: sim.fairPrice(state),
+      dailyIncome: sim.dailyIncome(state),
+      income: state.income,
       load: state.load,
       capacity: sim.capacity(state),
       uptime: sim.uptime(state),
@@ -294,6 +300,7 @@ export async function buildApp(opts: AppOptions) {
         return { id, name, personName, dayRate };
       }),
       minConfigDevelopers: config.addons.minConfigDevelopers,
+      maxPrice: config.pricing.maxPrice,
       migrationPhases: MIGRATION_PHASES.map((id) => ({ id, ...config.migration.phases[id] })),
     };
   }
@@ -422,7 +429,7 @@ export async function buildApp(opts: AppOptions) {
           type: "object",
           required: ["type"],
           properties: {
-            type: { enum: ["hire", "letGo", "buildFeature", "buyAddon", "moveStaff", "startMigration"] },
+            type: { enum: ["hire", "letGo", "buildFeature", "buyAddon", "moveStaff", "startMigration", "setPrice"] },
             pool: { enum: [...STAFF_POOLS] },
             // Checked against the product's list by the sim.
             feature: { type: "string", maxLength: 64 },
@@ -430,12 +437,15 @@ export async function buildApp(opts: AppOptions) {
             to: { enum: [...STAFF_POOLS] },
             // startMigration: the model to move to.
             model: { enum: [...MODEL_IDS] },
+            // setPrice: the monthly price. The sim checks it against the game's highest price.
+            price: { type: "number", exclusiveMinimum: 0 },
           },
           allOf: [
             { if: { properties: { type: { enum: ["hire", "letGo"] } } }, then: { required: ["pool"] } },
             { if: { properties: { type: { enum: ["buildFeature", "buyAddon"] } } }, then: { required: ["feature"] } },
             { if: { properties: { type: { const: "moveStaff" } } }, then: { required: ["to"] } },
             { if: { properties: { type: { const: "startMigration" } } }, then: { required: ["model"] } },
+            { if: { properties: { type: { const: "setPrice" } } }, then: { required: ["price"] } },
           ],
           additionalProperties: false,
         },

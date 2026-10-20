@@ -13,14 +13,16 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 9;
+export const GAME_STATE_VERSION = 10;
 
 /** Money spent in each category. */
 export type Spend = Record<SpendCategory, number>;
 
-/** What was spent on one day, for the cost-over-time chart. */
+/** What was spent on one day, for the cost-over-time chart, and what came in. */
 export interface DaySpend extends Spend {
   day: number;
+  /** Income on the day: what paying users paid. */
+  income: number;
 }
 
 /**
@@ -99,7 +101,14 @@ export interface GameState {
   rng: number;
   developers: number;
   ops: number;
+  /** Every user, paying or free. Free users add load and per-user fees just like paying ones. */
   users: number;
+  /** The users who pay. The rest of `users` are on the free tier. */
+  paidUsers: number;
+  /** The monthly price each paying user pays, a day's share at a time. A change applies from the next day played. */
+  price: number;
+  /** Everything paying users have paid so far. Not part of spend: profit is income − spend. */
+  income: number;
   /** Load on the day just played. */
   load: number;
   outageDays: number;
@@ -107,7 +116,7 @@ export interface GameState {
   downtimeHours: number;
   /** Running totals of every charge so far, by category. */
   spend: Spend;
-  /** Spend on each day played, day 1 (upfront costs) first. */
+  /** Spend and income on each day played, day 1 (upfront costs) first. */
   spendByDay: DaySpend[];
   /** Features started or built, by feature id. */
   features: Record<string, FeatureProgress>;
@@ -141,7 +150,9 @@ export type Action =
   /** Moves one person from the other pool into this one. Any time, including during a migration. */
   | { type: "moveStaff"; to: StaffPool }
   /** Starts a migration to another model. One at a time; it runs in the background. */
-  | { type: "startMigration"; model: ModelId };
+  | { type: "startMigration"; model: ModelId }
+  /** Sets the monthly price paying users pay, from the next day played. Above 0 and at most the configured maximum. */
+  | { type: "setPrice"; price: number };
 
 export interface NewGameParams {
   companyName: string;
@@ -155,8 +166,11 @@ export interface LogEntry {
   cashDelta: number;
   /** Set on every charge, and only on charges. */
   category?: SpendCategory;
-  /** Set on entries that need to stand out, such as an outage or bankruptcy. */
-  kind?: "outage" | "bankrupt" | "finished" | "feature" | "migration" | "event";
+  /**
+   * Set on entries that need to stand out, such as an outage or bankruptcy. "income" marks money coming in, which the
+   * ledger counts as income rather than spend.
+   */
+  kind?: "outage" | "bankrupt" | "finished" | "feature" | "migration" | "event" | "income";
 }
 
 export interface DayLog {
