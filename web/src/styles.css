@@ -2563,3 +2563,59 @@ body.modal-open {
 .day-log li.event.price .badge {
   color: var(--shared);
 }
+
+/* Free-to-paid conversion: what's helping or hurting the daily rate. */
+.conversion .drivers-heading {
+  margin: 0.5rem 0 0.25rem;
+  font-size: 1rem;
+}
+
+.drivers {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+}
+
+.driver {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr auto;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.driver-name {
+  font-weight: 600;
+}
+
+.driver-effect {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.driver.neutral .driver-effect {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+@media (max-width: 480px) {
+  .driver {
+    grid-template-columns: 1fr auto;
+  }
+
+  .driver-detail {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+
+/* Conversion entries in the day log. */
+.day-log li.event.conversion {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.day-log li.event.conversion .badge {
+  color: var(--pos);
+}

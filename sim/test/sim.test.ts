@@ -36,8 +36,8 @@ const features = [
   { id: "search", name: "Search", blurb: "", devDays: 4, growthMultiplier: 1.1, addonPricePerUser: 0.06 },
 ];
 
-// Everyone free unless a test says otherwise, so income only shows up where a test looks for it.
-const pricing = { fairPrice: 30, freeShare: 1 };
+// Everyone free unless a test says otherwise, and none converting, so income only shows up where a test looks for it.
+const pricing = { fairPrice: 30, freeShare: 1, conversionRate: 0 };
 // No tickets unless a test says otherwise, so satisfaction stays at 100% and never touches growth.
 const support = { ticketsPerPaidUser: 0, ticketsPerFreeUser: 0 };
 
@@ -126,6 +126,8 @@ const config: GameConfig = {
     growthAtZero: 0.3,
     churnAtZero: 0.02,
   },
+  // Conversion at its default strengths, but every product's base rate is 0 unless a test sets one.
+  conversion: { ...defaultConfig.conversion },
   addons: { minConfigDevelopers: 1 },
   migration: {
     phases: {
@@ -2221,9 +2223,9 @@ describe("pricing and income", () => {
       ...config,
       pricing: { ...config.pricing, ...overrides },
       productTypes: {
-        ecommerce: { ...config.productTypes.ecommerce, pricing: { fairPrice: 30, freeShare: freeShares.ecommerce } },
-        social: { ...config.productTypes.social, pricing: { fairPrice: 6, freeShare: freeShares.social } },
-        video: { ...config.productTypes.video, pricing: { fairPrice: 9, freeShare: freeShares.video } },
+        ecommerce: { ...config.productTypes.ecommerce, pricing: { fairPrice: 30, freeShare: freeShares.ecommerce, conversionRate: 0 } },
+        social: { ...config.productTypes.social, pricing: { fairPrice: 6, freeShare: freeShares.social, conversionRate: 0 } },
+        video: { ...config.productTypes.video, pricing: { fairPrice: 9, freeShare: freeShares.video, conversionRate: 0 } },
       },
     });
   const s = priced();
@@ -2327,7 +2329,7 @@ describe("pricing and income", () => {
       models: { ...s.config.models, saas: { ...s.config.models.saas, monthlyCost: 0, monthlyCostPerUser: 0.3 } },
       productTypes: {
         ...s.config.productTypes,
-        ecommerce: { ...s.config.productTypes.ecommerce, pricing: { fairPrice: 30, freeShare: 0.9 } },
+        ecommerce: { ...s.config.productTypes.ecommerce, pricing: { fairPrice: 30, freeShare: 0.9, conversionRate: 0 } },
       },
     });
     let state = begin(sm, "ecommerce", "saas");
@@ -2403,7 +2405,7 @@ describe("support, tickets and satisfaction", () => {
         social: {
           ...config.productTypes.social,
           growth: { ...growth, dailyGrowth: 0 },
-          pricing: { fairPrice: 30, freeShare },
+          pricing: { fairPrice: 30, freeShare, conversionRate: 0 },
           support: { ticketsPerPaidUser: 0.05, ticketsPerFreeUser: 0.01 },
         },
       },
@@ -2659,7 +2661,7 @@ describe("price waves and the price lock", () => {
         ecommerce: {
           ...config.productTypes.ecommerce,
           growth: { ...growth, dailyGrowth: 0, growthNoise: 0 },
-          pricing: { fairPrice: 30, freeShare: 0.4 },
+          pricing: { fairPrice: 30, freeShare: 0.4, conversionRate: 0 },
         },
       },
     });
@@ -2857,5 +2859,210 @@ describe("price waves and the price lock", () => {
     const after = s.advance(state, 7).state;
     expect(after.paidUsers).toBe(0);
     expect(after.users).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("free-to-paid conversion", () => {
+  // A social network with 10,000 users, half of them free, no growth, no random variation and no satisfaction churn,
+  // so every change in paying users comes from conversion. A base rate of 1% a day, and plenty of capacity.
+  const converting = (overrides: Partial<GameConfig["conversion"]> = {}, extra: Partial<GameConfig> = {}, rate = 0.01) =>
+    createSim({
+      ...config,
+      productTypes: {
+        ...config.productTypes,
+        social: {
+          ...config.productTypes.social,
+          growth: { ...growth, startingUsers: 10_000, dailyGrowth: 0, growthNoise: 0 },
+          pricing: { fairPrice: 30, freeShare: 0.5, conversionRate: rate },
+        },
+      },
+      support: { ...config.support, churnAtZero: 0 },
+      conversion: { ...defaultConfig.conversion, ...overrides },
+      ...extra,
+    });
+  const s = converting();
+  const begin = (sm = s, model = "iaas") => ({
+    ...sm.newGame({ companyName: "Acme", productType: "social", model, seed: 42 }),
+    ops: sm.opsNeeded(model as (typeof MODEL_IDS)[number]),
+  });
+  const conversionLog = (log: DayLog[]) => log.flatMap((d) => d.entries.filter((e) => e.kind === "conversion"));
+  const multiplier = (sm: Sim, state: GameState, id: string) => sm.conversion(state).drivers.find((d) => d.id === id)!.multiplier;
+  const setPrice = (price: number): Action => ({ type: "setPrice", price });
+
+  it("starts with no conversions, and every driver neutral or helping", () => {
+    const state = begin();
+    const view = s.conversion(state);
+    expect(state).toMatchObject({ conversionsToday: 0, conversions: 0, recentHoursDown: [] });
+    expect(view).toMatchObject({ today: 0, total: 0, baseRate: 0.01, recentUptime: 100 });
+    expect(view.drivers.map((d) => [d.id, d.effect])).toEqual([
+      ["features", "neutral"],
+      ["uptime", "helping"],
+      ["satisfaction", "helping"],
+      ["price", "neutral"],
+    ]);
+    // 100% uptime and satisfaction each multiply by 1 + 0.25.
+    expect(view.rate).toBeCloseTo(0.01 * 1.25 * 1.25, 10);
+  });
+
+  it("turns a share of free users into payers every day, and logs it", () => {
+    let state = begin();
+    const { rate } = s.conversion(state);
+    let total = 0;
+    for (let day = 0; day < 5; day++) {
+      const { state: next, log } = s.advance(state);
+      const free = state.users - state.paidUsers;
+      expect(next.conversionsToday).toBe(Math.round(free * rate));
+      expect(next.conversionsToday).toBeGreaterThan(0);
+      expect(next.paidUsers - state.paidUsers).toBe(next.conversionsToday);
+      expect(next.users).toBe(state.users);
+      const [entry] = conversionLog(log);
+      expect(entry).toMatchObject({ cashDelta: 0, kind: "conversion" });
+      expect(entry!.text).toMatch(/^Free to paid: \d[\d,]* of \d[\d,]* free users started paying \([\d.]+% a day\)\.$/);
+      total += next.conversionsToday;
+      state = next;
+    }
+    expect(state.conversions).toBe(total);
+    expect(s.conversion(state)).toMatchObject({ today: state.conversionsToday, total });
+    // Converted users pay from the next day.
+    expect(s.dailyIncome(state)).toBeGreaterThan(s.dailyIncome(begin()));
+  });
+
+  it("takes its base rate from the product's config, and none convert at 0", () => {
+    expect(defaultConfig.productTypes.ecommerce.pricing.conversionRate).toBeGreaterThan(0);
+    const none = converting({}, {}, 0);
+    const { state, log } = none.advance(begin(none), 5);
+    expect(state.paidUsers).toBe(5000);
+    expect(conversionLog(log)).toEqual([]);
+  });
+
+  it("rises with each feature built", () => {
+    const state = begin();
+    const oneBuilt = { ...state, features: { checkout: { status: "built" as const, progress: 6 } } };
+    const twoBuilt = { ...oneBuilt, features: { ...oneBuilt.features, reviews: { status: "built" as const, progress: 5 } } };
+    expect(multiplier(s, oneBuilt, "features")).toBeCloseTo(1.15, 10);
+    expect(multiplier(s, twoBuilt, "features")).toBeCloseTo(1.3, 10);
+    expect(s.conversion(twoBuilt).drivers[0]).toMatchObject({ effect: "helping", value: 2 });
+    const converted = (st: GameState) => s.advance(st).state.conversionsToday;
+    expect(converted(oneBuilt)).toBeGreaterThan(converted(state));
+    expect(converted(twoBuilt)).toBeGreaterThan(converted(oneBuilt));
+    // A build under way doesn't count until it's finished.
+    expect(multiplier(s, { ...state, features: { checkout: { status: "building", progress: 3 } } }, "features")).toBe(1);
+  });
+
+  it("rises with add-ons bought on SaaS", () => {
+    const state = { ...begin(s, "saas"), developers: 1 };
+    const bought = s.applyAction(state, { type: "buyAddon", feature: "search" });
+    expect(multiplier(s, bought, "features")).toBeCloseTo(1.15, 10);
+    expect(s.advance(bought).state.conversionsToday).toBeGreaterThan(s.advance(state).state.conversionsToday);
+  });
+
+  it("falls with recent outages and recovers once the uptime window has passed", () => {
+    // 10,000 users at 1 load each on 5,000 capacity: an outage every day.
+    const overloaded = converting({}, { models: { ...config.models, iaas: { ...config.models.iaas, capacity: 5_000 } } });
+    const good = s.advance(begin(), 3).state;
+    const bad = overloaded.advance(begin(overloaded), 3).state;
+    expect(bad.recentHoursDown).toHaveLength(3);
+    expect(overloaded.conversion(bad).recentUptime).toBeLessThan(90);
+    expect(multiplier(overloaded, bad, "uptime")).toBeLessThan(1);
+    expect(overloaded.conversion(bad).drivers[1]!.effect).toBe("hurting");
+    expect(bad.conversions).toBeLessThan(good.conversions);
+    // Only the last uptimeDays (7) days count: after a week without outages, uptime is back to 100%.
+    const recovered = s.advance(bad, 7).state;
+    expect(recovered.recentHoursDown).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    expect(s.conversion(recovered).recentUptime).toBe(100);
+    expect(multiplier(s, recovered, "uptime")).toBeCloseTo(1.25, 10);
+    // At the neutral uptime it neither helps nor hurts.
+    const neutral = { ...good, recentHoursDown: [24 * 7 * 0.05, 0, 0, 0, 0, 0, 0] };
+    expect(multiplier(s, neutral, "uptime")).toBeCloseTo(1, 10);
+  });
+
+  it("rises with satisfaction, and falls below good satisfaction", () => {
+    const state = begin();
+    const at = (satisfaction: number) => ({ ...state, satisfaction });
+    expect(multiplier(s, at(70), "satisfaction")).toBeCloseTo(1, 10);
+    expect(multiplier(s, at(100), "satisfaction")).toBeCloseTo(1.25, 10);
+    expect(multiplier(s, at(40), "satisfaction")).toBeCloseTo(0.75, 10);
+    const converted = (sat: number) => s.advance(at(sat)).state.conversionsToday;
+    expect(converted(100)).toBeGreaterThan(converted(70));
+    expect(converted(70)).toBeGreaterThan(converted(30));
+  });
+
+  it("falls with a price above the fair price, and isn't raised by a price below it", () => {
+    const state = begin();
+    const dear = s.applyAction(state, setPrice(60));
+    expect(multiplier(s, dear, "price")).toBeCloseTo(0.25, 10);
+    expect(s.conversion(dear).drivers[3]).toMatchObject({ effect: "hurting", value: 2 });
+    expect(s.advance(dear).state.conversionsToday).toBeLessThan(s.advance(state).state.conversionsToday);
+    // A cheap price brings its upgrades once, through the price wave, not every day here as well.
+    const cheap = s.applyAction(state, setPrice(15));
+    expect(multiplier(s, cheap, "price")).toBe(1);
+    expect(s.conversion(cheap).rate).toBe(s.conversion(state).rate);
+    // The effect is tunable: at 0 a high price makes no difference.
+    const flat = converting({ priceSensitivity: 0 });
+    expect(multiplier(flat, flat.applyAction(begin(flat), setPrice(60)), "price")).toBe(1);
+  });
+
+  it("is capped at the highest rate", () => {
+    const capped = converting({ maxRate: 0.012, perFeature: 1 });
+    const state = { ...begin(capped), features: { checkout: { status: "built" as const, progress: 6 } } };
+    expect(capped.conversion(state).rate).toBe(0.012);
+    expect(capped.advance(state).state.conversionsToday).toBe(60);
+  });
+
+  describe("with a price cut's wave", () => {
+    const waved = (waveOverrides: Partial<GameConfig["pricing"]> = {}) =>
+      converting({}, { pricing: { ...defaultConfig.pricing, ...waveOverrides } });
+
+    it("counts the wave's upgrades and the day's conversions separately, never the same user twice", () => {
+      const sm = waved();
+      let state = sm.applyAction(begin(sm), setPrice(20));
+      for (let i = 0; i < 7; i++) {
+        const before = state;
+        const { state: next, log } = sm.advance(before);
+        const doneBefore = before.priceWave!.done;
+        const done = next.priceWave!.done;
+        const upgraded = done.upgraded - doneBefore.upgraded;
+        const joinedPaid = done.joinedPaid - doneBefore.joinedPaid;
+        // Paying users rise by the wave's upgrades and new payers plus the day's conversions, and nothing more.
+        expect(next.paidUsers - before.paidUsers).toBe(upgraded + joinedPaid + next.conversionsToday);
+        // Conversions come from the free users the wave left, at the usual rate: the cut doesn't raise it.
+        const freeAfterWave = next.users - (next.paidUsers - next.conversionsToday);
+        expect(next.conversionsToday).toBe(Math.round(freeAfterWave * sm.conversion(before).rate));
+        expect(sm.conversion(before).drivers[3]!.multiplier).toBe(1);
+        // Each has its own log line.
+        expect(log[0]!.entries.some((e) => e.kind === "price")).toBe(true);
+        expect(conversionLog(log)).toHaveLength(1);
+        state = next;
+      }
+      expect(state.conversions).toBeGreaterThan(0);
+      expect(state.priceWave!.done.upgraded).toBeGreaterThan(0);
+    });
+
+    it("has no one left to convert once the wave has upgraded every free user", () => {
+      const sm = waved({ waveDays: 1, cutUpgradeStrength: 100, maxCutUpgrade: 1, cutGainStrength: 0 });
+      const { state, log } = sm.advance(sm.applyAction(begin(sm), setPrice(20)));
+      expect(state.priceWave!.done.upgraded).toBe(5000);
+      expect(state.paidUsers).toBe(state.users);
+      expect(state.conversionsToday).toBe(0);
+      expect(conversionLog(log)).toEqual([]);
+    });
+  });
+
+  it("is deterministic, and carries on identically after a JSON round trip", () => {
+    const overloaded = converting({}, { models: { ...config.models, iaas: { ...config.models.iaas, capacity: 9_000 } } });
+    const play = () => overloaded.advance(overloaded.applyAction(begin(overloaded), setPrice(40)), 20);
+    expect(play()).toEqual(play());
+    const part = overloaded.advance(overloaded.applyAction(begin(overloaded), setPrice(40)), 8).state;
+    expect(overloaded.advance(JSON.parse(JSON.stringify(part)) as GameState, 12).state).toEqual(play().state);
+  });
+
+  it("makes a free user worth having over a game by default, without making the free tier pointless", () => {
+    // The chance a free user starts paying within the game at each product's base rate, nothing helping or hurting.
+    for (const p of PRODUCT_TYPE_IDS) {
+      const rate = defaultConfig.productTypes[p].pricing.conversionRate;
+      const chance = 1 - (1 - rate) ** defaultConfig.finalDay;
+      expect(chance).toBeGreaterThan(0.2);
+      expect(chance).toBeLessThan(0.6);
+    }
   });
 });

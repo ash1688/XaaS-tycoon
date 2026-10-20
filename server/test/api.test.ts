@@ -47,9 +47,9 @@ const sim = createSim({
   },
   // No scripted events, so continue charges and outages are only the ones a test sets up.
   events: [],
-  // Everyone on the free tier, so continue brings in no income unless a test's config says otherwise.
+  // Everyone on the free tier and none converting, so continue brings in no income unless a test's config says otherwise.
   productTypes: Object.fromEntries(
-    Object.entries(defaultConfig.productTypes).map(([id, p]) => [id, { ...p, pricing: { ...p.pricing, freeShare: 1 } }]),
+    Object.entries(defaultConfig.productTypes).map(([id, p]) => [id, { ...p, pricing: { ...p.pricing, freeShare: 1, conversionRate: 0 } }]),
   ) as typeof defaultConfig.productTypes,
 });
 
@@ -1946,6 +1946,36 @@ describe("pricing and income", () => {
     expect(locked.json().message).toContain(`${lockDays} more days`);
     expect((await next()).company.priceLockDaysLeft).toBe(lockDays - 1);
     expect((await act({ type: "setPrice", price: fairPrice + 2 })).json()).toMatchObject({ daysLeft: lockDays - 1 });
+  });
+
+  it("shows free-to-paid conversion: today's conversions, the rate and what's helping or hurting it", async () => {
+    const { company, act, next } = await setup({
+      "productTypes.ecommerce.pricing.freeShare": 0.5,
+      "productTypes.ecommerce.pricing.conversionRate": 0.01,
+    });
+    expect(company.conversion).toMatchObject({ today: 0, total: 0, baseRate: 0.01, recentUptime: 100 });
+    expect(company.conversion.drivers.map((d) => [d.id, d.effect])).toEqual([
+      ["features", "neutral"],
+      ["uptime", "helping"],
+      ["satisfaction", "helping"],
+      ["price", "neutral"],
+    ]);
+    expect(company.conversion.rate).toBeGreaterThan(0.01);
+
+    const { company: after, log } = await next();
+    const line = log[0]!.entries.find((e) => e.kind === "conversion")!;
+    expect(line.text).toMatch(/^Free to paid: \d[\d,]* of \d[\d,]* free users started paying/);
+    expect(after.conversion.today).toBeGreaterThan(0);
+    expect(line.text).toContain(`Free to paid: ${after.conversion.today} of`);
+    expect(after.conversion.total).toBe(after.conversion.today);
+
+    // A price above the fair price hurts it.
+    const dear = (await act({ type: "setPrice", price: fairPrice * 2 })).json<CompanyView>();
+    expect(dear.conversion.drivers.find((d) => d.id === "price")).toMatchObject({ effect: "hurting", value: 2 });
+    expect(dear.conversion.rate).toBeLessThan(after.conversion.rate);
+
+    // Back to the base config for the tests after.
+    await app.inject({ method: "PUT", url: "/api/teacher/config", payload: { overrides: {} }, cookies: await teacherCookie() });
   });
 });
 

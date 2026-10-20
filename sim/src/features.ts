@@ -101,6 +101,9 @@ export function createFeatures(config: GameConfig) {
       .filter((f) => isActive(state, f.id))
       .map((f) => f.growthMultiplier);
 
+  /** Features built before today and add-ons bought: what's active for customers. */
+  const activeCount = (state: GameState) => featureList(state).filter((f) => isActive(state, f.id)).length;
+
   const activeAddons = (state: GameState) => featureList(state).filter((f) => state.features[f.id]?.status === "addon");
 
   /** The add-ons a migration to this model would leave behind: all of them when leaving SaaS, none otherwise. */
@@ -132,6 +135,7 @@ export function createFeatures(config: GameConfig) {
     buildDay,
     features,
     activeGrowth,
+    activeCount,
     addonsLeftBehind,
     addonEntries,
     monthlyAddonCost,

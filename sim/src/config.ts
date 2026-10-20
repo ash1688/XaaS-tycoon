@@ -116,6 +116,11 @@ export interface ProductPricing {
   fairPrice: number;
   /** Share of users on the free tier, at the start and among new users at the fair price (0.7 = 70% free). */
   freeShare: number;
+  /**
+   * Share of free users who start paying each day before any multiplier (0.002 = 2 in 1,000 a day). See
+   * ConversionConfig for what raises and lowers it.
+   */
+  conversionRate: number;
 }
 
 /** How many support tickets a product's users raise. Free users raise them too, but fewer. */
@@ -258,6 +263,39 @@ export interface SupportConfig {
   churnAtZero: number;
 }
 
+/**
+ * Free-to-paid conversion: free users are an investment. Each day a share of them start paying: the product's
+ * conversionRate (see ProductPricing) times four multipliers, each 1 when it neither helps nor hurts.
+ *
+ * - Features: 1 + perFeature × active features (built, or bought as add-ons). Two features at 0.15 make 1.3.
+ * - Uptime: 1 + uptimeEffect × (u − neutralUptime) ÷ (100 − neutralUptime), where u is the uptime % over the last
+ *   uptimeDays days played. Above the neutral line it helps, up to 1 + uptimeEffect at 100%; below it, it hurts, down
+ *   to 0.
+ * - Satisfaction: 1 + satisfactionEffect × (s − good) ÷ (100 − good), the same shape around SupportConfig's
+ *   goodSatisfaction, from yesterday's satisfaction s like growth and churn.
+ * - Price: (price ÷ fair price) ^ −priceSensitivity, at most 1. A price above fair puts free users off paying; one
+ *   below it adds nothing here, because a cut's upgrades come once, from its price wave.
+ *
+ * The rate is at most maxRate. Conversions come from the free users left after the day's growth, churn and any price
+ * wave, so a user a wave has already upgraded can't convert as well.
+ */
+export interface ConversionConfig {
+  /** Each active feature or add-on adds this to the features multiplier (0.15 = 15% more conversions each). */
+  perFeature: number;
+  /** Days of recent uptime that count: the last days played. */
+  uptimeDays: number;
+  /** Uptime % at which uptime neither helps nor hurts. */
+  neutralUptime: number;
+  /** How much 100% uptime raises conversion (0.25 = 25% more). Each step below neutral lowers it at the same rate. */
+  uptimeEffect: number;
+  /** How much 100% satisfaction raises conversion, with goodSatisfaction as the neutral line. */
+  satisfactionEffect: number;
+  /** How strongly a price above the fair price puts free users off paying. 0 for no effect. */
+  priceSensitivity: number;
+  /** The highest daily conversion rate, whatever the multipliers (0.05 = 5% of free users a day). */
+  maxRate: number;
+}
+
 /** SaaS add-ons: bought from the provider instead of built. */
 export interface AddonConfig {
   /**
@@ -381,6 +419,7 @@ export interface GameConfig {
   billing: BillingConfig;
   pricing: PricingConfig;
   support: SupportConfig;
+  conversion: ConversionConfig;
   addons: AddonConfig;
   migration: MigrationConfig;
   /** Scripted events, in the order they're logged on a day when more than one is on. */
@@ -453,7 +492,7 @@ export const defaultConfig: GameConfig = {
         seasonalSpike: { firstDay: 45, every: 45, length: 5, loadMultiplier: 1.6, growthMultiplier: 2 },
       },
       // Shoppers mostly pay: a shop's free tier is browsing without an account.
-      pricing: { fairPrice: 5, freeShare: 0.3 },
+      pricing: { fairPrice: 5, freeShare: 0.3, conversionRate: 0.004 },
       // Orders go wrong: paying shoppers raise the most tickets of any product.
       support: { ticketsPerPaidUser: 0.012, ticketsPerFreeUser: 0.003 },
       features: [
@@ -503,7 +542,7 @@ export const defaultConfig: GameConfig = {
         loadNoise: 0.05,
       },
       // Mostly free, like most social networks: a few pay for extras.
-      pricing: { fairPrice: 6, freeShare: 0.8 },
+      pricing: { fairPrice: 6, freeShare: 0.8, conversionRate: 0.0015 },
       support: { ticketsPerPaidUser: 0.01, ticketsPerFreeUser: 0.002 },
       features: [
         {
@@ -551,7 +590,7 @@ export const defaultConfig: GameConfig = {
         loadPerUser: 4,
         loadNoise: 0.15,
       },
-      pricing: { fairPrice: 9, freeShare: 0.6 },
+      pricing: { fairPrice: 9, freeShare: 0.6, conversionRate: 0.0025 },
       support: { ticketsPerPaidUser: 0.01, ticketsPerFreeUser: 0.003 },
       features: [
         {
@@ -631,6 +670,18 @@ export const defaultConfig: GameConfig = {
     poorSatisfaction: 40,
     growthAtZero: 0.3,
     churnAtZero: 0.02,
+  },
+  // Placeholders. At the fair price with nothing helping or hurting, a shop converts 0.4% of its free users a day, so
+  // a free user has about an even chance of paying within 180 days: worth having, but most new users still start
+  // free. Two features with 100% uptime and satisfaction double the rate; double the fair price quarters it.
+  conversion: {
+    perFeature: 0.15,
+    uptimeDays: 7,
+    neutralUptime: 95,
+    uptimeEffect: 0.25,
+    satisfactionEffect: 0.25,
+    priceSensitivity: 2,
+    maxRate: 0.05,
   },
   addons: { minConfigDevelopers: 2 },
   migration: {

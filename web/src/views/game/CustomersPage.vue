@@ -2,11 +2,12 @@
 import { computed } from "vue";
 import { formatCash, formatCount, formatPrice, formatUptime } from "../../api";
 import { useGame } from "../../game";
+import ConversionPanel from "../../panels/ConversionPanel.vue";
 import PriceWavePanel from "../../panels/PriceWavePanel.vue";
 import SupportPanel from "../../panels/SupportPanel.vue";
 
-// Customers: who's using the product, paying and free, how a price change is moving them, and how happy they are
-// with support.
+// Customers: who's using the product, paying and free, how many free users start paying, how a price change is
+// moving them, and how happy they are with support.
 const game = useGame();
 const userChange = computed(() =>
   game.company && game.previousUsers !== undefined ? game.company.users - game.previousUsers : undefined,
@@ -81,6 +82,7 @@ const activeFeatures = computed(
         <span class="badge">Feature gap</span> They want {{ gap.feature }}, and you can't give it to them yet.
       </p>
     </section>
+    <ConversionPanel />
     <PriceWavePanel />
     <SupportPanel />
   </div>

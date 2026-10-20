@@ -111,6 +111,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add(`${g}.seasonalSpike.length`, "Customers", s, "Seasonal spike: length (days)", "How many days each busy season lasts.", GAME_DAY);
     add(`${g}.seasonalSpike.growthMultiplier`, "Customers", s, "Seasonal spike: growth multiplier", "Growth is multiplied by this during a busy season.", MULTIPLIER);
     add(`productTypes.${p}.pricing.freeShare`, "Customers", s, "Free share", "Share of users on the free tier, at the start and among new users at the fair price.", SHARE);
+    add(`productTypes.${p}.pricing.conversionRate`, "Customers", s, "Free-to-paid conversion rate", "Share of free users who start paying each day, before features, uptime, satisfaction and price (0.004 = 0.4%).", range(0, 0.1, 0.0005));
     for (const f of product.features) {
       add(`productTypes.${p}.features.${f.id}.growthMultiplier`, "Customers", s, `${f.name}: growth multiplier`, "Once built or bought, daily growth is multiplied by this (1.1 = 10% faster).", range(0, 5, 0.01));
     }
@@ -135,6 +136,16 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("pricing.maxCutGain", "Customers", W, "Cut: most new users", "The most new users one cut can bring, as a share of users.", range(0, 5, 0.05));
   add("pricing.cutUpgradeStrength", "Customers", W, "Cut: upgrades", "A cut turns this × (cut ÷ fair price)^curve of free users into payers, before the cap.", range(0, 5, 0.05));
   add("pricing.maxCutUpgrade", "Customers", W, "Cut: most upgrades", "The most of the free users one cut can turn into payers.", SHARE);
+
+  // Customers: free-to-paid conversion. The daily rate is the product's base rate × each multiplier, at most the cap.
+  const C = "Free-to-paid conversion";
+  add("conversion.perFeature", "Customers", C, "Boost per feature", "Each feature built or add-on bought adds this to the conversion multiplier (0.15 = 15% more each).", range(0, 2, 0.01));
+  add("conversion.uptimeDays", "Customers", C, "Recent uptime (days)", "Days of recent uptime that count towards conversion: the last days played.", range(1, 60, 1));
+  add("conversion.neutralUptime", "Customers", C, "Neutral uptime %", "Recent uptime at which uptime neither helps nor hurts conversion. Above it helps, below it hurts.", range(0, 99, 0.5));
+  add("conversion.uptimeEffect", "Customers", C, "Uptime effect", "100% recent uptime multiplies conversion by 1 + this; each step below neutral lowers it at the same rate.", range(0, 5, 0.05));
+  add("conversion.satisfactionEffect", "Customers", C, "Satisfaction effect", "100% satisfaction multiplies conversion by 1 + this, with good satisfaction as the neutral line.", range(0, 5, 0.05));
+  add("conversion.priceSensitivity", "Customers", C, "Price effect on conversion", "Above the fair price, conversion is multiplied by (price ÷ fair price) to minus this. 0 for no effect.", range(0, 5, 0.05));
+  add("conversion.maxRate", "Customers", C, "Highest conversion rate", "The most of the free users who can start paying in a day, whatever helps.", range(0, 1, 0.005));
 
   // Customers: support tickets and satisfaction
   const TICKET_RATE = range(0, 1, 0.001);

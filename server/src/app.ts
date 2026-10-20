@@ -236,6 +236,7 @@ export async function buildApp(opts: AppOptions) {
       income: state.income,
       priceWave: sim.priceWave(state),
       priceLockDaysLeft: sim.priceLockDaysLeft(state),
+      conversion: sim.conversion(state),
       ticketsToday: state.ticketsToday,
       burstTickets: state.burstTickets,
       clearedToday: state.clearedToday,
@@ -320,6 +321,7 @@ export async function buildApp(opts: AppOptions) {
       maxPrice: config.pricing.maxPrice,
       priceWaveDays: config.pricing.waveDays,
       priceLockDays: config.pricing.lockDays,
+      conversionUptimeDays: config.conversion.uptimeDays,
       migrationPhases: MIGRATION_PHASES.map((id) => ({ id, ...config.migration.phases[id] })),
     };
   }

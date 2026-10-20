@@ -1,4 +1,5 @@
 import { defaultConfig, type GameConfig, type ModelId } from "./config.ts";
+import { createConversion, type ConversionView } from "./conversion.ts";
 import { createCustomers } from "./customers.ts";
 import { createEvents, type EventView, type FeatureGapView } from "./events.ts";
 import { createFeatures, type FeatureView } from "./features.ts";
@@ -27,6 +28,7 @@ import { createSupport } from "./support.ts";
 
 // The sim's one public interface is createSim. Its modules are internal; only the types and helpers the server and
 // web client need are re-exported here.
+export type { ConversionDriver, ConversionDriverId, ConversionView } from "./conversion.ts";
 export type { EventView, FeatureGapView } from "./events.ts";
 export type { FeatureStatus, FeatureView } from "./features.ts";
 export type { LostAddon, MigrationQuote, MigrationView } from "./migration.ts";
@@ -99,6 +101,11 @@ export interface Sim {
   dailyClearance(state: GameState): number;
   /** Tickets today's users would raise in a day before any burst: paid and free users × their rates. */
   usualTickets(state: GameState): number;
+  /**
+   * Free-to-paid conversion: free users who started paying on the day just played and in all, and the daily rate
+   * that applies from the next day, with what's helping or hurting it.
+   */
+  conversion(state: GameState): ConversionView;
   /** Share of time up across every day played, as a percentage. 100 before the first day. */
   uptime(state: GameState): number;
   /** The product's features, in config order, with each one's progress. */
@@ -124,6 +131,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   const pricing = createPricing(config);
   const support = createSupport(config);
   const customers = createCustomers(config, features, events, pricing, support);
+  const conversion = createConversion(config, features, pricing);
   const infra = createInfrastructure(config, customers, events);
   const staff = createStaff(config);
   const finance = createFinance(config);
@@ -156,6 +164,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       support: config.staff.support.startingCount,
       ...customers.startingUsers(productType, 1),
       ...support.startingSupport(),
+      ...conversion.startingConversion(),
       spend: noSpend(),
       spendByDay: [],
       features: {},
@@ -229,7 +238,10 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const grown = customers.grow(state, day, served.hoursDown > 0, served.rng);
     // Then any price wave takes its share for the day, planned when the price changed.
     const wave = pricing.waveDay(state, day, grown.users, grown.paidUsers);
-    const { users, paidUsers } = wave;
+    // Then a share of the free users left start paying. A user the wave upgraded is already paying, so can't convert.
+    const converted = conversion.convertDay(state, wave.users, wave.paidUsers);
+    const users = wave.users;
+    const paidUsers = converted.paidUsers;
     const rng = grown.rng;
 
     // Support answers what it can of today's tickets: the users' usual ones plus every burst, from downtime and from
@@ -249,6 +261,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       ...recorded.entries,
       ...(served.outage ? [served.outage] : []),
       ...wave.entries,
+      ...converted.entries,
       ...care.entries,
       ...build.entries,
       ...pricing.incomeEntries(state),
@@ -276,6 +289,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       clearedToday: care.clearedToday,
       backlog: care.backlog,
       satisfaction: care.satisfaction,
+      recentHoursDown: conversion.recentHoursDownAfter(state, served.hoursDown),
+      conversionsToday: converted.conversionsToday,
+      conversions: state.conversions + converted.conversionsToday,
     };
     // The migration moves on after the day is played and billed, so a model switch takes effect from tomorrow.
     const migrated = migration.migrationDay(played);
@@ -317,6 +333,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     capacity: (s) => infra.capacity(load(s)),
     dailyClearance: (s) => support.dailyClearance(load(s)),
     usualTickets: (s) => support.usualTickets(load(s)),
+    conversion: (s) => conversion.conversion(load(s)),
     uptime: (s) => infra.uptime(load(s)),
     features: (s) => features.features(load(s)),
     migration: (s) => migration.migration(load(s)),

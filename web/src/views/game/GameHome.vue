@@ -187,6 +187,12 @@ const alerts = computed(() => {
           {{ formatCount(game.company.paidUsers) }} paying, {{ formatCount(game.company.freeUsers) }} free, at
           {{ formatPrice(game.company.price) }} a month. {{ formatCash(game.company.income) }} so far.
         </p>
+        <p class="muted" data-testid="home-conversions">
+          <strong class="pos">{{ formatCount(game.company.conversion.today) }}</strong> free
+          {{ game.company.conversion.today === 1 ? "user" : "users" }} started paying<template v-if="game.lastDay">
+            on day {{ game.lastDay.day }}</template
+          >.
+        </p>
         <template #detail>
           <div class="stats">
             <div class="stat">
@@ -203,6 +209,11 @@ const alerts = computed(() => {
               <span class="value">{{ formatCount(game.company.freeUsers) }}</span>
             </div>
             <div class="stat">
+              <span class="label">Started paying</span>
+              <span class="value pos">{{ formatCount(game.company.conversion.today) }}</span>
+              <small>{{ (100 * game.company.conversion.rate).toFixed(2) }}% of free users a day</small>
+            </div>
+            <div class="stat">
               <span class="label">Monthly price</span>
               <span class="value">{{ formatPrice(game.company.price) }}</span>
               <small>Fair price {{ formatPrice(game.company.fairPrice) }}</small>
@@ -211,9 +222,12 @@ const alerts = computed(() => {
           <p>
             Each paying user pays a day's share of your monthly price. Free users pay nothing but still cost you load
             and, on SaaS, per-user fees. Pricing above the fair price slows growth and means fewer new users pay.
+            A few free users start paying each day: more with features, good uptime and happy customers, fewer at a
+            high price. See what's helping or hurting on Customers.
           </p>
           <p class="modal-link">
             <RouterLink :to="page('product')">Change the price on Product</RouterLink> ·
+            <RouterLink :to="page('customers')">Open Customers</RouterLink> ·
             <RouterLink :to="page('finance')">Open Finance</RouterLink>
           </p>
         </template>
