@@ -9,6 +9,7 @@ import { createMigration, type MigrationQuote, type MigrationView } from "./migr
 import { isNameAllowed } from "./nameFilter.ts";
 import { createPricing, type PricePreview, type PriceWaveView } from "./pricing.ts";
 import { seedRng } from "./rng.ts";
+import { createServers, type ServerOption, type ServerView, type UnitsView } from "./servers.ts";
 import { createStaff } from "./staff.ts";
 import {
   GAME_STATE_VERSION,
@@ -33,12 +34,15 @@ export type { EventView, FeatureGapView } from "./events.ts";
 export type { FeatureStatus, FeatureView } from "./features.ts";
 export type { LostAddon, MigrationQuote, MigrationView } from "./migration.ts";
 export type { PricePreview, PriceWaveView } from "./pricing.ts";
+export type { LoadBalancerView, ServerOption, ServerView, TierView, UnitsView } from "./servers.ts";
 export type { GameSummary, SummaryDay } from "./summary.ts";
 export {
   GAME_STATE_VERSION,
   isCurrentState,
   isModelId,
   isProductTypeId,
+  isServerSize,
+  isServerType,
   isStaffPool,
   SimError,
   type Action,
@@ -57,7 +61,9 @@ export {
   type PriceChange,
   type PriceWave,
   type ScheduledEvent,
+  type Server,
   type Spend,
+  type UnitDemand,
   type WaveEffect,
 } from "./state.ts";
 
@@ -73,8 +79,10 @@ export interface Sim {
   applyAction(state: GameState, action: Action): GameState;
   /** The only way time moves. Continue calls it with 1. */
   advance(state: GameState, days?: number): AdvanceResult;
-  /** Ops staff the model needs to keep running. */
+  /** Ops staff a model needs to keep running: on a model with servers, for the starter setup a company gets. */
   opsNeeded(model: ModelId): number;
+  /** Ops staff the company needs now: on a model with servers, for the servers it has, ready or not. */
+  opsNeededNow(state: GameState): number;
   /** What the current headcount costs per day. */
   dailyStaffCost(state: GameState): number;
   /** What the current model costs per month at today's users. */
@@ -95,8 +103,20 @@ export interface Sim {
   priceWave(state: GameState): PriceWaveView | null;
   /** Days until the price can be changed again: 0 when it can. */
   priceLockDaysLeft(state: GameState): number;
-  /** Load the company can serve in a day with its current model and staff. */
+  /**
+   * Load the company can serve in a day with its current model and staff. On a model with servers, the load its ready
+   * servers carry at the product's usual demand.
+   */
   capacity(state: GameState): number;
+  /**
+   * On a model with servers, CU, DBU and CH demand on the day just played against what the ready servers give, the
+   * tier that runs out first, and load balancers against app servers. Null on a model with a fixed capacity.
+   */
+  units(state: GameState): UnitsView | null;
+  /** The company's servers, ready or not, oldest first. Empty on a model without servers. */
+  servers(state: GameState): ServerView[];
+  /** Every server type and size the company can add on its model, with units and price. Empty without servers. */
+  serverOptions(state: GameState): ServerOption[];
   /** Tickets the support staff can clear in a day: support staff × tickets each. */
   dailyClearance(state: GameState): number;
   /** Tickets today's users would raise in a day before any burst: paid and free users × their rates. */
@@ -132,10 +152,11 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   const support = createSupport(config);
   const customers = createCustomers(config, features, events, pricing, support);
   const conversion = createConversion(config, features, pricing);
-  const infra = createInfrastructure(config, customers, events);
+  const servers = createServers(config);
+  const infra = createInfrastructure(config, customers, events, servers);
   const staff = createStaff(config);
   const finance = createFinance(config);
-  const migration = createMigration(config, infra, features, events);
+  const migration = createMigration(config, infra, features, events, servers);
   const summary = createSummary(config, infra);
 
   function newGame({ companyName, productType, model, seed }: NewGameParams): GameState {
@@ -150,6 +171,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     if (!isProductTypeId(productType)) throw new SimError("unknown_product_type", "Pick a product type from the list.");
     if (!isModelId(model)) throw new SimError("unknown_model", "Pick a deployment model from the list.");
     const [schedule, rng] = events.rollSchedule(seedRng(seed), 1);
+    // A model with servers starts with its starter setup, ready for the first day played.
+    const setup = servers.starter(model, 1);
     const state: GameState = {
       version: GAME_STATE_VERSION,
       status: "playing",
@@ -167,6 +190,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       ...conversion.startingConversion(),
       spend: noSpend(),
       spendByDay: [],
+      servers: setup.servers,
+      nextServerId: setup.nextServerId,
       features: {},
       migration: null,
       migrations: 0,
@@ -221,6 +246,10 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         return migration.startMigration(state, action.model);
       case "setPrice":
         return pricing.setPrice(state, action.price);
+      case "rentServer":
+        return servers.rentServer(state, action.server, action.size);
+      case "cancelServer":
+        return servers.cancelServer(state, action.id);
       default:
         throw new SimError("unknown_action", "That action isn't recognised.");
     }
@@ -280,6 +309,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       paidUsers,
       priceWave: wave.priceWave,
       load: served.load,
+      demand: served.demand,
       outageDays: state.outageDays + (served.hoursDown > 0 ? 1 : 0),
       downtimeHours: state.downtimeHours + served.hoursDown,
       features: build.features,
@@ -322,6 +352,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     applyAction,
     advance,
     opsNeeded: infra.opsNeeded,
+    opsNeededNow: (s) => infra.opsNeededNow(load(s)),
     dailyStaffCost: (s) => staff.dailyStaffCost(load(s)),
     monthlyInfrastructureCost: (s) => infra.monthlyInfrastructureCost(load(s)),
     monthlyAddonCost: (s) => features.monthlyAddonCost(load(s)),
@@ -331,6 +362,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     priceWave: (s) => pricing.priceWave(load(s)),
     priceLockDaysLeft: (s) => pricing.lockDaysLeft(load(s)),
     capacity: (s) => infra.capacity(load(s)),
+    units: (s) => infra.units(load(s)),
+    servers: (s) => servers.servers(load(s)),
+    serverOptions: (s) => servers.serverOptions(load(s)),
     dailyClearance: (s) => support.dailyClearance(load(s)),
     usualTickets: (s) => support.usualTickets(load(s)),
     conversion: (s) => conversion.conversion(load(s)),

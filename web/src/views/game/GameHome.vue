@@ -80,7 +80,17 @@ const alerts = computed(() => {
     list.push({
       id: "load",
       text: game.loadLevel === "over" ? "Over capacity" : "Close to capacity",
-      detail: `Load is ${game.loadPercent}% of capacity. Over 100% is an outage.`,
+      detail: game.tightest
+        ? `${game.tightest.name} (${game.tightest.unit}) is at ${game.tightest.percent}% of capacity. Over 100% is an outage: rent more ${game.tightest.servers}.`
+        : `Load is ${game.loadPercent}% of capacity. Over 100% is an outage.`,
+      page: "infrastructure",
+      pageName: "Infrastructure",
+    });
+  if (game.units?.loadBalancer.uncovered)
+    list.push({
+      id: "load-balancer",
+      text: "Load balancer needed",
+      detail: `${game.units.loadBalancer.uncovered} of your ${game.units.loadBalancer.appServers} app servers get no traffic until a load balancer covers them.`,
       page: "infrastructure",
       pageName: "Infrastructure",
     });
@@ -303,7 +313,34 @@ const alerts = computed(() => {
         </template>
       </OverviewCard>
 
-      <OverviewCard title="Uptime and capacity" :tone="game.loadLevel === 'ok' ? undefined : 'warn'">
+      <OverviewCard
+        v-if="game.tightest"
+        title="Capacity"
+        :tone="game.loadLevel === 'ok' && !game.units?.loadBalancer.uncovered ? undefined : 'warn'"
+      >
+        <p class="overview-value" data-testid="home-tightest">
+          {{ game.tightest.unit }} {{ game.tightest.capacity > 0 ? `${game.tightest.percent}%` : "full" }}
+          <small>tightest</small>
+        </p>
+        <div class="meter" aria-hidden="true">
+          <div
+            :class="['meter-fill', game.tightest.level]"
+            :style="{ width: `${Math.min(100, game.tightest.percent)}%` }"
+          ></div>
+        </div>
+        <p class="muted" data-testid="home-capacity">
+          {{ game.tightest.name }} sets your capacity: {{ formatCount(game.tightest.demand) }} of
+          {{ formatCount(game.tightest.capacity) }} {{ game.tightest.unit }}.
+          <span v-if="game.units?.loadBalancer.uncovered" class="warn-text">Load balancer needed.</span>
+          Uptime <strong data-testid="uptime">{{ formatUptime(game.company.uptime) }}</strong>.
+        </p>
+        <template #detail>
+          <CapacityPanel />
+          <p class="modal-link"><RouterLink :to="page('infrastructure')">Rent servers on Infrastructure</RouterLink></p>
+        </template>
+      </OverviewCard>
+
+      <OverviewCard v-else title="Uptime and capacity" :tone="game.loadLevel === 'ok' ? undefined : 'warn'">
         <p class="overview-value" data-testid="uptime">{{ formatUptime(game.company.uptime) }}</p>
         <div class="meter" aria-hidden="true">
           <div :class="['meter-fill', game.loadLevel]" :style="{ width: `${Math.min(100, game.loadPercent)}%` }"></div>

@@ -15,6 +15,8 @@ import {
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
   responsibilityStack,
+  SERVER_SIZES,
+  SERVER_TYPES,
   SimError,
   STAFF_POOLS,
   validateOverrides,
@@ -225,7 +227,7 @@ export async function buildApp(opts: AppOptions) {
       developers: state.developers,
       ops: state.ops,
       support: state.support,
-      opsNeeded: sim.opsNeeded(state.model),
+      opsNeeded: sim.opsNeededNow(state),
       dailyStaffCost: sim.dailyStaffCost(state),
       users: state.users,
       paidUsers: state.paidUsers,
@@ -246,6 +248,9 @@ export async function buildApp(opts: AppOptions) {
       dailyClearance: sim.dailyClearance(state),
       load: state.load,
       capacity: sim.capacity(state),
+      units: sim.units(state),
+      servers: sim.servers(state),
+      serverOptions: sim.serverOptions(state),
       uptime: sim.uptime(state),
       outageDays: state.outageDays,
       monthlyInfrastructureCost: sim.monthlyInfrastructureCost(state),
@@ -290,6 +295,7 @@ export async function buildApp(opts: AppOptions) {
 
   // The numbers a game shows come from its own config: the current one for a new game, or the one a game started with.
   function metaFor(config: GameConfig): MetaView {
+    const sim = simFor(config);
     return {
       startingCash: config.startingCash,
       finalDay: config.finalDay,
@@ -306,8 +312,9 @@ export async function buildApp(opts: AppOptions) {
         };
       }),
       models: MODEL_IDS.map((id) => {
-        const { name, blurb, comparison, opsNeeded, upfrontCost, monthlyCost, monthlyCostPerUser } = config.models[id];
+        const { name, blurb, comparison, upfrontCost, monthlyCost, monthlyCostPerUser } = config.models[id];
         const stack = responsibilityStack(id);
+        const opsNeeded = sim.opsNeeded(id);
         return { id, name, blurb, comparison, stack, opsNeeded, upfrontCost, monthlyCost, monthlyCostPerUser };
       }),
       staff: STAFF_POOLS.map((id) => {
@@ -322,6 +329,8 @@ export async function buildApp(opts: AppOptions) {
       priceWaveDays: config.pricing.waveDays,
       priceLockDays: config.pricing.lockDays,
       conversionUptimeDays: config.conversion.uptimeDays,
+      loadBalancerFrom: config.servers.loadBalancerFrom,
+      cacheableShare: config.servers.cacheableShare,
       migrationPhases: MIGRATION_PHASES.map((id) => ({ id, ...config.migration.phases[id] })),
     };
   }
@@ -470,7 +479,19 @@ export async function buildApp(opts: AppOptions) {
           type: "object",
           required: ["type"],
           properties: {
-            type: { enum: ["hire", "letGo", "buildFeature", "buyAddon", "moveStaff", "startMigration", "setPrice"] },
+            type: {
+              enum: [
+                "hire",
+                "letGo",
+                "buildFeature",
+                "buyAddon",
+                "moveStaff",
+                "startMigration",
+                "setPrice",
+                "rentServer",
+                "cancelServer",
+              ],
+            },
             pool: { enum: [...STAFF_POOLS] },
             // Checked against the product's list by the sim.
             feature: { type: "string", maxLength: 64 },
@@ -481,6 +502,11 @@ export async function buildApp(opts: AppOptions) {
             model: { enum: [...MODEL_IDS] },
             // setPrice: the monthly price. The sim checks it against the game's highest price.
             price: { type: "number", exclusiveMinimum: 0 },
+            // rentServer: the type and size of VM. The sim checks the model rents them.
+            server: { enum: [...SERVER_TYPES] },
+            size: { enum: [...SERVER_SIZES] },
+            // cancelServer: one of the company's servers, by id. The sim checks it's theirs.
+            id: { type: "integer", minimum: 1 },
           },
           allOf: [
             { if: { properties: { type: { enum: ["hire", "letGo"] } } }, then: { required: ["pool"] } },
@@ -488,6 +514,8 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { const: "moveStaff" } } }, then: { required: ["to"] } },
             { if: { properties: { type: { const: "startMigration" } } }, then: { required: ["model"] } },
             { if: { properties: { type: { const: "setPrice" } } }, then: { required: ["price"] } },
+            { if: { properties: { type: { const: "rentServer" } } }, then: { required: ["server", "size"] } },
+            { if: { properties: { type: { const: "cancelServer" } } }, then: { required: ["id"] } },
           ],
           additionalProperties: false,
         },

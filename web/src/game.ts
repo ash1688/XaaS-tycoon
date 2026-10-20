@@ -1,13 +1,36 @@
 // The game being played: loaded once by the game shell and shared with its pages, cards and modals through
 // provide/inject, so switching page never re-fetches the company. Reactive, so templates read its refs unwrapped.
 import { computed, inject, onUnmounted, provide, reactive, ref, watch, type InjectionKey } from "vue";
-import type { DayLog, EventView, FeatureGapView, LayerId, ModelId, StaffPool } from "@xaas/sim";
+import type { DayLog, EventView, FeatureGapView, LayerId, ModelId, StaffPool, UnitTier } from "@xaas/sim";
 import type { ActionBody, CompanyView, MetaView, SummaryView } from "@xaas/server/api-types";
 import { api } from "./api";
 
 export const days = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
 export const namesList = (names: string[]) =>
   names.length < 2 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+
+/** Over 100% is an outage (on a cache, full); close to it is a warning that one is coming. */
+const levelOf = (percent: number) => (percent > 100 ? "over" : percent >= 80 ? "high" : "ok");
+
+export const TIER_INFO = [
+  { id: "cu", unit: "CU", name: "Compute", servers: "app servers" },
+  { id: "dbu", unit: "DBU", name: "Database", servers: "databases" },
+  { id: "ch", unit: "CH", name: "Cache hits", servers: "caches" },
+] as const;
+
+/** One capacity tier, for its bar. */
+export interface Tier {
+  id: UnitTier;
+  unit: string;
+  name: string;
+  servers: string;
+  demand: number;
+  capacity: number;
+  percent: number;
+  level: "ok" | "high" | "over";
+  /** The tier that runs out first: it sets capacity. */
+  binding: boolean;
+}
 
 export function createGame(code: string, id: string) {
   const meta = ref<MetaView>();
@@ -45,9 +68,28 @@ export function createGame(code: string, id: string) {
   const summary = ref<SummaryView>();
 
   const understaffed = computed(() => !!company.value && company.value.ops < company.value.opsNeeded);
-  const loadPercent = computed(() => (company.value ? Math.round((100 * company.value.load) / company.value.capacity) : 0));
+
+  // Servers in units, on a model with them (IaaS): CU, DBU and CH demand against capacity. Over 100% on CU or DBU is
+  // an outage; the cache just takes what it can. A tier with no capacity and some demand shows as 999%, bar the cache:
+  // with none, nothing is waiting on it.
+  const units = computed(() => company.value?.units ?? null);
+  const tiers = computed((): Tier[] => {
+    const u = units.value;
+    if (!u) return [];
+    return TIER_INFO.map((info) => {
+      const { demand, capacity } = u[info.id];
+      const percent = capacity > 0 ? Math.round((100 * demand) / capacity) : demand > 0 && info.id !== "ch" ? 999 : 0;
+      return { ...info, demand, capacity, percent, level: levelOf(percent), binding: u.binding === info.id };
+    });
+  });
+  // The tier that runs out first sets capacity: the one to watch.
+  const tightest = computed(() => tiers.value.find((t) => t.binding));
+  const loadPercent = computed(() => {
+    if (tightest.value) return tightest.value.percent;
+    return company.value ? Math.round((100 * company.value.load) / company.value.capacity) : 0;
+  });
   // Over 100% is an outage; close to it is a warning that one is coming.
-  const loadLevel = computed(() => (loadPercent.value > 100 ? "over" : loadPercent.value >= 80 ? "high" : "ok"));
+  const loadLevel = computed(() => levelOf(loadPercent.value));
   const onSaas = computed(() => company.value?.model === "saas");
   const building = computed(() => company.value?.features.find((f) => f.status === "building"));
   // SaaS still needs a few developers to configure add-ons; without them, add-ons can't be bought.
@@ -242,6 +284,9 @@ export function createGame(code: string, id: string) {
     over,
     summary,
     understaffed,
+    units,
+    tiers,
+    tightest,
     loadPercent,
     loadLevel,
     onSaas,

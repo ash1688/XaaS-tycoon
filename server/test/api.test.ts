@@ -20,11 +20,14 @@ import type {
 import { setupTestDb } from "./testDb.ts";
 
 const PASSWORD = "test-teacher-password";
+const iaasServers = defaultConfig.models.iaas.servers!;
+const LIGHT_DEMAND = { cuPerUser: 0.0005, dbuPerUser: 0.0005 };
 const sim = createSim({
   ...defaultConfig,
   startingCash: 1000,
-  // IaaS costs a flat 25 a day (750 a month), with nothing upfront, unless a test says otherwise. Leaving it costs
-  // 200, and PaaS 100 upfront and 10 a day, so a migration between them fits in the starting cash.
+  // IaaS costs a flat 25 a day (750 a month), with nothing upfront, unless a test says otherwise: its starter VMs (a
+  // medium app server and database, needing 1 ops) are free here. Leaving it costs 200, and PaaS 100 upfront and 10 a
+  // day, so a migration between them fits in the starting cash.
   models: {
     ...defaultConfig.models,
     iaas: {
@@ -32,8 +35,15 @@ const sim = createSim({
       upfrontCost: 0,
       monthlyCost: 750,
       monthlyCostPerUser: 0,
-      opsNeeded: 2,
       exitPenalty: 200,
+      servers: {
+        ...iaasServers,
+        monthlyCost: {
+          ...iaasServers.monthlyCost,
+          app: { ...iaasServers.monthlyCost.app, medium: 0 },
+          database: { ...iaasServers.monthlyCost.database, medium: 0 },
+        },
+      },
     },
     paas: { ...defaultConfig.models.paas, upfrontCost: 100, monthlyCost: 300, monthlyCostPerUser: 0 },
   },
@@ -48,8 +58,12 @@ const sim = createSim({
   // No scripted events, so continue charges and outages are only the ones a test sets up.
   events: [],
   // Everyone on the free tier and none converting, so continue brings in no income unless a test's config says otherwise.
+  // Light demand, 2,000 users to a CU and a DBU, so the starter VMs serve every product for weeks even with no ops.
   productTypes: Object.fromEntries(
-    Object.entries(defaultConfig.productTypes).map(([id, p]) => [id, { ...p, pricing: { ...p.pricing, freeShare: 1, conversionRate: 0 } }]),
+    Object.entries(defaultConfig.productTypes).map(([id, p]) => [
+      id,
+      { ...p, pricing: { ...p.pricing, freeShare: 1, conversionRate: 0 }, demand: LIGHT_DEMAND },
+    ]),
   ) as typeof defaultConfig.productTypes,
 });
 
@@ -369,7 +383,8 @@ describe("staff actions", () => {
 
   it("starts with the configured staff and the model's ops requirement", async () => {
     const { company } = await setup();
-    expect(company).toMatchObject({ developers: 0, ops: 0, opsNeeded: 2, dailyStaffCost: 0 });
+    // IaaS's starter VMs need 1 ops.
+    expect(company).toMatchObject({ developers: 0, ops: 0, opsNeeded: 1, dailyStaffCost: 0 });
   });
 
   it("hires staff and keeps them across reloads", async () => {
@@ -575,13 +590,22 @@ describe("users, capacity and uptime", () => {
   it("starts with the product's users, full uptime and capacity cut for missing ops", async () => {
     const { company } = await setup();
     const { startingUsers, loadPerUser } = defaultConfig.productTypes.ecommerce.growth;
+    const { cuPerUser, dbuPerUser } = LIGHT_DEMAND;
+    const { unstaffedShare } = defaultConfig.capacity;
+    // The starter's medium app server and database give 15 CU and 15 DBU, cut to 40% with none of the 1 ops needed.
+    const units = defaultConfig.servers.types.app.units.medium * unstaffedShare;
     expect(company).toMatchObject({
       users: startingUsers,
       load: startingUsers * loadPerUser,
       uptime: 100,
       outageDays: 0,
-      // IaaS needs 2 ops and the test config starts with none.
-      capacity: Math.round(defaultConfig.models.iaas.capacity * defaultConfig.capacity.unstaffedShare),
+      opsNeeded: 1,
+      capacity: Math.round((units / Math.max(cuPerUser, dbuPerUser)) * loadPerUser),
+      units: {
+        cu: { demand: startingUsers * cuPerUser, capacity: units },
+        dbu: { demand: startingUsers * dbuPerUser, capacity: units, beforeCache: startingUsers * dbuPerUser },
+        ch: { capacity: 0, absorbed: 0 },
+      },
     });
   });
 
@@ -608,9 +632,11 @@ describe("users, capacity and uptime", () => {
   });
 
   it("logs an outage and saves the lower uptime when load is over capacity", async () => {
+    // Shoppers needing a whole CU each, far more than the starter VMs give.
+    const { ecommerce } = sim.config.productTypes;
     const tight = createSim({
       ...sim.config,
-      models: { ...sim.config.models, iaas: { ...sim.config.models.iaas, capacity: 100 } },
+      productTypes: { ...sim.config.productTypes, ecommerce: { ...ecommerce, demand: { ...ecommerce.demand, cuPerUser: 1 } } },
     });
     const tightApp = await buildApp({
       db: testDb.db,
@@ -637,6 +663,97 @@ describe("users, capacity and uptime", () => {
     } finally {
       await tightApp.close();
     }
+  });
+});
+
+describe("servers on IaaS", () => {
+  async function setup(model = "iaas") {
+    const code = await newCode();
+    const company = (await newCompany(code, { name: "Acme", productType: "ecommerce", model })).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
+    return { code, company, url, act };
+  }
+
+  it("shows the starter VMs, units per tier with the binding tier, load balancers and what can be rented", async () => {
+    const { company } = await setup();
+    expect(company.servers).toEqual([
+      expect.objectContaining({ id: 1, type: "app", size: "medium", name: "App server", status: "ready", units: 15 }),
+      expect.objectContaining({ id: 2, type: "database", size: "medium", name: "Database", status: "ready", units: 15 }),
+    ]);
+    expect(company.units).toMatchObject({
+      binding: expect.stringMatching(/^(cu|dbu)$/),
+      loadBalancer: { appServers: 1, loadBalancers: 0, needed: false, counted: 1, uncovered: 0 },
+      burst: false,
+    });
+    expect(company.serverOptions).toHaveLength(16);
+    expect(company.serverOptions).toContainEqual(
+      expect.objectContaining({ type: "loadBalancer", size: "small", units: 2, monthlyCost: 200 }),
+    );
+  });
+
+  it("rents VMs that persist and are ready after Continue, needing a load balancer for a second app server", async () => {
+    const { url, act } = await setup();
+    const rented = await act({ type: "rentServer", server: "app", size: "large" });
+    expect(rented.statusCode).toBe(200);
+    expect(rented.json<CompanyView>().servers.at(-1)).toMatchObject({ id: 3, type: "app", size: "large", status: "pending" });
+    const balanced = (await act({ type: "rentServer", server: "loadBalancer", size: "small" })).json<CompanyView>();
+    // Pending: nothing changes until they're ready, and ops needed counts them already.
+    expect(balanced.units!.cu.capacity).toBe(15 * defaultConfig.capacity.unstaffedShare);
+    expect(balanced.opsNeeded).toBe(2);
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>().servers).toHaveLength(4);
+
+    const next = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    expect(next.company.servers.every((s) => s.status === "ready")).toBe(true);
+    expect(next.company.units).toMatchObject({
+      cu: { capacity: (15 + 20) * defaultConfig.capacity.unstaffedShare },
+      loadBalancer: { appServers: 2, loadBalancers: 1, needed: true, coverage: 2, counted: 2, uncovered: 0 },
+    });
+    // Billed from the day after renting: a large app server is £700 a month and a small load balancer £200.
+    expect(next.log[0]!.entries).toContainEqual({
+      text: "App server (large) rent: 1 × £700 a month",
+      cashDelta: -Math.round(700 / 30),
+      category: "infrastructure",
+    });
+    expect(next.company.monthlyInfrastructureCost).toBe(750 + 700 + 200);
+  });
+
+  it("cancels a VM, which stops its rent and persists", async () => {
+    const { url, act } = await setup();
+    await act({ type: "rentServer", server: "cache", size: "small" });
+    await app.inject({ method: "POST", url: `${url}/continue` });
+    const cancelled = await act({ type: "cancelServer", id: 3 });
+    expect(cancelled.statusCode).toBe(200);
+    expect(cancelled.json<CompanyView>().servers.map((s) => s.id)).toEqual([1, 2]);
+    const next = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    expect(next.log[0]!.entries.filter((e) => e.text.includes(" rent: "))).toEqual([]);
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>().servers).toHaveLength(2);
+  });
+
+  it("validates the body, and rejects servers off IaaS or that aren't the company's, changing nothing", async () => {
+    const { url, act } = await setup();
+    for (const payload of [
+      { type: "rentServer", server: "app" },
+      { type: "rentServer", size: "small" },
+      { type: "rentServer", server: "mainframe", size: "small" },
+      { type: "rentServer", server: "app", size: "huge" },
+      { type: "cancelServer" },
+      { type: "cancelServer", id: 0 },
+      { type: "cancelServer", id: 1.5 },
+      { type: "cancelServer", id: "one" },
+    ]) {
+      expect((await act(payload)).statusCode, JSON.stringify(payload)).toBe(400);
+    }
+    const unknown = await act({ type: "cancelServer", id: 99 });
+    expect(unknown.statusCode).toBe(400);
+    expect(unknown.json()).toMatchObject({ error: "unknown_server" });
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>().servers).toHaveLength(2);
+
+    const paas = await setup("paas");
+    expect(paas.company).toMatchObject({ servers: [], units: null, serverOptions: [] });
+    const refused = await paas.act({ type: "rentServer", server: "app", size: "small" });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toMatchObject({ error: "no_servers" });
   });
 });
 
@@ -1309,7 +1426,7 @@ describe("migration", () => {
       expect.objectContaining({ kind: "migration", text: expect.stringContaining("Planning done") }),
     );
     for (let day = 6; day <= 13; day++) body = await next();
-    expect(body!.company).toMatchObject({ model: "iaas", opsNeeded: 2, migration: { phase: "moving", daysLeft: 1 } });
+    expect(body!.company).toMatchObject({ model: "iaas", opsNeeded: 1, migration: { phase: "moving", daysLeft: 1 } });
 
     body = await next();
     expect(body.company).toMatchObject({ day: 15, model: "paas", opsNeeded: 1, migration: null, migrations: 1 });
@@ -1782,7 +1899,8 @@ describe("meta", () => {
       ["ops", 4],
       ["support", 3],
     ]);
-    expect(meta.models.map((m) => m.opsNeeded)).toEqual([3, 2, 1, 0]);
+    // IaaS's from its starter VMs.
+    expect(meta.models.map((m) => m.opsNeeded)).toEqual([3, 1, 1, 0]);
   });
 
   it("includes each model's upfront and monthly costs", async () => {

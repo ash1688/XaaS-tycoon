@@ -18,6 +18,21 @@ export type MigrationPhase = (typeof MIGRATION_PHASES)[number];
 export const SPEND_CATEGORIES = ["staff", "infrastructure", "addons"] as const;
 export type SpendCategory = (typeof SPEND_CATEGORIES)[number];
 
+/**
+ * Kinds of server. App servers give compute (CU), databases give database units (DBU) and caches give cache hits
+ * (CH). A load balancer gives no units: it spreads traffic over app servers. Saved in game state, so don't rename.
+ */
+export const SERVER_TYPES = ["app", "database", "cache", "loadBalancer"] as const;
+export type ServerType = (typeof SERVER_TYPES)[number];
+
+/** Every server type comes in these sizes, smallest first. Saved in game state, so don't rename. */
+export const SERVER_SIZES = ["small", "medium", "large", "massive"] as const;
+export type ServerSize = (typeof SERVER_SIZES)[number];
+
+/** The capacity tiers servers are measured in: compute units, database units and cache hits. */
+export const UNIT_TIERS = ["cu", "dbu", "ch"] as const;
+export type UnitTier = (typeof UNIT_TIERS)[number];
+
 /** How a model compares, shown in the table when choosing one. Words, not numbers, for now. */
 export interface ModelComparison {
   upfrontCost: string;
@@ -37,15 +52,72 @@ export interface ModelConfig {
   monthlyCost: number;
   /** Extra per user per month, billed as a daily share on that day's users. SaaS charges per user. */
   monthlyCostPerUser: number;
-  /** Ops/sysadmins this model needs to keep running. Fewer as the provider manages more layers. */
-  opsNeeded: number;
-  /** Load the model can serve in a day when fully staffed. */
-  capacity: number;
+  /**
+   * Ops/sysadmins this model needs to keep running. Fewer as the provider manages more layers. Only for a model
+   * without servers: with them, ops needed come from the servers (see ModelServersConfig.opsPerServer).
+   */
+  opsNeeded?: number;
+  /** Load the model can serve in a day when fully staffed. Only for a model without servers, which uses units. */
+  capacity?: number;
+  /**
+   * How the model gets capacity from servers measured in units; left out for a fixed capacity. IaaS rents VMs.
+   * On-prem, PaaS and SaaS keep a fixed capacity until their own slices.
+   */
+  servers?: ModelServersConfig;
   /**
    * Charged once, in infrastructure, when a migration away from this model completes: the provider's fee for leaving
    * (early exit, getting your data out). Nothing on-prem, where you own the kit.
    */
   exitPenalty: number;
+}
+
+/** A number of servers of one type and size. */
+export interface ServerCount {
+  type: ServerType;
+  size: ServerSize;
+  count: number;
+}
+
+/**
+ * How a model gets servers. Each one is billed monthly, a day's share at a time like the model's own monthly cost,
+ * from the first day played after it's added until the day it's cancelled. So cancelling is pro rata: you pay only
+ * for the days you had it. Prices go up with the provider's price rises.
+ */
+export interface ModelServersConfig {
+  /** Monthly price of one server, by type and size. */
+  monthlyCost: Record<ServerType, Record<ServerSize, number>>;
+  /** Days from adding a server to it being ready. 1 is the next day: it serves load from the day after that. */
+  readyDays: number;
+  /** Ops staff each server of a type needs. Ops needed is the total over every server, rounded up. */
+  opsPerServer: Record<ServerType, number>;
+  /**
+   * The servers a new company on this model starts with, ready for the first day. Until migration sizes a setup to
+   * demand (#51), a migration onto the model gets these too.
+   */
+  starter: ServerCount[];
+}
+
+/** One server type: what it's called and the units each size gives. */
+export interface ServerTypeConfig {
+  name: string;
+  /** One line on what it does, for the rent modal. */
+  blurb: string;
+  /** Units each size gives: CU, DBU or CH; for a load balancer, the app servers it can serve. */
+  units: Record<ServerSize, number>;
+}
+
+/**
+ * Servers in units. Each user puts CU and DBU demand on the servers (see ProductDemand). Caches absorb database
+ * demand, one cache hit for one DBU, up to cacheableShare of it. Capacity is set by the weakest tier: compute, or the
+ * database after the cache. From loadBalancerFrom app servers, they need load balancers: only the app servers the
+ * load balancers cover count, biggest first, and with none, traffic reaches just one.
+ */
+export interface ServersConfig {
+  types: Record<ServerType, ServerTypeConfig>;
+  /** App servers from which load balancers are needed. */
+  loadBalancerFrom: number;
+  /** Share of database demand a cache can take (0.5 = half). The rest always reaches the database. */
+  cacheableShare: number;
 }
 
 export interface StaffPoolConfig {
@@ -131,11 +203,23 @@ export interface ProductSupport {
   ticketsPerFreeUser: number;
 }
 
+/**
+ * The units each user needs from the servers, on models with servers. Every user counts, paying or free, and the
+ * day's load variation and seasonal spike apply to both.
+ */
+export interface ProductDemand {
+  /** Compute units (CU) each user needs: app servers. */
+  cuPerUser: number;
+  /** Database units (DBU) each user needs before any cache: databases. */
+  dbuPerUser: number;
+}
+
 export interface ProductTypeConfig {
   name: string;
   /** Short description of how this product behaves. */
   profile: string;
   growth: GrowthProfile;
+  demand: ProductDemand;
   pricing: ProductPricing;
   support: ProductSupport;
   /** The fixed list of 3–5 features this product can have. */
@@ -352,6 +436,12 @@ export interface EventOutcome {
    * outage by the usual capacity rules.
    */
   scaleCostPerLoad?: number;
+  /**
+   * The same on a model with servers: extra servers meet the CU and DBU demand over capacity, charged per unit over
+   * (infrastructure). They take the model's readyDays to arrive, so they only help from that many days into the
+   * event: on IaaS, its first day runs on the servers you have.
+   */
+  scaleCostPerUnit?: number;
   /** Hours down, on top of any outage from load. Counts as an outage. */
   downtimeHours?: number;
   /** A charge in infrastructure, such as cleaning up after a break-in. */
@@ -400,8 +490,11 @@ export interface EventConfig {
   schedule: EventSchedule;
   /** Days it lasts, from the day it fires. */
   days: number;
-  /** Extra load while it's on: the day's load × multiplier, plus extra. */
-  load?: { multiplier: number; extra: number };
+  /**
+   * Extra load while it's on: the day's load × multiplier, plus extra. On a model with servers, CU and DBU demand are
+   * multiplied by unitMultiplier instead (by multiplier if it's left out).
+   */
+  load?: { multiplier: number; extra: number; unitMultiplier?: number };
   /** A model left out isn't hit: the event doesn't happen at all for a company running on it. */
   effects: Partial<Record<ModelId, EventEffect>>;
 }
@@ -415,6 +508,7 @@ export interface GameConfig {
   productTypes: Record<ProductTypeId, ProductTypeConfig>;
   staff: Record<StaffPool, StaffPoolConfig>;
   capacity: CapacityConfig;
+  servers: ServersConfig;
   outage: OutageConfig;
   billing: BillingConfig;
   pricing: PricingConfig;
@@ -449,11 +543,26 @@ export const defaultConfig: GameConfig = {
       blurb: "Rent virtual machines and run everything on them.",
       comparison: { upfrontCost: "Low", monthlyCost: "Medium", opsNeeded: "Medium", control: "High" },
       upfrontCost: 2_000,
-      monthlyCost: 6_000,
+      // The account, storage and bandwidth. The VMs are rented on top.
+      monthlyCost: 1_000,
       monthlyCostPerUser: 0,
-      opsNeeded: 2,
-      capacity: 90_000,
       exitPenalty: 3_000,
+      // Bigger VMs cost less per unit, and caches are the cheap way to take load off the database.
+      servers: {
+        monthlyCost: {
+          app: { small: 400, medium: 550, large: 700, massive: 850 },
+          database: { small: 500, medium: 700, large: 900, massive: 1_100 },
+          cache: { small: 150, medium: 200, large: 250, massive: 300 },
+          loadBalancer: { small: 200, medium: 300, large: 450, massive: 600 },
+        },
+        readyDays: 1,
+        opsPerServer: { app: 0.5, database: 0.5, cache: 0.25, loadBalancer: 0.25 },
+        // Enough for every product's starting users with room to grow for a few weeks, run by one ops person.
+        starter: [
+          { type: "app", size: "medium", count: 1 },
+          { type: "database", size: "medium", count: 1 },
+        ],
+      },
     },
     paas: {
       name: "Deploy to a platform (PaaS)",
@@ -491,6 +600,8 @@ export const defaultConfig: GameConfig = {
         loadNoise: 0.1,
         seasonalSpike: { firstDay: 45, every: 45, length: 5, loadMultiplier: 1.6, growthMultiplier: 2 },
       },
+      // Baskets and orders: as much database as compute, 250 shoppers to a CU and a DBU.
+      demand: { cuPerUser: 0.004, dbuPerUser: 0.004 },
       // Shoppers mostly pay: a shop's free tier is browsing without an account.
       pricing: { fairPrice: 5, freeShare: 0.3, conversionRate: 0.004 },
       // Orders go wrong: paying shoppers raise the most tickets of any product.
@@ -541,6 +652,8 @@ export const defaultConfig: GameConfig = {
         loadPerUser: 1.5,
         loadNoise: 0.05,
       },
+      // Feeds and friends lists: a bit more database than compute.
+      demand: { cuPerUser: 0.003, dbuPerUser: 0.004 },
       // Mostly free, like most social networks: a few pay for extras.
       pricing: { fairPrice: 6, freeShare: 0.8, conversionRate: 0.0015 },
       support: { ticketsPerPaidUser: 0.01, ticketsPerFreeUser: 0.002 },
@@ -590,6 +703,8 @@ export const defaultConfig: GameConfig = {
         loadPerUser: 4,
         loadNoise: 0.15,
       },
+      // Encoding and streaming: compute-heavy, with a light database.
+      demand: { cuPerUser: 0.008, dbuPerUser: 0.002 },
       pricing: { fairPrice: 9, freeShare: 0.6, conversionRate: 0.0025 },
       support: { ticketsPerPaidUser: 0.01, ticketsPerFreeUser: 0.003 },
       features: [
@@ -635,6 +750,35 @@ export const defaultConfig: GameConfig = {
     support: { name: "Support staff", personName: "support person", dayRate: 100, startingCount: 1 },
   },
   capacity: { unstaffedShare: 0.4 },
+  // Placeholders, balanced in #55. Each size gives a set number of units, app servers 10/15/20/25 CU as in the design
+  // notes. A CU serves the same users whatever the size (250 shoppers at 0.004 CU each), so a small app server serves
+  // 2,500 shoppers and a massive one 6,250, not the notes' 3k/5k/10k/15k, which no one per-user figure fits.
+  servers: {
+    types: {
+      app: {
+        name: "App server",
+        blurb: "Runs your code: compute units (CU).",
+        units: { small: 10, medium: 15, large: 20, massive: 25 },
+      },
+      database: {
+        name: "Database",
+        blurb: "Stores your data: database units (DBU).",
+        units: { small: 10, medium: 15, large: 20, massive: 25 },
+      },
+      cache: {
+        name: "Cache",
+        blurb: "Answers repeat reads from memory: each cache hit (CH) takes a DBU off the database.",
+        units: { small: 10, medium: 15, large: 20, massive: 25 },
+      },
+      loadBalancer: {
+        name: "Load balancer",
+        blurb: "Spreads traffic over your app servers. Needed once you run 2 or more.",
+        units: { small: 2, medium: 4, large: 8, massive: 16 },
+      },
+    },
+    loadBalancerFrom: 2,
+    cacheableShare: 0.5,
+  },
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25 },
   billing: { daysPerMonth: 30 },
   pricing: {
@@ -702,18 +846,20 @@ export const defaultConfig: GameConfig = {
       // Somewhere in the game, never in the first weeks.
       schedule: { type: "seeded", count: 2, fromDay: 20, toDay: 170 },
       days: 2,
-      // More than any model's normal capacity, so only a model that scales stays up.
-      load: { multiplier: 2, extra: 80_000 },
+      // More than any model's normal capacity, so only a model that scales stays up. On servers, triple the demand.
+      load: { multiplier: 2, extra: 80_000, unitMultiplier: 3 },
       effects: {
         onprem: {
           detail: "You own the hardware, and new servers take weeks to arrive, so capacity can't grow to meet it.",
         },
         iaas: {
           opsNeeded: 2,
-          scaleCostPerLoad: 0.04,
-          detail: "Your ops team rented extra VMs to meet it, so you stayed up, but you pay for every extra VM.",
+          // A burst VM costs about 20 times a rented one per unit: renting your own ahead of time is cheaper.
+          scaleCostPerUnit: 25,
+          detail:
+            "Your ops team rented extra VMs to meet it. They're ready the next day, so the first day ran on the servers you had; after that you stayed up, paying for every extra VM.",
           shortOfOps: {
-            detail: "Without enough ops staff to rent and set up extra VMs in time, capacity stayed where it was.",
+            detail: "Without enough ops staff to rent and set up extra VMs, capacity stayed where it was.",
           },
         },
         paas: {

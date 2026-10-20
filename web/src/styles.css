@@ -2619,3 +2619,108 @@ body.modal-open {
 .day-log li.event.conversion .badge {
   color: var(--pos);
 }
+
+/* Servers in units (IaaS): a bar each for CU, DBU and CH, the binding tier outlined. */
+.unit-intro {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+}
+
+.unit-tier {
+  margin: 0 0 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.unit-tier.binding {
+  border: 2px solid var(--accent);
+  background: var(--accent-soft);
+}
+
+.unit-tier .row-between {
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+}
+
+.binding-badge {
+  margin-left: 0.4rem;
+  color: var(--accent);
+  font-size: 0.75rem;
+}
+
+.lb-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin: 0 0 0.75rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  background: var(--accent-soft);
+}
+
+.lb-status.warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.server-group h3 {
+  margin: 0.75rem 0 0.25rem;
+  font-size: 1rem;
+}
+
+.server-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.server-list li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.server-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.server-info .muted,
+.pending-note {
+  font-size: 0.9rem;
+}
+
+.pending-note {
+  color: var(--you);
+}
+
+.server-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin-top: 1rem;
+  font-size: 0.95rem;
+}
+
+.size-choices {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr));
+}
+
+.size-choices strong {
+  text-transform: capitalize;
+}
+
+.rent-summary {
+  margin: 1rem 0;
+}

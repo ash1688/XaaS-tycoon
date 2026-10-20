@@ -21,7 +21,10 @@ const game = useGame();
         </li>
         <li>
           <strong>Ops staff</strong>
-          <span class="muted">Keep the infrastructure running. Too few and capacity is cut.</span>
+          <span class="muted">
+            Keep the infrastructure running. Too few and capacity is cut. On IaaS, every VM you rent needs a share of
+            someone's time.
+          </span>
         </li>
         <li>
           <strong>Support staff</strong>
@@ -36,7 +39,10 @@ const game = useGame();
         <tbody>
           <tr v-for="m in game.meta.models" :key="m.id" :class="{ on: m.id === game.company.model }">
             <th scope="row">{{ m.name }}</th>
-            <td>{{ m.opsNeeded }}</td>
+            <td>
+              {{ m.id === game.company.model ? game.company.opsNeeded : m.opsNeeded }}
+              <span v-if="m.id === 'iaas'" class="muted">{{ m.id === game.company.model ? "for your VMs" : "to start" }}</span>
+            </td>
           </tr>
         </tbody>
       </table>

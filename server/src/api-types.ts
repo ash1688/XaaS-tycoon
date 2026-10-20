@@ -18,9 +18,12 @@ import type {
   PriceWaveView,
   ModelId,
   ProductTypeId,
+  ServerOption,
+  ServerView,
   Spend,
   StackLayer,
   StaffPool,
+  UnitsView,
 } from "@xaas/sim";
 
 export interface ApiError {
@@ -58,6 +61,7 @@ export interface MetaView {
     comparison: ModelComparison;
     /** Responsibility stack, bottom layer first. */
     stack: StackLayer[];
+    /** Ops staff the model needs: on a model with servers, for the starter setup a company gets. */
     opsNeeded: number;
     upfrontCost: number;
     monthlyCost: number;
@@ -79,6 +83,9 @@ export interface MetaView {
   priceLockDays: number;
   /** Days of recent uptime that count towards free-to-paid conversion. */
   conversionUptimeDays: number;
+  /** On servers: app servers from which load balancers are needed, and the most of database demand caches can take. */
+  loadBalancerFrom: number;
+  cacheableShare: number;
   /** A migration's phases in order, and how long each takes before any overrun. */
   migrationPhases: { id: MigrationPhase; name: string; days: number }[];
 }
@@ -107,7 +114,7 @@ export interface CompanyView {
   ops: number;
   /** Support staff: they answer customers' tickets, on every model. */
   support: number;
-  /** Ops staff the current model needs. */
+  /** Ops staff the company needs: on a model with servers (IaaS), for the servers it has, ready or not. */
   opsNeeded: number;
   /** What the current headcount costs per day. */
   dailyStaffCost: number;
@@ -154,8 +161,21 @@ export interface CompanyView {
   dailyClearance: number;
   /** Load on the day just played. */
   load: number;
-  /** Load the company can serve in a day with its current model and staff. */
+  /**
+   * Load the company can serve in a day with its current model and staff. On a model with servers, the load its ready
+   * servers carry at the product's usual demand: see units for each tier.
+   */
   capacity: number;
+  /**
+   * On a model with servers (IaaS): CU, DBU (after the cache) and CH demand on the day just played against what the
+   * ready servers give, the binding tier that runs out first, the users the servers can serve, and load balancer
+   * coverage of the app servers. Null on a model with a fixed capacity.
+   */
+  units: UnitsView | null;
+  /** The company's servers (type, size, ready or pending, units and monthly price), oldest first. Empty without servers. */
+  servers: ServerView[];
+  /** What the company can add on its model, every type and size with its units and monthly price. Empty without servers. */
+  serverOptions: ServerOption[];
   /** Percentage of time up across every day played. */
   uptime: number;
   outageDays: number;

@@ -3,6 +3,7 @@ import type { Events } from "./events.ts";
 import type { Features } from "./features.ts";
 import type { Infrastructure } from "./infrastructure.ts";
 import { nextRandom } from "./rng.ts";
+import type { Servers } from "./servers.ts";
 import { isModelId, SimError, type GameState, type LogEntry, type Migration } from "./state.ts";
 
 /** Where a migration has got to, for the screen. */
@@ -58,7 +59,19 @@ export interface LostAddon {
 }
 
 /** Migration: moving from one deployment model to another through the configured phases, and what it costs. */
-export function createMigration(config: GameConfig, infra: Infrastructure, features: Features, events: Events) {
+export function createMigration(
+  config: GameConfig,
+  infra: Infrastructure,
+  features: Features,
+  events: Events,
+  servers: Servers,
+) {
+  /** A model's starter setup in words: "1 medium app server, 1 medium database". */
+  const modelServersList = (model: ModelId) =>
+    config.models[model].servers?.starter
+      .filter((s) => s.count > 0)
+      .map((s) => `${s.count} ${s.size} ${config.servers.types[s.type].name.toLowerCase()}${s.count === 1 ? "" : "s"}`);
+
   /** Checks a migration to this model can start, and returns it as a model id. */
   function migrationTarget(state: GameState, to: string): ModelId {
     if (!isModelId(to)) throw new SimError("unknown_model", "Pick a deployment model from the list.");
@@ -167,8 +180,19 @@ export function createMigration(config: GameConfig, infra: Infrastructure, featu
       }
       return { state: { ...state, rng, migration: moved }, entries };
     }
-    const switched: GameState = { ...state, model: m.to, migration: null, migrations: state.migrations + 1 };
-    const needed = infra.opsNeeded(m.to);
+    // Until migration sizes the new setup to demand (#51), the servers go with the model: those on the model being
+    // left are dropped, which stops their rent from tomorrow (pro rata, like the model's own bill), and a model with
+    // servers gets its starter setup, ready for tomorrow and billed from then.
+    const setup = servers.starter(m.to, state.day, state.nextServerId);
+    const switched: GameState = {
+      ...state,
+      model: m.to,
+      migration: null,
+      migrations: state.migrations + 1,
+      servers: setup.servers,
+      nextServerId: setup.nextServerId,
+    };
+    const needed = infra.opsNeededNow(switched);
     const left = config.models[state.model];
     const entries: LogEntry[] = [
       {
@@ -177,6 +201,16 @@ export function createMigration(config: GameConfig, infra: Infrastructure, featu
         kind: "migration",
       },
     ];
+    if (state.servers.length) {
+      const n = state.servers.length;
+      const text = `Your ${n} rented VM${n === 1 ? " was" : "s were"} cancelled: you paid rent only for the days you had them.`;
+      entries.push({ text, cashDelta: 0, kind: "migration" });
+    }
+    if (setup.servers.length) {
+      const list = (modelServersList(m.to) ?? []).join(", ");
+      const text = `Your ${toName} starter setup is ready for tomorrow: ${list}. Rent more VMs as you grow.`;
+      entries.push({ text, cashDelta: 0, kind: "migration" });
+    }
     // Charged once, on the day you leave. The old provider's pro-rata share for today was billed with the rest.
     if (left.exitPenalty > 0) {
       const text = `Exit penalty: leaving ${left.name}`;

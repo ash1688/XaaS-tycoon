@@ -1,10 +1,14 @@
 import {
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
+  SERVER_SIZES,
+  SERVER_TYPES,
   STAFF_POOLS,
   type MigrationPhase,
   type ModelId,
   type ProductTypeId,
+  type ServerSize,
+  type ServerType,
   type SpendCategory,
   type StaffPool,
 } from "./config.ts";
@@ -13,7 +17,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 13;
+export const GAME_STATE_VERSION = 14;
 
 /** Money spent in each category. */
 export type Spend = Record<SpendCategory, number>;
@@ -114,6 +118,25 @@ export interface PriceWave {
   done: WaveEffect;
 }
 
+/**
+ * A server the company has, on a model with servers: a rented VM on IaaS. Billed from the first day played after it's
+ * added until it's cancelled.
+ */
+export interface Server {
+  /** Unique within the game, for cancelling it. */
+  id: number;
+  type: ServerType;
+  size: ServerSize;
+  /** Ready at the end of this day: it serves load on every day played after it. */
+  readyDay: number;
+}
+
+/** CU and DBU demand on the day just played: what every user needed, before any cache. */
+export interface UnitDemand {
+  cu: number;
+  dbu: number;
+}
+
 /** A price change, for the summary. */
 export interface PriceChange {
   /** The first day played at the new price. */
@@ -162,6 +185,12 @@ export interface GameState {
   income: number;
   /** Load on the day just played. */
   load: number;
+  /** CU and DBU demand on the day just played, on any model. Only a model with servers serves it in units. */
+  demand: UnitDemand;
+  /** The servers the company has, ready or not, oldest first. Empty on a model without servers. */
+  servers: Server[];
+  /** The id the next server added gets. */
+  nextServerId: number;
   outageDays: number;
   /** Total hours down across every day played, for uptime. */
   downtimeHours: number;
@@ -222,7 +251,11 @@ export type Action =
   /** Starts a migration to another model. One at a time; it runs in the background. */
   | { type: "startMigration"; model: ModelId }
   /** Sets the monthly price paying users pay, from the next day played. Above 0 and at most the configured maximum. */
-  | { type: "setPrice"; price: number };
+  | { type: "setPrice"; price: number }
+  /** Rents a VM of a type and size, on IaaS. Billed monthly from the next day played, and ready the next day. */
+  | { type: "rentServer"; server: ServerType; size: ServerSize }
+  /** Cancels a rented VM, ready or not. Its rent stops: you pay only for the days you had it. */
+  | { type: "cancelServer"; id: number };
 
 export interface NewGameParams {
   companyName: string;
@@ -279,6 +312,14 @@ export function isModelId(v: string): v is ModelId {
 
 export function isProductTypeId(v: string): v is ProductTypeId {
   return (PRODUCT_TYPE_IDS as readonly string[]).includes(v);
+}
+
+export function isServerType(v: string): v is ServerType {
+  return (SERVER_TYPES as readonly string[]).includes(v);
+}
+
+export function isServerSize(v: string): v is ServerSize {
+  return (SERVER_SIZES as readonly string[]).includes(v);
 }
 
 export function isStaffPool(v: string): v is StaffPool {
