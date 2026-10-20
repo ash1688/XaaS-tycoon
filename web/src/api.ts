@@ -109,4 +109,5 @@ export const CATEGORY_LABELS: Record<SpendCategory, string> = {
   staff: "Staff",
   infrastructure: "Infrastructure",
   addons: "Add-ons",
+  debt: "Debt",
 };

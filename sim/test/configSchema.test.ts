@@ -21,11 +21,11 @@ describe("config schema completeness", () => {
   });
 
   it("would catch a new number nobody listed", () => {
-    const grown = { ...defaultConfig, loan: { amount: 10_000, rates: [0.05, 0.08] } };
+    const grown = { ...defaultConfig, investors: { amount: 10_000, rates: [0.05, 0.08] } };
     expect(numericPaths(grown).filter((p) => !paths.has(p) && !(p in CONFIG_EXCLUSIONS))).toEqual([
-      "loan.amount",
-      "loan.rates.0",
-      "loan.rates.1",
+      "investors.amount",
+      "investors.rates.0",
+      "investors.rates.1",
     ]);
   });
 
@@ -119,7 +119,7 @@ describe("validateOverrides", () => {
 
 describe("applyOverrides and diffFromDefaults", () => {
   const overrides = {
-    startingCash: 15_000,
+    startingCash: 20_000,
     "models.iaas.monthlyCost": 7_000,
     "staff.developers.dayRate": 200,
     "productTypes.video.features.hd.devDays": 5,
@@ -130,7 +130,7 @@ describe("applyOverrides and diffFromDefaults", () => {
 
   it("merges overrides over the defaults without changing them", () => {
     const config = applyOverrides(overrides);
-    expect(config.startingCash).toBe(15_000);
+    expect(config.startingCash).toBe(20_000);
     expect(config.models.iaas.monthlyCost).toBe(7_000);
     expect(config.models.iaas.upfrontCost).toBe(defaultConfig.models.iaas.upfrontCost);
     expect(config.staff.developers.dayRate).toBe(200);
@@ -142,7 +142,7 @@ describe("applyOverrides and diffFromDefaults", () => {
     });
     expect(config.events.find((e) => e.id === "osPatch")?.effects.iaas?.shortOfOps?.downtimeHours).toBe(12);
     // The defaults are untouched.
-    expect(defaultConfig.startingCash).toBe(250_000);
+    expect(defaultConfig.startingCash).toBe(15_000);
     expect(defaultConfig.events.find((e) => e.id === "osPatch")?.schedule).toEqual({ type: "fixed", days: [3, 75, 140] });
   });
 

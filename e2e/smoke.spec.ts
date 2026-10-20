@@ -34,7 +34,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
 
   await student.getByLabel("Login code").fill(code!);
   await student.getByRole("button", { name: "Go" }).click();
-  await expect(student.getByRole("table")).toContainText("Ops staff needed");
+  await expect(student.getByRole("table").first()).toContainText("Ops staff needed");
   await student.getByText("Social network").click();
   await student.locator("label.choice", { hasText: "Rent VMs (IaaS)" }).click();
   // A name on the profanity list is turned away with a message by the name field.
@@ -49,9 +49,9 @@ test("teacher creates a code, student starts a game and presses Continue", async
   const game = new URL(student.url()).pathname;
   await expect(student.getByTestId("day")).toContainText(`1 of ${E2E_FINAL_DAY}`);
   await expect(student.getByText("You're the customer of the layer below.")).toBeVisible();
-  // Home's overview cards. £250,000 starting cash less IaaS's £2,000 upfront cost, and a social network starts with
+  // Home's overview cards. £15,000 starting cash less IaaS's £2,000 upfront cost, and a social network starts with
   // 1,000 users.
-  await expect(student.getByTestId("cash")).toHaveText("£248,000");
+  await expect(student.getByTestId("cash")).toHaveText("£13,000");
   await expect(student.getByTestId("users")).toHaveText("1,000");
   await expect(student.getByTestId("uptime")).toHaveText("100%");
 
@@ -120,7 +120,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await goTo(student, "Home");
   // £74 of IaaS (£33 running costs and £18 and £23 of VM rent, each a month ÷ 30) + 3 developers × £160 + 1 ops × £140
   // + 1 support × £100 out, and £40 in: 200 of the social network's 1,000 users pay £6 a month.
-  await expect(student.getByTestId("cash")).toHaveText("£247,246");
+  await expect(student.getByTestId("cash")).toHaveText("£12,246");
   // Users grow each day; load stays well under capacity, so uptime stays at 100%.
   await expect(student.getByTestId("users")).not.toHaveText("1,000");
   await expect(student.getByTestId("users")).toHaveText(/^1,\d{3}$/);
@@ -155,7 +155,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   const row = live.locator(`[data-code="${code}"] tr`, { hasText: "Playwright Ltd" });
   await expect(row.getByTestId("live-day")).toHaveText(`2/${E2E_FINAL_DAY}`);
   await expect(row).toContainText("IaaS");
-  await expect(row).toContainText("£247,246");
+  await expect(row).toContainText("£12,246");
   await expect(row).toContainText("Active");
 
   // Teacher sees the company counted against the code.
@@ -166,7 +166,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await teacher.getByRole("link", { name: "Playwright Ltd" }).click();
   await expect(teacher.getByRole("heading", { name: "How Playwright Ltd did" })).toBeVisible();
   await expect(teacher.getByTestId("summary")).toContainText(`So far: day 2 of ${E2E_FINAL_DAY}`);
-  await expect(teacher.getByTestId("summary-cash")).toHaveText("£247,246");
+  await expect(teacher.getByTestId("summary-cash")).toHaveText("£12,246");
   await teacher.getByRole("link", { name: "← Staff dashboard" }).click();
   await expect(teacher.getByTestId("live-dashboard")).toBeVisible();
 });
@@ -453,7 +453,9 @@ test("a scripted event shows a card that names the layer and highlights it in th
   const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
 
   const company = async (name: string, model: string) => {
-    const created = await request.post(`/api/codes/${code}/companies`, { data: { name, productType: "social", model } });
+    // On-prem's kit costs more than the starting cash, so it takes the bank loan.
+    const data = { name, productType: "social", model, takeLoan: model === "onprem" };
+    const created = await request.post(`/api/codes/${code}/companies`, { data });
     return (await created.json()).id as string;
   };
   const [onprem, paas] = [await company("Patchy Ltd", "onprem"), await company("Platform Ltd", "paas")];
@@ -571,6 +573,14 @@ test("a company plays to the final day and sees its summary, again when reopened
     data: { name: "Finishers Ltd", productType: "social", model: "iaas" },
   });
   const { id } = await created.json();
+  // Plenty of cash in the test database, so it lasts the game whatever its costs: this test is about the ending, not
+  // the balance.
+  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
+  try {
+    await sql`update companies set state = jsonb_set(state, '{cash}', '100000') where id = ${id}`;
+  } finally {
+    await sql.end();
+  }
   // Hire the ops IaaS needs, so the game runs smoothly to the end.
   await request.post(`/api/codes/${code}/companies/${id}/actions`, { data: { type: "hire", pool: "ops" } });
 

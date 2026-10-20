@@ -14,6 +14,7 @@ const CATEGORY_LABELS: Record<SpendCategory, string> = {
   staff: "Staff",
   infrastructure: "Infrastructure",
   addons: "Add-ons",
+  debt: "Debt",
 };
 const share = (c: SpendCategory) =>
   props.summary.totalSpend ? Math.round((100 * props.summary.spend[c]) / props.summary.totalSpend) : 0;

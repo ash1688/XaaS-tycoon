@@ -19,7 +19,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 17;
+export const GAME_STATE_VERSION = 18;
 
 /** Money spent in each category. */
 export type Spend = Record<SpendCategory, number>;
@@ -29,6 +29,26 @@ export interface DaySpend extends Spend {
   day: number;
   /** Income on the day: what paying users paid. */
   income: number;
+  /** Money borrowed on the day: the bank loan, if it was taken then. Not income: it's paid back as debt. */
+  borrowed: number;
+}
+
+/**
+ * The company's bank loan. It's repaid in equal daily repayments (debt), from the day after it's taken to the final
+ * day, whatever happens. See LoanConfig for how the rate and repayment are set.
+ */
+export interface Loan {
+  amount: number;
+  /** The day it was taken: 1 if taken when the game started. */
+  day: number;
+  /** Interest as a share of the amount (0.1 = 10%), set by the day it was taken. */
+  rate: number;
+  /** Charged on every day played after `day`, to the final day. */
+  dailyRepayment: number;
+  /** Everything to repay: the amount plus interest, dailyRepayment × the days to repay it. */
+  total: number;
+  /** Repaid so far. */
+  repaid: number;
 }
 
 /**
@@ -214,6 +234,8 @@ export interface GameState {
   migration: Migration | null;
   /** Migrations completed, for the end-of-game summary. */
   migrations: number;
+  /** The bank loan once taken, kept once repaid, or null. One per company. */
+  loan: Loan | null;
   /** When each scripted event fires, in day order. Rolled when the game starts. */
   schedule: ScheduledEvent[];
   /** Scripted events that were on during the day just played. */
@@ -282,13 +304,20 @@ export type Action =
    * Sets the size of a managed service on PaaS, at once, like an instance count. The cache can be turned off with
    * a null size; the database can't.
    */
-  | { type: "setManagedService"; service: ManagedService; size: ServerSize | null };
+  | { type: "setManagedService"; service: ManagedService; size: ServerSize | null }
+  /**
+   * Takes the bank loan, if it wasn't taken at the start: the money arrives at once, and repayments start the next day
+   * played, at today's rate. One per company, and not with too few days left to repay it.
+   */
+  | { type: "takeLoan" };
 
 export interface NewGameParams {
   companyName: string;
   productType: string;
   model: string;
   seed: number;
+  /** Take the bank loan at the start, on its best terms. */
+  takeLoan?: boolean;
 }
 
 export interface LogEntry {
@@ -298,9 +327,21 @@ export interface LogEntry {
   category?: SpendCategory;
   /**
    * Set on entries that need to stand out, such as an outage or bankruptcy. "income" marks money coming in, which the
-   * ledger counts as income rather than spend.
+   * ledger counts as income rather than spend. "loan" marks the bank loan: money coming in with it is borrowed, which
+   * is cash but not income.
    */
-  kind?: "outage" | "bankrupt" | "finished" | "feature" | "migration" | "event" | "income" | "support" | "price" | "conversion";
+  kind?:
+    | "outage"
+    | "bankrupt"
+    | "finished"
+    | "feature"
+    | "migration"
+    | "event"
+    | "income"
+    | "support"
+    | "price"
+    | "conversion"
+    | "loan";
 }
 
 export interface DayLog {

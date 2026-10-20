@@ -21,12 +21,12 @@ test("the teacher changes starting cash: new games use it, a game already starte
   await teacher.getByRole("button", { name: "Create code" }).click();
   code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
 
-  // A game started on the defaults: £250,000 less IaaS's £2,000 upfront.
+  // A game started on the defaults: £15,000 less IaaS's £2,000 upfront.
   const created = await request.post(`/api/codes/${code}/companies`, {
     data: { name: "Before Ltd", productType: "social", model: "iaas" },
   });
   const before = await created.json();
-  expect(before.cash).toBe(248_000);
+  expect(before.cash).toBe(13_000);
 
   await teacher.getByRole("link", { name: "Game config" }).click();
   await expect(teacher.getByRole("heading", { name: "Game config" })).toBeVisible();
@@ -35,8 +35,8 @@ test("the teacher changes starting cash: new games use it, a game already starte
   // Searching opens the groups with a match.
   await teacher.getByLabel("Search settings").fill("starting cash");
   const startingCash = teacher.getByLabel("Starting cash", { exact: true });
-  await expect(startingCash).toHaveValue("250000");
-  await expect(teacher.locator('[data-path="startingCash"]')).toContainText("Default 250,000 · 0 to 10,000,000");
+  await expect(startingCash).toHaveValue("15000");
+  await expect(teacher.locator('[data-path="startingCash"]')).toContainText("Default 15,000 · 0 to 10,000,000");
 
   // Out of range: the server refuses it, with the error by the field.
   await startingCash.fill("-5");
@@ -46,7 +46,7 @@ test("the teacher changes starting cash: new games use it, a game already starte
 
   // A per-field reset puts the default back.
   await teacher.getByRole("button", { name: "Reset Starting cash to its default" }).click();
-  await expect(startingCash).toHaveValue("250000");
+  await expect(startingCash).toHaveValue("15000");
 
   await startingCash.fill("100000");
   await teacher.getByRole("button", { name: "Save" }).click();
@@ -69,7 +69,7 @@ test("the teacher changes starting cash: new games use it, a game already starte
   // The game started before keeps its numbers.
   await student.goto(`/play/${code}/${before.id}`);
   await expect(student.getByRole("heading", { name: "Before Ltd" })).toBeVisible();
-  await expect(student.getByTestId("cash")).toHaveText("£248,000");
+  await expect(student.getByTestId("cash")).toHaveText("£13,000");
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).toContainText("2 of");
 
@@ -79,5 +79,5 @@ test("the teacher changes starting cash: new games use it, a game already starte
   await teacher.getByRole("dialog", { name: "Reset every number?" }).getByRole("button", { name: "Yes, reset all" }).click();
   await expect(teacher.getByRole("status")).toContainText("back to its default");
   await student.goto(`/play/${code}`);
-  await expect(student.getByText("You start with £250,000.")).toBeVisible();
+  await expect(student.getByText("You start with £15,000.")).toBeVisible();
 });

@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import type { CompanyView, MetaView } from "@xaas/server/api-types";
 import { api, formatCash, formatPrice, RequestError } from "../api";
+import LoanTerms from "../components/LoanTerms.vue";
 
 const props = defineProps<{ code: string }>();
 const router = useRouter();
@@ -14,6 +15,7 @@ const loadError = ref("");
 const name = ref("");
 const productType = ref("");
 const model = ref("");
+const takeLoan = ref(false);
 const formError = ref("");
 const nameError = ref("");
 const busy = ref(false);
@@ -32,7 +34,16 @@ const retiring = ref(false);
 
 const productName = (id: string) => meta.value?.productTypes.find((p) => p.id === id)?.name ?? id;
 const modelName = (id: string) => meta.value?.models.find((m) => m.id === id)?.name ?? id;
-const canStart = computed(() => name.value.trim() && productType.value && model.value && !busy.value);
+// A model that costs more up front than the company would start with can't be picked without the loan: on-prem.
+const startCash = computed(() => {
+  const m = meta.value;
+  return m ? m.startingCash + (takeLoan.value ? m.startLoan.amount : 0) : 0;
+});
+const chosenModel = computed(() => meta.value?.models.find((m) => m.id === model.value));
+const cantAfford = computed(() => !!chosenModel.value && chosenModel.value.upfrontCost > startCash.value);
+const canStart = computed(
+  () => name.value.trim() && productType.value && model.value && !cantAfford.value && !busy.value,
+);
 
 onMounted(async () => {
   try {
@@ -76,6 +87,7 @@ async function start() {
       name: name.value,
       productType: productType.value,
       model: model.value,
+      takeLoan: takeLoan.value,
     });
     await router.push(`/play/${props.code}/${company.id}`);
   } catch (e) {
@@ -213,7 +225,33 @@ async function start() {
           </div>
         </fieldset>
 
-        <p class="muted">You start with {{ formatCash(meta.startingCash) }}.</p>
+        <fieldset>
+          <legend>Bank loan</legend>
+          <p class="muted">
+            You start with {{ formatCash(meta.startingCash) }} of your own. You can borrow more from the bank now, on its
+            best terms, or later at a higher rate. Each company can have one loan.
+          </p>
+          <label :class="['loan-option', { on: takeLoan }]">
+            <input v-model="takeLoan" type="checkbox" data-testid="take-loan" />
+            <span>
+              <strong>Take a bank loan of {{ formatCash(meta.startLoan.amount) }}</strong>
+              <span class="muted">
+                {{ formatCash(meta.startLoan.dailyRepayment) }} a day until day {{ meta.startLoan.lastDay }}
+              </span>
+            </span>
+          </label>
+          <LoanTerms :quote="meta.startLoan" />
+        </fieldset>
+
+        <p class="muted" data-testid="start-cash">
+          You start with {{ formatCash(startCash) }}<template v-if="takeLoan"
+            >, {{ formatCash(meta.startLoan.amount) }} of it borrowed</template
+          >.
+        </p>
+        <p v-if="cantAfford" class="error" role="alert" data-testid="cant-afford">
+          {{ chosenModel!.name }} costs {{ formatCash(chosenModel!.upfrontCost) }} up front: more than you'd start with.
+          {{ takeLoan ? "Pick" : "Take the bank loan, or pick" }} a model that costs less to start.
+        </p>
         <p v-if="formError" class="error" role="alert">{{ formError }}</p>
         <button type="submit" :disabled="!canStart">Start company</button>
       </form>

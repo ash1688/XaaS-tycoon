@@ -98,7 +98,7 @@ To try the end of a game without playing 180 days, set `GAME_FINAL_DAY` (for exa
 
 ### Game config
 
-The staff dashboard's **Game config** page (`/staff/config`) edits the game's numbers: starting cash, costs, growth, capacity, staff, migration and event days and effects. They're grouped, and each shows its default, what it does and the range it can take, with a reset per number and a **Reset all**. Saving changes what **games started from then on** use. Each company stores a snapshot of its full config when it starts, and every request about that game runs on that snapshot, so changing the config never alters a game already being played.
+The staff dashboard's **Game config** page (`/staff/config`) edits the game's numbers: starting cash, the bank loan, costs, growth, capacity, staff, migration and event days and effects. They're grouped, and each shows its default, what it does and the range it can take, with a reset per number and a **Reset all**. Saving changes what **games started from then on** use. Each company stores a snapshot of its full config when it starts, and every request about that game runs on that snapshot, so changing the config never alters a game already being played.
 
 How it fits with the env settings:
 

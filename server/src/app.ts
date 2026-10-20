@@ -259,6 +259,8 @@ export async function buildApp(opts: AppOptions) {
       monthlyInfrastructureCost: sim.monthlyInfrastructureCost(state),
       monthlyAddonCost: sim.monthlyAddonCost(state),
       spend: state.spend,
+      loan: sim.loan(state),
+      loanQuote: sim.loanQuote(state),
       features: sim.features(state),
       migration: sim.migration(state),
       migrations: state.migrations,
@@ -337,6 +339,7 @@ export async function buildApp(opts: AppOptions) {
       loadBalancerFrom: config.servers.loadBalancerFrom,
       cacheableShare: config.servers.cacheableShare,
       migrationPhases: MIGRATION_PHASES.map((id) => ({ id, ...config.migration.phases[id] })),
+      startLoan: sim.startLoanQuote(),
     };
   }
 
@@ -364,7 +367,12 @@ export async function buildApp(opts: AppOptions) {
         body: {
           type: "object",
           required: ["name", "productType", "model"],
-          properties: { name: { type: "string" }, productType: { type: "string" }, model: { type: "string" } },
+          properties: {
+            name: { type: "string" },
+            productType: { type: "string" },
+            model: { type: "string" },
+            takeLoan: { type: "boolean" },
+          },
           additionalProperties: false,
         },
       },
@@ -372,7 +380,7 @@ export async function buildApp(opts: AppOptions) {
     async (req, reply) => {
       const code = await findCode(req.params.code);
       if (!code) return sendError(reply, 404, "unknown_code", "That code wasn't recognised. Check it with your teacher.");
-      const { name, productType, model } = req.body;
+      const { name, productType, model, takeLoan = false } = req.body;
       // Locks the code so two creates at once can't both see room under the limit. Only games still being played
       // count: finished, bankrupt and retired ones are history. Archiving is only the teacher's view, so it doesn't
       // change what counts.
@@ -386,7 +394,7 @@ export async function buildApp(opts: AppOptions) {
         // The game keeps the config it starts with, whatever the teacher changes later.
         const config = await newGameConfig(tx);
         const sim = simFor(config);
-        const state = sim.newGame({ companyName: name, productType, model, seed: randomInt(2 ** 31) });
+        const state = sim.newGame({ companyName: name, productType, model, seed: randomInt(2 ** 31), takeLoan });
         const [inserted] = await tx
           .insert(companies)
           .values({
@@ -499,6 +507,7 @@ export async function buildApp(opts: AppOptions) {
                 "sellServer",
                 "setInstances",
                 "setManagedService",
+                "takeLoan",
               ],
             },
             pool: { enum: [...STAFF_POOLS] },

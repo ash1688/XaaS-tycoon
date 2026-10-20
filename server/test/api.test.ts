@@ -1020,7 +1020,7 @@ describe("ledger and bankruptcy", () => {
       { text: expect.stringContaining("running costs"), cashDelta: -25, category: "infrastructure" },
       { text: "Ops staff pay (1)", cashDelta: -4, category: "staff" },
     ]);
-    const spend = { staff: 8, infrastructure: 50, addons: 0 };
+    const spend = { staff: 8, infrastructure: 50, addons: 0, debt: 0 };
     expect(body!.company).toMatchObject({ cash: 1000 - 58, spend });
     expect((await app.inject({ method: "GET", url })).json<CompanyView>().spend).toEqual(spend);
   });
@@ -1060,6 +1060,104 @@ describe("ledger and bankruptcy", () => {
     const body = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
     expect(body.company).toMatchObject({ cash: 0, status: "active" });
     expect((await app.inject({ method: "POST", url: `${url}/continue` })).statusCode).toBe(200);
+  });
+});
+
+describe("bank loan", () => {
+  // The default loan, £35,000 at 10% from the start, on £1,000 of starting cash. IaaS costs £25 a day here.
+  async function setup(body: object = {}) {
+    const code = await newCode();
+    const created = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "iaas", ...body });
+    expect(created.statusCode).toBe(201);
+    const company = created.json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
+    const next = async () => (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    return { code, company, url, act, next };
+  }
+  const startLoan = async () => (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>().startLoan;
+
+  it("shows the start terms in meta, and a new game can take them", async () => {
+    const terms = await startLoan();
+    // £38,500 over 179 days, rounded up to the pound a day.
+    expect(terms).toEqual({
+      amount: 35_000,
+      rate: 0.1,
+      dailyRepayment: 216,
+      days: 179,
+      total: 38_664,
+      interest: 3_664,
+      lastDay: 180,
+    });
+    const { company, next } = await setup({ takeLoan: true });
+    expect(company.cash).toBe(1_000 + 35_000);
+    expect(company.loan).toMatchObject({ amount: 35_000, day: 1, rate: 0.1, total: terms.total, repaid: 0 });
+    expect(company.loan).toMatchObject({ dailyRepayment: terms.dailyRepayment, remaining: terms.total, daysLeft: 179 });
+    expect(company.loanQuote).toBeNull();
+    const { company: after, log } = await next();
+    expect(after.spend.debt).toBe(terms.dailyRepayment);
+    expect(after.loan).toMatchObject({ repaid: terms.dailyRepayment, daysLeft: 178 });
+    expect(log[0]!.entries).toContainEqual(
+      expect.objectContaining({ category: "debt", cashDelta: -terms.dailyRepayment }),
+    );
+    expect(log[0]!.entries).toContainEqual(expect.objectContaining({ kind: "loan" }));
+  });
+
+  it("starts without a loan by default, offering the start terms, which get worse later", async () => {
+    const terms = await startLoan();
+    const { company, next } = await setup();
+    expect(company).toMatchObject({ cash: 1_000, loan: null, loanQuote: terms });
+    let later = company;
+    for (let i = 0; i < 10; i++) later = (await next()).company;
+    expect(later.day).toBe(11);
+    expect(later.loanQuote!.rate).toBeGreaterThan(terms.rate);
+    expect(later.loanQuote!.dailyRepayment).toBeGreaterThan(terms.dailyRepayment);
+    expect(later.loanQuote!.total).toBeGreaterThan(terms.total);
+    expect(later.loanQuote!.days).toBe(169);
+  });
+
+  it("takes the loan later as an action, on the quoted terms, and only once", async () => {
+    const { act, next } = await setup();
+    await next();
+    const before = (await next()).company;
+    const res = await act({ type: "takeLoan" });
+    expect(res.statusCode).toBe(200);
+    const taken = res.json<CompanyView>();
+    expect(taken.cash).toBe(before.cash + 35_000);
+    expect(taken.loan).toMatchObject({
+      day: 3,
+      rate: before.loanQuote!.rate,
+      dailyRepayment: before.loanQuote!.dailyRepayment,
+      total: before.loanQuote!.total,
+      repaid: 0,
+    });
+    expect(taken.loanQuote).toBeNull();
+    const again = await act({ type: "takeLoan" });
+    expect(again.statusCode).toBe(400);
+    expect(again.json()).toMatchObject({ error: "loan_taken", message: expect.stringContaining("one") });
+  });
+
+  it("rejects a second loan on a game that took one at the start", async () => {
+    const { act } = await setup({ takeLoan: true });
+    const res = await act({ type: "takeLoan" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: "loan_taken" });
+  });
+
+  it("validates the take-loan option", async () => {
+    const code = await newCode();
+    const res = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "iaas", takeLoan: "yes" });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("refuses on-prem without the loan, since its kit costs more than the starting cash, but not with it", async () => {
+    const code = await newCode();
+    const without = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "onprem" });
+    expect(without.statusCode).toBe(400);
+    expect(without.json()).toMatchObject({ error: "cant_afford", message: expect.stringContaining("bank loan") });
+    const withLoan = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "onprem", takeLoan: true });
+    expect(withLoan.statusCode).toBe(201);
+    expect(withLoan.json<CompanyView>().cash).toBe(1_000 + 35_000 - 34_800);
   });
 });
 
@@ -1131,13 +1229,18 @@ describe("game end and summary", () => {
       cash: 1000 - 116,
       uptime: 100,
       migrations: 0,
-      spend: { staff: 16, infrastructure: 100, addons: 0 },
+      spend: { staff: 16, infrastructure: 100, addons: 0, debt: 0 },
       totalSpend: 116,
     });
     expect(summary.users).toBeGreaterThan(0);
     const logged = (category: string) =>
       logs.flatMap((d) => d.entries).filter((e) => e.category === category).reduce((sum, e) => sum - e.cashDelta, 0);
-    expect(summary.spend).toEqual({ staff: logged("staff"), infrastructure: logged("infrastructure"), addons: 0 });
+    expect(summary.spend).toEqual({
+      staff: logged("staff"),
+      infrastructure: logged("infrastructure"),
+      addons: 0,
+      debt: 0,
+    });
     expect(summary.days.map((d) => [d.day, d.staff, d.infrastructure, d.cash])).toEqual([
       [1, 0, 0, 1000],
       [2, 4, 25, 971],

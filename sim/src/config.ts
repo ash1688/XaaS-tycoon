@@ -15,7 +15,7 @@ export const MIGRATION_PHASES = ["planning", "testing", "moving"] as const;
 export type MigrationPhase = (typeof MIGRATION_PHASES)[number];
 
 /** Every charge is tagged with one of these, so students can see where their money goes. */
-export const SPEND_CATEGORIES = ["staff", "infrastructure", "addons"] as const;
+export const SPEND_CATEGORIES = ["staff", "infrastructure", "addons", "debt"] as const;
 export type SpendCategory = (typeof SPEND_CATEGORIES)[number];
 
 /**
@@ -556,6 +556,32 @@ export interface EventConfig {
   effects: Partial<Record<ModelId, EventEffect>>;
 }
 
+/**
+ * The bank loan: one per company, taken when the game starts or at any point after. It's repaid in equal daily
+ * repayments (debt) from the next day played to the final day, whatever happens, so the later it's taken the fewer
+ * days there are to repay it, and the bank charges more interest too.
+ *
+ * Interest is simple, on the whole amount, at a rate set by the day the loan is taken (day 1 at the start):
+ *
+ *   rate = baseRate + ratePerDay × (day − 1)
+ *   days = finalDay − day                             (repayment days left)
+ *   dailyRepayment = amount × (1 + rate) ÷ days, rounded up to the pound like every charge
+ *   total repaid = dailyRepayment × days; interest = total repaid − amount
+ *
+ * With the defaults over 180 days: taken at the start, 10% (£216 a day for 179 days, £38,664 in all); on day 60,
+ * 21.8% (£356 a day for 120 days, £42,720); on day 120, 33.8% (£781 a day for 60 days, £46,860).
+ */
+export interface LoanConfig {
+  /** What the bank lends. */
+  amount: number;
+  /** Interest on a loan taken at the start, as a share of the amount (0.1 = 10%). */
+  baseRate: number;
+  /** Added to the rate for each day later it's taken (0.002 = 0.2 percentage points a day). */
+  ratePerDay: number;
+  /** The bank won't lend with fewer repayment days than this left. */
+  minDays: number;
+}
+
 export interface GameConfig {
   startingCash: number;
   /** The last day played. The game ends once it has been played, so day finalDay is played in full. */
@@ -568,6 +594,7 @@ export interface GameConfig {
   servers: ServersConfig;
   outage: OutageConfig;
   billing: BillingConfig;
+  loan: LoanConfig;
   pricing: PricingConfig;
   support: SupportConfig;
   conversion: ConversionConfig;
@@ -578,9 +605,9 @@ export interface GameConfig {
 }
 
 export const defaultConfig: GameConfig = {
-  // Set when there was no income, to carry a sensible setup to day 180 with room for mistakes. Lowered once the loan
-  // arrives (#52).
-  startingCash: 250_000,
+  // Placeholder, balanced in #55. Your own money: enough to start on IaaS, PaaS or SaaS and run for a few weeks while
+  // income builds. Not enough for on-prem's £34,800 of kit up front without the bank loan.
+  startingCash: 15_000,
   finalDay: 180,
   maxCompanyNameLength: 40,
   models: {
@@ -891,6 +918,9 @@ export const defaultConfig: GameConfig = {
   },
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25 },
   billing: { daysPerMonth: 30 },
+  // Placeholders, balanced in #55. Enough to buy on-prem's kit with some left over, or to see an IaaS, PaaS or SaaS
+  // company through the weeks before income covers its costs. See LoanConfig for the interest formula.
+  loan: { amount: 35_000, baseRate: 0.1, ratePerDay: 0.002, minDays: 14 },
   pricing: {
     maxPrice: 1_000,
     growthSensitivity: 1,

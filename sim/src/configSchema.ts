@@ -83,6 +83,10 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
 
   // Money
   add("startingCash", "Money", "", "Starting cash", "Cash each new company starts with.", range(0, 10_000_000, 1_000));
+  add("loan.amount", "Money", "Bank loan", "Loan amount", "What the bank lends. One loan per company, at the start or later.", range(0, 10_000_000, 1_000));
+  add("loan.baseRate", "Money", "Bank loan", "Interest at the start", "Interest on a loan taken when the game starts, as a share of the amount (0.1 = 10%), repaid with it in equal daily repayments by the final day.", range(0, 5, 0.01));
+  add("loan.ratePerDay", "Money", "Bank loan", "Extra interest per day later", "Added to the interest rate for each day later the loan is taken (0.002 = 0.2 percentage points a day).", range(0, 0.1, 0.0005));
+  add("loan.minDays", "Money", "Bank loan", "Fewest repayment days", "The bank won't lend with fewer days than this left to repay it.", range(1, 365, 1));
   add("billing.daysPerMonth", "Money", "", "Days in a billing month", "Monthly costs are charged a day at a time: the monthly cost ÷ this.", range(28, 31, 1));
   for (const m of MODEL_IDS) {
     const s = MODEL_LABELS[m];
@@ -372,6 +376,7 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
   const pairs: [low: string, high: string, message: string][] = [
     ["migration.overrun.minDays", "migration.overrun.maxDays", "The most extra days can't be fewer than the fewest."],
     ["support.poorSatisfaction", "support.goodSatisfaction", "Good satisfaction can't be below poor satisfaction."],
+    ["loan.minDays", "finalDay", "The fewest repayment days can't be more than the game's length."],
     // A new company starts at the fair price, so it has to be one the student could set.
     ...PRODUCT_TYPE_IDS.filter((p) => base.productTypes[p]).map((p): [string, string, string] => [
       `productTypes.${p}.pricing.fairPrice`,

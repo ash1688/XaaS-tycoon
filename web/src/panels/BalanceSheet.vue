@@ -65,7 +65,8 @@ const signed = (n: number) => (n < 0 ? `−${formatCash(-n)}` : formatCash(Math.
     </div>
     <p class="muted">
       Income is what paying users pay, a day's share of the monthly price each. Profit is income less every cost. Day 1
-      includes any upfront cost of your model.
+      includes any upfront cost of your model. Debt is the bank loan's daily repayments: what you borrowed isn't income,
+      so paying it back counts as a cost.
     </p>
   </section>
 </template>
