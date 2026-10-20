@@ -1,0 +1,45 @@
+# Production compose, for Dokploy (see "Deploying with Dokploy" in the README). Every secret comes from the
+# environment with no default, so a deploy with one missing stops at once. Postgres isn't published, and the app is
+# only exposed to Dokploy's Traefik, which adds HTTPS. For local development use docker-compose.yml.
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: xaas
+      POSTGRES_DB: xaas
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    # Named, so the data survives redeploys. Only "docker compose down -v" or deleting the volume removes it.
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xaas"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      # Use letters and digits only for POSTGRES_PASSWORD, as it goes into this URL as it is.
+      DATABASE_URL: postgres://xaas:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/xaas
+      TEACHER_PASSWORD: ${TEACHER_PASSWORD:?Set TEACHER_PASSWORD}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET (at least 32 characters)}
+      PORT: 3080
+      # Traefik reaches the app over a private Docker network.
+      TRUST_PROXY: ${TRUST_PROXY:-uniquelocal}
+      GAME_FINAL_DAY: ${GAME_FINAL_DAY:-}
+      TIMED_FLOW: ${TIMED_FLOW:-}
+      TIMED_FLOW_SECONDS: ${TIMED_FLOW_SECONDS:-}
+      RATE_LIMIT_CODE_FAILURES: ${RATE_LIMIT_CODE_FAILURES:-}
+      RATE_LIMIT_LOGIN_FAILURES: ${RATE_LIMIT_LOGIN_FAILURES:-}
+      RATE_LIMIT_WINDOW_MINUTES: ${RATE_LIMIT_WINDOW_MINUTES:-}
+    expose:
+      - "3080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
