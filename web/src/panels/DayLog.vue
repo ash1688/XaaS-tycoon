@@ -16,6 +16,7 @@ const EVENT_LABELS = {
   migration: "Migration",
   event: "Event",
   support: "Support",
+  price: "Price",
 } as const;
 const events = computed(() => props.log.entries.filter((e) => !e.category && e.kind !== "income"));
 const income = computed(() => props.log.entries.filter((e) => e.kind === "income"));

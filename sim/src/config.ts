@@ -186,6 +186,46 @@ export interface PricingConfig {
   maxGrowthBoost: number;
   /** How strongly a price above the fair price puts new users on the free tier. 0 for no effect. */
   paidShareSensitivity: number;
+  /**
+   * Days a price change's wave lasts, from the first day played at the new price. Day 1 is the quick reaction
+   * (firstDayShare of the whole effect); the rest is spread over the remaining days, building to a peak in the
+   * middle and fading, like word spreading on social media.
+   */
+  waveDays: number;
+  /** Days the price is locked after a change, counted in days played. Changes are refused until it ends. */
+  lockDays: number;
+  /** Share of a wave's whole effect that lands on its first day: the small next-day reaction. */
+  firstDayShare: number;
+  /**
+   * How a wave's size grows with the size of the change. The change is measured against the fair price
+   * (d = |new − old| ÷ fair price, so £5 on a £20 product is 0.25) and raised to this power. Above 1, a small tweak
+   * barely registers and a big jump hits much harder: at 1.5, a change twice as big has nearly three times the effect.
+   */
+  waveCurve: number;
+  /**
+   * Share of paying users a rise affects at d = 1 (doubling a fair price), before the cap. Each affected user leaves
+   * or drops to free. The share is riseStrength × d^waveCurve × (new price ÷ fair price)^dearness.
+   */
+  riseStrength: number;
+  /**
+   * How much harder a rise hits the further above the fair price it goes: the share is multiplied by (new price ÷
+   * fair price) to this power when that's above 1. 0 for no effect. Stops small rises adding up for free.
+   */
+  dearness: number;
+  /** The most of the paying users one rise can affect (0.9 = 90%). */
+  maxRiseShare: number;
+  /** Of the paying users a rise affects, the share who drop to the free tier. The rest leave altogether. */
+  dropToFreeShare: number;
+  /** Support tickets each affected user raises over a rise's backlash: complaints, cancellations, refund requests. */
+  backlashTicketsPerUser: number;
+  /** New users a cut brings at d = 1, as a share of today's users, before the cap: cutGainStrength × d^waveCurve. */
+  cutGainStrength: number;
+  /** The most new users one cut can bring, as a share of today's users. */
+  maxCutGain: number;
+  /** Share of free users a cut turns into payers at d = 1, before the cap: cutUpgradeStrength × d^waveCurve. */
+  cutUpgradeStrength: number;
+  /** The most of the free users one cut can turn into payers. */
+  maxCutUpgrade: number;
 }
 
 /**
@@ -558,7 +598,29 @@ export const defaultConfig: GameConfig = {
   capacity: { unstaffedShare: 0.4 },
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25 },
   billing: { daysPerMonth: 30 },
-  pricing: { maxPrice: 1_000, growthSensitivity: 1, maxGrowthBoost: 2, paidShareSensitivity: 1 },
+  pricing: {
+    maxPrice: 1_000,
+    growthSensitivity: 1,
+    maxGrowthBoost: 2,
+    paidShareSensitivity: 1,
+    // A change starts a 7-day wave and locks the price for 14. With these, a 25% rise on a fair price costs about 10%
+    // of payers, 50% about 28% and doubling it 80%: the most income comes from about 25-30% above fair, and each rise
+    // after that pays less, until raising the price stops paying at all.
+    waveDays: 7,
+    lockDays: 14,
+    firstDayShare: 0.05,
+    waveCurve: 1.5,
+    riseStrength: 0.8,
+    dearness: 1,
+    maxRiseShare: 0.9,
+    dropToFreeShare: 0.4,
+    backlashTicketsPerUser: 1,
+    // A 12.5% cut (£20 to £17.50) brings about 3% more users and turns about 2% of free users into payers.
+    cutGainStrength: 0.6,
+    maxCutGain: 0.5,
+    cutUpgradeStrength: 0.5,
+    maxCutUpgrade: 0.5,
+  },
   support: {
     ticketsPerPerson: 30,
     ticketsPerUserPerHourDown: 0.002,

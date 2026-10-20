@@ -40,6 +40,7 @@ import type {
   MetaView,
   MigrationQuoteView,
   NewCompanyBody,
+  PricePreviewView,
   SummaryView,
   TeacherCodeView,
   TeacherGamesView,
@@ -103,16 +104,19 @@ export const CUSTOM_PRESET = "Custom";
 /** Sims kept for game configs, most recently used last. Most games in a lesson share a config, so a few is plenty. */
 const MAX_CACHED_SIMS = 20;
 
-/** SimError codes for a game that has ended, or that the student retired. */
-const GAME_OVER = new Set(["bankrupt", "finished", "retired"]);
+/**
+ * SimError codes that are a 409: a game that has ended or that the student retired, or a price still locked after the
+ * last change. The request was fine, but the game can't take it now.
+ */
+const CONFLICT = new Set(["bankrupt", "finished", "retired", "price_locked"]);
 
 /** The SimError code for a game saved by an older version of the sim, which can't be loaded any more. */
 const OLD_VERSION = "old_version";
 
 type CompanyRow = typeof companies.$inferSelect;
 
-function sendError(reply: FastifyReply, status: number, error: string, message: string) {
-  return reply.code(status).send({ error, message } satisfies ApiError);
+function sendError(reply: FastifyReply, status: number, error: string, message: string, details: object = {}) {
+  return reply.code(status).send({ ...details, error, message } satisfies ApiError);
 }
 
 export async function buildApp(opts: AppOptions) {
@@ -167,8 +171,8 @@ export async function buildApp(opts: AppOptions) {
     // A bankrupt or finished game is over: the request was fine, but the game can't take it any more. A game from an
     // older version is gone for good: it can't be loaded, so it can't be shown or played.
     if (err instanceof SimError) {
-      const status = GAME_OVER.has(err.code) ? 409 : err.code === OLD_VERSION ? 410 : 400;
-      return sendError(reply, status, err.code, err.message);
+      const status = CONFLICT.has(err.code) ? 409 : err.code === OLD_VERSION ? 410 : 400;
+      return sendError(reply, status, err.code, err.message, err.details);
     }
     const { statusCode, message } = err as { statusCode?: number; message?: string };
     if (statusCode && statusCode < 500) return sendError(reply, statusCode, "bad_request", message ?? "Bad request.");
@@ -230,6 +234,8 @@ export async function buildApp(opts: AppOptions) {
       fairPrice: sim.fairPrice(state),
       dailyIncome: sim.dailyIncome(state),
       income: state.income,
+      priceWave: sim.priceWave(state),
+      priceLockDaysLeft: sim.priceLockDaysLeft(state),
       ticketsToday: state.ticketsToday,
       burstTickets: state.burstTickets,
       clearedToday: state.clearedToday,
@@ -312,6 +318,8 @@ export async function buildApp(opts: AppOptions) {
       goodSatisfaction: config.support.goodSatisfaction,
       poorSatisfaction: config.support.poorSatisfaction,
       maxPrice: config.pricing.maxPrice,
+      priceWaveDays: config.pricing.waveDays,
+      priceLockDays: config.pricing.lockDays,
       migrationPhases: MIGRATION_PHASES.map((id) => ({ id, ...config.migration.phases[id] })),
     };
   }
@@ -416,6 +424,26 @@ export async function buildApp(opts: AppOptions) {
       const row = await findCompany(req.params.code, req.params.id);
       if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
       return simOf(row).migrationQuote(row.state, req.query.target) satisfies MigrationQuoteView;
+    },
+  );
+
+  // What a new price would do, for the price modal's live preview. Changes nothing.
+  app.get<{ Params: { code: string; id: string }; Querystring: { price: number } }>(
+    "/api/codes/:code/companies/:id/price-preview",
+    {
+      schema: {
+        querystring: {
+          type: "object",
+          required: ["price"],
+          // The sim checks it against the game's highest price.
+          properties: { price: { type: "number", exclusiveMinimum: 0 } },
+        },
+      },
+    },
+    async (req, reply) => {
+      const row = await findCompany(req.params.code, req.params.id);
+      if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      return simOf(row).pricePreview(row.state, req.query.price) satisfies PricePreviewView;
     },
   );
 

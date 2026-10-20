@@ -9,6 +9,7 @@ import type {
   MetaView,
   MigrationQuoteView,
   NewCompanyBody,
+  PricePreviewView,
   SummaryView,
   TeacherCodeView,
   TeacherGamesView,
@@ -63,6 +64,13 @@ export const api = {
     request<MigrationQuoteView>(
       "GET",
       `/api/codes/${enc(code)}/companies/${enc(id)}/migration-quote?target=${enc(target)}`,
+    ),
+
+  // What a new price would do, for the price modal's live preview. Changes nothing.
+  pricePreview: (code: string, id: string, price: number) =>
+    request<PricePreviewView>(
+      "GET",
+      `/api/codes/${enc(code)}/companies/${enc(id)}/price-preview?price=${enc(String(price))}`,
     ),
 
   teacherLogin: (password: string) => request<{ ok: true }>("POST", "/api/teacher/login", { password }),

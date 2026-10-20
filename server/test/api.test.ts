@@ -11,6 +11,7 @@ import type {
   ContinueResult,
   MetaView,
   MigrationQuoteView,
+  PricePreviewView,
   SummaryView,
   TeacherCodeView,
   TeacherGamesView,
@@ -1894,6 +1895,57 @@ describe("pricing and income", () => {
     expect((await app.inject({ method: "GET", url: `${url}/meta` })).json<MetaView>().maxPrice).toBe(40);
     expect((await act({ type: "setPrice", price: 41 })).json()).toMatchObject({ error: "price_too_high" });
     expect((await act({ type: "setPrice", price: 40 })).statusCode).toBe(200);
+  });
+
+  it("previews a price without changing anything, and the preview matches the wave that follows", async () => {
+    const { url, act, next } = await setup({ "productTypes.ecommerce.pricing.freeShare": 0.5 });
+    const preview = async (price: unknown) => app.inject({ method: "GET", url: `${url}/price-preview?price=${price}` });
+    const res = await preview(fairPrice * 1.5);
+    expect(res.statusCode).toBe(200);
+    const body = res.json<PricePreviewView>();
+    expect(body).toMatchObject({ price: fairPrice * 1.5, currentPrice: fairPrice, direction: "rise", locked: false, lockDaysLeft: 0 });
+    expect(body.lockDays).toBe(sim.config.pricing.lockDays);
+    expect(body.days).toHaveLength(sim.config.pricing.waveDays);
+    expect(body.total.left + body.total.toFree).toBeGreaterThan(0);
+    expect(body.days.reduce((sum, d) => sum + d.left, 0)).toBe(body.total.left);
+    // Nothing changed.
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({ price: fairPrice, priceWave: null });
+
+    // The wave that follows is the one previewed.
+    const set = (await act({ type: "setPrice", price: fairPrice * 1.5 })).json<CompanyView>();
+    expect(set.priceWave).toMatchObject({ direction: "rise", day: 0, remaining: body.days.length, total: body.total });
+    expect(set.priceWave!.days).toEqual(body.days);
+    const { company } = await next();
+    expect(company.priceWave).toMatchObject({ day: 1, remaining: body.days.length - 1 });
+    expect(company.priceWave!.done).toMatchObject({ left: body.days[0]!.left, toFree: body.days[0]!.toFree });
+    expect((await preview(fairPrice)).json<PricePreviewView>()).toMatchObject({ locked: true });
+  });
+
+  it("validates the preview's price", async () => {
+    const { url } = await setup();
+    for (const q of ["", "?price=", "?price=0", "?price=-5", "?price=lots"]) {
+      const res = await app.inject({ method: "GET", url: `${url}/price-preview${q}` });
+      expect(res.statusCode).toBe(400);
+    }
+    const tooHigh = await app.inject({ method: "GET", url: `${url}/price-preview?price=${sim.config.pricing.maxPrice + 1}` });
+    expect(tooHigh.statusCode).toBe(400);
+    expect(tooHigh.json()).toMatchObject({ error: "price_too_high" });
+    const code = await newCode();
+    const elsewhere = await app.inject({ method: "GET", url: url.replace(/codes\/[^/]+/, `codes/${code}`) + "/price-preview?price=5" });
+    expect(elsewhere.statusCode).toBe(404);
+  });
+
+  it("locks the price after a change: another change is a 409 with the days left, counting down each day", async () => {
+    const { act, next } = await setup();
+    const first = (await act({ type: "setPrice", price: fairPrice + 1 })).json<CompanyView>();
+    const lockDays = sim.config.pricing.lockDays;
+    expect(first.priceLockDaysLeft).toBe(lockDays);
+    const locked = await act({ type: "setPrice", price: fairPrice + 2 });
+    expect(locked.statusCode).toBe(409);
+    expect(locked.json()).toMatchObject({ error: "price_locked", daysLeft: lockDays });
+    expect(locked.json().message).toContain(`${lockDays} more days`);
+    expect((await next()).company.priceLockDaysLeft).toBe(lockDays - 1);
+    expect((await act({ type: "setPrice", price: fairPrice + 2 })).json()).toMatchObject({ daysLeft: lockDays - 1 });
   });
 });
 
