@@ -245,15 +245,15 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
       const name = base.servers.types[s.type]?.name.toLowerCase() ?? s.type;
       if (servers.managed) {
         if (s.type === "app") {
-          add(`models.${m}.servers.starter.${i}.count`, "Infrastructure", MODEL_LABELS[m], "Starter setup: app instances", "How many app instances a new company on this model starts with, ready for the first day. A migration onto it gets them too.", range(1, 100, 1));
+          add(`models.${m}.servers.starter.${i}.count`, "Infrastructure", MODEL_LABELS[m], "Starter setup: app instances", "How many app instances a new company on this model starts with, ready for the first day.", range(1, 100, 1));
         } else {
-          add(`models.${m}.servers.starter.${i}.count`, "Infrastructure", MODEL_LABELS[m], `Starter setup: ${s.size} managed ${name} (0 or 1)`, "Whether a new company on this model starts with this managed service, ready for the first day. A migration onto it gets it too.", range(0, 1, 1));
+          add(`models.${m}.servers.starter.${i}.count`, "Infrastructure", MODEL_LABELS[m], `Starter setup: ${s.size} managed ${name} (0 or 1)`, "Whether a new company on this model starts with this managed service, ready for the first day.", range(0, 1, 1));
         }
         return;
       }
       const help = servers.purchase
-        ? "How many a new company on this model starts with, bought at their purchase prices on top of the upfront cost. A migration onto it buys them too."
-        : "How many a new company on this model starts with, ready for the first day. A migration onto it gets them too.";
+        ? "How many a new company on this model starts with, bought at their purchase prices on top of the upfront cost."
+        : "How many a new company on this model starts with, ready for the first day.";
       add(`models.${m}.servers.starter.${i}.count`, "Infrastructure", MODEL_LABELS[m], `Starter setup: ${s.size} ${name}s`, help, HEADCOUNT);
     });
   }
@@ -287,6 +287,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     const name = base.migration.phases[phase]?.name ?? phase;
     add(`migration.phases.${phase}.days`, "Migration", "", `${name}: days`, "Days this phase of a migration takes before any overrun.", range(1, 90, 1));
   }
+  add("migration.setupHeadroom", "Migration", "", "New setup headroom", "A migration builds a setup on the new model sized to today's usual demand plus this share (0.25 = 25% more), so there's room to grow.", range(0, 2, 0.05));
   add("migration.overrun.chance", "Migration", "", "Overrun chance", "Chance a migration overruns (0.3 = 3 in 10).", SHARE);
   add("migration.overrun.minDays", "Migration", "", "Overrun: fewest extra days", "An overrun adds between the fewest and most extra days.", range(0, 60, 1));
   add("migration.overrun.maxDays", "Migration", "", "Overrun: most extra days", "An overrun adds between the fewest and most extra days.", range(0, 60, 1));

@@ -5,6 +5,7 @@ import {
   type ManagedService,
   type ModelId,
   type ProductTypeId,
+  type ServerCount,
   type ServerSize,
   type ServerType,
 } from "./config.ts";
@@ -43,6 +44,26 @@ export interface ServerView {
   paid: number | null;
   /** What selling it back would refund now, or null for a rented one. */
   sellBack: number | null;
+}
+
+/**
+ * Servers of one type and size in a setup a migration builds, for the quote and the migration panel. All of them were
+ * added on the migration's first day.
+ */
+export interface SetupItem {
+  type: ServerType;
+  size: ServerSize;
+  /** "App server", or on a managed platform "App instance", "Managed database". */
+  name: string;
+  count: number;
+  /** CU, DBU or CH each; for a load balancer, the app servers it can serve. */
+  units: number;
+  /** What they cost to buy, all together, charged on the migration's first day; 0 where they're rented. */
+  upfront: number;
+  /** What they cost a month, all together: rent, or bought, power and upkeep once they've arrived. */
+  monthly: number;
+  /** Days until they're ready or, bought, arrive: 0 once they have. */
+  daysLeft: number;
 }
 
 /** A server the company can add, for the rent or buy modal. */
@@ -210,45 +231,158 @@ export function createServers(config: GameConfig, finance: Finance) {
   const sellBackValue = (model: ModelId, s: Server) => Math.round((s.paid ?? 0) * (purchaseOf(model)?.sellBackShare ?? 0));
 
   /**
-   * A model's starter setup as servers, numbered from nextId and ready at the end of readyDay. On a model that buys
-   * its servers, each is marked as paid for at its purchase price (see starterPurchases).
-   *
-   * Migration uses this for the model it moves to until #51 sizes the setup to demand. A `sizeSetupFor(model,
-   * demand)` belongs next to it, returning the same shape: on IaaS and on-prem, enough servers of each type for the
-   * CU and DBU demand; on PaaS, ceil(CU ÷ instance CU) instances and the smallest managed database (and cache) that
-   * covers the DBU; on SaaS, nothing.
+   * Counts of servers as servers, numbered from nextId and ready at the end of readyDay. On a model that buys its
+   * servers, each is marked as paid for at `price` (see kitEntries).
    */
-  function starter(model: ModelId, readyDay: number, nextId = 1): { servers: Server[]; nextServerId: number } {
+  function build(
+    model: ModelId,
+    counts: ServerCount[],
+    readyDay: number,
+    nextId: number,
+    price: (type: ServerType, size: ServerSize) => number,
+  ): { servers: Server[]; nextServerId: number } {
     const servers: Server[] = [];
-    const purchase = purchaseOf(model);
+    const bought = buys(model);
     let id = nextId;
-    for (const { type, size, count: n } of modelServers(model)?.starter ?? []) {
-      for (let i = 0; i < n; i++) {
-        servers.push({ id: id++, type, size, readyDay, ...(purchase && { paid: purchase.price[type][size] }) });
-      }
+    for (const { type, size, count: n } of counts) {
+      for (let i = 0; i < n; i++) servers.push({ id: id++, type, size, readyDay, ...(bought && { paid: price(type, size) }) });
     }
     return { servers, nextServerId: id };
   }
 
+  /** A model's starter setup as servers, for a new company: bought ones at their purchase prices (see starterPurchases). */
+  const starter = (model: ModelId, readyDay: number, nextId = 1) =>
+    build(model, modelServers(model)?.starter ?? [], readyDay, nextId, (type, size) => purchaseOf(model)?.price[type][size] ?? 0);
+
+  /** The cheapest of some choices, by cost then by fewest servers; the first of any that tie. */
+  const cheapest = <T extends { cost: number; servers: number }>(choices: T[]) =>
+    choices.reduce((best, c) => (c.cost < best.cost || (c.cost === best.cost && c.servers < best.servers) ? c : best));
+
   /**
-   * Buying a model's starter kit, on a model that buys its servers: charged with the model's upfront cost (the server
-   * room), one line per type and size. None where servers are rented: those are billed as rent.
+   * The smallest sensible setup on a model for some CU and DBU demand, plus the configured headroom: what a migration
+   * onto the model builds. Sized at base prices, so price rises don't change it.
+   * - IaaS and on-prem: app servers and databases of whichever single size meets the demand most cheaply (rent, or
+   *   on-prem the purchase price), at least one of each, and on enough app servers, the cheapest load balancers that
+   *   cover them all. No cache: that's for the student to add.
+   * - PaaS: ceil(CU ÷ instance CU) instances, up to the most allowed, and the smallest managed database that covers
+   *   the DBU; past the biggest, the smallest managed cache that takes the rest.
+   * - SaaS (no servers): nothing.
    */
-  function starterPurchases(model: ModelId): LogEntry[] {
-    const purchase = purchaseOf(model);
-    if (!purchase) return [];
-    return (modelServers(model)?.starter ?? [])
-      .filter((s) => s.count > 0 && purchase.price[s.type][s.size] > 0)
-      .map(({ type, size, count: n }) => ({
-        text: `Starter kit: bought ${plural(n, size, type)} at ${pounds(purchase.price[type][size])} each`,
-        cashDelta: -n * purchase.price[type][size],
+  function sizeSetupFor(model: ModelId, demand: UnitDemand): ServerCount[] {
+    const servers = modelServers(model);
+    if (!servers) return [];
+    const room = 1 + config.migration.setupHeadroom;
+    const cu = demand.cu * room;
+    const dbu = demand.dbu * room;
+    const managed = servers.managed;
+    if (managed) {
+      const instanceUnits = unitsOn(model, { type: "app", size: managed.instanceSize });
+      const instances = instanceUnits > 0 ? Math.ceil(cu / instanceUnits) : 1;
+      const smallest = (type: ManagedService, units: number) =>
+        SERVER_SIZES.find((size) => managed.units[type][size] >= units) ?? SERVER_SIZES[SERVER_SIZES.length - 1]!;
+      const database = smallest("database", dbu);
+      const setup: ServerCount[] = [
+        { type: "app", size: managed.instanceSize, count: Math.min(managed.maxInstances, Math.max(1, instances)) },
+        { type: "database", size: database, count: 1 },
+      ];
+      const rest = dbu - managed.units.database[database];
+      if (rest > 0) setup.push({ type: "cache", size: smallest("cache", rest), count: 1 });
+      return setup;
+    }
+    const price = (type: ServerType, size: ServerSize) =>
+      servers.purchase ? servers.purchase.price[type][size] : (servers.monthlyCost[type]?.[size] ?? 0);
+    // Of each size, enough of one type for the units, at least one.
+    const options = (type: ServerType, units: number) =>
+      SERVER_SIZES.filter((size) => unitsOn(model, { type, size }) > 0).map((size) => {
+        const n = Math.max(1, Math.ceil(units / unitsOn(model, { type, size })));
+        return { size, n, cost: n * price(type, size), servers: n };
+      });
+    const balancersFor = (apps: number) =>
+      apps < config.servers.loadBalancerFrom ? { size: "small" as const, n: 0, cost: 0, servers: 0 } : cheapest(options("loadBalancer", apps));
+    const app = cheapest(
+      options("app", cu).map((o) => {
+        const lb = balancersFor(o.n);
+        return { ...o, lb, cost: o.cost + lb.cost, servers: o.n + lb.n };
+      }),
+    );
+    const database = cheapest(options("database", dbu));
+    const setup: ServerCount[] = [{ type: "app", size: app.size, count: app.n }];
+    if (app.lb.n > 0) setup.push({ type: "loadBalancer", size: app.lb.size, count: app.lb.n });
+    setup.push({ type: "database", size: database.size, count: database.n });
+    return setup;
+  }
+
+  /**
+   * The setup a migration onto a model builds for some demand (see sizeSetupFor), numbered from the company's next
+   * server id. It's added on the migration's first day: rented servers are ready on the model's usual terms, and
+   * bought ones are paid for at today's prices and on order for the delivery time, as if bought one by one.
+   */
+  function setupFor(state: GameState, model: ModelId, demand: UnitDemand) {
+    const readyDay = state.day + readyDaysOf(model);
+    const price = (type: ServerType, size: ServerSize) => purchasePrice(state, model, type, size);
+    return build(model, sizeSetupFor(model, demand), readyDay, state.nextServerId, price);
+  }
+
+  /**
+   * Buying kit, on a model that buys its servers: one line per type, size and price, each labelled ("Starter kit").
+   * None where servers are rented: those are billed as rent.
+   */
+  function kitEntries(model: ModelId, list: Server[], label: string): LogEntry[] {
+    if (!buys(model)) return [];
+    const groups = new Map<string, { s: Server; n: number }>();
+    for (const s of list) {
+      const key = `${s.type}/${s.size}/${s.paid ?? 0}`;
+      const group = groups.get(key);
+      if (group) group.n++;
+      else groups.set(key, { s, n: 1 });
+    }
+    return [...groups.values()]
+      .filter(({ s }) => (s.paid ?? 0) > 0)
+      .map(({ s, n }) => ({
+        text: `${label}: bought ${plural(n, s.size, s.type)} at ${pounds(s.paid ?? 0)} each`,
+        cashDelta: -n * (s.paid ?? 0),
         category: "infrastructure" as const,
       }));
   }
 
-  /** The servers a model has: the company's on its current model, otherwise the starter setup it would get. */
+  /**
+   * Buying a model's starter kit, on a model that buys its servers: charged with the model's upfront cost (the server
+   * room), one line per type and size.
+   */
+  const starterPurchases = (model: ModelId) => kitEntries(model, starter(model, 0).servers, "Starter kit");
+
+  /**
+   * The servers a model has: the company's on its current model, and on the model a migration is moving to, the
+   * setup being built there. None on any other model.
+   */
   const serversOn = (state: GameState, model: ModelId) =>
-    model === state.model ? state.servers : starter(model, state.day).servers;
+    model === state.model ? state.servers : model === state.migration?.to ? state.migration.servers : [];
+
+  /**
+   * Some servers on a model grouped by type and size, in type then size order, with what they give and cost: a
+   * migration's new setup, for the quote and the migration panel.
+   */
+  function setupItems(state: GameState, model: ModelId, list: Server[]): SetupItem[] {
+    const managed = !!managedOf(model);
+    const items: SetupItem[] = [];
+    for (const type of SERVER_TYPES) {
+      for (const size of SERVER_SIZES) {
+        const of = list.filter((s) => s.type === type && s.size === size);
+        if (of.length === 0) continue;
+        items.push({
+          type,
+          size,
+          name: managed ? managedName(type) : nameOf(type),
+          count: of.length,
+          units: unitsOn(model, { type, size }),
+          upfront: of.reduce((sum, s) => sum + (s.paid ?? 0), 0),
+          monthly: Math.round(of.length * monthlyCost(state, model, type, size) * 100) / 100,
+          daysLeft: Math.max(0, ...of.map((s) => s.readyDay - state.day)),
+        });
+      }
+    }
+    return items;
+  }
 
   /** A server's monthly price on a model, after the provider's price rises. One the model doesn't price is free. */
   function monthlyCost(state: GameState, model: ModelId, type: ServerType, size: ServerSize): number {
@@ -488,11 +622,14 @@ export function createServers(config: GameConfig, finance: Finance) {
     };
   }
 
+  /** What selling back all the company's bought kit would refund, on order or not: 0 where servers are rented. */
+  const sellBackTotal = (state: GameState) =>
+    buys(state.model) ? state.servers.reduce((sum, s) => sum + sellBackValue(state.model, s), 0) : 0;
+
   /**
-   * What happens to the company's servers when a migration off its model completes, until migration sizes the new
-   * setup (#51): rented VMs, and a platform's instances and managed services, are cancelled, their rent having been
-   * billed up to the day you leave; bought kit is sold back at the configured share, kit still on order included (the
-   * order goes with the move).
+   * What happens to the old setup when a migration off its model completes: rented VMs, and a platform's instances
+   * and managed services, are cancelled, their rent having been billed up to and including the day you leave, so pro
+   * rata; bought kit is sold back at the configured share, kit still on order included (the order goes with the move).
    */
   function leaveEntries(state: GameState): LogEntry[] {
     const n = state.servers.length;
@@ -505,7 +642,7 @@ export function createServers(config: GameConfig, finance: Finance) {
       const text = `Your ${n} rented VM${n === 1 ? " was" : "s were"} cancelled: you paid rent only for the days you had them.`;
       return [{ text, cashDelta: 0, kind: "migration" }];
     }
-    const refund = state.servers.reduce((sum, s) => sum + sellBackValue(state.model, s), 0);
+    const refund = sellBackTotal(state);
     const paid = state.servers.reduce((sum, s) => sum + (s.paid ?? 0), 0);
     const share = Math.round(100 * (purchaseOf(state.model)?.sellBackShare ?? 0));
     const text = `Your ${n} server${n === 1 ? " was" : "s were"} sold back for ${pounds(refund)}: ${share}% of the ${pounds(paid)} you paid.`;
@@ -619,6 +756,12 @@ export function createServers(config: GameConfig, finance: Finance) {
     managedName,
     starter,
     starterPurchases,
+    sizeSetupFor,
+    setupFor,
+    kitEntries,
+    setupItems,
+    sellBackTotal,
+    opsFor,
     serverEntries,
     monthlyServerCost,
     opsNeeded,

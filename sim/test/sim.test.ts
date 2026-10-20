@@ -187,7 +187,7 @@ const config: GameConfig = {
       testing: { name: "Testing", days: 2 },
       moving: { name: "Moving infrastructure", days: 7 },
     },
-    billNewFromStart: true,
+    setupHeadroom: 0.25,
     // Never overruns unless a test says so.
     overrun: { chance: 0, minDays: 2, maxDays: 4 },
   },
@@ -1039,7 +1039,7 @@ describe("servers on IaaS", () => {
     expect(state).toEqual(copy);
   });
 
-  describe("migrating, until migration sizes the setup to demand", () => {
+  describe("migrating off IaaS", () => {
     // A starter that costs something: a small app server and database, £1 a day each.
     const smallStarter = createSim({
       ...config,
@@ -1058,25 +1058,6 @@ describe("servers on IaaS", () => {
       },
     });
     const migrate = (state: GameState, model: ModelId) => smallStarter.applyAction(state, { type: "startMigration", model });
-
-    it("gets the starter setup on moving onto IaaS, serving from the next day, and double-bills its rent", () => {
-      const paas = { ...smallStarter.newGame({ companyName: "Acme", productType: "social", model: "paas", seed: 1 }), ops: 3 };
-      const moving = migrate(paas, "iaas");
-      const quote = smallStarter.migrationQuote(paas, "iaas");
-      // IaaS's £20 a day plus £2 of rent, for 14 days.
-      expect(quote.doubleBilling).toBe(14 * 22);
-      const { state, log } = smallStarter.advance(moving, 14);
-      expect(state.model).toBe("iaas");
-      expect(rentLines(log)).toHaveLength(28);
-      expect(smallStarter.servers(state).map((s) => [s.type, s.size, s.status])).toEqual([
-        ["app", "small", "ready"],
-        ["database", "small", "ready"],
-      ]);
-      expect(log.at(-1)!.entries.map((e) => e.text)).toContain(
-        "Your IaaS starter setup is ready for tomorrow: 1 small app server, 1 small database. Rent more VMs as you grow.",
-      );
-      expect(smallStarter.units(state)!.cu.capacity).toBeGreaterThan(0);
-    });
 
     it("drops the VMs on leaving IaaS, so their rent stops", () => {
       const iaas = { ...smallStarter.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 1 }), ops: 3 };
@@ -1336,24 +1317,8 @@ describe("servers on-prem", () => {
     }
   });
 
-  describe("migrating, until migration sizes the setup to demand", () => {
+  describe("migrating off on-prem", () => {
     const migrate = (state: GameState, model: ModelId) => own.applyAction(state, { type: "startMigration", model });
-
-    it("buys the starter kit on moving onto on-prem, on the first day, and it's there on completion", () => {
-      const paas = begin(own, "paas");
-      const quote = own.migrationQuote(paas, "onprem");
-      expect(quote.upfrontCost).toBe(13_000);
-      const { state, log } = own.advance(migrate(paas, "onprem"), 14);
-      expect(log[0]!.entries.filter((e) => e.text.startsWith("Starter kit") || e.text.startsWith("Upfront")).map((e) => e.cashDelta)).toEqual([-5_000, -4_000, -4_000]);
-      expect(state.model).toBe("onprem");
-      expect(own.servers(state).map((s) => [s.type, s.status, s.paid])).toEqual([
-        ["app", "ready", 4_000],
-        ["database", "ready", 4_000],
-      ]);
-      expect(log.at(-1)!.entries.map((e) => e.text)).toContain(
-        "Your On-prem starter setup is ready for tomorrow: 1 massive app server, 1 massive database. Buy more servers as you grow.",
-      );
-    });
 
     it("sells the kit back at a loss on leaving on-prem, kit on order included", () => {
       const state = buy(fleet(begin(), BIG_APP, BIG_DB), "cache", "small");
@@ -1613,22 +1578,8 @@ describe("PaaS managed services", () => {
     expect(paas.advance(roundTrip, 6)).toEqual(paas.advance(half, 6));
   });
 
-  describe("migrating, until migration sizes the setup to demand", () => {
+  describe("migrating off PaaS", () => {
     const migrate = (state: GameState, model: ModelId) => paas.applyAction(state, { type: "startMigration", model });
-
-    it("gets the starter instances and managed database on moving onto PaaS, and double-bills them", () => {
-      const iaas = begin(paas, "iaas");
-      const quote = paas.migrationQuote(iaas, "paas");
-      // PaaS's £30 a day plus £1 for the instance and £1 for the database, for 14 days.
-      expect(quote.doubleBilling).toBe(14 * 32);
-      const { state, log } = paas.advance(migrate(iaas, "paas"), 14);
-      expect(state.model).toBe("paas");
-      expect(paas.managed(state)).toMatchObject({ instances: 1, database: { size: "small" }, cache: null });
-      expect(log.at(-1)!.entries.map((e) => e.text)).toContain(
-        "Your PaaS starter setup is ready for tomorrow: 1 app instance, 1 small managed database. Raise your instance count as you grow.",
-      );
-      expect(paas.units(state)!.cu.capacity).toBe(10);
-    });
 
     it("cancels the instances and managed services on leaving PaaS, so their bill stops", () => {
       const big = service(instances(begin(), 4), "cache", "small");
@@ -2285,6 +2236,12 @@ describe("migration", () => {
       daysLeft: 14,
       totalDays: 14,
       overrunDays: 0,
+      // Sized for 1,000 users' 10 CU and 10 DBU plus a quarter: one (free) massive instance and a medium database.
+      setup: [
+        { type: "app", size: "massive", name: "App instance", count: 1, units: 10_000, upfront: 0, monthly: 0, daysLeft: 0 },
+        { type: "database", size: "medium", name: "Managed database", count: 1, units: 100, upfront: 0, monthly: 60, daysLeft: 0 },
+      ],
+      setupMonthly: 60,
     });
   });
 
@@ -2362,7 +2319,7 @@ describe("migration", () => {
       [15, "Your 2 rented VMs were cancelled: you paid rent only for the days you had them."],
       [
         15,
-        "Your PaaS starter setup is ready for tomorrow: 1 app instance, 1 massive managed database. Raise your instance count as you grow.",
+        "Your new PaaS setup takes over tomorrow: 1 app instance, 1 medium managed database. Fine-tune its sizes on Infrastructure as you grow.",
       ],
     ]);
   });
@@ -2386,8 +2343,8 @@ describe("migration", () => {
   it("bills the current model until the migration completes, then only the new one", () => {
     const { log } = sim.advance(migrating(), 15);
     for (const day of log.slice(0, 14)) expect(charges(day.entries)).toContain("IaaS running costs (£600 a month)");
-    expect(charges(log[14]!.entries)).toEqual(["PaaS running costs (£900 a month)"]);
-    expect(sim.monthlyInfrastructureCost(sim.advance(migrating(), 14).state)).toBe(900);
+    expect(charges(log[14]!.entries)).toEqual(["PaaS running costs (£900 a month)", "Managed database (medium): 1 × £60 a month"]);
+    expect(sim.monthlyInfrastructureCost(sim.advance(migrating(), 14).state)).toBe(960);
   });
 
   it("switches the stack, ops needed and capacity to the new model on completion", () => {
@@ -2457,26 +2414,20 @@ describe("migration costs", () => {
   const withModels = (models: Partial<GameConfig["models"]>) =>
     createSim({ ...config, models: { ...config.models, ...models } });
 
-  it("bills both providers on every day of the migration, the new one in full from day 1", () => {
+  it("bills both providers on every day of the migration, the new one and its new setup in full from day 1", () => {
     const { log } = sim.advance(sim.applyAction(rich(), migrate("paas")), 15);
     for (const day of log.slice(0, 14)) {
       expect(infra(day.entries)).toEqual([
         ["IaaS running costs (£600 a month)", -20],
         ["Double billing: PaaS running costs (£900 a month)", -30],
+        ["Double billing: Managed database (medium): 1 × £60 a month", -2],
       ]);
     }
     // The day after you leave, only the new provider bills.
-    expect(infra(log[14]!.entries)).toEqual([["PaaS running costs (£900 a month)", -30]]);
-  });
-
-  it("bills the new provider only after the switch when config turns double billing off", () => {
-    const single = createSim({ ...config, migration: { ...config.migration, billNewFromStart: false } });
-    const { log } = single.advance(single.applyAction(rich(), migrate("paas")), 15);
-    for (const day of log.slice(0, 14)) {
-      expect(infra(day.entries)).toEqual([["IaaS running costs (£600 a month)", -20]]);
-    }
-    expect(infra(log[14]!.entries)).toEqual([["PaaS running costs (£900 a month)", -30]]);
-    expect(single.migrationQuote(rich(), "paas").doubleBilling).toBe(0);
+    expect(infra(log[14]!.entries)).toEqual([
+      ["PaaS running costs (£900 a month)", -30],
+      ["Managed database (medium): 1 × £60 a month", -2],
+    ]);
   });
 
   it("charges the old provider pro rata up to the day you leave: 280 a month, leaving on 14 February, is 140", () => {
@@ -2487,7 +2438,7 @@ describe("migration costs", () => {
       models: {
         ...config.models,
         iaas: { ...config.models.iaas, monthlyCost: 280 },
-        paas: { ...config.models.paas, monthlyCost: 0 },
+        paas: { ...config.models.paas, monthlyCost: 0, servers: { ...paasServers, monthlyCost: {} } },
       },
     });
     // Start on the 1st: the 14-day migration completes, and you leave, on the 14th.
@@ -2557,9 +2508,10 @@ describe("migration costs", () => {
       const quote = slips.migrationQuote(gameWith(7), "paas");
       const state = migratingWith(7);
       const { log, state: done } = slips.advance(state, 17);
-      const doubleBilled = log.flatMap((d) => d.entries).filter((e) => e.text.startsWith("Double billing"));
+      const doubleBilled = log.filter((d) => d.entries.some((e) => e.text.startsWith("Double billing")));
       expect(doubleBilled).toHaveLength(17);
-      expect(done.spend.infrastructure - state.spend.infrastructure).toBe(quote.total + 3 * (20 + 30));
+      // IaaS's £20 a day, and PaaS's £30 and the new setup's £2, for 3 more days.
+      expect(done.spend.infrastructure - state.spend.infrastructure).toBe(quote.total + 3 * (20 + 30 + 2));
     });
 
     it("doesn't overrun with a seed that rolls against it", () => {
@@ -2587,18 +2539,30 @@ describe("migration costs", () => {
       paas: { ...config.models.paas, upfrontCost: 100 },
     });
 
-    it("gives the duration, upfront cost, double billing, pro-rata charge, exit penalty and total", () => {
+    it("gives the duration, new setup, upfront cost, double billing, pro-rata charge, exit penalty and total", () => {
       expect(s.migrationQuote(start(), "paas")).toEqual({
         from: "iaas",
         to: "paas",
         days: 14,
+        setup: [
+          { type: "app", size: "massive", name: "App instance", count: 1, units: 10_000, upfront: 0, monthly: 0, daysLeft: 0 },
+          { type: "database", size: "medium", name: "Managed database", count: 1, units: 100, upfront: 0, monthly: 60, daysLeft: 0 },
+        ],
+        // 1,000 users at 0.01 CU and DBU each, plus a quarter.
+        sizedFor: { cu: 12.5, dbu: 12.5 },
+        headroom: 0.25,
+        setupUpfront: 0,
+        setupMonthly: 60,
+        opsNeeded: 1,
+        deliveryDays: null,
         upfrontCost: 100,
-        // 14 days of PaaS at £30 a day, on top of IaaS.
-        doubleBilling: 420,
+        // 14 days of PaaS at £30 a day and its new database at £2, on top of IaaS.
+        doubleBilling: 448,
         // 14 days of IaaS at £20 a day, up to the day you leave.
         proRata: 280,
         exitPenalty: 250,
-        total: 1050,
+        sellBack: 0,
+        total: 1078,
         overrun: { chance: 0, minDays: 2, maxDays: 4 },
         lostAddons: [],
       });
@@ -2785,8 +2749,9 @@ describe("default migration config", () => {
     expect([phases.planning.days, phases.testing.days, phases.moving.days]).toEqual([5, 2, 7]);
   });
 
-  it("bills the new provider from the first day, and can overrun", () => {
-    expect(defaultConfig.migration.billNewFromStart).toBe(true);
+  it("sizes the new setup with some headroom, and can overrun", () => {
+    expect(defaultConfig.migration.setupHeadroom).toBeGreaterThan(0);
+    expect(defaultConfig.migration.setupHeadroom).toBeLessThan(1);
     const { chance, minDays, maxDays } = defaultConfig.migration.overrun;
     expect(chance).toBeGreaterThan(0);
     expect(chance).toBeLessThan(1);
@@ -2797,6 +2762,280 @@ describe("default migration config", () => {
   it("charges no exit penalty for leaving on-prem, and one for leaving a provider", () => {
     expect(defaultConfig.models.onprem.exitPenalty).toBe(0);
     for (const id of ["iaas", "paas", "saas"] as const) expect(defaultConfig.models[id].exitPenalty).toBeGreaterThan(0);
+  });
+});
+
+describe("migration with servers", () => {
+  // The default prices, units and delivery time, with no events and no overrun unless a test says so, so a move's
+  // charges are exactly the quote's.
+  const calm: GameConfig = {
+    ...defaultConfig,
+    startingCash: 10_000_000,
+    events: [],
+    migration: { ...defaultConfig.migration, overrun: { ...defaultConfig.migration.overrun, chance: 0 } },
+  };
+  const s = createSim(calm);
+  const migrate = (model: ModelId): Action => ({ type: "startMigration", model });
+  /** A social network on a model with this many users, and ops enough for any setup here. */
+  const on = (model: ModelId, users = 1_000, sim: Sim = s) => ({
+    ...sim.newGame({ companyName: "Acme", productType: "social", model, seed: 42 }),
+    users,
+    paidUsers: 0,
+    ops: 100,
+  });
+  const entries = (log: DayLog[]) => log.flatMap((d) => d.entries);
+  const texts = (log: DayLog[]) => entries(log).map((e) => e.text);
+  const total = (list: LogEntry[]) => list.reduce((sum, e) => sum - e.cashDelta, 0);
+  const pairs = MODEL_IDS.flatMap((from) => MODEL_IDS.filter((to) => to !== from).map((to) => [from, to] as const));
+
+  describe("sizeSetupFor", () => {
+    it("picks the cheapest single size of app server and database, with load balancers where needed", () => {
+      // 60 CU and 80 DBU plus a quarter: 75 CU and 100 DBU. 3 massive VMs (£2,550) and a medium load balancer (£300)
+      // beat 4 large ones and one (£3,100); 4 massive databases (£4,400) beat 5 large (£4,500).
+      expect(s.sizeSetupFor("iaas", { cu: 60, dbu: 80 })).toEqual([
+        { type: "app", size: "massive", count: 3 },
+        { type: "loadBalancer", size: "medium", count: 1 },
+        { type: "database", size: "massive", count: 4 },
+      ]);
+      // On-prem picks by purchase price, here the same sizes.
+      expect(s.sizeSetupFor("onprem", { cu: 60, dbu: 80 })).toEqual([
+        { type: "app", size: "massive", count: 3 },
+        { type: "loadBalancer", size: "medium", count: 1 },
+        { type: "database", size: "massive", count: 4 },
+      ]);
+    });
+
+    it("needs no load balancer for one app server, and always has an app server and a database", () => {
+      expect(s.sizeSetupFor("iaas", { cu: 8, dbu: 8 })).toEqual([
+        { type: "app", size: "small", count: 1 },
+        { type: "database", size: "small", count: 1 },
+      ]);
+      expect(s.sizeSetupFor("iaas", { cu: 0, dbu: 0 })).toEqual([
+        { type: "app", size: "small", count: 1 },
+        { type: "database", size: "small", count: 1 },
+      ]);
+    });
+
+    it("on PaaS, runs enough instances and the smallest managed database, adding a cache past the biggest", () => {
+      // 75 CU over 15-CU instances is 5; 100 DBU fits a massive (120) database.
+      expect(s.sizeSetupFor("paas", { cu: 60, dbu: 80 })).toEqual([
+        { type: "app", size: "medium", count: 5 },
+        { type: "database", size: "massive", count: 1 },
+      ]);
+      expect(s.sizeSetupFor("paas", { cu: 1, dbu: 1 })).toEqual([
+        { type: "app", size: "medium", count: 1 },
+        { type: "database", size: "small", count: 1 },
+      ]);
+      // 200 DBU: 80 more than the massive database, taken by a massive (120 CH) cache. 50 instances is past the most.
+      expect(s.sizeSetupFor("paas", { cu: 600, dbu: 160 })).toEqual([
+        { type: "app", size: "medium", count: 20 },
+        { type: "database", size: "massive", count: 1 },
+        { type: "cache", size: "massive", count: 1 },
+      ]);
+    });
+
+    it("builds nothing on SaaS", () => {
+      expect(s.sizeSetupFor("saas", { cu: 60, dbu: 80 })).toEqual([]);
+    });
+
+    it("takes the headroom from config", () => {
+      const tight = createSim({ ...calm, migration: { ...calm.migration, setupHeadroom: 0 } });
+      // 15 CU exactly fits one medium instance with no headroom; a quarter more needs two.
+      expect(tight.sizeSetupFor("paas", { cu: 15, dbu: 15 })[0]).toMatchObject({ count: 1 });
+      expect(s.sizeSetupFor("paas", { cu: 15, dbu: 15 })[0]).toMatchObject({ count: 2 });
+    });
+  });
+
+  it("builds a target setup that meets today's demand plus headroom on every model, once it takes over", () => {
+    for (const [from, to] of pairs) {
+      for (const users of [1_000, 20_000, 40_000]) {
+        const state = on(from, users);
+        const quote = s.migrationQuote(state, to);
+        const done = s.advance(s.applyAction(state, migrate(to)), 14).state;
+        expect(done.model).toBe(to);
+        const units = s.units(done);
+        if (to === "saas") {
+          expect([units, s.capacity(done), done.servers]).toEqual([null, null, []]);
+          continue;
+        }
+        expect(units!.cu.capacity).toBeGreaterThanOrEqual(quote.sizedFor.cu);
+        // The database with any cache covers the DBU: the users it all serves include today's plus the headroom.
+        expect(units!.usersSupported).toBeGreaterThanOrEqual(Math.floor(users * (1 + calm.migration.setupHeadroom)));
+        expect(units!.loadBalancer.uncovered).toBe(0);
+        expect(done.servers.every((srv) => srv.readyDay < done.day + 1)).toBe(true);
+      }
+    }
+  });
+
+  it("itemises the setup in the quote: type, size, count and cost, upfront for bought kit, monthly for rented", () => {
+    const onprem = s.migrationQuote(on("iaas", 20_000), "onprem");
+    // 20,000 users need 60 CU and 80 DBU; plus a quarter, 75 and 100.
+    expect(onprem.sizedFor).toEqual({ cu: 75, dbu: 100 });
+    expect(onprem.setup.map((i) => [i.name, i.size, i.count, i.upfront, i.monthly, i.daysLeft])).toEqual([
+      ["App server", "massive", 3, 3 * 2_550, 3 * 85, 10],
+      ["Database", "massive", 4, 4 * 3_300, 4 * 110, 10],
+      ["Load balancer", "medium", 1, 900, 30, 10],
+    ]);
+    // 3 app servers and 4 databases at 0.6 ops each, and a load balancer at 0.3: 4.5, so 5.
+    expect(onprem).toMatchObject({ setupUpfront: 21_750, setupMonthly: 725, deliveryDays: 10, opsNeeded: 5 });
+    // The server room and the kit, on the first day.
+    expect(onprem.upfrontCost).toBe(calm.models.onprem.upfrontCost + 21_750);
+
+    const paas = s.migrationQuote(on("iaas", 20_000), "paas");
+    expect(paas.setup.map((i) => [i.name, i.size, i.count, i.upfront, i.monthly])).toEqual([
+      ["App instance", "medium", 5, 0, 5 * 800],
+      ["Managed database", "massive", 1, 0, 6_400],
+    ]);
+    expect(paas).toMatchObject({ setupUpfront: 0, setupMonthly: 10_400, deliveryDays: null });
+    expect(s.migrationQuote(on("iaas", 20_000), "saas")).toMatchObject({ setup: [], setupUpfront: 0, setupMonthly: 0 });
+  });
+
+  it("with no overrun, charges exactly the quote: setup, double billing, pro rata, exit penalty and sell-back", () => {
+    // Not SaaS's per-user fees, which follow the users.
+    for (const [from, to] of pairs.filter((p) => !p.includes("saas"))) {
+      const state = on(from, 20_000);
+      const quote = s.migrationQuote(state, to);
+      const { state: done, log } = s.advance(s.applyAction(state, migrate(to)), 14);
+      expect(done.model).toBe(to);
+      expect(done.spend.infrastructure - state.spend.infrastructure).toBe(quote.total);
+      // Item by item: the kit bought, and the new model's bill (its setup included) on every day of the move.
+      expect(total(entries(log).filter((e) => e.text.startsWith("New setup")))).toBe(quote.setupUpfront);
+      expect(total(entries(log).filter((e) => e.text.startsWith("Double billing")))).toBe(quote.doubleBilling);
+      expect(entries(log).filter((e) => e.text.startsWith("Exit penalty")).map((e) => -e.cashDelta)).toEqual(
+        quote.exitPenalty > 0 ? [quote.exitPenalty] : [],
+      );
+    }
+  });
+
+  it("bills both setups during the move: the old servers, and the new ones from day 1 (bought kit once it arrives)", () => {
+    const { log } = s.advance(s.applyAction(on("iaas", 20_000), migrate("onprem")), 14);
+    for (const day of log) {
+      const t = day.entries.map((e) => e.text);
+      // The old VMs, every day up to and including the day you leave.
+      expect(t.filter((x) => x.includes(") rent: "))).toHaveLength(2);
+      expect(t).toContain("Double billing: Own servers (on-prem) running costs (£1,500 a month)");
+    }
+    // Ordered on day 1 and arriving 10 days later, the kit's power and upkeep is billed from the day after.
+    const upkeepDays = log.filter((d) => d.entries.some((e) => e.text.includes("power and upkeep"))).map((d) => d.day);
+    expect(upkeepDays).toEqual([12, 13, 14, 15]);
+    expect(texts(log.slice(0, 1))).toContain("New setup: bought 3 massive app servers at £2,550 each");
+
+    const paas = s.advance(s.applyAction(on("iaas", 20_000), migrate("paas")), 1).log;
+    expect(texts(paas)).toEqual(
+      expect.arrayContaining([
+        "App server (medium) rent: 1 × £550 a month",
+        "Double billing: App instance (medium): 5 × £800 a month",
+        "Double billing: Managed database (massive): 1 × £6,400 a month",
+      ]),
+    );
+  });
+
+  it("shows the old setup and the new one side by side during the move, the new kit counting down to delivery", () => {
+    const moving = s.applyAction(on("iaas", 20_000), migrate("onprem"));
+    // The old setup is still the company's, and serves.
+    expect(s.servers(moving).map((srv) => [srv.type, srv.size])).toEqual([
+      ["app", "medium"],
+      ["database", "medium"],
+    ]);
+    expect(s.migration(moving)!.setup.map((i) => [i.type, i.count, i.daysLeft])).toEqual([
+      ["app", 3, 10],
+      ["database", 4, 10],
+      ["loadBalancer", 1, 10],
+    ]);
+    expect(s.migration(moving)!.setupMonthly).toBe(725);
+    const later = s.advance(moving, 10).state;
+    expect(s.migration(later)!.setup.every((i) => i.daysLeft === 0)).toBe(true);
+    // The kit has arrived but doesn't serve until the switch: capacity is still the old VMs'.
+    expect(s.units(later)!.cu.capacity).toBe(s.units(moving)!.cu.capacity);
+  });
+
+  it("delivers bought kit inside the move, and an overrun only adds days billed by both", () => {
+    expect(calm.models.onprem.servers!.readyDays!).toBeLessThan(
+      Object.values(calm.migration.phases).reduce((sum, p) => sum + p.days, 0),
+    );
+    const slips = createSim({ ...calm, migration: { ...calm.migration, overrun: { chance: 1, minDays: 3, maxDays: 3 } } });
+    const state = on("iaas", 20_000, slips);
+    const quote = slips.migrationQuote(state, "onprem");
+    const { state: done, log } = slips.advance(slips.applyAction(state, migrate("onprem")), 17);
+    expect(done.model).toBe("onprem");
+    expect(slips.servers(done).every((srv) => srv.status === "ready")).toBe(true);
+    // 3 more days of IaaS with its VMs, and of on-prem with its arrived kit.
+    const extra = log.slice(14).reduce((sum, d) => sum + total(d.entries.filter((e) => e.category === "infrastructure")), 0);
+    expect(done.spend.infrastructure - state.spend.infrastructure).toBe(quote.total + extra - total(log[16]!.entries.filter((e) => e.text.startsWith("Exit penalty"))));
+    expect(extra).toBeGreaterThan(0);
+  });
+
+  it("on completion, sells old kit back at the configured loss, kit on order included", () => {
+    const state = on("onprem", 20_000);
+    const quote = s.migrationQuote(state, "iaas");
+    // The starter kit: a large app server (£2,100) and database (£2,700). 40% back is £1,920.
+    expect(quote.sellBack).toBe(1_920);
+    let moving = s.advance(s.applyAction(state, migrate("iaas")), 10).state;
+    moving = s.applyAction(moving, { type: "buyServer", server: "cache", size: "small" });
+    const { state: done, log } = s.advance(moving, 4);
+    expect(log.at(-1)!.entries).toContainEqual({
+      text: "Your 3 servers were sold back for £2,100: 40% of the £5,250 you paid.",
+      cashDelta: 2_100,
+      category: "infrastructure",
+    });
+    expect(done.servers.every((srv) => srv.paid === undefined)).toBe(true);
+  });
+
+  it("on completion, cancels old rentals pro rata: billed up to the day you leave, and none after", () => {
+    const state = on("paas", 20_000);
+    const { state: done, log } = s.advance(s.applyAction(state, migrate("iaas")), 16);
+    const instanceDays = (days: DayLog[]) =>
+      days.filter((d) => d.entries.some((e) => e.text.startsWith("App instance"))).map((d) => d.day);
+    expect(instanceDays(log)).toEqual(Array.from({ length: 14 }, (_, i) => i + 2));
+    expect(texts(log.slice(13, 14))).toContain(
+      "Your app instances and managed services were cancelled: you paid for them only for the days you had them.",
+    );
+    // The new VMs are the company's now, numbered after the old servers.
+    expect(Math.min(...done.servers.map((srv) => srv.id))).toBeGreaterThanOrEqual(state.nextServerId);
+    expect(texts(log.slice(13, 14)).find((t) => t.startsWith("Your new "))).toBe(
+      "Your new Rent VMs (IaaS) setup takes over tomorrow: 3 massive app servers, 4 massive databases, 1 medium load balancer. Fine-tune its sizes on Infrastructure as you grow.",
+    );
+  });
+
+  it("drops every server moving to SaaS: VMs cancelled, kit sold back", () => {
+    for (const from of ["onprem", "iaas", "paas"] as const) {
+      const state = on(from, 20_000);
+      expect(s.migrationQuote(state, "saas").setup).toEqual([]);
+      const { state: done } = s.advance(s.applyAction(state, migrate("saas")), 14);
+      expect(done).toMatchObject({ model: "saas", servers: [] });
+      expect(s.units(done)).toBeNull();
+    }
+  });
+
+  it("lets the student fine-tune the new setup once it has taken over", () => {
+    const onPaas = s.advance(s.applyAction(on("iaas", 20_000), migrate("paas")), 14).state;
+    expect(s.managed(s.applyAction(onPaas, { type: "setInstances", count: 7 }))!.instances).toBe(7);
+    const onIaas = s.advance(s.applyAction(on("paas", 20_000), migrate("iaas")), 14).state;
+    const id = onIaas.servers.find((srv) => srv.type === "database")!.id;
+    expect(s.applyAction(onIaas, { type: "cancelServer", id }).servers).toHaveLength(onIaas.servers.length - 1);
+    // Mid-move the new setup isn't the company's yet, so it can't be changed.
+    const moving = s.applyAction(on("paas", 20_000), migrate("iaas"));
+    expect(() => s.applyAction(moving, { type: "cancelServer", id: moving.migration!.servers[0]!.id })).toThrow(
+      expect.objectContaining({ code: "managed" }),
+    );
+  });
+
+  it("keeps the existing rules: lost add-ons, exit penalty and staff free to move", () => {
+    const saas = { ...on("saas", 1_000), developers: 3 };
+    const bought = s.applyAction(saas, { type: "buyAddon", feature: calm.productTypes.social.features[0]!.id });
+    const quote = s.migrationQuote(bought, "iaas");
+    expect(quote.lostAddons).toHaveLength(1);
+    expect(quote.setup.length).toBeGreaterThan(0);
+    expect(quote.exitPenalty).toBe(calm.models.saas.exitPenalty);
+    const moving = s.applyAction(bought, migrate("iaas"));
+    expect(s.applyAction(moving, { type: "moveStaff", to: "ops" })).toMatchObject({ developers: 2, ops: 101 });
+  });
+
+  it("is deterministic, and resumes identically after a JSON round trip", () => {
+    const run = () => s.advance(s.applyAction(on("iaas", 20_000), migrate("onprem")), 16);
+    expect(run()).toEqual(run());
+    const half = s.advance(s.applyAction(on("iaas", 20_000), migrate("onprem")), 6).state;
+    expect(s.advance(JSON.parse(JSON.stringify(half)) as GameState, 10).state).toEqual(run().state);
   });
 });
 

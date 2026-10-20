@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import type { ModelId } from "@xaas/sim";
+import { SERVER_SIZES, SERVER_TYPES, type ModelId, type ServerType, type SetupItem } from "@xaas/sim";
 import type { MigrationQuoteView } from "@xaas/server/api-types";
-import { api, formatCash } from "../api";
+import { api, formatCash, formatCount } from "../api";
 import { days, namesList, useGame } from "../game";
 
 // Migration: pick a target, see the quote and confirm, then it runs in the background while you keep playing.
@@ -24,18 +24,48 @@ const quoteRows = computed(() => {
   const q = quote.value;
   if (!q) return [];
   const [from, to] = [game.modelName(q.from), game.modelName(q.to)];
-  return [
-    { id: "upfront", label: "New setup", detail: `${to} upfront cost, on the first day`, amount: q.upfrontCost },
+  const kit = q.setupUpfront > 0 ? " and the new kit" : "";
+  const setup = q.setup.length ? " and your new setup" : "";
+  const rows = [
+    { id: "upfront", label: "Upfront", detail: `${to} upfront cost${kit}, on the first day`, amount: q.upfrontCost },
     {
       id: "double",
       label: "Double billing",
-      detail: `${to} billed in full for ${days(q.days)}, on top of ${from}`,
+      detail: `${to}${setup} billed in full for ${days(q.days)}, on top of ${from}`,
       amount: q.doubleBilling,
     },
-    { id: "pro-rata", label: "Pro rata", detail: `${from} billed up to the day you leave`, amount: q.proRata },
+    { id: "pro-rata", label: "Pro rata", detail: `${from} and your servers billed up to the day you leave`, amount: q.proRata },
     { id: "exit", label: "Exit penalty", detail: `${from} charges once for leaving`, amount: q.exitPenalty },
   ];
+  if (q.sellBack > 0) {
+    rows.push({ id: "sell-back", label: "Sell-back", detail: "Your old kit, sold back at a loss on the day you leave", amount: -q.sellBack });
+  }
+  return rows;
 });
+
+// A setup item in words: "3 × massive app server", or on PaaS "5 × app instance (15 CU each)".
+const UNIT: Record<ServerType, string> = { app: "CU", database: "DBU", cache: "CH", loadBalancer: "app servers" };
+const itemName = (i: { name: string; size: string; count: number; type: ServerType }) =>
+  i.type === "app" && i.name === "App instance" ? `${i.count} × app instance` : `${i.count} × ${i.size} ${i.name.toLowerCase()}`;
+const itemUnits = (i: { units: number; type: ServerType }) =>
+  i.type === "loadBalancer" ? `serves ${i.units} app servers` : `${formatCount(i.units)} ${UNIT[i.type]} each`;
+const quoteBuys = computed(() => (quote.value?.setupUpfront ?? 0) > 0);
+
+// During a move, both setups side by side: the old one still serving, and the new one being built.
+const oldSetup = computed(() => {
+  const servers = game.company?.servers ?? [];
+  return SERVER_TYPES.flatMap((type) =>
+    SERVER_SIZES.map((size) => {
+      const list = servers.filter((s) => s.type === type && s.size === size);
+      const first = list[0];
+      return first
+        ? { type, size, name: first.name, count: list.length, units: first.units, monthly: list.reduce((sum, s) => sum + s.monthlyCost, 0), onOrder: list.filter((s) => s.status === "pending" && s.paid !== null).length }
+        : null;
+    }),
+  ).filter((i) => i !== null);
+});
+const oldMonthly = computed(() => Math.round(oldSetup.value.reduce((sum, i) => sum + i.monthly, 0)));
+const newStatus = (i: SetupItem) => (i.upfront > 0 && i.daysLeft > 0 ? `Arrives in ${days(i.daysLeft)}` : "Ready for the switch");
 // Per-user fees are priced at today's users, so they're an estimate if users grow.
 const quotePerUser = computed(() =>
   [quote.value?.from, quote.value?.to].some(
@@ -131,6 +161,42 @@ async function startMigration() {
           <strong data-testid="migration-days-left">{{ days(game.migration.daysLeft) }}</strong>
         </span>
       </p>
+      <div class="setups" data-testid="migration-setups">
+        <section class="setup" aria-labelledby="old-setup-heading" data-testid="old-setup">
+          <h3 id="old-setup-heading">
+            Now: {{ game.modelName(game.migration.from) }}
+            <span class="muted">Serving until the switch</span>
+          </h3>
+          <ul v-if="oldSetup.length">
+            <li v-for="i in oldSetup" :key="`${i.type}-${i.size}`">
+              <span>{{ itemName(i) }}<span v-if="i.onOrder" class="muted"> ({{ i.onOrder }} on order)</span></span>
+              <span class="muted">{{ formatCash(i.monthly) }}/mo</span>
+            </li>
+          </ul>
+          <p v-else class="muted">No servers: the provider scales.</p>
+          <p class="setup-total">
+            <span>{{ oldSetup.length ? "Servers a month" : "" }}</span>
+            <strong v-if="oldSetup.length">{{ formatCash(oldMonthly) }}</strong>
+          </p>
+        </section>
+        <section class="setup new" aria-labelledby="new-setup-heading" data-testid="new-setup">
+          <h3 id="new-setup-heading">
+            Next: {{ game.modelName(game.migration.to) }}
+            <span class="muted">Being built, billed from day 1</span>
+          </h3>
+          <ul v-if="game.migration.setup.length">
+            <li v-for="i in game.migration.setup" :key="`${i.type}-${i.size}`" :data-setup-item="`${i.type}-${i.size}`">
+              <span>{{ itemName(i) }} <span class="muted">· {{ newStatus(i) }}</span></span>
+              <span class="muted">{{ formatCash(i.monthly) }}/mo</span>
+            </li>
+          </ul>
+          <p v-else class="muted">No servers: the provider scales.</p>
+          <p class="setup-total">
+            <span>{{ game.migration.setup.length ? "Servers a month" : "" }}</span>
+            <strong v-if="game.migration.setup.length" data-testid="new-setup-monthly">{{ formatCash(game.migration.setupMonthly) }}</strong>
+          </p>
+        </section>
+      </div>
       <p v-if="game.migration.overrunDays" class="overrun" role="status" data-testid="migration-overrun">
         <span class="badge">Overrun</span>
         <span>
@@ -140,7 +206,8 @@ async function startMigration() {
       </p>
       <p class="muted migration-note">
         It runs in the background: your staff aren't tied up. You stay on {{ game.modelName(game.migration.from) }}
-        until the move completes, paying for it and for {{ game.modelName(game.migration.to) }} at the same time.
+        until the move completes, paying for both setups at the same time. Then the new setup takes over, and your old
+        servers go: rentals cancelled, bought kit sold back at a loss.
       </p>
       <p v-if="addonsAtRisk.length" class="warn-text migration-note" data-testid="addons-at-risk">
         Your add-ons ({{ namesList(addonsAtRisk.map((f) => f.name)) }}) keep working, and keep being billed, until the
@@ -198,6 +265,45 @@ async function startMigration() {
             rebuild them, {{ rebuildDays }} developer-days in all. Until then, you lose their growth boost.
           </p>
         </div>
+        <table class="quote setup-table" data-testid="quote-setup">
+          <caption>
+            Your new setup
+            <span class="muted">
+              Built for you on the first day, sized to today's demand ({{ formatCount(quote.sizedFor.cu) }} CU,
+              {{ formatCount(quote.sizedFor.dbu) }} DBU) with {{ Math.round(100 * quote.headroom) }}% room to grow
+            </span>
+          </caption>
+          <thead v-if="quote.setup.length">
+            <tr>
+              <th scope="col">Item</th>
+              <th v-if="quoteBuys" scope="col" class="num">Up front</th>
+              <th scope="col" class="num">A month</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="i in quote.setup" :key="`${i.type}-${i.size}`" :data-setup-item="`${i.type}-${i.size}`">
+              <th scope="row">
+                {{ itemName(i) }}
+                <span class="muted">{{ itemUnits(i) }}</span>
+              </th>
+              <td v-if="quoteBuys">{{ formatCash(i.upfront) }}</td>
+              <td>{{ formatCash(i.monthly) }}</td>
+            </tr>
+            <tr v-if="!quote.setup.length">
+              <th scope="row" data-testid="quote-setup-none">
+                No servers to set up
+                <span class="muted">{{ game.modelName(quote.to) }} scales for you: you pay per user instead</span>
+              </th>
+            </tr>
+          </tbody>
+          <tfoot v-if="quote.setup.length">
+            <tr>
+              <th scope="row">New setup</th>
+              <td v-if="quoteBuys" data-testid="quote-setup-upfront">{{ formatCash(quote.setupUpfront) }}</td>
+              <td data-testid="quote-setup-monthly">{{ formatCash(quote.setupMonthly) }}</td>
+            </tr>
+          </tfoot>
+        </table>
         <table class="quote" data-testid="migration-quote">
           <caption>
             What it costs
@@ -231,8 +337,18 @@ async function startMigration() {
             {{ quote.overrun.minDays }}–{{ quote.overrun.maxDays }} extra days, with both providers billing for them.
           </li>
           <li v-if="quotePerUser">Per-user fees are priced at today's users, so they'll be more if you grow.</li>
+          <li v-if="quote.deliveryDays !== null" data-testid="quote-delivery">
+            The new kit takes {{ days(quote.deliveryDays) }} to arrive,
+            {{ quote.deliveryDays < quote.days ? `inside the ${quote.days}-day move` : "longer than the move: it serves once it arrives" }}.
+            Its power and upkeep start once it's in.
+          </li>
+          <li v-if="game.company.servers.length">
+            On the day you leave, your old servers go:
+            {{ quote.sellBack > 0 ? "bought kit is sold back at a loss" : "rentals are cancelled, billed only for the days you had them" }}.
+          </li>
+          <li v-if="quote.setup.length">Once you've switched, fine-tune the sizes here on Infrastructure.</li>
           <li>
-            Then {{ targetModel.name }} needs <strong>{{ targetModel.opsNeeded }}</strong> ops staff. You have
+            Then {{ targetModel.name }} needs <strong data-testid="quote-ops">{{ quote.opsNeeded }}</strong> ops staff. You have
             {{ game.company.ops }}.
           </li>
         </ul>

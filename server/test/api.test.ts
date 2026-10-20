@@ -1637,6 +1637,17 @@ describe("migration", () => {
     });
     // Kept across reloads.
     expect((await app.inject({ method: "GET", url })).json<CompanyView>().migration).toMatchObject({ to: "paas" });
+    // Both setups: the old VMs still serving, and the new one being built.
+    const both = (await app.inject({ method: "GET", url })).json<CompanyView>();
+    expect(both.servers.map((s) => [s.name, s.size])).toEqual([
+      ["App server", "medium"],
+      ["Database", "medium"],
+    ]);
+    expect(both.migration!.setup.map((s) => [s.name, s.size, s.count])).toEqual([
+      ["App instance", "medium", 1],
+      ["Managed database", "small", 1],
+    ]);
+    expect(both.migration!.setupMonthly).toBe(0);
 
     let body: ContinueResult | undefined;
     for (let day = 1; day <= 5; day++) body = await next();
@@ -1735,15 +1746,41 @@ describe("migration quote", () => {
       from: "iaas",
       to: "paas",
       days: 14,
+      // 2,000 shoppers need 1 CU and 1 DBU; with a quarter's headroom, one instance and a small database, free here.
+      setup: [
+        { type: "app", size: "medium", name: "App instance", count: 1, units: 15, upfront: 0, monthly: 0, daysLeft: 0 },
+        { type: "database", size: "small", name: "Managed database", count: 1, units: 15, upfront: 0, monthly: 0, daysLeft: 0 },
+      ],
+      sizedFor: { cu: 1.25, dbu: 1.25 },
+      headroom: 0.25,
+      setupUpfront: 0,
+      setupMonthly: 0,
+      opsNeeded: 1,
+      deliveryDays: null,
       upfrontCost: 100,
       doubleBilling: 14 * 10,
       proRata: 14 * 25,
       exitPenalty: 200,
+      sellBack: 0,
       total: 100 + 140 + 350 + 200,
       overrun: { chance: 0, minDays: 2, maxDays: 5 },
       lostAddons: [],
     });
     expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({ cash: 1000, migration: null });
+  });
+
+  it("itemises a bought setup: what each item costs up front and a month, and the delivery time", async () => {
+    const { quote } = await setup();
+    const onprem = (await quote("onprem")).json<MigrationQuoteView>();
+    const { price } = defaultConfig.models.onprem.servers!.purchase!;
+    const upkeep = defaultConfig.models.onprem.servers!.monthlyCost;
+    expect(onprem.setup).toEqual([
+      { type: "app", size: "small", name: "App server", count: 1, units: 10, upfront: price.app.small, monthly: upkeep.app!.small!, daysLeft: 10 },
+      { type: "database", size: "small", name: "Database", count: 1, units: 10, upfront: price.database.small, monthly: upkeep.database!.small!, daysLeft: 10 },
+    ]);
+    expect(onprem).toMatchObject({ setupUpfront: price.app.small + price.database.small, deliveryDays: 10 });
+    expect(onprem.upfrontCost).toBe(defaultConfig.models.onprem.upfrontCost + onprem.setupUpfront);
+    expect((await quote("saas")).json<MigrationQuoteView>()).toMatchObject({ setup: [], setupMonthly: 0 });
   });
 
   it("matches what continuing through the migration charges, with no overrun", async () => {

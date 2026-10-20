@@ -4,7 +4,7 @@ import type { EventToday, Events } from "./events.ts";
 import { count, pounds, risen } from "./finance.ts";
 import { vary } from "./rng.ts";
 import type { Servers, UnitCapacity, UnitsView } from "./servers.ts";
-import type { GameState, LogEntry, UnitDemand } from "./state.ts";
+import type { GameState, LogEntry, Server, UnitDemand } from "./state.ts";
 
 /** Demand rounded to the hundredth of a unit, so state stays tidy. */
 const tidy = (n: number) => Math.round(n * 100) / 100;
@@ -38,19 +38,31 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
   const opsNeeded = (model: ModelId) => servers.modelOpsNeeded(model);
 
   /**
-   * What adopting a model costs up front: its upfront cost and, on a model that buys its servers, the starter kit at
-   * its purchase prices. The model's upfront cost is the rest of the setup (the server room), so nothing is charged
-   * twice.
+   * What adopting a model costs up front: its upfront cost and, on a model that buys its servers, the kit at what it
+   * was bought for: a new company's starter kit, or the setup a migration builds there. The model's upfront cost is
+   * the rest of the setup (the server room), so nothing is charged twice.
    */
-  function upfrontEntries(modelId: ModelId): LogEntry[] {
+  function upfrontEntries(modelId: ModelId, setup?: Server[]): LogEntry[] {
     const { name, upfrontCost } = config.models[modelId];
     const model: LogEntry[] =
       upfrontCost === 0 ? [] : [{ text: `Upfront cost: ${name}`, cashDelta: -upfrontCost, category: "infrastructure" }];
-    return [...model, ...servers.starterPurchases(modelId)];
+    const kit = setup ? servers.kitEntries(modelId, setup, "New setup") : servers.starterPurchases(modelId);
+    return [...model, ...kit];
   }
 
-  /** Everything adopting a model costs up front. */
-  const upfrontCost = (modelId: ModelId) => -upfrontEntries(modelId).reduce((sum, e) => sum + e.cashDelta, 0);
+  /** Everything adopting a model costs up front, with its starter kit or a migration's setup. */
+  const upfrontCost = (modelId: ModelId, setup?: Server[]) =>
+    -upfrontEntries(modelId, setup).reduce((sum, e) => sum + e.cashDelta, 0);
+
+  /**
+   * The company's usual CU and DBU demand today: every user at the product's demand per user, before load variation,
+   * seasons and events. A migration sizes the setup it builds to this, plus headroom (see Servers.sizeSetupFor), so a
+   * traffic spike on the day it starts doesn't oversize it.
+   */
+  function usualDemand(state: GameState): UnitDemand {
+    const { cuPerUser, dbuPerUser } = config.productTypes[state.productType].demand;
+    return { cu: state.users * cuPerUser, dbu: state.users * dbuPerUser };
+  }
 
   /** A model's monthly and per-user prices, after any provider price rises. */
   function modelPrices(state: GameState, modelId: ModelId) {
@@ -63,7 +75,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
    * A model's running costs for some days: its monthly cost, plus its per-user cost on the given users, plus the rent
    * on its servers, each billed as days ÷ daysPerMonth of a month and rounded to the pound. Advance bills one day at a
    * time; billing part of a month (say when leaving a model) uses the same rule. Prices include any provider price
-   * rises. A model the company isn't on is priced with the starter setup it would get.
+   * rises. The model a migration is moving to is priced with the setup being built there (see Servers.serversOn).
    */
   function infrastructureEntries(state: GameState, modelId: ModelId, users: number, days = 1): LogEntry[] {
     const { name } = config.models[modelId];
@@ -267,6 +279,8 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     opsNeededNow: servers.opsNeeded,
     upfrontEntries,
     upfrontCost,
+    usualDemand,
+    sizeSetupFor: servers.sizeSetupFor,
     infrastructureEntries,
     dailyInfrastructure,
     monthlyInfrastructureCost,
