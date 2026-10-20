@@ -6,6 +6,8 @@ import fastifyStatic from "@fastify/static";
 import { and, asc, count, desc, eq, gte, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
   createSim,
+  GAME_STATE_VERSION,
+  isCurrentState,
   MIGRATION_PHASES,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
@@ -85,6 +87,9 @@ const CODE_PATTERN = /^\d{8}$/;
 /** SimError codes for a game that has ended, or that the student retired. */
 const GAME_OVER = new Set(["bankrupt", "finished", "retired"]);
 
+/** The SimError code for a game saved by an older version of the sim, which can't be loaded any more. */
+const OLD_VERSION = "old_version";
+
 type CompanyRow = typeof companies.$inferSelect;
 
 function sendError(reply: FastifyReply, status: number, error: string, message: string) {
@@ -139,8 +144,12 @@ export async function buildApp(opts: AppOptions) {
   }
 
   app.setErrorHandler((err, _req, reply) => {
-    // A bankrupt or finished game is over: the request was fine, but the game can't take it any more.
-    if (err instanceof SimError) return sendError(reply, GAME_OVER.has(err.code) ? 409 : 400, err.code, err.message);
+    // A bankrupt or finished game is over: the request was fine, but the game can't take it any more. A game from an
+    // older version is gone for good: it can't be loaded, so it can't be shown or played.
+    if (err instanceof SimError) {
+      const status = GAME_OVER.has(err.code) ? 409 : err.code === OLD_VERSION ? 410 : 400;
+      return sendError(reply, status, err.code, err.message);
+    }
     const { statusCode, message } = err as { statusCode?: number; message?: string };
     if (statusCode && statusCode < 500) return sendError(reply, statusCode, "bad_request", message ?? "Bad request.");
     app.log.error(err);
@@ -189,6 +198,9 @@ export async function buildApp(opts: AppOptions) {
     ...(state.status !== "playing" && { status: state.status }),
     state,
   });
+
+  /** Only games from this version, which can still be played, count towards a code's limit. */
+  const currentVersion = sql`(${companies.state}->>'version')::int = ${GAME_STATE_VERSION}`;
 
   async function findCode(code: string) {
     if (!CODE_PATTERN.test(code)) return undefined;
@@ -245,7 +257,8 @@ export async function buildApp(opts: AppOptions) {
       .from(companies)
       .where(eq(companies.loginCode, code.code))
       .orderBy(desc(companies.updatedAt));
-    return { code: code.code, companies: rows.map(view) } satisfies CodeView;
+    // Games from an older version can't be shown, so they're left out rather than breaking the whole list.
+    return { code: code.code, companies: rows.filter((r) => isCurrentState(r.state)).map(view) } satisfies CodeView;
   });
 
   app.post<{ Params: { code: string }; Body: NewCompanyBody }>(
@@ -272,7 +285,7 @@ export async function buildApp(opts: AppOptions) {
         const [counted] = await tx
           .select({ active: count() })
           .from(companies)
-          .where(and(eq(companies.loginCode, code.code), eq(companies.status, "active")));
+          .where(and(eq(companies.loginCode, code.code), eq(companies.status, "active"), currentVersion));
         if (counted!.active >= maxActiveCompanies) return undefined;
         const state = sim.newGame({ companyName: name, productType, model, seed: randomInt(2 ** 31) });
         const [inserted] = await tx
