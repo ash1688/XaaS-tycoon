@@ -13,3 +13,9 @@ export function nextRandom(state: number): [value: number, next: number] {
   t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
   return [((t ^ (t >>> 14)) >>> 0) / 4294967296, next];
 }
+
+/** A random factor of 1 ± spread, and the next RNG state. */
+export function vary(rng: number, spread: number): [factor: number, next: number] {
+  const [r, next] = nextRandom(rng);
+  return [1 + spread * (2 * r - 1), next];
+}

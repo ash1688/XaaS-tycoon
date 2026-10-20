@@ -112,6 +112,23 @@ npm run typecheck
 
 The first time you run the e2e tests, install the browser with `npx playwright install chromium`.
 
+## Old saved games
+
+Saved games are stored with a game-state version, and only games from the current version load. Older ones aren't upgraded: opening, continuing or acting on one shows "This game is from an older version", and it's left out of the student's list of companies. The teacher's dashboard still lists it, so it can be deleted there.
+
+Round two (from issue #41) bumped the version, so a local database from before then holds games that won't load. Clear them out by emptying the companies table:
+
+```bash
+docker compose exec db psql -U xaas -d xaas -c "truncate companies"
+```
+
+or start the database again from scratch, which also deletes login codes:
+
+```bash
+docker compose down -v
+npm run db:up
+```
+
 ## Database changes
 
 Edit `server/src/db/schema.ts`, then generate a migration:

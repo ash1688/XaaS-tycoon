@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createSim,
   defaultConfig,
+  GAME_STATE_VERSION,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
   responsibilityStack,
@@ -12,10 +13,6 @@ import {
   type EventConfig,
   type GameConfig,
   type GameState,
-  type GameStateV4,
-  type GameStateV5,
-  type GameStateV6,
-  type GameStateV7,
   type LogEntry,
   type Sim,
 } from "../src/index.ts";
@@ -119,6 +116,38 @@ describe("newGame", () => {
   it("produces JSON-serialisable state", () => {
     const state = start();
     expect(JSON.parse(JSON.stringify(state))).toEqual(state);
+  });
+});
+
+describe("games from an older version", () => {
+  // A game saved by the alpha, before the clean break. Old games are refused, not upgraded.
+  const old = () => ({ ...JSON.parse(JSON.stringify(start())), version: GAME_STATE_VERSION - 1 }) as GameState;
+
+  it("are refused by every method that takes saved state", () => {
+    for (const attempt of [
+      () => sim.load(old()),
+      () => sim.advance(old()),
+      () => sim.applyAction(old(), { type: "hire", pool: "developers" }),
+      () => sim.migrationQuote(old(), "paas"),
+      () => sim.summarise(old()),
+      () => sim.capacity(old()),
+      () => sim.features(old()),
+    ]) {
+      expect(attempt).toThrow(SimError);
+      expect(attempt).toThrow(expect.objectContaining({ code: "old_version" }));
+      expect(attempt).toThrow(/older version/);
+    }
+  });
+
+  it("are refused when the saved state isn't a game at all", () => {
+    for (const saved of [null, "state", 9, {}, { version: "9" }]) {
+      expect(() => sim.load(saved)).toThrow(expect.objectContaining({ code: "old_version" }));
+    }
+  });
+
+  it("while a game from this version loads as it was saved", () => {
+    const state = JSON.parse(JSON.stringify(start()));
+    expect(sim.load(state)).toEqual(start());
   });
 });
 
@@ -512,89 +541,6 @@ describe("SaaS add-ons", () => {
     sim.advance(sim.applyAction(before, buy("checkout")), 3);
     expect(before).toEqual(copy);
   });
-
-  it("can buy add-ons on a game saved before features existed", () => {
-    const { features: _, ...rest } = startOn();
-    const v4: GameStateV4 = { ...rest, version: 4 };
-    expect(feature(sim.applyAction(v4, buy("checkout")), "checkout").status).toBe("addon");
-  });
-});
-
-describe("state saved before features existed (version 4)", () => {
-  const v4 = () => {
-    const { features: _f, ...rest } = JSON.parse(JSON.stringify(sim.advance(start(), 4).state));
-    return { ...rest, version: 4 } as GameStateV4;
-  };
-
-  it("loads with no features started and keeps everything else", () => {
-    const state = sim.load(v4());
-    expect(state).toEqual({ ...sim.advance(start(), 4).state, version: 8, features: {} });
-    expect(sim.features(state).every((f) => f.status === "notStarted")).toBe(true);
-  });
-
-  it("can start a build and advance", () => {
-    const state = sim.applyAction({ ...v4(), developers: 6 }, { type: "buildFeature", feature: "checkout" });
-    expect(sim.advance(state).state.features).toEqual({ checkout: { status: "built", progress: 6 } });
-  });
-});
-
-describe("state saved before staff existed (version 1)", () => {
-  // A version 1 save, exactly as the server stored it before this change.
-  const v1 = () =>
-    JSON.parse(
-      '{"version":1,"companyName":"Acme","productType":"ecommerce","model":"iaas","day":5,"cash":920,"rng":12345}',
-    );
-
-  it("loads with no staff, starting users and the current version", () => {
-    expect(sim.load(v1())).toEqual({
-      ...v1(),
-      version: 8,
-      status: "playing",
-      developers: 0,
-      ops: 0,
-      users: 1000,
-      load: 1000,
-      outageDays: 0,
-      downtimeHours: 0,
-      spend: { staff: 0, infrastructure: 0, addons: 0 },
-      spendByDay: [],
-      features: {},
-      migration: null,
-      migrations: 0,
-      schedule: [],
-      events: [],
-      priceRises: {},
-      addonPriceRise: 1,
-      featureGaps: [],
-    });
-  });
-
-  it("still advances, charging only the model's running cost", () => {
-    const { state } = sim.advance(v1());
-    expect(state).toMatchObject({ version: 8, day: 6, cash: 900, developers: 0, ops: 0 });
-  });
-
-  it("accepts actions", () => {
-    expect(sim.applyAction(v1(), { type: "hire", pool: "developers" })).toMatchObject({ version: 8, developers: 1 });
-    expect(() => sim.applyAction(v1(), { type: "letGo", pool: "ops" })).toThrow(SimError);
-  });
-});
-
-describe("state saved before users existed (version 2)", () => {
-  const v2 = () =>
-    JSON.parse(
-      '{"version":2,"companyName":"Acme","productType":"video","model":"iaas","day":5,"cash":920,"rng":12345,"developers":1,"ops":2}',
-    );
-
-  it("keeps its staff and picks up with the product's starting users and full uptime", () => {
-    const state = sim.load(v2());
-    expect(state).toMatchObject({ version: 8, developers: 1, ops: 2, users: 1000, load: 5000, outageDays: 0 });
-    expect(sim.uptime(state)).toBe(100);
-  });
-
-  it("grows users on advance", () => {
-    expect(sim.advance(v2(), 5).state.users).toBeGreaterThan(1000);
-  });
 });
 
 describe("users and growth", () => {
@@ -890,27 +836,6 @@ describe("bankruptcy", () => {
   });
 });
 
-describe("state saved before the ledger existed (version 3)", () => {
-  const v3 = (cash = 920) => ({ ...JSON.parse(JSON.stringify(start())), version: 3, day: 5, cash }) as Record<string, unknown>;
-  const withoutLedger = (state: Record<string, unknown>) => {
-    const { status: _s, spend: _sp, spendByDay: _d, ...rest } = state;
-    return rest as unknown as Parameters<typeof sim.load>[0];
-  };
-
-  it("keeps playing with spend counted from now on", () => {
-    const state = sim.load(withoutLedger(v3()));
-    expect(state).toMatchObject({ version: 8, status: "playing", day: 5, cash: 920, spendByDay: [] });
-    expect(state.spend).toEqual({ staff: 0, infrastructure: 0, addons: 0 });
-    expect(sim.advance(state).state).toMatchObject({ cash: 900, spend: { infrastructure: 20 } });
-  });
-
-  it("loads a game already in debt as bankrupt", () => {
-    const saved = withoutLedger(v3(-50));
-    expect(sim.load(saved).status).toBe("bankrupt");
-    expect(() => sim.advance(saved)).toThrow(SimError);
-  });
-});
-
 describe("game end and summary", () => {
   // A 30-day game, with cash for two migrations. IaaS costs 20 a day and £100 upfront; PaaS 30 a day.
   const shortConfig: GameConfig = {
@@ -1057,16 +982,6 @@ describe("game end and summary", () => {
     const summary = s.summarise(s.advance(begin(), 5).state);
     expect(summary).toMatchObject({ ending: null, day: 6 });
     expect(summary.days).toHaveLength(6);
-  });
-
-  it("summarises a game saved before the ledger existed with the days it has", () => {
-    const { status: _s, spend: _sp, spendByDay: _d, ...rest } = JSON.parse(JSON.stringify(s.advance(begin(), 4).state));
-    const old = { ...rest, version: 3 } as Parameters<typeof s.load>[0];
-    const { state } = s.advance(old, 3);
-    const summary = s.summarise(state);
-    expect(summary.days.map((d) => d.day)).toEqual([6, 7, 8]);
-    expect(summary.days.at(-1)!.cash).toBe(summary.cash);
-    expect(summary.totalSpend).toBe(60);
   });
 
   it("is deterministic and JSON-serialisable", () => {
@@ -1525,11 +1440,6 @@ describe("migration costs", () => {
       s.migrationQuote(state, "paas");
       expect(state).toEqual(start());
     });
-
-    it("quotes from older saved state", () => {
-      const { migration: _m, migrations: _n, ...rest } = start();
-      expect(s.migrationQuote({ ...rest, version: 5 } as GameStateV5, "paas").total).toBe(1050);
-    });
   });
 });
 
@@ -1658,13 +1568,6 @@ describe("leaving SaaS (vendor lock-in)", () => {
     const saved = JSON.parse(JSON.stringify(leave(withAddons(), 9).state));
     expect(sim.advance(saved, 11).state).toEqual(leave(withAddons(), 20).state);
   });
-
-  it("quotes and loses add-ons from state saved before migration existed (version 5)", () => {
-    const { migration: _m, migrations: _n, ...rest } = withAddons();
-    const v5 = { ...rest, version: 5 } as GameStateV5;
-    expect(sim.migrationQuote(v5, "paas").lostAddons.map((a) => a.id)).toEqual(["checkout", "reviews"]);
-    expect(leave(sim.load(v5)).state.features).toEqual({});
-  });
 });
 
 describe("moving staff between pools", () => {
@@ -1686,23 +1589,6 @@ describe("moving staff between pools", () => {
   it("pays each person their new pool's day rate", () => {
     const { log } = sim.advance(sim.applyAction({ ...start(), developers: 2 }, moveTo("ops")));
     expect(log[0]!.entries.filter((e) => e.category === "staff").map((e) => e.cashDelta)).toEqual([-7, -3]);
-  });
-});
-
-describe("state saved before migration existed (version 5)", () => {
-  const v5 = () => {
-    const { migration: _m, migrations: _n, ...rest } = JSON.parse(JSON.stringify(sim.advance(start(), 4).state));
-    return { ...rest, version: 5 } as GameStateV5;
-  };
-
-  it("loads with no migration and none made, and keeps everything else", () => {
-    expect(sim.load(v5())).toEqual(sim.advance(start(), 4).state);
-    expect(sim.migration(v5())).toBeNull();
-  });
-
-  it("can start a migration and advance", () => {
-    const state = sim.applyAction(v5(), { type: "startMigration", model: "paas" });
-    expect(sim.advance(state, 14).state).toMatchObject({ version: 8, model: "paas", migrations: 1 });
   });
 });
 
@@ -1950,28 +1836,10 @@ describe("scripted events", () => {
     expect(s.events(state)[0]).toMatchObject({ model: "iaas", owner: "you", hit: true });
     expect(state.outageDays).toBe(1);
   });
-
-  describe("state saved before events existed (version 6)", () => {
-    const s = withEvents({ ...patch, schedule: { type: "fixed", days: [2, 8] } });
-    const v6 = () => {
-      const saved = JSON.parse(JSON.stringify(quiet.advance(begin(quiet, "paas"), 4).state));
-      const { schedule: _s, events: _e, ...rest } = saved;
-      return { ...rest, version: 6 } as GameStateV6;
-    };
-
-    it("loads with the events still to come, and none on the day just played", () => {
-      expect(s.load(v6())).toMatchObject({ version: 8, day: 5, schedule: [{ event: "patch", day: 8 }], events: [] });
-      expect(s.events(v6())).toEqual([]);
-    });
-
-    it("fires those events as it advances", () => {
-      expect(eventDays(s.advance(v6(), 5).log)).toEqual([8]);
-    });
-  });
 });
 
 describe("provider events and the SaaS feature gap", () => {
-  // The ids of the default events, so a version 7 save schedules them.
+  // The ids of the default events.
   const priceRise: EventConfig = {
     id: "providerPriceRise",
     name: "Provider price rise",
@@ -2190,30 +2058,6 @@ describe("provider events and the SaaS feature gap", () => {
     const seeded = (e: EventConfig, fromDay: number) => ({ ...e, schedule: { type: "seeded" as const, count: 1, fromDay, toDay: 20 } });
     const s = withEvents(seeded(priceRise, 2), seeded(outage, 2), seeded(gap, 2));
     for (const model of MODEL_IDS) expect(play(s, model, 25)).toEqual(play(s, model, 25));
-  });
-
-  describe("state saved before these events existed (version 7)", () => {
-    const s = withEvents({ ...priceRise, schedule: { type: "fixed", days: [2, 8] } });
-    const v7 = () => {
-      const saved = JSON.parse(JSON.stringify(quiet.advance(begin(quiet, "paas"), 4).state));
-      const { priceRises: _p, addonPriceRise: _a, featureGaps: _f, ...rest } = saved;
-      return { ...rest, version: 7 } as GameStateV7;
-    };
-
-    it("loads with these events still to come, and no price rises or gaps", () => {
-      expect(s.load(v7())).toMatchObject({
-        version: 8,
-        day: 5,
-        schedule: [{ event: "providerPriceRise", day: 8 }],
-        priceRises: {},
-        addonPriceRise: 1,
-        featureGaps: [],
-      });
-    });
-
-    it("fires them as it advances", () => {
-      expect(s.monthlyInfrastructureCost(s.advance(v7(), 5).state)).toBe(1350);
-    });
   });
 });
 

@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
-import { createSim, defaultConfig } from "@xaas/sim";
+import { createSim, defaultConfig, GAME_STATE_VERSION } from "@xaas/sim";
 import { buildApp } from "../src/app.ts";
 import { companies } from "../src/db/schema.ts";
 import type {
@@ -418,14 +418,44 @@ describe("staff actions", () => {
     await Promise.all(Array.from({ length: 5 }, () => act({ type: "hire", pool: "developers" })));
     expect((await app.inject({ method: "GET", url })).json<CompanyView>().developers).toBe(5);
   });
+});
 
-  it("shows a game saved before staff existed with no staff", async () => {
+describe("games from an older version", () => {
+  async function setup() {
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    // As the alpha saved it, before the clean break.
+    await testDb.db.execute(
+      sql`update companies set state = jsonb_set(state, '{version}', ${String(GAME_STATE_VERSION - 1)}::jsonb) where id = ${company.id}`,
+    );
+    return { code, company, url };
+  }
+
+  it("are refused with a clear message when loading, continuing, acting, quoting or summarising", async () => {
     const { company, url } = await setup();
-    const v1 = { version: 1, companyName: "Acme", productType: "ecommerce", model: "iaas", day: 3, cash: 950, rng: 1 };
-    await testDb.db.execute(sql`update companies set state = ${JSON.stringify(v1)}::jsonb where id = ${company.id}`);
-    expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({ day: 3, developers: 0, ops: 0 });
-    const res = await app.inject({ method: "POST", url: `${url}/continue` });
-    expect(res.json<ContinueResult>().company).toMatchObject({ day: 4, cash: 925 });
+    const cookies = await teacherCookie();
+    for (const res of [
+      await app.inject({ method: "GET", url }),
+      await app.inject({ method: "POST", url: `${url}/continue` }),
+      await app.inject({ method: "POST", url: `${url}/actions`, payload: { type: "hire", pool: "developers" } }),
+      await app.inject({ method: "GET", url: `${url}/migration-quote?target=paas` }),
+      await app.inject({ method: "GET", url: `${url}/summary` }),
+      await app.inject({ method: "GET", url: `/api/teacher/companies/${company.id}/summary`, cookies }),
+    ]) {
+      expect(res.statusCode).toBe(410);
+      expect(res.json()).toMatchObject({ error: "old_version", message: expect.stringContaining("This game is from an older version") });
+    }
+  });
+
+  it("are left out of the code's companies, and don't count towards its limit", async () => {
+    const { code } = await setup();
+    expect((await app.inject({ method: "GET", url: `/api/codes/${code}` })).json<{ companies: unknown[] }>().companies).toEqual([]);
+    for (const name of ["One", "Two", "Three"]) {
+      expect((await newCompany(code, { name, productType: "ecommerce", model: "iaas" })).statusCode).toBe(201);
+    }
+    const list = (await app.inject({ method: "GET", url: `/api/codes/${code}` })).json<{ companies: CompanyView[] }>();
+    expect(list.companies.map((c) => c.name).sort()).toEqual(["One", "Three", "Two"]);
   });
 });
 
@@ -496,30 +526,6 @@ describe("users, capacity and uptime", () => {
     } finally {
       await tightApp.close();
     }
-  });
-
-  it("shows a game saved before users existed with the product's starting users", async () => {
-    const { company, url } = await setup();
-    const v2 = {
-      version: 2,
-      companyName: "Acme",
-      productType: "social",
-      model: "iaas",
-      day: 3,
-      cash: 950,
-      rng: 1,
-      developers: 0,
-      ops: 2,
-    };
-    await testDb.db.execute(sql`update companies set state = ${JSON.stringify(v2)}::jsonb where id = ${company.id}`);
-    expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({
-      day: 3,
-      ops: 2,
-      users: defaultConfig.productTypes.social.growth.startingUsers,
-      uptime: 100,
-    });
-    const res = await app.inject({ method: "POST", url: `${url}/continue` });
-    expect(res.json<ContinueResult>().company.day).toBe(4);
   });
 });
 
@@ -1074,16 +1080,6 @@ describe("features", () => {
     expect(res.statusCode).toBe(404);
     expect(res.json()).toMatchObject({ error: "unknown_company" });
   });
-
-  it("shows a game saved before features existed with none started", async () => {
-    const { company, url } = await setup();
-    const [row] = await testDb.db.select().from(companies).where(eq(companies.id, company.id));
-    const { features: _f, ...v4 } = { ...row!.state, version: 4 };
-    await testDb.db.execute(sql`update companies set state = ${JSON.stringify(v4)}::jsonb where id = ${company.id}`);
-    const loaded = (await app.inject({ method: "GET", url })).json<CompanyView>();
-    expect(loaded.features.every((f) => f.status === "notStarted")).toBe(true);
-    expect((await app.inject({ method: "POST", url: `${url}/continue` })).statusCode).toBe(200);
-  });
 });
 
 describe("SaaS add-ons", () => {
@@ -1272,16 +1268,6 @@ describe("migration", () => {
     expect(res.statusCode).toBe(404);
     expect(res.json()).toMatchObject({ error: "unknown_company" });
     expect((await app.inject({ method: "GET", url })).json<CompanyView>().migration).toBeNull();
-  });
-
-  it("shows a game saved before migration existed with none running", async () => {
-    const { company, url } = await setup();
-    const [row] = await testDb.db.select().from(companies).where(eq(companies.id, company.id));
-    const { migration: _m, migrations: _n, ...v5 } = { ...row!.state, version: 5 };
-    await testDb.db.execute(sql`update companies set state = ${JSON.stringify(v5)}::jsonb where id = ${company.id}`);
-    const loaded = (await app.inject({ method: "GET", url })).json<CompanyView>();
-    expect(loaded).toMatchObject({ migration: null, migrations: 0 });
-    expect((await app.inject({ method: "POST", url: `${url}/actions`, payload: toPaas })).statusCode).toBe(200);
   });
 });
 
