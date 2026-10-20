@@ -185,6 +185,18 @@ const alerts = computed(() => {
           Infrastructure {{ formatCash(game.company.monthlyInfrastructureCost) }} a month, staff
           {{ formatCash(game.company.dailyStaffCost) }} a day.
         </p>
+        <p class="muted" data-testid="home-loan">
+          <template v-if="game.company.loan?.remaining">
+            Includes a {{ formatCash(game.company.loan.amount) }} bank loan:
+            <strong>{{ formatCash(game.company.loan.dailyRepayment) }}</strong> a day to repay until day
+            {{ game.company.finalDay }}, {{ formatCash(game.company.loan.remaining) }} left.
+          </template>
+          <template v-else-if="game.company.loan">Bank loan repaid in full.</template>
+          <template v-else-if="game.company.loanQuote">
+            No bank loan. You can borrow {{ formatCash(game.company.loanQuote.amount) }} on Finance.
+          </template>
+          <template v-else>No bank loan.</template>
+        </p>
         <template #detail>
           <SpendPanel />
           <p class="modal-link"><RouterLink :to="page('finance')">Open Finance</RouterLink></p>

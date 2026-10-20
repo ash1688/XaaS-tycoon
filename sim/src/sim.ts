@@ -3,8 +3,9 @@ import { createConversion, type ConversionView } from "./conversion.ts";
 import { createCustomers } from "./customers.ts";
 import { createEvents, type EventView, type FeatureGapView } from "./events.ts";
 import { createFeatures, type FeatureView } from "./features.ts";
-import { createFinance, noSpend } from "./finance.ts";
+import { createFinance, noSpend, pounds } from "./finance.ts";
 import { createInfrastructure, type ProviderView } from "./infrastructure.ts";
+import { createLoan, type LoanQuote, type LoanView } from "./loan.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
 import { isNameAllowed } from "./nameFilter.ts";
 import { createPricing, type PricePreview, type PriceWaveView } from "./pricing.ts";
@@ -34,6 +35,7 @@ export type { ConversionDriver, ConversionDriverId, ConversionView } from "./con
 export type { EventView, FeatureGapView } from "./events.ts";
 export type { FeatureStatus, FeatureView } from "./features.ts";
 export type { ProviderView } from "./infrastructure.ts";
+export type { LoanQuote, LoanView } from "./loan.ts";
 export type { LostAddon, MigrationQuote, MigrationView } from "./migration.ts";
 export type { PricePreview, PriceWaveView } from "./pricing.ts";
 export type {
@@ -68,6 +70,7 @@ export {
   type GameEnding,
   type GameState,
   type GameStatus,
+  type Loan,
   type LogEntry,
   type Migration,
   type NewGameParams,
@@ -170,6 +173,15 @@ export interface Sim {
   uptime(state: GameState): number;
   /** The product's features, in config order, with each one's progress. */
   features(state: GameState): FeatureView[];
+  /** The bank loan once taken, with what's left to repay and the repayments left, or null. */
+  loan(state: GameState): LoanView | null;
+  /**
+   * What taking the bank loan now would cost: amount, rate, interest, total repaid, the daily repayment and the days
+   * to repay it. Null when it can't be taken: one has been, or there are too few days left.
+   */
+  loanQuote(state: GameState): LoanQuote | null;
+  /** The terms a new game gets if it takes the loan at the start: the best there are. */
+  startLoanQuote(): LoanQuote;
   /** The migration under way, or null. */
   migration(state: GameState): MigrationView | null;
   /**
@@ -198,8 +210,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   const staff = createStaff(config);
   const migration = createMigration(config, infra, features, events, servers);
   const summary = createSummary(config, infra);
+  const loan = createLoan(config, finance);
 
-  function newGame({ companyName, productType, model, seed }: NewGameParams): GameState {
+  function newGame({ companyName, productType, model, seed, takeLoan = false }: NewGameParams): GameState {
     const name = companyName.trim();
     if (!name) throw new SimError("name_required", "Enter a company name.");
     if (name.length > config.maxCompanyNameLength) {
@@ -235,13 +248,28 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       features: {},
       migration: null,
       migrations: 0,
+      loan: null,
       schedule,
       events: [],
       priceRises: {},
       addonPriceRise: 1,
       featureGaps: [],
     };
-    return finance.settle(state, 1, infra.upfrontEntries(model)).state;
+    // The loan arrives with the upfront bill. A model that costs more up front than the company has would bankrupt it
+    // on day 1, so it's refused instead: on-prem needs the loan.
+    const borrowed = takeLoan ? loan.startLoan(state) : { state, entries: [] };
+    const upfront = infra.upfrontEntries(model);
+    const cost = -upfront.reduce((sum, e) => sum + e.cashDelta, 0);
+    const cash = config.startingCash + (borrowed.state.loan?.amount ?? 0);
+    if (cost > cash) {
+      const advice = `${takeLoan ? "Pick" : "Take the bank loan, or pick"} a model that costs less to start.`;
+      throw new SimError(
+        "cant_afford",
+        `${config.models[model].name} costs ${pounds(cost)} up front, and you'd start with ${pounds(cash)}. ${advice}`,
+        { cost, cash },
+      );
+    }
+    return finance.settle(borrowed.state, 1, [...borrowed.entries, ...upfront]).state;
   }
 
   /** Refuses a game from an older version, then ends one played under a config with more days than this one has. */
@@ -298,6 +326,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         return servers.setInstances(state, action.count);
       case "setManagedService":
         return servers.setManagedService(state, action.service, action.size);
+      case "takeLoan":
+        return loan.takeLoan(state);
       default:
         throw new SimError("unknown_action", "That action isn't recognised.");
     }
@@ -333,6 +363,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     // the model being left is billed pro rata up to the day you leave. During a migration the new model is billed as
     // well (see migrationCharges).
     const recorded = events.record(state, today, served.overloaded);
+    // The loan is repaid every day, whatever else happens.
+    const repayment = loan.repaymentDay(state, day);
     // Income comes from the users paying at the start of the day, at today's price, like the per-user fees.
     const entries: LogEntry[] = [
       ...recorded.entries,
@@ -348,6 +380,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       ...staff.staffEntries(state),
       ...served.charges,
       ...events.costEntries(today),
+      ...repayment.entries,
     ];
     const played: GameState = {
       ...state,
@@ -370,6 +403,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       recentHoursDown: conversion.recentHoursDownAfter(state, served.hoursDown),
       conversionsToday: converted.conversionsToday,
       conversions: state.conversions + converted.conversionsToday,
+      loan: repayment.loan,
     };
     // The migration moves on after the day is played and billed, so a model switch takes effect from tomorrow.
     const migrated = migration.migrationDay(played);
@@ -422,6 +456,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     conversion: (s) => conversion.conversion(load(s)),
     uptime: (s) => infra.uptime(load(s)),
     features: (s) => features.features(load(s)),
+    loan: (s) => loan.loanView(load(s)),
+    loanQuote: (s) => loan.loanQuote(load(s)),
+    startLoanQuote: () => loan.termsOn(1),
     migration: (s) => migration.migration(load(s)),
     migrationQuote: (s, target) => migration.migrationQuote(load(s), target),
     events: (s) => events.events(load(s)),

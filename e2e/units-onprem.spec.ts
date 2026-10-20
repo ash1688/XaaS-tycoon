@@ -15,7 +15,8 @@ test("on-prem, buying a server charges it up front and shows it on order, counti
   const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
 
   const created = await request.post(`/api/codes/${code}/companies`, {
-    data: { name: "Kit Ltd", productType: "social", model: "onprem" },
+    // On-prem's kit costs more than the starting cash, so it takes the bank loan.
+    data: { name: "Kit Ltd", productType: "social", model: "onprem", takeLoan: true },
   });
   const { id, cash } = await created.json();
 

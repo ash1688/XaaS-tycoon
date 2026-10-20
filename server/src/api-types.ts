@@ -10,6 +10,8 @@ import type {
   FeatureGapView,
   FeatureView,
   GameSummary,
+  LoanQuote,
+  LoanView,
   ManagedView,
   MigrationPhase,
   MigrationQuote,
@@ -91,6 +93,11 @@ export interface MetaView {
   cacheableShare: number;
   /** A migration's phases in order, and how long each takes before any overrun. */
   migrationPhases: { id: MigrationPhase; name: string; days: number }[];
+  /**
+   * The bank loan's terms if it's taken when the game starts, the best there are: amount, rate, interest, total
+   * repaid, the daily repayment and the days to repay it.
+   */
+  startLoan: LoanQuote;
 }
 
 /**
@@ -206,8 +213,18 @@ export interface CompanyView {
   monthlyInfrastructureCost: number;
   /** What the active add-ons cost per month at today's users. */
   monthlyAddonCost: number;
-  /** Total spent so far in each category. */
+  /** Total spent so far in each category. Debt is the bank loan's repayments. */
   spend: Spend;
+  /**
+   * The bank loan once taken (kept once repaid), or null: amount, the day it was taken, rate, daily repayment, total,
+   * repaid so far, what's left to repay and the repayments left.
+   */
+  loan: LoanView | null;
+  /**
+   * What taking the bank loan now would cost, to show before accepting: amount, rate, interest, total repaid, the daily
+   * repayment and the days to repay it. Null when it can't be taken: one has been, or there are too few days left.
+   */
+  loanQuote: LoanQuote | null;
   /** The product's features, with each one's status (built, building or a SaaS add-on) and build progress. */
   features: FeatureView[];
   /**
@@ -260,6 +277,8 @@ export interface NewCompanyBody {
   name: string;
   productType: string;
   model: string;
+  /** Take the bank loan at the start, on the terms in MetaView.startLoan. */
+  takeLoan?: boolean;
 }
 
 export type ActionBody = Action;

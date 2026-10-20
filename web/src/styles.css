@@ -19,6 +19,9 @@
   --shared-soft: #f1eafe;
   --warn: #b42318;
   --warn-soft: #fdeceb;
+  /* The bank's: debt */
+  --debt: #a16207;
+  --debt-soft: #fdf6dd;
   color-scheme: light;
 }
 
@@ -43,6 +46,8 @@
     --shared-soft: #2a2140;
     --warn: #ff9b91;
     --warn-soft: #3a1b1b;
+    --debt: #facc15;
+    --debt-soft: #352d10;
     color-scheme: dark;
   }
 }
@@ -403,6 +408,59 @@ fieldset > p {
 .cat-addons {
   --cat: var(--shared);
   --cat-soft: var(--shared-soft);
+}
+
+/* Debt is the bank's: loan repayments. */
+.cat-debt {
+  --cat: var(--debt);
+  --cat-soft: var(--debt-soft);
+}
+
+.loan-bar {
+  height: 0.6rem;
+  margin: 0.75rem 0;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--cat-soft);
+}
+
+.loan-bar span {
+  display: block;
+  height: 100%;
+  background: var(--cat);
+}
+
+.loan-panel h2 {
+  border-left: 4px solid var(--cat);
+  padding-left: 0.6rem;
+}
+
+.loan-option {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.loan-option.on {
+  border-color: var(--debt);
+  background: var(--debt-soft);
+}
+
+.loan-option input {
+  width: auto;
+  margin-top: 0.3rem;
+}
+
+.loan-option strong,
+.loan-option .muted {
+  display: block;
+}
+
+.loan-terms {
+  margin-top: 0.75rem;
 }
 
 .spend-bar {

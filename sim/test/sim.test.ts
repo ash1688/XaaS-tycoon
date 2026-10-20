@@ -159,6 +159,8 @@ const config: GameConfig = {
   },
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25 },
   billing: { daysPerMonth: 30 },
+  // Taken at the start: £17,900 at 10%, £19,690 over 179 days, £110 a day.
+  loan: { amount: 17_900, baseRate: 0.1, ratePerDay: 0.002, minDays: 14 },
   // No price waves unless a test says otherwise, so a price change only has its ongoing effect on growth and payers.
   pricing: {
     maxPrice: 1_000,
@@ -196,6 +198,10 @@ const config: GameConfig = {
 };
 
 const sim = createSim(config);
+
+// The default numbers with the starting cash they had before the bank loan, for tests of how the defaults play: they
+// check the mechanics, not whether the money lasts, which the balance pass (#55) settles.
+const roomyDefaults: GameConfig = { ...defaultConfig, startingCash: 250_000 };
 
 /**
  * A config whose IaaS starter app server carries this much load at 1 a user: its CU is load ÷ 100, at 0.01 CU a user.
@@ -1357,8 +1363,12 @@ describe("servers on-prem", () => {
     expect(s.opsNeeded("onprem")).toBeGreaterThan(s.opsNeeded("iaas"));
     expect(onprem.servers!.readyDays).toBe(10);
     for (const p of PRODUCT_TYPE_IDS) {
-      const state = s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1 });
-      expect(state.cash).toBe(defaultConfig.startingCash - 34_800);
+      // Starting cash alone doesn't cover it: the bank loan does.
+      expect(() => s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1 })).toThrow(
+        expect.objectContaining({ code: "cant_afford" }),
+      );
+      const state = s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1, takeLoan: true });
+      expect(state.cash).toBe(defaultConfig.startingCash + defaultConfig.loan.amount - 34_800);
       expect(s.units({ ...state, ops: s.opsNeeded("onprem") })!.usersSupported, p).toBeGreaterThan(state.users * 2);
     }
     // Every bought server sells back at a loss, and costs more up front than a month's rent of the same VM.
@@ -1684,7 +1694,7 @@ describe("PaaS and SaaS leave on-prem and IaaS alone", () => {
   });
 
   it("plays on-prem and IaaS identically, on the test config and the default one", () => {
-    for (const base of [config, defaultConfig]) {
+    for (const base of [config, roomyDefaults]) {
       const now = createSim(base);
       const before = createSim(fixed(base));
       for (const model of ["onprem", "iaas"]) {
@@ -1836,8 +1846,8 @@ describe("ledger", () => {
     const s = withModel({ upfrontCost: 50 });
     const { state } = s.advance(s.applyAction(startOn(s), { type: "hire", pool: "ops" }), 4);
     expect(state.spendByDay).toEqual([
-      { day: 1, staff: 0, infrastructure: 50, addons: 0, income: 0 },
-      ...[2, 3, 4, 5].map((day) => ({ day, staff: 3, infrastructure: 20, addons: 0, income: 0 })),
+      { day: 1, staff: 0, infrastructure: 50, addons: 0, debt: 0, income: 0, borrowed: 0 },
+      ...[2, 3, 4, 5].map((day) => ({ day, staff: 3, infrastructure: 20, addons: 0, debt: 0, income: 0, borrowed: 0 })),
     ]);
     for (const c of SPEND_CATEGORIES) {
       expect(state.spendByDay.reduce((sum, d) => sum + d[c], 0)).toBe(state.spend[c]);
@@ -1894,11 +1904,172 @@ describe("bankruptcy", () => {
     expect(sim.advance(start(), 100)).toEqual(sim.advance(start(), 100));
   });
 
-  it("starts bankrupt if the upfront cost is more than the starting cash", () => {
+  it("refuses to start on a model that costs more up front than the starting cash, unless the loan covers it", () => {
     const s = createSim({ ...config, models: { ...config.models, iaas: { ...config.models.iaas, upfrontCost: 1001 } } });
-    const state = s.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 1 });
-    expect(state).toMatchObject({ cash: -1, status: "bankrupt" });
-    expect(() => s.advance(state)).toThrow(expect.objectContaining({ code: "bankrupt" }));
+    const attempt = () => s.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 1 });
+    expect(attempt).toThrow(expect.objectContaining({ code: "cant_afford", details: { cost: 1001, cash: 1000 } }));
+    expect(attempt).toThrow(/bank loan/);
+    const borrowed = s.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 1, takeLoan: true });
+    expect(borrowed).toMatchObject({ cash: 1000 + 17_900 - 1001, status: "playing" });
+    // Exactly enough is fine: it leaves £0.
+    const exact = createSim({ ...config, models: { ...config.models, iaas: { ...config.models.iaas, upfrontCost: 1000 } } });
+    expect(exact.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 1 })).toMatchObject({
+      cash: 0,
+      status: "playing",
+    });
+  });
+});
+
+describe("bank loan", () => {
+  // Cash for 180 days on IaaS at £20 a day without the loan. The loan is £17,900: 10% at the start, plus 0.2 points a
+  // day later, repaid by day 180.
+  const rich = createSim({ ...config, startingCash: 100_000 });
+  const begin = (takeLoan = false) =>
+    rich.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, takeLoan });
+  const takeLoan: Action = { type: "takeLoan" };
+  const debts = (log: DayLog[]) => log.flatMap((d) => d.entries.filter((e) => e.category === "debt"));
+  const loanNotes = (log: DayLog[]) =>
+    log.flatMap((d) => d.entries.filter((e) => e.kind === "loan").map((e) => ({ day: d.day, text: e.text })));
+  // Day 60: 59 days later, so 21.8%, repaid over the 120 days from 61 to 180.
+  const onDay60 = () => rich.advance(begin(), 59).state;
+
+  it("can be taken at the start: the money arrives on day 1 as borrowing, not income", () => {
+    const state = begin(true);
+    expect(state.cash).toBe(100_000 + 17_900);
+    expect(state.loan).toEqual({ amount: 17_900, day: 1, rate: 0.1, dailyRepayment: 110, total: 19_690, repaid: 0 });
+    expect(state.spendByDay).toEqual([
+      { day: 1, staff: 0, infrastructure: 0, addons: 0, debt: 0, income: 0, borrowed: 17_900 },
+    ]);
+    expect(state.income).toBe(0);
+    expect(rich.startLoanQuote()).toEqual({
+      amount: 17_900,
+      rate: 0.1,
+      interest: 1_790,
+      total: 19_690,
+      dailyRepayment: 110,
+      days: 179,
+      lastDay: 180,
+    });
+    expect(rich.loan(state)).toMatchObject({ remaining: 19_690, daysLeft: 179 });
+  });
+
+  it("costs more a day taken later, at a higher rate over fewer days", () => {
+    const quote = rich.loanQuote(onDay60())!;
+    // £21,802.20 over 120 days, rounded up to £182 a day.
+    expect(quote).toEqual({
+      amount: 17_900,
+      rate: 0.218,
+      interest: 3_940,
+      total: 21_840,
+      dailyRepayment: 182,
+      days: 120,
+      lastDay: 180,
+    });
+    const atStart = rich.loanQuote(begin())!;
+    expect(atStart).toEqual(rich.startLoanQuote());
+    expect(quote.dailyRepayment).toBeGreaterThan(atStart.dailyRepayment);
+    expect(quote.rate).toBeGreaterThan(atStart.rate);
+    expect(quote.interest).toBeGreaterThan(atStart.interest);
+    // Later still is worse again.
+    const day120 = rich.loanQuote(rich.advance(begin(), 119).state)!;
+    expect(day120.dailyRepayment).toBeGreaterThan(quote.dailyRepayment);
+  });
+
+  it("charges exactly what the quote said, daily as debt, and is repaid on the final day", () => {
+    const before = onDay60();
+    const quote = rich.loanQuote(before)!;
+    const taken = rich.applyAction(before, takeLoan);
+    expect(taken.cash).toBe(before.cash + 17_900);
+    expect(taken.day).toBe(60);
+    const { state, log } = rich.advance(taken, 200);
+    expect(state).toMatchObject({ day: 180, status: "finished" });
+    const repayments = debts(log);
+    expect(repayments).toHaveLength(quote.days);
+    expect(repayments.every((e) => e.cashDelta === -quote.dailyRepayment)).toBe(true);
+    expect(log[0]!.day).toBe(61);
+    expect(log.at(-1)!.entries.some((e) => e.category === "debt")).toBe(true);
+    expect(state.spend.debt).toBe(quote.total);
+    expect(state.loan).toMatchObject({ day: 60, rate: quote.rate, total: quote.total, repaid: quote.total });
+    expect(rich.loan(state)).toMatchObject({ remaining: 0, daysLeft: 0 });
+    // A note when it's taken, on the first repayment, and when it's repaid.
+    const notes = loanNotes(log);
+    expect(notes).toHaveLength(2);
+    expect(notes[0]).toMatchObject({ day: 61, text: expect.stringContaining("on day 60 at 21.8% interest") });
+    expect(notes[0]!.text).toContain("£182 a day until day 180");
+    expect(notes[1]).toMatchObject({ day: 180, text: expect.stringContaining("repaid in full") });
+  });
+
+  it("taken at the start, is repaid in equal amounts from day 2 to the final day", () => {
+    const { state, log } = rich.advance(begin(true), 200);
+    expect(state).toMatchObject({ day: 180, status: "finished" });
+    expect(debts(log)).toHaveLength(179);
+    expect(debts(log).every((e) => e.cashDelta === -110)).toBe(true);
+    expect(state.spend.debt).toBe(19_690);
+    expect(loanNotes(log)[0]).toMatchObject({ day: 2, text: expect.stringContaining("at the start at 10% interest") });
+    // Nothing after it's repaid: the last repayment and the note are on day 180.
+    expect(loanNotes(log).at(-1)!.day).toBe(180);
+  });
+
+  it("allows only one loan per company", () => {
+    const refused = expect.objectContaining({ code: "loan_taken" });
+    expect(() => rich.applyAction(begin(true), takeLoan)).toThrow(refused);
+    const taken = rich.applyAction(onDay60(), takeLoan);
+    expect(() => rich.applyAction(taken, takeLoan)).toThrow(SimError);
+    expect(() => rich.applyAction(rich.advance(taken, 10).state, takeLoan)).toThrow(refused);
+    expect(rich.loanQuote(taken)).toBeNull();
+    expect(rich.loanQuote(begin(true))).toBeNull();
+  });
+
+  it("isn't lent with fewer than the fewest repayment days left", () => {
+    // Day 166 leaves 14 days to repay: the fewest. Day 167 leaves 13.
+    const day166 = rich.advance(begin(), 165).state;
+    expect(rich.loanQuote(day166)).toMatchObject({ days: 14 });
+    const day167 = rich.advance(day166).state;
+    expect(rich.loanQuote(day167)).toBeNull();
+    expect(() => rich.applyAction(day167, takeLoan)).toThrow(
+      expect.objectContaining({ code: "too_late_for_loan", details: { daysLeft: 13 } }),
+    );
+    const short = createSim({ ...config, finalDay: 10 });
+    expect(() => short.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1, takeLoan: true })).toThrow(
+      expect.objectContaining({ code: "too_late_for_loan" }),
+    );
+  });
+
+  it("makes debt a spend category, with the categories and the cash series adding up", () => {
+    expect(SPEND_CATEGORIES).toContain("debt");
+    const { state, log } = rich.advance(rich.applyAction(onDay60(), takeLoan), 30);
+    expect(state.spend.debt).toBeCloseTo(-debts(log).reduce((sum, e) => sum + e.cashDelta, 0), 6);
+    for (const c of SPEND_CATEGORIES) {
+      expect(state.spendByDay.reduce((sum, d) => sum + d[c], 0)).toBeCloseTo(state.spend[c], 6);
+    }
+    // Cash is the start, plus income and borrowing, less every cost.
+    const costs = SPEND_CATEGORIES.reduce((sum, c) => sum + state.spend[c], 0);
+    expect(state.cash).toBeCloseTo(100_000 + state.income + 17_900 - costs, 6);
+    // The borrowing is on day 60, so the cash chart shows the jump then and nothing before it.
+    const { days } = rich.summarise(state);
+    expect(days.find((d) => d.day === 60)).toMatchObject({ borrowed: 17_900 });
+    expect(days.find((d) => d.day === 59)!.cash).toBe(rich.advance(begin(), 58).state.cash);
+    expect(days[0]!.cash).toBe(begin().cash);
+    const profit = rich.summarise(state).profit;
+    expect(profit).toBeCloseTo(state.income - costs, 6);
+  });
+
+  it("charges repayments whatever happens, so they can bankrupt a company", () => {
+    // SaaS at £5 a day: £1,000 lasts to day 180 alone, but £110 a day of repayments on top of the £17,900 runs out.
+    const play = (takeLoan: boolean) =>
+      sim.advance(sim.newGame({ companyName: "Acme", productType: "ecommerce", model: "saas", seed: 1, takeLoan }), 200);
+    expect(play(false).state).toMatchObject({ day: 180, status: "finished" });
+    const { state, log } = play(true);
+    expect(state.status).toBe("bankrupt");
+    expect(state.day).toBeLessThan(180);
+    const last = log.at(-1)!.entries;
+    expect(last.some((e) => e.category === "debt")).toBe(true);
+    expect(last.at(-1)).toMatchObject({ kind: "bankrupt" });
+  });
+
+  it("is deterministic", () => {
+    const play = () => rich.advance(rich.applyAction(onDay60(), takeLoan), 50);
+    expect(play()).toEqual(play());
   });
 });
 
@@ -1983,6 +2154,7 @@ describe("game end and summary", () => {
       staff: charges(log, "staff"),
       infrastructure: 100 + charges(log, "infrastructure"),
       addons: charges(log, "addons"),
+      debt: 0,
     });
     expect(summary.spend.staff).toBe(29 * 10);
     expect(summary.totalSpend).toBe(SPEND_CATEGORIES.reduce((sum, c) => sum + summary.spend[c], 0));
@@ -2002,11 +2174,20 @@ describe("game end and summary", () => {
   it("gives the cash left after each day, ending on the final cash", () => {
     const { state } = s.advance(begin(), 29);
     const { days, cash } = s.summarise(state);
-    expect(days[0]).toEqual({ day: 1, staff: 0, infrastructure: 100, addons: 0, income: 0, cash: 99_900 });
+    expect(days[0]).toEqual({
+      day: 1,
+      staff: 0,
+      infrastructure: 100,
+      addons: 0,
+      debt: 0,
+      income: 0,
+      borrowed: 0,
+      cash: 99_900,
+    });
     expect(days.at(-1)!.cash).toBe(cash);
     for (let i = 1; i < days.length; i++) {
       const d = days[i]!;
-      expect(days[i - 1]!.cash - d.cash).toBe(d.staff + d.infrastructure + d.addons);
+      expect(days[i - 1]!.cash - d.cash).toBe(d.staff + d.infrastructure + d.addons + d.debt);
     }
   });
 
@@ -2058,7 +2239,7 @@ describe("game end and summary", () => {
 });
 
 describe("default config", () => {
-  const sim180 = createSim(defaultConfig);
+  const sim180 = createSim(roomyDefaults);
   const run = (productType: string, model: string, ops?: number) => {
     const start = sim180.newGame({ companyName: "Acme", productType, model, seed: 7 });
     return sim180.advance(ops === undefined ? start : { ...start, ops }, defaultConfig.finalDay - 1).state;
@@ -3571,7 +3752,7 @@ describe("default events", () => {
   });
 
   it("let a SaaS company that never leaves still reach day 180 with the feature gap", () => {
-    const s = createSim(defaultConfig);
+    const s = createSim(roomyDefaults);
     const state = s.advance(s.newGame({ companyName: "Acme", productType: "video", model: "saas", seed: 7 }), 179).state;
     expect(state).toMatchObject({ day: 180, status: "finished" });
     expect(s.featureGaps(state)).toHaveLength(1);
@@ -3579,7 +3760,7 @@ describe("default events", () => {
 
   it("melt on-prem in a spike, but scale PaaS", () => {
     // By day 30 a social network has grown into its starter kit enough that tripled demand is too much for it.
-    const s = createSim({ ...defaultConfig, events: [{ ...event("trafficSpike"), schedule: { type: "fixed", days: [30] } }] });
+    const s = createSim({ ...roomyDefaults, events: [{ ...event("trafficSpike"), schedule: { type: "fixed", days: [30] } }] });
     const run = (model: (typeof MODEL_IDS)[number]) => {
       const start = s.newGame({ companyName: "Acme", productType: "social", model, seed: 7 });
       return s.advance({ ...start, ops: s.opsNeeded(model) }, 29).state;
