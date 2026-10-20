@@ -30,6 +30,64 @@ docker compose up --build
 
 Set `TEACHER_PASSWORD` and `SESSION_SECRET` in your environment first; the compose defaults are for local use only.
 
+## Deploying with Dokploy
+
+Production runs on a VPS through [Dokploy](https://dokploy.com), from `docker-compose.prod.yml`: the app and Postgres 18, with the database in a named volume so it survives redeploys. Postgres isn't published to the internet; only Dokploy's Traefik proxy reaches the app, and adds HTTPS.
+
+The image is a multi-stage build: production dependencies only, running as the `node` user with `NODE_ENV=production`. The server still runs its TypeScript through tsx, as in development, rather than a compiled build. A `HEALTHCHECK` calls `/api/health`, which answers `{"ok":true}` when the server can reach the database. Migrations run when the server starts.
+
+### Setting it up
+
+1. **Create the project.** In Dokploy, create a project (for example *XaaS Tycoon*), then **Create Service → Compose**.
+2. **Point it at the repo.** Choose GitHub (or Git) as the provider, pick `ash1688/XaaS-tycoon`, branch `main`, and set the compose path to `./docker-compose.prod.yml`. The compose type is *Docker Compose*.
+3. **Set the environment.** In the service's **Environment** tab, add the variables below. Make each secret with `openssl rand -hex 32`, and keep them in a password manager, not in the repo.
+4. **Attach the domain.** In **Domains**, add your domain (for example `xaas.example.co.uk`) for service `app`, container port `3080`, with HTTPS on and Let's Encrypt as the certificate. Point the domain's DNS A record at the VPS first, or the certificate can't be issued.
+5. **Deploy.** Press **Deploy** and watch the log. A missing secret stops it early with `required variable ... is missing a value`. When the app container shows as healthy, run the checks below.
+6. **Redeploy.** Press **Deploy** again after merging to `main`, or turn on auto-deploy in the service's settings. Redeploying rebuilds the app and keeps the `pgdata` volume, so games and codes stay.
+
+| Variable | Required | What it does |
+| --- | --- | --- |
+| `POSTGRES_PASSWORD` | Yes | The database password. The compose file builds `DATABASE_URL` from it, so use letters and digits only (`openssl rand -hex 32`). Keep it once set: Postgres only reads it when the volume is first created. |
+| `TEACHER_PASSWORD` | Yes | The password for `/staff`. Share it only with teaching staff. |
+| `SESSION_SECRET` | Yes | Signs the teacher's sign-in cookie; at least 32 characters. Changing it signs every teacher out. |
+| `TRUST_PROXY` | No | The proxy addresses to trust for the client's IP and HTTPS. Defaults to `uniquelocal` (the private ranges Traefik connects from), which marks the teacher cookie `Secure` over HTTPS and lets the rate limits tell clients apart. Don't publish the app's port while this is on. |
+| `RATE_LIMIT_CODE_FAILURES` | No | Failed student code lookups allowed per client IP in the window before it gets a 429. Default 100. A whole class behind the college's network usually shares one public IP, so keep this generous; only failures count, so normal play never uses it up. |
+| `RATE_LIMIT_LOGIN_FAILURES` | No | Wrong teacher passwords allowed per client IP in the window. Default 10. |
+| `RATE_LIMIT_WINDOW_MINUTES` | No | The rate limit window. Default 15. A blocked IP gets back in when it ends. |
+| `GAME_FINAL_DAY` | No | Ends games after this many days instead of 180. Leave unset in production. |
+| `TIMED_FLOW` | No | `on` gives the game page Play/Pause. Off unless set. |
+| `TIMED_FLOW_SECONDS` | No | Seconds per day with timed flow on. Default 15. |
+
+`DATABASE_URL` and `PORT` are set by the compose file. The server checks `DATABASE_URL`, `TEACHER_PASSWORD` and `SESSION_SECRET` before connecting to anything, and exits with a message naming the one that's missing.
+
+### Backing up the database
+
+Dokploy's database backups only cover databases it created itself, so back up this one with `pg_dump` on the VPS. Find the container with `docker ps --filter name=db`, then:
+
+```bash
+docker exec <db-container> pg_dump -U xaas -Fc xaas > xaas-$(date +%F).dump
+```
+
+Run it from cron (or a Dokploy schedule) daily, and copy the files off the VPS. To restore into a running deployment:
+
+```bash
+docker exec -i <db-container> pg_restore -U xaas -d xaas --clean --if-exists < xaas-2026-10-20.dump
+```
+
+The data itself is in the Docker volume named `<compose project>_pgdata` (`docker volume ls`). Don't delete it, and don't remove the service with its volumes, unless you mean to lose every game.
+
+### Checking a deployment
+
+From a college machine, on the college network:
+
+1. `https://<your domain>/api/health` shows `{"ok":true}`, with a padlock and no certificate warning.
+2. `https://<your domain>/staff`: a wrong password is refused, and `TEACHER_PASSWORD` signs in.
+3. Create a login code.
+4. In a private window, enter that code on the home page, start a company and press **Continue** a few times.
+5. Back on `/staff`, the dashboard shows that company.
+6. Redeploy in Dokploy, then reload: the code and company are still there.
+7. If something's blocked on the college network, check the college's web filter allows the domain.
+
 ## Using it
 
 1. Go to `/staff`, sign in with `TEACHER_PASSWORD`, and create a login code for each student.

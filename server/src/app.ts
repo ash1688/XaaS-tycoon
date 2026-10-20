@@ -17,6 +17,7 @@ import {
 } from "@xaas/sim";
 import type { Db } from "./db/client.ts";
 import { companies, loginCodes } from "./db/schema.ts";
+import { FailureLimiter } from "./rateLimit.ts";
 import { endTeacherSession, isTeacher, passwordMatches, startTeacherSession } from "./teacherAuth.ts";
 import type {
   ActionBody,
@@ -53,7 +54,25 @@ export interface AppOptions {
    * Off unless set, so students press Continue a day at a time.
    */
   timedFlow?: TimedFlowView;
+  /**
+   * Which proxies to trust for the client's IP and protocol (Fastify's `trustProxy`): true, or a comma-separated list
+   * of addresses, CIDRs or proxy-addr names such as "uniquelocal". Needed behind Dokploy's Traefik, so the teacher's cookie is marked Secure over HTTPS and rate limits see
+   * each client rather than the proxy. Off unless set.
+   */
+  trustProxy?: boolean | string;
+  /** Limits on failed student code lookups and teacher sign-ins per client IP. Defaults to RATE_LIMIT_DEFAULTS. */
+  rateLimit?: RateLimitOptions | false;
 }
+
+export interface RateLimitOptions {
+  /** Failed code lookups (any 404 under /api/codes/:code) an IP may make in a window. */
+  codeFailures: number;
+  /** Wrong teacher passwords an IP may try in a window. */
+  loginFailures: number;
+  windowMinutes: number;
+}
+
+export const RATE_LIMIT_DEFAULTS: RateLimitOptions = { codeFailures: 100, loginFailures: 10, windowMinutes: 15 };
 
 export const DEFAULT_MAX_ACTIVE_COMPANIES = 3;
 export const DEFAULT_DASHBOARD_HOURS = 3;
@@ -78,9 +97,46 @@ export async function buildApp(opts: AppOptions) {
   const maxActiveCompanies = opts.maxActiveCompanies ?? DEFAULT_MAX_ACTIVE_COMPANIES;
   const dashboardHours = opts.dashboardHours ?? DEFAULT_DASHBOARD_HOURS;
   const timedFlow = opts.timedFlow ?? { enabled: false, seconds: DEFAULT_TIMED_FLOW_SECONDS };
-  const app = Fastify({ logger: opts.logger ?? false });
+  const app = Fastify({ logger: opts.logger ?? false, trustProxy: opts.trustProxy ?? false });
 
   await app.register(cookie, { secret: opts.sessionSecret });
+
+  if (opts.rateLimit !== false) limitFailures(opts.rateLimit ?? RATE_LIMIT_DEFAULTS);
+
+  /**
+   * Refuses an IP with a 429 once it has had too many failed code lookups or teacher sign-ins in the window. A failure
+   * is a 404 from a code route (an unknown code, or a company not under it) or a 401 from the sign-in.
+   */
+  function limitFailures({ codeFailures, loginFailures, windowMinutes }: RateLimitOptions) {
+    const windowMs = windowMinutes * 60 * 1000;
+    const codes = new FailureLimiter(codeFailures, windowMs);
+    const logins = new FailureLimiter(loginFailures, windowMs);
+    const limited = (url: string | undefined) =>
+      url?.startsWith("/api/codes/:code")
+        ? { limiter: codes, failure: 404, message: "Too many unrecognised codes from your network." }
+        : url === "/api/teacher/login"
+          ? { limiter: logins, failure: 401, message: "Too many wrong passwords from your network." }
+          : undefined;
+
+    app.addHook("onRequest", async (req, reply) => {
+      const limit = limited(req.routeOptions.url);
+      const wait = limit?.limiter.retryAfter(req.ip);
+      if (!limit || !wait) return;
+      reply.header("retry-after", String(wait));
+      const minutes = Math.ceil(wait / 60);
+      return sendError(
+        reply,
+        429,
+        "rate_limited",
+        `${limit.message} Wait ${minutes} minute${minutes === 1 ? "" : "s"} and try again.`,
+      );
+    });
+
+    app.addHook("onSend", async (req, reply) => {
+      const limit = limited(req.routeOptions.url);
+      if (limit && reply.statusCode === limit.failure) limit.limiter.fail(req.ip);
+    });
+  }
 
   app.setErrorHandler((err, _req, reply) => {
     // A bankrupt or finished game is over: the request was fine, but the game can't take it any more.
@@ -141,6 +197,12 @@ export async function buildApp(opts: AppOptions) {
   }
 
   // --- public ---
+
+  // For the container's HEALTHCHECK and the deploy smoke check: up, and can reach the database.
+  app.get("/api/health", async () => {
+    await db.execute(sql`select 1`);
+    return { ok: true };
+  });
 
   app.get("/api/meta", async (): Promise<MetaView> => {
     const { config } = sim;

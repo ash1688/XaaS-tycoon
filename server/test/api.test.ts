@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { createSim, defaultConfig } from "@xaas/sim";
 import { buildApp } from "../src/app.ts";
@@ -50,7 +50,8 @@ let app: Awaited<ReturnType<typeof buildApp>>;
 
 beforeAll(async () => {
   testDb = await setupTestDb();
-  app = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), sim });
+  // No rate limit here: tests make plenty of deliberate 404s from the one inject address. It has its own tests below.
+  app = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), sim, rateLimit: false });
 });
 
 afterAll(async () => {
@@ -1713,5 +1714,107 @@ describe("meta", () => {
     expect(owner("saas", "application")).toBe("shared");
     expect(owner("iaas", "os")).toBe("you");
     expect(meta.models.find((m: { id: string }) => m.id === "saas").comparison.opsNeeded).toBe("None");
+  });
+});
+
+describe("health", () => {
+  it("reports ok when the database answers", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/health" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+  });
+});
+
+describe("behind a proxy", () => {
+  async function loginCookie(trustProxy?: string) {
+    const proxied = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), trustProxy });
+    try {
+      const res = await proxied.inject({
+        method: "POST",
+        url: "/api/teacher/login",
+        headers: { "x-forwarded-proto": "https" },
+        payload: { password: PASSWORD },
+      });
+      return res.cookies.find((c) => c.name === "teacher")!;
+    } finally {
+      await proxied.close();
+    }
+  }
+
+  it("marks the teacher cookie Secure when a trusted proxy says the request was HTTPS", async () => {
+    // inject requests come from 127.0.0.1, standing in for the proxy.
+    expect((await loginCookie("loopback")).secure).toBe(true);
+  });
+
+  it("ignores X-Forwarded-Proto unless the proxy is trusted", async () => {
+    expect((await loginCookie()).secure).toBeUndefined();
+  });
+
+  it("serves plain HTTP without Secure, for local use", async () => {
+    const res = await app.inject({ method: "POST", url: "/api/teacher/login", payload: { password: PASSWORD } });
+    expect(res.cookies.find((c) => c.name === "teacher")!.secure).toBeUndefined();
+  });
+});
+
+describe("rate limits", () => {
+  let limited: Awaited<ReturnType<typeof buildApp>>;
+
+  beforeEach(async () => {
+    limited = await buildApp({
+      db: testDb.db,
+      teacherPassword: PASSWORD,
+      sessionSecret: "x".repeat(32),
+      sim,
+      trustProxy: "loopback",
+      rateLimit: { codeFailures: 3, loginFailures: 2, windowMinutes: 15 },
+    });
+  });
+
+  afterEach(async () => {
+    await limited.close();
+  });
+
+  const fromIp = (ip: string) => ({ "x-forwarded-for": ip });
+
+  it("blocks an IP after too many unknown codes, even for a real code, but not other IPs", async () => {
+    const code = await newCode();
+    for (let i = 0; i < 3; i++) {
+      const res = await limited.inject({ method: "GET", url: "/api/codes/12345678", headers: fromIp("10.0.0.1") });
+      expect(res.statusCode).toBe(404);
+    }
+    const blocked = await limited.inject({ method: "GET", url: `/api/codes/${code}`, headers: fromIp("10.0.0.1") });
+    expect(blocked.statusCode).toBe(429);
+    expect(blocked.json().error).toBe("rate_limited");
+    expect(Number(blocked.headers["retry-after"])).toBeGreaterThan(0);
+    // Every route under the code is covered, not just the lookup.
+    const create = await limited.inject({
+      method: "POST",
+      url: `/api/codes/${code}/companies`,
+      headers: fromIp("10.0.0.1"),
+      payload: { name: "Acme", productType: "ecommerce", model: "iaas" },
+    });
+    expect(create.statusCode).toBe(429);
+
+    const other = await limited.inject({ method: "GET", url: `/api/codes/${code}`, headers: fromIp("10.0.0.2") });
+    expect(other.statusCode).toBe(200);
+  });
+
+  it("doesn't count successful lookups", async () => {
+    const code = await newCode();
+    for (let i = 0; i < 10; i++) {
+      const res = await limited.inject({ method: "GET", url: `/api/codes/${code}`, headers: fromIp("10.0.0.3") });
+      expect(res.statusCode).toBe(200);
+    }
+  });
+
+  it("blocks an IP after too many wrong teacher passwords, even with the right one", async () => {
+    const login = (password: string, ip = "10.0.0.4") =>
+      limited.inject({ method: "POST", url: "/api/teacher/login", headers: fromIp(ip), payload: { password } });
+    expect((await login("nope")).statusCode).toBe(401);
+    expect((await login("nope")).statusCode).toBe(401);
+    const blocked = await login(PASSWORD);
+    expect(blocked.statusCode).toBe(429);
+    expect(blocked.cookies).toHaveLength(0);
+    expect((await login(PASSWORD, "10.0.0.5")).statusCode).toBe(200);
   });
 });
