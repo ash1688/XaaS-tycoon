@@ -7,6 +7,36 @@ export interface SummaryDay extends DaySpend {
   cash: number;
 }
 
+/** Income against costs on one day, and both added up from day 1: the income-against-costs chart. */
+export interface IncomeCostDay {
+  day: number;
+  income: number;
+  /** Everything spent on the day, debt included. */
+  costs: number;
+  totalIncome: number;
+  totalCosts: number;
+}
+
+/** The users on the day there were most, and how many of them paid. */
+export interface PeakUsers {
+  /** The first day they reached the peak. */
+  day: number;
+  users: number;
+  paidUsers: number;
+}
+
+/** The bank loan, for the summary: null there if it was never taken. */
+export interface LoanSummary {
+  /** The day it was taken: 1 if at the start. */
+  day: number;
+  amount: number;
+  /** Everything to repay: the amount plus interest. */
+  total: number;
+  repaid: number;
+  /** Repaid in full. False on a game that went bankrupt before the final day. */
+  fullyRepaid: boolean;
+}
+
 /**
  * How a company did, for the end-of-game summary and the teacher's dashboard. Plain and JSON-serialisable, like state.
  * Works on a game still being played too, as a summary so far.
@@ -27,8 +57,12 @@ export interface GameSummary {
   paidUsers: number;
   /** Everything paying users paid. */
   income: number;
-  /** Income − total spend: below 0 is a loss. */
+  /** Income − total spend (debt included): below 0 is a loss. */
   profit: number;
+  /** The most users the company had at the end of a day, with the paid/free split then. */
+  peak: PeakUsers;
+  /** Satisfaction averaged over every day played after day 1, or today's before any has been. */
+  satisfaction: number;
   /** Share of time up across every day played, as a percentage. */
   uptime: number;
   outageDays: number;
@@ -38,11 +72,16 @@ export interface GameSummary {
   totalSpend: number;
   /** Migrations completed. One still under way at the end doesn't count. */
   migrations: number;
+  /** Price changes made. */
+  priceChanges: number;
+  loan: LoanSummary | null;
   /**
    * Spend and income on each day played and the cash left after it, day 1 (upfront costs) first: the cost-over-time
    * and cash charts.
    */
   days: SummaryDay[];
+  /** Income and costs on each day, and added up so far, day 1 first. The last day's totals are income and totalSpend. */
+  incomeVsCosts: IncomeCostDay[];
 }
 
 /** The end-of-game summary, also shown as a summary so far. */
@@ -58,6 +97,24 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
       days.unshift({ ...d, cash });
       cash += total(d) - d.income - d.borrowed;
     }
+    let totalIncome = 0;
+    let totalCosts = 0;
+    const incomeVsCosts = state.spendByDay.map((d): IncomeCostDay => {
+      const costs = total(d);
+      totalIncome += d.income;
+      totalCosts += costs;
+      return { day: d.day, income: d.income, costs, totalIncome, totalCosts };
+    });
+    const peak = state.spendByDay.reduce<PeakUsers>(
+      (best, d) => (d.users > best.users ? { day: d.day, users: d.users, paidUsers: d.paidUsers } : best),
+      { day: 1, users: -1, paidUsers: 0 },
+    );
+    // Like uptime, over the days played: day 1 is only the setup.
+    const played = state.spendByDay.filter((d) => d.day > 1);
+    const satisfaction = played.length
+      ? played.reduce((sum, d) => sum + d.satisfaction, 0) / played.length
+      : state.satisfaction;
+    const { loan } = state;
     const ending = state.status === "playing" ? null : state.status === "bankrupt" ? "bankrupt" : "completed";
     return {
       companyName: state.companyName,
@@ -71,12 +128,23 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
       paidUsers: state.paidUsers,
       income: state.income,
       profit: state.income - total(state.spend),
+      peak,
+      satisfaction,
       uptime: infra.uptime(state),
       outageDays: state.outageDays,
       spend: { ...state.spend },
       totalSpend: total(state.spend),
       migrations: state.migrations,
+      priceChanges: state.priceChanges.length,
+      loan: loan && {
+        day: loan.day,
+        amount: loan.amount,
+        total: loan.total,
+        repaid: loan.repaid,
+        fullyRepaid: loan.repaid >= loan.total,
+      },
       days,
+      incomeVsCosts,
     };
   }
 

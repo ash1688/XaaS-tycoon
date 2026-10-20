@@ -19,18 +19,24 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 18;
+export const GAME_STATE_VERSION = 19;
 
 /** Money spent in each category. */
 export type Spend = Record<SpendCategory, number>;
 
-/** What was spent on one day, for the cost-over-time chart, and what came in. */
+/** What was spent on one day, for the cost-over-time chart, what came in, and where the customers stood after it. */
 export interface DaySpend extends Spend {
   day: number;
   /** Income on the day: what paying users paid. */
   income: number;
   /** Money borrowed on the day: the bank loan, if it was taken then. Not income: it's paid back as debt. */
   borrowed: number;
+  /** Users at the end of the day, paying or free, for the summary's peak. */
+  users: number;
+  /** Of them, those paying. */
+  paidUsers: number;
+  /** Customer satisfaction at the end of the day, 0–100, for the summary's average. */
+  satisfaction: number;
 }
 
 /**

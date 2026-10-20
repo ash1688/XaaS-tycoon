@@ -316,6 +316,17 @@ export interface TeacherGameView {
   archivedAt: string | null;
   /** The config preset the game started with. */
   preset: string;
+  /** Of the users, those paying. */
+  paidUsers: number;
+  freeUsers: number;
+  /** Income on the last day played. */
+  lastDayIncome: number;
+  /** Income − everything spent so far, debt included: below 0 is a loss. */
+  profit: number;
+  /** Customer satisfaction now, 0–100, rounded. */
+  satisfaction: number;
+  /** Left to repay on the bank loan: null if it wasn't taken, 0 once repaid. */
+  loanRemaining: number | null;
 }
 
 /**

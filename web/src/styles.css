@@ -99,6 +99,10 @@ h2 {
   padding: 1.5rem 1rem 3rem;
 }
 
+.page.wide {
+  max-width: 1400px;
+}
+
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -1395,6 +1399,41 @@ fieldset > p {
   stroke-linejoin: round;
 }
 
+.chart .income-line,
+.chart .costs-line {
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+}
+
+.chart .income-line {
+  stroke: var(--pos);
+}
+
+.chart .costs-line {
+  stroke: var(--neg);
+  stroke-dasharray: 6 4;
+}
+
+.chart .hover-strip {
+  fill: transparent;
+}
+
+.chart .hover-strip:hover {
+  fill: var(--text);
+  opacity: 0.06;
+}
+
+.chart-legend .line-swatch {
+  display: inline-block;
+  width: 1.6rem;
+  border-top: 3px solid var(--pos);
+}
+
+.chart-legend .key-costs .line-swatch {
+  border-top: 3px dashed var(--neg);
+}
+
 .chart-legend {
   display: flex;
   flex-wrap: wrap;
@@ -1423,6 +1462,54 @@ fieldset > p {
 
 .summary .stat {
   min-width: 0;
+}
+
+/* Profit or loss, said by the label and the sign as well as the colour. */
+.summary-headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+  margin: 0.75rem 0 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  border: 2px solid var(--pos);
+  border-left-width: 6px;
+}
+
+.summary-headline.loss {
+  border-color: var(--neg);
+}
+
+.headline-label {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.headline-value {
+  font-size: 1.8rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-headline.profit .headline-label,
+.summary-headline.profit .headline-value {
+  color: var(--pos);
+}
+
+.summary-headline.loss .headline-label,
+.summary-headline.loss .headline-value {
+  color: var(--neg);
+}
+
+.headline-sum {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.headline-sum strong {
+  color: var(--text);
 }
 
 /* Teacher's live dashboard */
@@ -1478,50 +1565,103 @@ fieldset > p {
   position: relative;
 }
 
-/* Fixed columns, so every code's table lines up with the others. Scrolls sideways on a phone. */
+/*
+ * Fixed columns, so every code's table lines up with the others. Less important columns fold away as the screen
+ * narrows (col-wide first, then col-mid); what's left scrolls sideways on a phone.
+ */
 .live-table {
   width: 100%;
-  min-width: 52rem;
+  min-width: 64rem;
   table-layout: fixed;
   border-collapse: collapse;
   margin-top: 0.5rem;
   font-variant-numeric: tabular-nums;
 }
 
-.live-table th:nth-child(1) {
-  width: 18%;
+.live-table .c-company {
+  width: 12%;
 }
 
-.live-table th:nth-child(2) {
-  width: 9%;
+.live-table .c-day {
+  width: 5%;
 }
 
-/* Preset. */
-.live-table th:nth-child(3) {
-  width: 11%;
+.live-table .c-model,
+.live-table .c-preset,
+.live-table .c-uptime {
+  width: 6%;
 }
 
-.live-table th:nth-child(4) {
+.live-table .c-cash,
+.live-table .c-income,
+.live-table .c-profit,
+.live-table .c-loan {
   width: 7%;
 }
 
-.live-table th:nth-child(5) {
-  width: 10%;
-}
-
-.live-table th:nth-child(6),
-.live-table th:nth-child(7) {
+.live-table .c-satisfaction,
+.live-table .c-status {
   width: 8%;
 }
 
-.live-table th:nth-child(8) {
-  width: 11%;
+.live-table .c-users {
+  width: 9%;
 }
 
-.live-table th:nth-child(9) {
-  width: 18%;
+.live-table .c-actions {
+  width: 12%;
 }
 
+/* Paid and free users go onto a second line rather than being cut off. */
+.live-table td[data-testid="live-users"] small {
+  white-space: normal;
+}
+
+@media (max-width: 72rem) {
+  .live-table {
+    min-width: 50rem;
+  }
+
+  .live-table .col-wide {
+    display: none;
+  }
+}
+
+@media (max-width: 56rem) {
+  .live-table {
+    min-width: 48rem;
+  }
+
+  .live-table .col-mid {
+    display: none;
+  }
+
+  .live-table .c-company {
+    width: 16%;
+  }
+
+  .live-table .c-day {
+    width: 9%;
+  }
+
+  .live-table .c-income {
+    width: 10%;
+  }
+
+  .live-table .c-status {
+    width: 11%;
+  }
+
+  .live-table .c-users,
+  .live-table .c-profit,
+  .live-table .c-satisfaction {
+    width: 12%;
+  }
+
+  .live-table .c-actions {
+    width: 18%;
+  }
+}
 
 .live-controls {
   display: flex;
@@ -1612,6 +1752,8 @@ button.danger-fill {
 .live-table th {
   font-size: 0.85rem;
   color: var(--muted);
+  white-space: normal;
+  vertical-align: bottom;
 }
 
 /* The company stays in view when the table scrolls sideways on a phone. */

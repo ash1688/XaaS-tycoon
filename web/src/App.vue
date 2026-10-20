@@ -12,7 +12,7 @@ const route = useRoute();
     <header class="topbar">
       <RouterLink to="/" class="brand">XaaS Tycoon</RouterLink>
     </header>
-    <main class="page">
+    <main :class="['page', { wide: route.meta.wide }]">
       <RouterView />
     </main>
   </template>
