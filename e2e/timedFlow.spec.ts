@@ -35,7 +35,8 @@ test("with timed flow on, days play by themselves and Pause stops them", async (
   await expect(student.getByRole("timer")).toContainText("Next day in");
   await expect(student.getByRole("button", { name: "Continue" })).toBeDisabled();
   await expect(student.getByTestId("day")).toContainText(`3 of ${E2E_FINAL_DAY}`, { timeout: 10_000 });
-  // Actions still work while it plays.
+  // Actions still work while it plays, on any page.
+  await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "People" }).click();
   await student.getByRole("button", { name: "Hire one developer" }).click();
   await expect(student.getByTestId("developers-count")).toHaveText("3");
 

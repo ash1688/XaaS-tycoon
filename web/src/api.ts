@@ -1,3 +1,4 @@
+import type { SpendCategory } from "@xaas/sim";
 import type {
   ActionBody,
   ApiError,
@@ -85,3 +86,9 @@ const count = new Intl.NumberFormat("en-GB");
 export const formatCount = (n: number) => count.format(n);
 // Rounds down, so a single outage never shows as 100%.
 export const formatUptime = (pct: number) => (pct >= 100 ? "100%" : `${(Math.floor(pct * 10) / 10).toFixed(1)}%`);
+
+export const CATEGORY_LABELS: Record<SpendCategory, string> = {
+  staff: "Staff",
+  infrastructure: "Infrastructure",
+  addons: "Add-ons",
+};
