@@ -15,7 +15,7 @@ You need Node 24 and Docker.
 
 ```bash
 npm install
-cp .env.example .env
+cp .env.example .env.local
 npm run db:up
 npm run dev
 ```
@@ -94,7 +94,7 @@ From a college machine, on the college network:
 2. Students enter their code on the home page, start a company and press **Continue** to play a day at a time.
 3. The game ends after day 180, or sooner if the company goes bankrupt, and shows a summary: final cash, users and uptime, where the money went, migrations made and a cost-over-time chart. Reopening a finished game from the company list shows its summary again.
 
-To try the end of a game without playing 180 days, set `GAME_FINAL_DAY` (for example `GAME_FINAL_DAY=10` in `.env`). The server reads it at startup; leave it unset for the real 180-day game. The e2e tests run with `GAME_FINAL_DAY=30`.
+To try the end of a game without playing 180 days, set `GAME_FINAL_DAY` (for example `GAME_FINAL_DAY=10` in `.env.local`). The server reads it at startup; leave it unset for the real 180-day game. The e2e tests run with `GAME_FINAL_DAY=30`.
 
 ### Timed flow (off by default)
 
