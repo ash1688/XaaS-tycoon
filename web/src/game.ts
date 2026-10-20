@@ -84,6 +84,10 @@ export function createGame(code: string, id: string) {
   });
   // The tier that runs out first sets capacity: the one to watch.
   const tightest = computed(() => tiers.value.find((t) => t.binding));
+  // On-prem buys its servers rather than renting them: they're on order, adding nothing, until they arrive.
+  const buysServers = computed(() => company.value?.serverOptions[0]?.price != null);
+  const addVerb = computed(() => (buysServers.value ? "buy" : "rent"));
+  const onOrder = computed(() => (buysServers.value ? (company.value?.servers ?? []).filter((s) => s.status === "pending") : []));
   const loadPercent = computed(() => {
     if (tightest.value) return tightest.value.percent;
     return company.value ? Math.round((100 * company.value.load) / company.value.capacity) : 0;
@@ -287,6 +291,9 @@ export function createGame(code: string, id: string) {
     units,
     tiers,
     tightest,
+    buysServers,
+    addVerb,
+    onOrder,
     loadPercent,
     loadLevel,
     onSaas,

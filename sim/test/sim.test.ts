@@ -822,8 +822,8 @@ describe("servers on IaaS", () => {
   it("starts a new IaaS game with the configured starter setup, ready for the first day", () => {
     const state = begin();
     expect(flat.servers(state)).toEqual([
-      { id: 1, type: "app", size: "massive", name: "App server", status: "ready", readyDay: 1, units: 10_000, monthlyCost: 0 },
-      { id: 2, type: "database", size: "massive", name: "Database", status: "ready", readyDay: 1, units: 10_000, monthlyCost: 0 },
+      { id: 1, type: "app", size: "massive", name: "App server", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, monthlyCost: 0, paid: null, sellBack: null },
+      { id: 2, type: "database", size: "massive", name: "Database", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, monthlyCost: 0, paid: null, sellBack: null },
     ]);
     expect(flat.units(state)).toMatchObject({ cu: { demand: 10, capacity: 10_000 }, dbu: { demand: 10, capacity: 10_000 } });
   });
@@ -1100,6 +1100,287 @@ describe("servers on IaaS", () => {
       const [smaller, bigger] = [SERVER_SIZES[i - 1]!, SERVER_SIZES[i]!];
       expect(units[bigger]).toBeGreaterThan(units[smaller]);
       expect(prices[bigger] / units[bigger]).toBeLessThan(prices[smaller] / units[smaller]);
+    }
+  });
+});
+
+describe("servers on-prem", () => {
+  // Bought kit: every type costs £1,000 small to £4,000 massive, runs at £30 to £120 a month (£1 to £4 a day), takes
+  // 10 days to arrive and sells back for 40%. The starter is a massive app server and database, £8,000 in all, on
+  // top of a £5,000 server room. No growth or variation, so 1,000 users need exactly 10 CU and 10 DBU.
+  const still = { dailyGrowth: 0, growthNoise: 0, loadNoise: 0 };
+  const each = (small: number, medium: number, large: number, massive: number) => {
+    const s = sizes(small, medium, large, massive);
+    return { app: s, database: s, cache: s, loadBalancer: s };
+  };
+  const onpremServers = {
+    ...iaasServers,
+    purchase: { price: each(1_000, 2_000, 3_000, 4_000), sellBackShare: 0.4 },
+    monthlyCost: each(30, 60, 90, 120),
+    readyDays: 10,
+  };
+  const ownConfig: GameConfig = {
+    ...config,
+    startingCash: 100_000,
+    models: { ...config.models, onprem: { ...config.models.onprem, upfrontCost: 5_000, servers: onpremServers } },
+    productTypes: {
+      ...config.productTypes,
+      social: { ...config.productTypes.social, growth: { ...config.productTypes.social.growth, ...still } },
+    },
+  };
+  const own = createSim(ownConfig);
+  const begin = (s: Sim = own, model = "onprem") => ({
+    ...s.newGame({ companyName: "Acme", productType: "social", model, seed: 42 }),
+    ops: 10,
+  });
+  type Kind = [type: ServerType, size: ServerSize];
+  /** The state with exactly these servers, all arrived, each bought at its price. */
+  const fleet = (state: GameState, ...servers: Kind[]): GameState => ({
+    ...state,
+    servers: servers.map(([type, size], i) => ({ id: i + 1, type, size, readyDay: state.day, paid: onpremServers.purchase.price[type][size] })),
+    nextServerId: servers.length + 1,
+  });
+  const withUsers = (state: GameState, users: number) => ({ ...state, users, paidUsers: 0 });
+  const buy = (state: GameState, server: ServerType, size: ServerSize, s: Sim = own) =>
+    s.applyAction(state, { type: "buyServer", server, size });
+  const sell = (state: GameState, id: number) => own.applyAction(state, { type: "sellServer", id });
+  const outages = (log: DayLog[]) => log.flatMap((d) => d.entries.filter((e) => e.kind === "outage"));
+  const upkeepLines = (log: DayLog[]) => log.flatMap((d) => d.entries.filter((e) => e.text.includes(" power and upkeep: ")));
+  const code = (f: () => unknown) => {
+    try {
+      f();
+    } catch (e) {
+      return (e as SimError).code;
+    }
+  };
+  const BIG_DB: Kind = ["database", "massive"];
+  const BIG_APP: Kind = ["app", "massive"];
+
+  it("starts with the starter kit, bought on day 1 on top of the server room, ready for the first day", () => {
+    const state = own.newGame({ companyName: "Acme", productType: "social", model: "onprem", seed: 42 });
+    // The £5,000 upfront cost is the server room; the kit is £4,000 + £4,000 at its purchase prices, charged once.
+    expect(state).toMatchObject({ cash: 100_000 - 5_000 - 8_000, spend: { infrastructure: 13_000 } });
+    expect(own.upfrontCost("onprem")).toBe(13_000);
+    expect(own.servers(state).map((s) => [s.type, s.size, s.status, s.paid])).toEqual([
+      ["app", "massive", "ready", 4_000],
+      ["database", "massive", "ready", 4_000],
+    ]);
+    expect(own.units({ ...state, ops: 2 })).toMatchObject({ cu: { capacity: 10_000 }, dbu: { capacity: 10_000 } });
+    // Never charged again: from day 2 it's the room's £10 a day and the kit's £8 a day of power and upkeep.
+    const { state: later, log } = own.advance({ ...state, ops: 10 }, 3);
+    expect(later.cash).toBe(state.cash - 3 * (10 + 8 + 10 * 3));
+    expect(log.flatMap((d) => d.entries).some((e) => e.text.startsWith("Starter kit"))).toBe(false);
+  });
+
+  it("charges the purchase price at once, in infrastructure, without moving time on", () => {
+    const before = begin();
+    const bought = buy(before, "database", "large");
+    expect(bought).toMatchObject({ day: before.day, cash: before.cash - 3_000, nextServerId: before.nextServerId + 1 });
+    expect(bought.spend.infrastructure).toBe(before.spend.infrastructure + 3_000);
+    // Counted in the spend of the day just played, so the cost charts add up.
+    expect(bought.spendByDay.at(-1)).toMatchObject({ day: before.day, infrastructure: before.spendByDay.at(-1)!.infrastructure + 3_000 });
+    expect(own.servers(bought).at(-1)).toMatchObject({ type: "database", size: "large", status: "pending", daysLeft: 10, paid: 3_000, sellBack: 1_200 });
+    // You can't buy what you can't pay for, and nothing changes.
+    expect(code(() => buy({ ...before, cash: 2_999 }, "database", "large"))).toBe("cant_afford");
+    expect(own.serverOptions(before).find((o) => o.type === "cache" && o.size === "small")).toMatchObject({
+      price: 1_000,
+      monthlyCost: 30,
+      sellBackShare: 0.4,
+      readyDays: 10,
+      units: 10,
+    });
+  });
+
+  it("counts down to delivery, and adds capacity only once the kit has arrived", () => {
+    const bought = buy(fleet(begin(), BIG_DB), "app", "small");
+    expect(own.units(bought)!.cu.capacity).toBe(0);
+    let state = bought;
+    for (let daysLeft = 10; daysLeft > 0; daysLeft--) {
+      expect(own.servers(state).at(-1)).toMatchObject({ status: "pending", daysLeft });
+      expect(own.units(state)!.cu.capacity).toBe(0);
+      state = own.advance(state).state;
+    }
+    expect(own.servers(state).at(-1)).toMatchObject({ status: "ready", daysLeft: 0 });
+    expect(own.units(state)!.cu.capacity).toBe(10);
+    // Every day it was on order ran without it: 1,000 users need 10 CU.
+    const { log } = own.advance(bought, 11);
+    expect(log.map((d) => outages([d]).length)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0]);
+  });
+
+  it("charges power and upkeep only from the day after the kit arrives, a day's share of the monthly cost", () => {
+    const bought = buy(fleet(begin(), BIG_APP), "database", "small");
+    const { log } = own.advance(bought, 15);
+    const lines = upkeepLines(log).filter((e) => e.text.startsWith("Database (small)"));
+    expect(lines).toHaveLength(5);
+    expect(lines[0]).toEqual({ text: "Database (small) power and upkeep: 1 × £30 a month", cashDelta: -1, category: "infrastructure" });
+    expect(log.findIndex((d) => d.entries.includes(lines[0]!))).toBe(10);
+    expect(own.monthlyInfrastructureCost(bought)).toBe(own.monthlyInfrastructureCost(fleet(begin(), BIG_APP)));
+    expect(own.monthlyInfrastructureCost(own.advance(bought, 10).state)).toBe(own.monthlyInfrastructureCost(fleet(begin(), BIG_APP)) + 30);
+  });
+
+  it("sells kit back at the configured share of what it cost, refunded at once", () => {
+    const state = fleet(begin(), BIG_APP, BIG_DB, ["cache", "medium"]);
+    const sold = sell(state, 3);
+    expect(sold).toMatchObject({ day: state.day, cash: state.cash + 800 });
+    expect(sold.spend.infrastructure).toBe(state.spend.infrastructure - 800);
+    expect(own.servers(sold).map((s) => s.id)).toEqual([1, 2]);
+    // A share of what you paid, not today's price: so a server bought dearer sells for more.
+    const dear = { ...state, servers: state.servers.map((s) => (s.id === 3 ? { ...s, paid: 5_000 } : s)) };
+    expect(own.servers(dear).at(-1)!.sellBack).toBe(2_000);
+    expect(sell(dear, 3).cash).toBe(state.cash + 2_000);
+    expect(code(() => sell(state, 99))).toBe("unknown_server");
+  });
+
+  it("can't cancel an order or sell kit still on order, and has no rent to cancel", () => {
+    const bought = buy(begin(), "app", "small");
+    const id = bought.servers.at(-1)!.id;
+    let refused: SimError | undefined;
+    try {
+      sell(bought, id);
+    } catch (e) {
+      refused = e as SimError;
+    }
+    expect(refused).toMatchObject({ code: "on_order", details: { daysLeft: 10 } });
+    expect(code(() => own.applyAction(bought, { type: "cancelServer", id }))).toBe("not_rented");
+    expect(code(() => own.applyAction(bought, { type: "rentServer", server: "app", size: "small" }))).toBe("not_for_rent");
+    // Once it arrives it can be sold.
+    expect(sell(own.advance(bought, 10).state, id).cash).toBe(own.advance(bought, 10).state.cash + 400);
+  });
+
+  it("derives ops needed from the kit that has arrived, and cuts every tier when short", () => {
+    // 1 ops for each app server and database, 0.5 for each cache and load balancer, rounded up.
+    const state = begin();
+    expect(own.opsNeededNow(state)).toBe(2);
+    expect(own.opsNeeded("onprem")).toBe(2);
+    const ordered = buy(buy(state, "cache", "small"), "app", "small");
+    expect(own.opsNeededNow(ordered)).toBe(2);
+    expect(own.opsNeededNow(own.advance(ordered, 10).state)).toBe(4);
+    expect(own.opsNeededNow(sell(own.advance(ordered, 10).state, 4))).toBe(3);
+    // With 1 of the 2 ops needed, each tier keeps 40% + 60% × ½ = 70%.
+    expect(own.units({ ...state, ops: 1 })).toMatchObject({ cu: { capacity: 7_000 }, dbu: { capacity: 7_000 } });
+  });
+
+  it("can't be bought out of a traffic spike: new kit arrives after it's over", () => {
+    // Triples demand for 2 days from day 12: 3,000 users' worth against kit for 2,000.
+    const spike: EventConfig = {
+      id: "spike",
+      name: "Traffic spike",
+      description: "A flood of visitors.",
+      layer: "runtime",
+      schedule: { type: "fixed", days: [12] },
+      days: 2,
+      load: { multiplier: 2, extra: 0, unitMultiplier: 3 },
+      effects: { onprem: { detail: "Your kit melted." } },
+    };
+    const spiky = createSim({ ...ownConfig, events: [spike] });
+    // Kit for 2,000 users: two small app servers behind a load balancer, and two small databases.
+    const tight = (s: Sim) =>
+      withUsers(fleet(begin(s), ["app", "small"], ["app", "small"], ["loadBalancer", "small"], ["database", "small"], ["database", "small"]), 1_000);
+    const daysDown = (log: DayLog[]) => log.filter((d) => outages([d]).length).map((d) => d.day);
+
+    // Up every day without the spike, down both days with it.
+    expect(daysDown(own.advance(tight(own), 14).log)).toEqual([]);
+    expect(daysDown(spiky.advance(tight(spiky), 14).log)).toEqual([12, 13]);
+
+    // Buying the day before the spike, or once it has hit, doesn't help: the kit is still on order.
+    for (const day of [11, 12]) {
+      let state = spiky.advance(tight(spiky), day - 1).state;
+      for (const server of ["app", "database"] as const) state = buy(buy(state, server, "massive", spiky), server, "massive", spiky);
+      state = buy(state, "loadBalancer", "massive", spiky);
+      expect(spiky.servers(state).filter((s) => s.status === "pending")).toHaveLength(5);
+      expect(daysDown(spiky.advance(state, 14 - day).log)).toEqual([12, 13].filter((d) => d > day));
+    }
+    // Only kit bought ahead, 10 days before, would have been there.
+    let ahead = tight(spiky);
+    ahead = buy(buy(ahead, "app", "massive", spiky), "database", "massive", spiky);
+    expect(daysDown(spiky.advance(ahead, 14).log)).toEqual([]);
+  });
+
+  it("leaves IaaS, PaaS and SaaS as they were: nothing to buy or sell", () => {
+    for (const model of ["iaas", "paas", "saas"] as const) {
+      const state = begin(own, model);
+      expect(code(() => buy(state, "app", "small"))).toBe("not_for_sale");
+      expect(code(() => sell(state, 1))).toBe("not_for_sale");
+      for (const o of own.serverOptions(state)) expect(o).toMatchObject({ price: null, sellBackShare: null, readyDays: 1 });
+      for (const s of own.servers(state)) expect(s).toMatchObject({ paid: null, sellBack: null });
+    }
+    // Each plays, bills and serves exactly as on a config where on-prem has no kit, only a fixed capacity.
+    const plain = createSim({ ...ownConfig, models: { ...ownConfig.models, onprem: config.models.onprem } });
+    for (const model of ["iaas", "paas", "saas"] as const) {
+      const state = begin(plain, model);
+      const run = (s: Sim) => s.advance(model === "iaas" ? s.applyAction(state, { type: "rentServer", server: "cache", size: "small" }) : state, 20);
+      expect(run(own)).toEqual(run(plain));
+    }
+  });
+
+  describe("migrating, until migration sizes the setup to demand", () => {
+    const migrate = (state: GameState, model: ModelId) => own.applyAction(state, { type: "startMigration", model });
+
+    it("buys the starter kit on moving onto on-prem, on the first day, and it's there on completion", () => {
+      const paas = begin(own, "paas");
+      const quote = own.migrationQuote(paas, "onprem");
+      expect(quote.upfrontCost).toBe(13_000);
+      const { state, log } = own.advance(migrate(paas, "onprem"), 14);
+      expect(log[0]!.entries.filter((e) => e.text.startsWith("Starter kit") || e.text.startsWith("Upfront")).map((e) => e.cashDelta)).toEqual([-5_000, -4_000, -4_000]);
+      expect(state.model).toBe("onprem");
+      expect(own.servers(state).map((s) => [s.type, s.status, s.paid])).toEqual([
+        ["app", "ready", 4_000],
+        ["database", "ready", 4_000],
+      ]);
+      expect(log.at(-1)!.entries.map((e) => e.text)).toContain(
+        "Your On-prem starter setup is ready for tomorrow: 1 massive app server, 1 massive database. Buy more servers as you grow.",
+      );
+    });
+
+    it("sells the kit back at a loss on leaving on-prem, kit on order included", () => {
+      const state = buy(fleet(begin(), BIG_APP, BIG_DB), "cache", "small");
+      const moving = own.advance(migrate(state, "iaas"), 13).state;
+      const ordered = buy(moving, "cache", "small");
+      const { state: after, log } = own.advance(ordered);
+      expect(after).toMatchObject({ model: "iaas" });
+      expect(after.servers.every((s) => s.paid === undefined)).toBe(true);
+      // £4,000 + £4,000 + £1,000 + £1,000 paid: 40% back is £4,000.
+      expect(log[0]!.entries).toContainEqual({
+        text: "Your 4 servers were sold back for £4,000: 40% of the £10,000 you paid.",
+        cashDelta: 4_000,
+        category: "infrastructure",
+      });
+    });
+  });
+
+  it("is deterministic, and resumes identically after a JSON round trip", () => {
+    const run = (state: GameState) => {
+      let s = own.advance(buy(state, "app", "small"), 12).state;
+      s = sell(s, s.servers.at(-1)!.id);
+      return own.advance(buy(s, "cache", "medium"), 5);
+    };
+    expect(run(begin())).toEqual(run(begin()));
+    const half = own.advance(buy(begin(), "loadBalancer", "small"), 3).state;
+    expect(own.advance(JSON.parse(JSON.stringify(half)), 12)).toEqual(own.advance(half, 12));
+  });
+
+  it("by default, buys a starter kit with room to grow, needs more ops than IaaS and costs more up front", () => {
+    const s = createSim(defaultConfig);
+    const { onprem } = defaultConfig.models;
+    const kit = onprem.servers!.starter.reduce((sum, k) => sum + k.count * onprem.servers!.purchase!.price[k.type][k.size], 0);
+    // The model's upfront cost is the server room; the kit is on top, not charged twice.
+    expect(s.upfrontCost("onprem")).toBe(onprem.upfrontCost + kit);
+    expect(s.upfrontCost("onprem")).toBe(34_800);
+    expect(s.opsNeeded("onprem")).toBeGreaterThan(s.opsNeeded("iaas"));
+    expect(onprem.servers!.readyDays).toBe(10);
+    for (const p of PRODUCT_TYPE_IDS) {
+      const state = s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1 });
+      expect(state.cash).toBe(defaultConfig.startingCash - 34_800);
+      expect(s.units({ ...state, ops: s.opsNeeded("onprem") })!.usersSupported, p).toBeGreaterThan(state.users * 2);
+    }
+    // Every bought server sells back at a loss, and costs more up front than a month's rent of the same VM.
+    const { purchase } = onprem.servers!;
+    expect(purchase!.sellBackShare).toBeLessThan(1);
+    for (const t of SERVER_TYPES) {
+      for (const size of SERVER_SIZES) {
+        expect(purchase!.price[t][size]).toBeGreaterThan(defaultConfig.models.iaas.servers!.monthlyCost[t][size]);
+        expect(onprem.servers!.monthlyCost[t][size]).toBeLessThan(defaultConfig.models.iaas.servers!.monthlyCost[t][size]);
+      }
     }
   });
 });
@@ -1422,19 +1703,26 @@ describe("default config", () => {
     const start = sim180.newGame({ companyName: "Acme", productType, model, seed: 7 });
     return sim180.advance(ops === undefined ? start : { ...start, ops }, defaultConfig.finalDay - 1).state;
   };
-  // On servers, rents a massive one for any tier past half its capacity, enough headroom for load variation and the
-  // seasonal spike: a cache while it has room to take more off the database, then a database.
+  // On servers, rents (or on-prem, buys) a massive one for any tier past half its capacity, enough headroom for load
+  // variation, the seasonal spike and on-prem's delivery time: a cache while it has room to take more off the
+  // database, then a database.
   const rentAhead = (state: GameState): GameState => {
     const units = sim180.units(state);
     if (!units) return state;
-    const rent = (server: "app" | "database" | "cache" | "loadBalancer") =>
-      rentAhead(sim180.applyAction(state, { type: "rentServer", server, size: "massive" }));
+    const type = state.model === "onprem" ? "buyServer" : "rentServer";
+    const rent = (server: ServerType) =>
+      rentAhead(sim180.applyAction(state, { type, server, size: "massive" }));
     const { cu, dbu, ch, loadBalancer } = units;
-    const pending = sim180.servers(state).some((s) => s.status === "pending");
-    if (pending) return state;
-    if (loadBalancer.uncovered > 0) return rent("loadBalancer");
-    if (cu.demand > cu.capacity / 2) return rent("app");
-    if (dbu.demand > dbu.capacity / 2) return rent(ch.absorbed < ch.demand && ch.capacity < dbu.capacity ? "cache" : "database");
+    // VMs are ready the next day, so it waits for any being set up. Kit takes 10 days to arrive, so on-prem buys
+    // further ahead, and waits only for kit of the same type already on order.
+    const onprem = state.model === "onprem";
+    const ahead = onprem ? 2.5 : 2;
+    const pending = (type: ServerType) => sim180.servers(state).some((s) => s.status === "pending" && (!onprem || s.type === type));
+    const add = (server: ServerType) => (pending(server) ? undefined : rent(server));
+    if (loadBalancer.uncovered > 0) return add("loadBalancer") ?? state;
+    const app = cu.demand > cu.capacity / ahead ? add("app") : undefined;
+    if (app) return app;
+    if (dbu.demand > dbu.capacity / ahead) return add(ch.absorbed < ch.demand && ch.capacity < dbu.capacity ? "cache" : "database") ?? state;
     return state;
   };
   // Plays to the end with the ops the model needs, hiring support each day to keep up with the usual tickets, and on
@@ -1547,7 +1835,7 @@ describe("default config", () => {
   });
 
   it("makes on-prem's upfront cost the highest, and only SaaS charge per user", () => {
-    const upfront = (m: (typeof MODEL_IDS)[number]) => defaultConfig.models[m].upfrontCost;
+    const upfront = (m: (typeof MODEL_IDS)[number]) => createSim(defaultConfig).upfrontCost(m);
     for (const m of ["iaas", "paas", "saas"] as const) expect(upfront("onprem")).toBeGreaterThan(upfront(m) * 10);
     expect(MODEL_IDS.filter((m) => defaultConfig.models[m].monthlyCostPerUser > 0)).toEqual(["saas"]);
   });
@@ -2611,10 +2899,11 @@ describe("default events", () => {
   });
 
   it("melt on-prem in a spike, but scale PaaS", () => {
-    const s = createSim({ ...defaultConfig, events: [{ ...event("trafficSpike"), schedule: { type: "fixed", days: [10] } }] });
+    // By day 30 a social network has grown into its starter kit enough that tripled demand is too much for it.
+    const s = createSim({ ...defaultConfig, events: [{ ...event("trafficSpike"), schedule: { type: "fixed", days: [30] } }] });
     const run = (model: (typeof MODEL_IDS)[number]) => {
       const start = s.newGame({ companyName: "Acme", productType: "social", model, seed: 7 });
-      return s.advance({ ...start, ops: s.opsNeeded(model) }, 9).state;
+      return s.advance({ ...start, ops: s.opsNeeded(model) }, 29).state;
     };
     expect(run("onprem").outageDays).toBeGreaterThan(0);
     expect(run("paas").outageDays).toBe(0);

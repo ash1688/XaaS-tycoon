@@ -63,6 +63,7 @@ export interface MetaView {
     stack: StackLayer[];
     /** Ops staff the model needs: on a model with servers, for the starter setup a company gets. */
     opsNeeded: number;
+    /** Everything charged on adopting the model: on a model that buys its servers, the starter kit too. */
     upfrontCost: number;
     monthlyCost: number;
     monthlyCostPerUser: number;
@@ -114,7 +115,10 @@ export interface CompanyView {
   ops: number;
   /** Support staff: they answer customers' tickets, on every model. */
   support: number;
-  /** Ops staff the company needs: on a model with servers (IaaS), for the servers it has, ready or not. */
+  /**
+   * Ops staff the company needs: on a model with servers, for the servers it has (on IaaS ready or not, on-prem once
+   * they've arrived).
+   */
   opsNeeded: number;
   /** What the current headcount costs per day. */
   dailyStaffCost: number;
@@ -167,14 +171,21 @@ export interface CompanyView {
    */
   capacity: number;
   /**
-   * On a model with servers (IaaS): CU, DBU (after the cache) and CH demand on the day just played against what the
+   * On a model with servers (IaaS and on-prem): CU, DBU (after the cache) and CH demand on the day just played against what the
    * ready servers give, the binding tier that runs out first, the users the servers can serve, and load balancer
    * coverage of the app servers. Null on a model with a fixed capacity.
    */
   units: UnitsView | null;
-  /** The company's servers (type, size, ready or pending, units and monthly price), oldest first. Empty without servers. */
+  /**
+   * The company's servers (type, size, ready or pending with the days left, units and monthly price; for bought kit,
+   * what it cost and what selling it back would refund), oldest first. On-prem, pending servers are on order. Empty
+   * without servers.
+   */
   servers: ServerView[];
-  /** What the company can add on its model, every type and size with its units and monthly price. Empty without servers. */
+  /**
+   * What the company can add on its model, every type and size with its units and monthly price; on-prem, the purchase
+   * price, sell-back share and delivery days too. Empty without servers.
+   */
   serverOptions: ServerOption[];
   /** Percentage of time up across every day played. */
   uptime: number;

@@ -81,7 +81,7 @@ const alerts = computed(() => {
       id: "load",
       text: game.loadLevel === "over" ? "Over capacity" : "Close to capacity",
       detail: game.tightest
-        ? `${game.tightest.name} (${game.tightest.unit}) is at ${game.tightest.percent}% of capacity. Over 100% is an outage: rent more ${game.tightest.servers}.`
+        ? `${game.tightest.name} (${game.tightest.unit}) is at ${game.tightest.percent}% of capacity. Over 100% is an outage: ${game.addVerb} more ${game.tightest.servers}.`
         : `Load is ${game.loadPercent}% of capacity. Over 100% is an outage.`,
       page: "infrastructure",
       pageName: "Infrastructure",
@@ -332,11 +332,16 @@ const alerts = computed(() => {
           {{ game.tightest.name }} sets your capacity: {{ formatCount(game.tightest.demand) }} of
           {{ formatCount(game.tightest.capacity) }} {{ game.tightest.unit }}.
           <span v-if="game.units?.loadBalancer.uncovered" class="warn-text">Load balancer needed.</span>
+          <span v-if="game.onOrder.length" data-testid="home-on-order">
+            {{ game.onOrder.length }} server{{ game.onOrder.length === 1 ? "" : "s" }} on order, the next arriving in
+            {{ Math.min(...game.onOrder.map((s) => s.daysLeft)) }}
+            day{{ Math.min(...game.onOrder.map((s) => s.daysLeft)) === 1 ? "" : "s" }}.
+          </span>
           Uptime <strong data-testid="uptime">{{ formatUptime(game.company.uptime) }}</strong>.
         </p>
         <template #detail>
           <CapacityPanel />
-          <p class="modal-link"><RouterLink :to="page('infrastructure')">Rent servers on Infrastructure</RouterLink></p>
+          <p class="modal-link"><RouterLink :to="page('infrastructure')">{{ game.buysServers ? "Buy" : "Rent" }} servers on Infrastructure</RouterLink></p>
         </template>
       </OverviewCard>
 

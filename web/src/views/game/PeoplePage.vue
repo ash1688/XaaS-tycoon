@@ -22,8 +22,8 @@ const game = useGame();
         <li>
           <strong>Ops staff</strong>
           <span class="muted">
-            Keep the infrastructure running. Too few and capacity is cut. On IaaS, every VM you rent needs a share of
-            someone's time.
+            Keep the infrastructure running. Too few and capacity is cut. On IaaS and on-prem, every server you run needs a
+            share of someone's time.
           </span>
         </li>
         <li>

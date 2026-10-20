@@ -2724,3 +2724,27 @@ body.modal-open {
 .rent-summary {
   margin: 1rem 0;
 }
+
+/* Kit on order (on-prem): a countdown bar to delivery. */
+.order-meter {
+  flex: 1 1 8rem;
+  max-width: 12rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.order-meter-fill {
+  height: 100%;
+  background: var(--you);
+}
+
+.order-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.9rem;
+}
+
+.sell-note {
+  font-size: 1.05rem;
+}

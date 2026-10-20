@@ -17,7 +17,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 14;
+export const GAME_STATE_VERSION = 15;
 
 /** Money spent in each category. */
 export type Spend = Record<SpendCategory, number>;
@@ -119,16 +119,18 @@ export interface PriceWave {
 }
 
 /**
- * A server the company has, on a model with servers: a rented VM on IaaS. Billed from the first day played after it's
- * added until it's cancelled.
+ * A server the company has, on a model with servers: a rented VM on IaaS, billed from the first day played after it's
+ * added until it's cancelled; or kit bought on-prem, paid for up front and on order until it arrives.
  */
 export interface Server {
-  /** Unique within the game, for cancelling it. */
+  /** Unique within the game, for cancelling or selling it. */
   id: number;
   type: ServerType;
   size: ServerSize;
-  /** Ready at the end of this day: it serves load on every day played after it. */
+  /** Ready at the end of this day: it serves load on every day played after it. Bought kit arrives on this day. */
   readyDay: number;
+  /** What it was bought for, on a model that buys its servers. Selling it back refunds a share of this. */
+  paid?: number;
 }
 
 /** CU and DBU demand on the day just played: what every user needed, before any cache. */
@@ -255,7 +257,14 @@ export type Action =
   /** Rents a VM of a type and size, on IaaS. Billed monthly from the next day played, and ready the next day. */
   | { type: "rentServer"; server: ServerType; size: ServerSize }
   /** Cancels a rented VM, ready or not. Its rent stops: you pay only for the days you had it. */
-  | { type: "cancelServer"; id: number };
+  | { type: "cancelServer"; id: number }
+  /**
+   * Buys a server of a type and size, on-prem. Its price is charged at once (infrastructure). It's on order until it
+   * arrives after the delivery time, adding no capacity until then. An order can't be cancelled.
+   */
+  | { type: "buyServer"; server: ServerType; size: ServerSize }
+  /** Sells back a bought server that has arrived, refunding the configured share of what it cost, at once. */
+  | { type: "sellServer"; id: number };
 
 export interface NewGameParams {
   companyName: string;

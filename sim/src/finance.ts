@@ -54,5 +54,25 @@ export function createFinance(config: GameConfig) {
     return { state: settled, entries };
   }
 
-  return { settle };
+  /**
+   * Charges (or refunds) made between days, such as buying a server: applied to cash and spend at once, and counted
+   * in the spend of the day just played, so the cost charts still add up. Never ends the game: an action that would
+   * leave cash below zero is refused before it gets here.
+   */
+  function chargeNow(state: GameState, entries: LogEntry[]): GameState {
+    const daySpend = noSpend();
+    for (const e of entries) if (e.category) daySpend[e.category] -= e.cashDelta;
+    const spend = noSpend();
+    for (const c of SPEND_CATEGORIES) spend[c] = state.spend[c] + daySpend[c];
+    const last = state.spendByDay.at(-1);
+    const spendByDay =
+      last?.day === state.day
+        ? [...state.spendByDay.slice(0, -1), { ...last, ...Object.fromEntries(SPEND_CATEGORIES.map((c) => [c, last[c] + daySpend[c]])) }]
+        : [...state.spendByDay, { day: state.day, ...daySpend, income: 0 }];
+    return { ...state, cash: state.cash + entries.reduce((sum, e) => sum + e.cashDelta, 0), spend, spendByDay };
+  }
+
+  return { settle, chargeNow };
 }
+
+export type Finance = ReturnType<typeof createFinance>;

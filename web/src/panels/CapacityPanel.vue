@@ -74,7 +74,7 @@ const cachePercent = () => Math.round(100 * (game.meta?.cacheableShare ?? 0));
               That's after the cache, of {{ formatCount(game.units.dbu.beforeCache) }} DBU in all.
             </template>
             <template v-if="t.level === 'over'"> Over capacity: expect outages.</template>
-            <template v-else-if="t.level === 'high'"> Getting close: rent more {{ t.servers }} soon.</template>
+            <template v-else-if="t.level === 'high'"> Getting close: {{ game.addVerb }} more {{ t.servers }} soon.</template>
             <template v-if="t.id === 'cu' && game.units.loadBalancer.uncovered">
               {{ game.units.loadBalancer.uncovered }} app server{{ game.units.loadBalancer.uncovered === 1 ? " isn't" : "s aren't" }}
               counted: no load balancer covers {{ game.units.loadBalancer.uncovered === 1 ? "it" : "them" }}.
@@ -86,6 +86,10 @@ const cachePercent = () => Math.round(100 * (game.meta?.cacheableShare ?? 0));
         Your ready servers serve about <strong>{{ formatCount(game.units.usersSupported) }}</strong> users at your
         product's usual demand. You have {{ formatCount(game.company.users) }}, free users included.
         <template v-if="game.units.burst">Today that includes the extra VMs your ops team rented for the event.</template>
+        <template v-if="game.onOrder.length">
+          The {{ game.onOrder.length }} server{{ game.onOrder.length === 1 ? "" : "s" }} you have on order add nothing
+          until {{ game.onOrder.length === 1 ? "it arrives" : "they arrive" }}.
+        </template>
       </p>
       <p v-if="game.understaffed" class="warn-text capacity-staff">
         You're {{ game.company.opsNeeded - game.company.ops }} ops short, so every tier is cut.
