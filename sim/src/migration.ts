@@ -3,8 +3,8 @@ import type { Events } from "./events.ts";
 import type { Features } from "./features.ts";
 import type { Infrastructure } from "./infrastructure.ts";
 import { nextRandom } from "./rng.ts";
-import type { Servers } from "./servers.ts";
-import { isModelId, SimError, type GameState, type LogEntry, type Migration } from "./state.ts";
+import type { Servers, SetupItem } from "./servers.ts";
+import { isModelId, SimError, type GameState, type LogEntry, type Migration, type Server, type UnitDemand } from "./state.ts";
 
 /** Where a migration has got to, for the screen. */
 export interface MigrationView {
@@ -19,6 +19,13 @@ export interface MigrationView {
   totalDays: number;
   /** Extra days from an overrun, included in the days above. 0 if it hasn't overrun (or not yet). */
   overrunDays: number;
+  /**
+   * The setup being built on the new model, by type and size: billed alongside the old one until the switch, when it
+   * takes over. Empty moving to SaaS, which has no servers.
+   */
+  setup: SetupItem[];
+  /** What the new setup costs a month, after any price rises: rent, or bought kit's power and upkeep. */
+  setupMonthly: number;
 }
 
 /**
@@ -31,15 +38,40 @@ export interface MigrationQuote {
   to: ModelId;
   /** Days the migration takes if it doesn't overrun. The model switches at the end of the last one. */
   days: number;
-  /** The new model's upfront cost, with any starter kit it buys, charged on the migration's first day. */
+  /**
+   * The setup the migration builds on the new model, itemised by type and size: sized to today's usual demand plus
+   * headroom. Empty moving to SaaS, which has no servers.
+   */
+  setup: SetupItem[];
+  /** The demand the setup is sized for: today's usual CU and DBU, plus the headroom. */
+  sizedFor: UnitDemand;
+  /** The headroom on top of today's demand (0.25 = 25%). */
+  headroom: number;
+  /** What buying the setup costs, on a model that buys its servers: part of the upfront cost. 0 where it's rented. */
+  setupUpfront: number;
+  /** What the setup costs a month: rent, or bought kit's power and upkeep. Part of the double billing. */
+  setupMonthly: number;
+  /** Ops staff the new model needs once the setup takes over: its fixed number plus the setup's servers' shares. */
+  opsNeeded: number;
+  /**
+   * Days bought kit takes to arrive, on a model that buys its servers: it's ordered on the first day, so it arrives
+   * during the move if this is shorter than it. Null where the setup is rented.
+   */
+  deliveryDays: number | null;
+  /** The new model's upfront cost and the setup's kit, if it buys it, charged on the migration's first day. */
   upfrontCost: number;
-  /** The new provider's running costs for every day of the migration, on top of the old one's. */
+  /**
+   * The new provider's running costs for every day of the migration, on top of the old one's: its own monthly and
+   * per-user fees and the new setup's servers (bought kit from the day after it arrives).
+   */
   doubleBilling: number;
-  /** The old provider's running costs from the first day of the migration up to the day you leave. */
+  /** The old provider's running costs, its servers included, from the first day of the migration up to the day you leave. */
   proRata: number;
   /** Charged once by the old provider on the day you leave. */
   exitPenalty: number;
-  /** Everything above added up. */
+  /** What the old setup's bought kit sells back for on the day you leave (a refund): 0 where it's rented. */
+  sellBack: number;
+  /** Everything above added up, less the sell-back. */
   total: number;
   /** The odds of an overrun and how many extra days it can add. Both providers bill for those days too. */
   overrun: { chance: number; minDays: number; maxDays: number };
@@ -67,19 +99,18 @@ export function createMigration(
   servers: Servers,
 ) {
   /**
-   * A model's starter setup in words: "1 medium app server, 1 medium database", or on a managed platform "1 app
-   * instance, 1 small managed database".
+   * A setup in words: "1 medium app server, 1 medium database", or on a managed platform "2 app instances, 1 small
+   * managed database".
    */
-  const modelServersList = (model: ModelId) => {
-    const managed = servers.isManaged(model);
-    return config.models[model].servers?.starter
-      .filter((s) => s.count > 0)
-      .map((s) => {
-        const plural = s.count === 1 ? "" : "s";
-        if (managed && s.type === "app") return `${s.count} app instance${plural}`;
-        return `${s.count} ${s.size} ${(managed ? servers.managedName(s.type) : config.servers.types[s.type].name).toLowerCase()}${plural}`;
-      });
-  };
+  const setupList = (state: GameState, model: ModelId, list: Server[]) =>
+    servers
+      .setupItems(state, model, list)
+      .map((item) => {
+        const plural = item.count === 1 ? "" : "s";
+        if (servers.isManaged(model) && item.type === "app") return `${item.count} app instance${plural}`;
+        return `${item.count} ${item.size} ${item.name.toLowerCase()}${plural}`;
+      })
+      .join(", ");
 
   /** Checks a migration to this model can start, and returns it as a model id. */
   function migrationTarget(state: GameState, to: string): ModelId {
@@ -92,47 +123,87 @@ export function createMigration(
     return to;
   }
 
+  /**
+   * Starts a migration, building the target model's setup at once, sized to today's usual demand plus headroom (see
+   * sizeSetupFor): rented servers on the model's usual terms, bought kit ordered today and paid for on the first day.
+   */
   function startMigration(state: GameState, model: string): GameState {
     const to = migrationTarget(state, model);
-    return { ...state, migration: { to, phase: MIGRATION_PHASES[0], phaseDaysDone: 0, overrunDays: 0 } };
+    const setup = servers.setupFor(state, to, infra.usualDemand(state));
+    const migration: Migration = { to, phase: MIGRATION_PHASES[0], phaseDaysDone: 0, overrunDays: 0, servers: setup.servers };
+    return { ...state, nextServerId: setup.nextServerId, migration };
   }
 
+  /**
+   * What a migration costs, worked out by starting it and pricing each of its days by the same rules a day is billed
+   * by, so the rounding matches too, and bought kit costs its upkeep only once it has arrived, as it's billed.
+   */
   function migrationQuote(state: GameState, target: string): MigrationQuote {
-    const to = migrationTarget(state, target);
+    const started = startMigration(state, target);
+    const m = started.migration!;
+    const to = m.to;
     const days = MIGRATION_PHASES.reduce((sum, p) => sum + config.migration.phases[p].days, 0);
-    // Priced by the same daily rules a day is billed by, so the rounding matches too.
-    const upfrontCost = infra.upfrontCost(to);
-    const doubleBilling = config.migration.billNewFromStart ? days * infra.dailyInfrastructure(state, to, state.users) : 0;
-    const proRata = days * infra.dailyInfrastructure(state, state.model, state.users);
+    const upfrontCost = infra.upfrontCost(to, m.servers);
+    let doubleBilling = 0;
+    let proRata = 0;
+    for (let d = 0; d < days; d++) {
+      const day = { ...started, day: state.day + d };
+      doubleBilling -= newSetupEntries(day).reduce((sum, e) => sum + e.cashDelta, 0);
+      proRata += infra.dailyInfrastructure(day, state.model, state.users);
+    }
     const exitPenalty = config.models[state.model].exitPenalty;
+    const sellBack = servers.sellBackTotal(state);
+    const setup = servers.setupItems(started, to, m.servers);
+    const room = config.migration.setupHeadroom;
+    const usual = infra.usualDemand(state);
+    const tidy = (n: number) => Math.round(n * 100) / 100;
     const { chance, minDays, maxDays } = config.migration.overrun;
     const lostAddons = features.addonsLeftBehind(state, to).map(({ id, name, devDays }) => ({ id, name, devDays }));
     return {
       from: state.model,
       to,
       days,
+      setup,
+      sizedFor: { cu: tidy(usual.cu * (1 + room)), dbu: tidy(usual.dbu * (1 + room)) },
+      headroom: room,
+      setupUpfront: setup.reduce((sum, item) => sum + item.upfront, 0),
+      setupMonthly: Math.round(setup.reduce((sum, item) => sum + item.monthly, 0)),
+      opsNeeded: servers.opsFor(to, m.servers),
+      deliveryDays: config.models[to].servers?.purchase && setup.length ? servers.readyDaysOf(to) : null,
       upfrontCost,
       doubleBilling,
       proRata,
       exitPenalty,
-      total: upfrontCost + doubleBilling + proRata + exitPenalty,
+      sellBack,
+      total: upfrontCost + doubleBilling + proRata + exitPenalty - sellBack,
       overrun: { chance, minDays, maxDays },
       lostAddons,
     };
   }
 
   /**
-   * The migration's own charges for a day, on top of the current model's bill: the new model's upfront cost on the
-   * first day, and (if config says so) the new provider's running costs in full from that day to the switch.
+   * A day's bill for the new model during a migration, on top of the old one's: its own monthly cost and per-user
+   * fees (the flat bill a model has had since the alpha), and the servers of the setup being built, one line per type
+   * and size like any server bill. The setup's servers are only ever billed here: the model's own monthly cost is
+   * the account, not servers, so nothing is counted twice. Rented servers are billed from the first day, bought kit
+   * from the day after it arrives.
+   */
+  const newSetupEntries = (state: GameState): LogEntry[] =>
+    state.migration
+      ? infra
+          .infrastructureEntries(state, state.migration.to, state.users)
+          .map((e) => ({ ...e, text: `Double billing: ${e.text}` }))
+      : [];
+
+  /**
+   * The migration's own charges for a day, on top of the current model's bill: on the first day the new model's
+   * upfront cost and any kit the new setup buys, and every day the new model's bill, so you pay for both setups.
    */
   function migrationCharges(state: GameState): LogEntry[] {
     const m = state.migration;
     if (!m) return [];
     const firstDay = m.phase === MIGRATION_PHASES[0] && m.phaseDaysDone === 0;
-    const running = config.migration.billNewFromStart
-      ? infra.infrastructureEntries(state, m.to, state.users).map((e) => ({ ...e, text: `Double billing: ${e.text}` }))
-      : [];
-    return [...(firstDay ? infra.upfrontEntries(m.to) : []), ...running];
+    return [...(firstDay ? infra.upfrontEntries(m.to, m.servers) : []), ...newSetupEntries(state)];
   }
 
   /** A seeded roll for whether a migration overruns, and by how many days. Always draws once, then again if so. */
@@ -157,7 +228,9 @@ export function createMigration(
     const daysLeft = later.reduce((sum, p) => sum + phaseLength(m, p), phaseDaysLeft);
     const totalDays = MIGRATION_PHASES.reduce((sum, p) => sum + phaseLength(m, p), 0);
     const { overrunDays } = m;
-    return { from: state.model, to: m.to, phase: m.phase, phaseDaysLeft, daysLeft, totalDays, overrunDays };
+    const setup = servers.setupItems(state, m.to, m.servers);
+    const setupMonthly = Math.round(setup.reduce((sum, item) => sum + item.monthly, 0));
+    return { from: state.model, to: m.to, phase: m.phase, phaseDaysLeft, daysLeft, totalDays, overrunDays, setup, setupMonthly };
   }
 
   /**
@@ -189,20 +262,18 @@ export function createMigration(
       }
       return { state: { ...state, rng, migration: moved }, entries };
     }
-    // Until migration sizes the new setup to demand (#51), the servers go with the model: those on the model being
-    // left are dropped, which stops their rent from tomorrow (pro rata, like the model's own bill; on PaaS, instances
-    // and managed services too), or for bought kit sells it back at a loss; and a model with servers gets its starter
-    // setup, ready for tomorrow and billed from then (on PaaS, its starter instances and managed database). Bought
-    // starter kit was paid for on the migration's first day, with the upfront cost, so it has arrived: a migration
-    // takes longer than delivery. SaaS has no servers, so moving there drops them all and capacity is the provider's.
-    const setup = servers.starter(m.to, state.day, state.nextServerId);
+    // The new setup takes over, serving from tomorrow, and capacity and ops are worked out on it from now. The old
+    // setup goes: rented servers are cancelled, having been billed up to and including today (pro rata, like the
+    // model's own bill), and bought kit is sold back at a loss. SaaS has no servers, so moving there drops them all
+    // and capacity is the provider's. Bought kit for the new setup was ordered on the first day, so with the default
+    // 10-day delivery inside a 14-day move it has arrived; an overrun only makes the move longer. If a teacher sets a
+    // delivery longer than the move, kit still on order arrives later and serves from then.
     const switched: GameState = {
       ...state,
       model: m.to,
       migration: null,
       migrations: state.migrations + 1,
-      servers: setup.servers,
-      nextServerId: setup.nextServerId,
+      servers: m.servers,
     };
     const needed = infra.opsNeededNow(switched);
     const left = config.models[state.model];
@@ -214,14 +285,10 @@ export function createMigration(
       },
     ];
     entries.push(...servers.leaveEntries(state));
-    if (setup.servers.length) {
-      const list = (modelServersList(m.to) ?? []).join(", ");
-      const more = servers.isManaged(m.to)
-        ? "Raise your instance count"
-        : config.models[m.to].servers?.purchase
-          ? "Buy more servers"
-          : "Rent more VMs";
-      const text = `Your ${toName} starter setup is ready for tomorrow: ${list}. ${more} as you grow.`;
+    if (m.servers.length) {
+      const onOrder = m.servers.filter((s) => s.readyDay > state.day).length;
+      const late = onOrder > 0 ? ` ${onOrder} still on order, serving once ${onOrder === 1 ? "it arrives" : "they arrive"}.` : "";
+      const text = `Your new ${toName} setup takes over tomorrow: ${setupList(state, m.to, m.servers)}.${late} Fine-tune its sizes on Infrastructure as you grow.`;
       entries.push({ text, cashDelta: 0, kind: "migration" });
     }
     // Charged once, on the day you leave. The old provider's pro-rata share for today was billed with the rest.

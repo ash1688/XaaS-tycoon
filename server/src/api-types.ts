@@ -210,7 +210,10 @@ export interface CompanyView {
   spend: Spend;
   /** The product's features, with each one's status (built, building or a SaaS add-on) and build progress. */
   features: FeatureView[];
-  /** The migration under way (target, phase, days left in the phase and overall), or null. */
+  /**
+   * The migration under way (target, phase, days left in the phase and overall), or null. It holds the new setup
+   * being built on the target, itemised; the old setup is still `servers` until the switch, so both show.
+   */
   migration: MigrationView | null;
   /** Migrations completed so far. */
   migrations: number;
@@ -228,8 +231,9 @@ export interface CompanyView {
 
 
 /**
- * GET .../migration-quote?target=: what migrating to the target would cost (duration, upfront, double billing, pro
- * rata, exit penalty, total), the odds of an overrun, and the add-ons lost when leaving SaaS, for the confirm step.
+ * GET .../migration-quote?target=: what migrating to the target would cost (duration, the new setup itemised by type
+ * and size with its upfront and monthly cost, upfront, double billing, pro rata, exit penalty, sell-back, total), the
+ * odds of an overrun, and the add-ons lost when leaving SaaS, for the confirm step.
  */
 export type MigrationQuoteView = MigrationQuote;
 

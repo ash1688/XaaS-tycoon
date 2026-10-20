@@ -1,4 +1,4 @@
-import { defaultConfig, type GameConfig, type ModelId } from "./config.ts";
+import { defaultConfig, type GameConfig, type ModelId, type ServerCount } from "./config.ts";
 import { createConversion, type ConversionView } from "./conversion.ts";
 import { createCustomers } from "./customers.ts";
 import { createEvents, type EventView, type FeatureGapView } from "./events.ts";
@@ -23,6 +23,7 @@ import {
   type GameState,
   type LogEntry,
   type NewGameParams,
+  type UnitDemand,
 } from "./state.ts";
 import { createSummary, type GameSummary } from "./summary.ts";
 import { createSupport } from "./support.ts";
@@ -42,6 +43,7 @@ export type {
   ManagedView,
   ServerOption,
   ServerView,
+  SetupItem,
   TierView,
   UnitsView,
 } from "./servers.ts";
@@ -100,6 +102,12 @@ export interface Sim {
    * kit at its purchase prices.
    */
   upfrontCost(model: ModelId): number;
+  /**
+   * The smallest sensible setup on a model for some CU and DBU demand, plus the configured migration headroom: what a
+   * migration onto it builds. App servers and databases (and load balancers where needed) on IaaS and on-prem,
+   * instances and managed services on PaaS, nothing on SaaS.
+   */
+  sizeSetupFor(model: ModelId, demand: UnitDemand): ServerCount[];
   /**
    * Ops staff the company needs now: the model's fixed number, plus on a model with servers, the servers' shares.
    * Managed services need none.
@@ -392,7 +400,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     applyAction,
     advance,
     opsNeeded: infra.opsNeeded,
-    upfrontCost: infra.upfrontCost,
+    upfrontCost: (model) => infra.upfrontCost(model),
+    sizeSetupFor: infra.sizeSetupFor,
     opsNeededNow: (s) => infra.opsNeededNow(load(s)),
     dailyStaffCost: (s) => staff.dailyStaffCost(load(s)),
     monthlyInfrastructureCost: (s) => infra.monthlyInfrastructureCost(load(s)),

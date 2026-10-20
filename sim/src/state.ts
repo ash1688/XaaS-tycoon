@@ -19,7 +19,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 16;
+export const GAME_STATE_VERSION = 17;
 
 /** Money spent in each category. */
 export type Spend = Record<SpendCategory, number>;
@@ -57,6 +57,12 @@ export interface Migration {
   phaseDaysDone: number;
   /** Extra days added to the moving phase by an overrun, rolled when that phase starts. 0 until then. */
   overrunDays: number;
+  /**
+   * The setup being built on the target model, sized to demand when the migration started (see sizeSetupFor). Rented
+   * servers are billed from the migration's first day; bought ones are paid for then and on order until they arrive.
+   * They serve only once the model switches, when they become the company's servers.
+   */
+  servers: Server[];
 }
 
 /** A day a scripted event fires on, fixed when the game starts. */

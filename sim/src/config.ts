@@ -125,9 +125,9 @@ export interface ModelServersConfig {
   /** Set on a model whose platform runs the servers for you (PaaS). */
   managed?: ManagedServersConfig;
   /**
-   * The servers a new company on this model starts with, ready for the first day. Until migration sizes a setup to
-   * demand (#51), a migration onto the model gets these too. On a model that buys its servers, they're bought along
-   * with the model's upfront cost, at their purchase prices.
+   * The servers a new company on this model starts with, ready for the first day. On a model that buys its servers,
+   * they're bought along with the model's upfront cost, at their purchase prices. A migration onto the model doesn't
+   * get these: it builds a setup sized to the company's demand (see Servers.sizeSetupFor).
    */
   starter: ServerCount[];
 }
@@ -464,11 +464,11 @@ export interface MigrationPhaseConfig {
 export interface MigrationConfig {
   phases: Record<MigrationPhase, MigrationPhaseConfig>;
   /**
-   * Whether the new provider bills in full from the first day of a migration, on top of the old one, so you pay for
-   * two setups while you move. The design notes assume it does, still to confirm, hence the switch. Off, the new
-   * provider bills from the day after the switch. Its upfront cost is charged on the migration's first day either way.
+   * Room to grow in the setup a migration builds on the target model, as a share on top of today's usual CU and DBU
+   * demand (0.25 = sized for 25% more). The setup is built on the migration's first day and billed from then, on top
+   * of the old one, so you pay for two setups while you move; it serves once the model switches.
    */
-  billNewFromStart: boolean;
+  setupHeadroom: number;
   overrun: OverrunConfig;
 }
 
@@ -944,7 +944,8 @@ export const defaultConfig: GameConfig = {
       testing: { name: "Testing", days: 2 },
       moving: { name: "Moving infrastructure", days: 7 },
     },
-    billNewFromStart: true,
+    // Users grow while you move, so the new setup has a quarter more room than today's demand needs.
+    setupHeadroom: 0.25,
     overrun: { chance: 0.3, minDays: 2, maxDays: 5 },
   },
   events: [
