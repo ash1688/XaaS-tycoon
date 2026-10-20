@@ -61,6 +61,12 @@ export interface MetaView {
   staff: { id: StaffPool; name: string; personName: string; dayRate: number }[];
   /** Developers a SaaS company needs to configure add-ons before it can buy one. */
   minConfigDevelopers: number;
+  /** Tickets one support person clears a day. */
+  ticketsPerPerson: number;
+  /** At or above this satisfaction %, customers are happy: no slower growth or extra churn. */
+  goodSatisfaction: number;
+  /** Below this satisfaction %, customers are angry. */
+  poorSatisfaction: number;
   /** The highest monthly price a company can set. */
   maxPrice: number;
   /** A migration's phases in order, and how long each takes before any overrun. */
@@ -89,6 +95,8 @@ export interface CompanyView {
   status: CompanyStatus;
   developers: number;
   ops: number;
+  /** Support staff: they answer customers' tickets, on every model. */
+  support: number;
   /** Ops staff the current model needs. */
   opsNeeded: number;
   /** What the current headcount costs per day. */
@@ -107,6 +115,20 @@ export interface CompanyView {
   dailyIncome: number;
   /** Everything paying users have paid so far. */
   income: number;
+  /** Tickets raised on the day just played, bursts included. */
+  ticketsToday: number;
+  /** Of today's tickets, those from bursts such as outages. */
+  burstTickets: number;
+  /** Tickets support cleared on the day just played. */
+  clearedToday: number;
+  /** Tickets still waiting at the end of the day just played. */
+  backlog: number;
+  /** Customer satisfaction, 0–100, rounded to a whole number. Falls while the backlog grows; low hurts growth and churn. */
+  satisfaction: number;
+  /** Tickets today's users raise in a day before any burst. */
+  usualTickets: number;
+  /** Tickets the support staff can clear in a day. */
+  dailyClearance: number;
   /** Load on the day just played. */
   load: number;
   /** Load the company can serve in a day with its current model and staff. */

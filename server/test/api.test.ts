@@ -42,6 +42,7 @@ const sim = createSim({
   staff: {
     developers: { ...defaultConfig.staff.developers, dayRate: 10, startingCount: 0 },
     ops: { ...defaultConfig.staff.ops, dayRate: 4, startingCount: 0 },
+    support: { ...defaultConfig.staff.support, dayRate: 3, startingCount: 0 },
   },
   // No scripted events, so continue charges and outages are only the ones a test sets up.
   events: [],
@@ -423,6 +424,103 @@ describe("staff actions", () => {
     const { url, act } = await setup();
     await Promise.all(Array.from({ length: 5 }, () => act({ type: "hire", pool: "developers" })));
     expect((await app.inject({ method: "GET", url })).json<CompanyView>().developers).toBe(5);
+  });
+});
+
+describe("support and satisfaction", () => {
+  // Everyone's free here: 2,000 free shoppers × 0.003 = 6 tickets a day. A support person clears 30.
+  async function setup() {
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
+    const play = async (days: number) => {
+      let body: ContinueResult | undefined;
+      for (let i = 0; i < days; i++) body = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+      return body!;
+    };
+    return { company, url, act, play };
+  }
+
+  it("starts a company with no support staff here, no tickets, no backlog and happy customers", async () => {
+    const { company } = await setup();
+    expect(company).toMatchObject({
+      support: 0,
+      ticketsToday: 0,
+      clearedToday: 0,
+      backlog: 0,
+      satisfaction: 100,
+      usualTickets: 6,
+      dailyClearance: 0,
+    });
+  });
+
+  it("hires and lets go support through the actions endpoint, and keeps them across reloads", async () => {
+    const { url, act } = await setup();
+    const hire: ActionBody = { type: "hire", pool: "support" };
+    await act(hire);
+    const res = await act(hire);
+    expect(res.statusCode).toBe(200);
+    expect(res.json<CompanyView>()).toMatchObject({ support: 2, dailyStaffCost: 6, dailyClearance: 60, day: 1 });
+    expect((await act({ type: "letGo", pool: "support" })).json<CompanyView>()).toMatchObject({ support: 1 });
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({ support: 1 });
+    await act({ type: "letGo", pool: "support" });
+    const none = await act({ type: "letGo", pool: "support" });
+    expect(none.statusCode).toBe(400);
+    expect(none.json()).toMatchObject({ error: "no_staff" });
+  });
+
+  it("builds a backlog and lowers satisfaction with no support, on continue", async () => {
+    const { play } = await setup();
+    const { company, log } = await play(10);
+    expect(company).toMatchObject({ day: 11, clearedToday: 0, support: 0 });
+    // At least 6 a day, more as users grow, and none answered.
+    expect(company.ticketsToday).toBeGreaterThanOrEqual(6);
+    expect(company.backlog).toBeGreaterThanOrEqual(60);
+    expect(company.satisfaction).toBeLessThan(70);
+    expect(Number.isInteger(company.satisfaction)).toBe(true);
+    expect(log).toHaveLength(1);
+  });
+
+  it("clears tickets with support staff, paying them each day", async () => {
+    const { act, play } = await setup();
+    await act({ type: "hire", pool: "support" });
+    const { company, log } = await play(3);
+    expect(company).toMatchObject({ backlog: 0, satisfaction: 100 });
+    expect(company.clearedToday).toBe(company.ticketsToday);
+    expect(log[0]!.entries).toContainEqual({ text: "Support staff pay (1)", cashDelta: -3, category: "staff" });
+  });
+
+  it("recovers satisfaction once support clears the backlog", async () => {
+    const { act, play } = await setup();
+    const low = (await play(10)).company.satisfaction;
+    await act({ type: "hire", pool: "support" });
+    await act({ type: "hire", pool: "support" });
+    const { company } = await play(10);
+    expect(company.backlog).toBe(0);
+    expect(company.satisfaction).toBeGreaterThan(low + 20);
+  });
+
+  it("moves staff into support from a named pool", async () => {
+    const { act } = await setup();
+    await act({ type: "hire", pool: "ops" });
+    const moved = await act({ type: "moveStaff", from: "ops", to: "support" });
+    expect(moved.statusCode).toBe(200);
+    expect(moved.json<CompanyView>()).toMatchObject({ ops: 0, support: 1 });
+    for (const payload of [{ type: "moveStaff", from: "sales", to: "ops" }, { type: "hire", pool: "complaints" }]) {
+      expect((await act(payload)).statusCode).toBe(400);
+    }
+    const same = await act({ type: "moveStaff", from: "support", to: "support" });
+    expect(same.json()).toMatchObject({ error: "same_pool" });
+  });
+
+  it("sends tickets per support person and the satisfaction thresholds in the meta", async () => {
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta).toMatchObject({
+      ticketsPerPerson: defaultConfig.support.ticketsPerPerson,
+      goodSatisfaction: defaultConfig.support.goodSatisfaction,
+      poorSatisfaction: defaultConfig.support.poorSatisfaction,
+    });
   });
 });
 
@@ -1681,6 +1779,7 @@ describe("meta", () => {
     expect(meta.staff.map((s) => [s.id, s.dayRate])).toEqual([
       ["developers", 10],
       ["ops", 4],
+      ["support", 3],
     ]);
     expect(meta.models.map((m) => m.opsNeeded)).toEqual([3, 2, 1, 0]);
   });

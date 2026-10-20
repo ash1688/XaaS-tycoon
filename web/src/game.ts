@@ -18,8 +18,9 @@ export function createGame(code: string, id: string) {
   // Every day played since the page opened, oldest first. The server keeps the game, not its log.
   const dayLogs = ref<DayLog[]>([]);
   const lastDay = computed(() => dayLogs.value.at(-1));
-  // Users before the last day played, for the change it made.
+  // Users and satisfaction before the last day played, for the change it made.
   const previousUsers = ref<number>();
+  const previousSatisfaction = ref<number>();
   // Where each page lives: /play/:code/:id is Home.
   const base = `/play/${code}/${id}`;
 
@@ -53,6 +54,19 @@ export function createGame(code: string, id: string) {
   const configTeamNeeded = computed(() => meta.value?.minConfigDevelopers ?? 0);
   const configTeamShort = computed(() => (company.value ? Math.max(0, configTeamNeeded.value - company.value.developers) : 0));
   const migration = computed(() => company.value?.migration ?? null);
+
+  // Customer care. Support staff needed to keep up with today's users' usual tickets, before any burst.
+  const supportNeeded = computed(() =>
+    company.value && meta.value ? Math.ceil(company.value.usualTickets / meta.value.ticketsPerPerson) : 0,
+  );
+  const supportShort = computed(() => (company.value ? Math.max(0, supportNeeded.value - company.value.support) : 0));
+  // Good: no effect. Below good: growth slows and users leave. Below poor: angry customers.
+  const satisfactionLevel = computed(() => {
+    const c = company.value;
+    const m = meta.value;
+    if (!c || !m) return "ok";
+    return c.satisfaction >= m.goodSatisfaction ? "ok" : c.satisfaction >= m.poorSatisfaction ? "high" : "over";
+  });
 
   // Scripted events on the day just played. Each names the layer of the stack that decided how it hit this model.
   const events = computed(() => company.value?.events ?? []);
@@ -113,6 +127,7 @@ export function createGame(code: string, id: string) {
     try {
       const before = company.value?.model;
       const users = company.value?.users;
+      const satisfaction = company.value?.satisfaction;
       const addons = company.value?.features.filter((f) => f.status === "addon") ?? [];
       const result = await api.continueDay(code, id);
       previousModel.value = before !== result.company.model ? before : undefined;
@@ -120,6 +135,7 @@ export function createGame(code: string, id: string) {
         .filter((a) => result.company.features.find((f) => f.id === a.id)?.status === "notStarted")
         .map((a) => a.name);
       previousUsers.value = users;
+      previousSatisfaction.value = satisfaction;
       company.value = result.company;
       dayLogs.value = [...dayLogs.value, ...result.log];
       if (over.value) await loadSummary();
@@ -210,6 +226,7 @@ export function createGame(code: string, id: string) {
     dayLogs,
     lastDay,
     previousUsers,
+    previousSatisfaction,
     productName,
     modelName,
     personName,
@@ -232,6 +249,9 @@ export function createGame(code: string, id: string) {
     configTeamNeeded,
     configTeamShort,
     migration,
+    supportNeeded,
+    supportShort,
+    satisfactionLevel,
     events,
     eventsByLayer,
     featureGaps,

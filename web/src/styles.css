@@ -2385,3 +2385,29 @@ body.modal-open {
 .log-group.income {
   --cat: var(--pos);
 }
+
+/* Customer care: support entries in the day log, and the quick hire under the satisfaction meter. */
+.day-log li.event.support {
+  background: var(--you-soft);
+  color: var(--text);
+}
+
+.day-log li.event.support .badge {
+  color: var(--you);
+}
+
+.satisfaction-scale {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+}
+
+.support-hire {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}

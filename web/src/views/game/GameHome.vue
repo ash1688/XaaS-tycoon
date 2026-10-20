@@ -11,6 +11,7 @@ import FeaturesPanel from "../../panels/FeaturesPanel.vue";
 import MigrationPanel from "../../panels/MigrationPanel.vue";
 import SpendPanel from "../../panels/SpendPanel.vue";
 import StaffPanel from "../../panels/StaffPanel.vue";
+import SupportPanel from "../../panels/SupportPanel.vue";
 
 // Home: the company at a glance. Each card opens a modal with the detail and its controls. Once the game has ended,
 // its banner and summary come first, and the cards stay as a read-only record.
@@ -49,6 +50,22 @@ const alerts = computed(() => {
       detail: `${game.modelName(c.model)} needs ${c.opsNeeded} ops staff. Until you have them, capacity is cut.`,
       page: "people",
       pageName: "People",
+    });
+  if (game.satisfactionLevel !== "ok")
+    list.push({
+      id: "satisfaction",
+      text: `Customer satisfaction ${c.satisfaction}%`,
+      detail: `${formatCount(c.backlog)} tickets are waiting. Growth is slower and users are leaving until support clears the backlog.`,
+      page: "customers",
+      pageName: "Customers",
+    });
+  else if (game.supportShort)
+    list.push({
+      id: "support",
+      text: `Support: ${game.supportShort} short`,
+      detail: `Your users raise about ${formatCount(c.usualTickets)} tickets a day: ${game.supportNeeded} support staff keep up. Fewer, and a backlog builds.`,
+      page: "customers",
+      pageName: "Customers",
     });
   if (game.loadLevel !== "ok")
     list.push({
@@ -244,9 +261,28 @@ const alerts = computed(() => {
         </template>
       </OverviewCard>
 
+      <OverviewCard title="Satisfaction" :tone="game.satisfactionLevel === 'ok' ? undefined : 'warn'">
+        <p class="overview-value" data-testid="home-satisfaction">{{ game.company.satisfaction }}%</p>
+        <div class="meter" aria-hidden="true">
+          <div :class="['meter-fill', game.satisfactionLevel]" :style="{ width: `${game.company.satisfaction}%` }"></div>
+        </div>
+        <p class="muted" data-testid="home-backlog">
+          Backlog {{ formatCount(game.company.backlog) }} ticket{{ game.company.backlog === 1 ? "" : "s" }}.
+          {{ game.company.support }} support staff clear up to {{ formatCount(game.company.dailyClearance) }} a day.
+        </p>
+        <template #detail>
+          <SupportPanel />
+          <p class="modal-link">
+            <RouterLink :to="page('customers')">Open Customers</RouterLink> ·
+            <RouterLink :to="page('people')">Open People</RouterLink>
+          </p>
+        </template>
+      </OverviewCard>
+
       <OverviewCard title="Staff" :tone="game.understaffed ? 'warn' : undefined">
         <p class="overview-value" data-testid="home-staff">
-          {{ game.company.developers }} <small>dev</small> · {{ game.company.ops }} <small>ops</small>
+          {{ game.company.developers }} <small>dev</small> · {{ game.company.ops }} <small>ops</small> ·
+          {{ game.company.support }} <small>support</small>
         </p>
         <p class="muted">
           {{ formatCash(game.company.dailyStaffCost) }} a day.

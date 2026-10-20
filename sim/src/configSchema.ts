@@ -120,6 +120,23 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("pricing.maxGrowthBoost", "Customers", "", "Most a low price speeds growth", "A price below the fair price multiplies growth by at most this.", range(1, 10, 0.05));
   add("pricing.paidShareSensitivity", "Customers", "", "Price effect on new payers", "The paid share of new users is multiplied by (price ÷ fair price) to minus this.", range(0, 5, 0.05));
 
+  // Customers: support tickets and satisfaction
+  const TICKET_RATE = range(0, 1, 0.001);
+  for (const p of PRODUCT_TYPE_IDS) {
+    const product = base.productTypes[p];
+    if (!product) continue;
+    add(`productTypes.${p}.support.ticketsPerPaidUser`, "Customers", product.name, "Tickets per paying user", "Support tickets each paying user raises a day, on average (0.01 = 1 per 100 users).", TICKET_RATE);
+    add(`productTypes.${p}.support.ticketsPerFreeUser`, "Customers", product.name, "Tickets per free user", "The same for each free user: usually lower, but you still answer them.", TICKET_RATE);
+  }
+  add("support.ticketsPerUserPerHourDown", "Customers", "Support", "Tickets per user per hour down", "Extra tickets each user raises for every hour of an outage, yours or the provider's.", range(0, 0.1, 0.0005));
+  add("support.bigBurstShare", "Customers", "Support", "Burst worth logging", "A burst of tickets is logged when it adds at least this share of the day's usual tickets.", range(0, 10, 0.05));
+  add("support.backlogPerUserAtZero", "Customers", "Support", "Backlog per user for 0% satisfaction", "Satisfaction heads for 0% when the backlog reaches this many tickets per user (0.05 = 1 per 20).", range(0.001, 1, 0.001));
+  add("support.satisfactionSpeed", "Customers", "Support", "Satisfaction speed", "Share of the gap to its target satisfaction closes each day. Higher moves faster.", range(0.01, 1, 0.01));
+  add("support.goodSatisfaction", "Customers", "Support", "Good satisfaction %", "At or above this, satisfaction doesn't hurt growth or churn. Below it, the lower the worse.", range(1, 100, 1));
+  add("support.poorSatisfaction", "Customers", "Support", "Poor satisfaction %", "Falling below this is logged as a warning.", range(0, 100, 1));
+  add("support.growthAtZero", "Customers", "Support", "Growth at 0% satisfaction", "Daily growth is multiplied by this at 0% satisfaction, rising to 1 at good satisfaction.", SHARE);
+  add("support.churnAtZero", "Customers", "Support", "Churn at 0% satisfaction", "Share of users who leave each day at 0% satisfaction, falling to none at good satisfaction.", range(0, 0.5, 0.001));
+
   // Infrastructure
   for (const m of MODEL_IDS) {
     add(`models.${m}.capacity`, "Infrastructure", MODEL_LABELS[m], "Capacity", "Load the model serves in a day when fully staffed.", range(0, 10_000_000, 1_000));
@@ -150,6 +167,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
       add(`productTypes.${p}.features.${f.id}.devDays`, "People", base.productTypes[p].name, `${f.name}: developer-days`, "Work to build it. A developer does one developer-day a day.", range(1, 365, 1));
     }
   }
+  add("support.ticketsPerPerson", "People", "", "Tickets per support person", "Tickets one support person clears a day.", range(1, 1_000, 1));
   add("addons.minConfigDevelopers", "People", "", "Developers to configure add-ons", "On SaaS, add-ons can't be bought with fewer developers than this.", HEADCOUNT);
 
   // Migration
@@ -239,6 +257,7 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
   const config = applyOverrides(overrides as ConfigOverrides, base);
   const pairs: [low: string, high: string, message: string][] = [
     ["migration.overrun.minDays", "migration.overrun.maxDays", "The most extra days can't be fewer than the fewest."],
+    ["support.poorSatisfaction", "support.goodSatisfaction", "Good satisfaction can't be below poor satisfaction."],
     // A new company starts at the fair price, so it has to be one the student could set.
     ...PRODUCT_TYPE_IDS.filter((p) => base.productTypes[p]).map((p): [string, string, string] => [
       `productTypes.${p}.pricing.fairPrice`,

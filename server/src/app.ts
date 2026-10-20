@@ -220,6 +220,7 @@ export async function buildApp(opts: AppOptions) {
       status: (state.status === "playing" ? row.status : state.status) as CompanyStatus,
       developers: state.developers,
       ops: state.ops,
+      support: state.support,
       opsNeeded: sim.opsNeeded(state.model),
       dailyStaffCost: sim.dailyStaffCost(state),
       users: state.users,
@@ -229,6 +230,13 @@ export async function buildApp(opts: AppOptions) {
       fairPrice: sim.fairPrice(state),
       dailyIncome: sim.dailyIncome(state),
       income: state.income,
+      ticketsToday: state.ticketsToday,
+      burstTickets: state.burstTickets,
+      clearedToday: state.clearedToday,
+      backlog: state.backlog,
+      satisfaction: Math.round(state.satisfaction),
+      usualTickets: sim.usualTickets(state),
+      dailyClearance: sim.dailyClearance(state),
       load: state.load,
       capacity: sim.capacity(state),
       uptime: sim.uptime(state),
@@ -300,6 +308,9 @@ export async function buildApp(opts: AppOptions) {
         return { id, name, personName, dayRate };
       }),
       minConfigDevelopers: config.addons.minConfigDevelopers,
+      ticketsPerPerson: config.support.ticketsPerPerson,
+      goodSatisfaction: config.support.goodSatisfaction,
+      poorSatisfaction: config.support.poorSatisfaction,
       maxPrice: config.pricing.maxPrice,
       migrationPhases: MIGRATION_PHASES.map((id) => ({ id, ...config.migration.phases[id] })),
     };
@@ -433,8 +444,9 @@ export async function buildApp(opts: AppOptions) {
             pool: { enum: [...STAFF_POOLS] },
             // Checked against the product's list by the sim.
             feature: { type: "string", maxLength: 64 },
-            // moveStaff: the pool one person moves into, from the other.
+            // moveStaff: the pool one person moves into, and optionally the one they leave.
             to: { enum: [...STAFF_POOLS] },
+            from: { enum: [...STAFF_POOLS] },
             // startMigration: the model to move to.
             model: { enum: [...MODEL_IDS] },
             // setPrice: the monthly price. The sim checks it against the game's highest price.

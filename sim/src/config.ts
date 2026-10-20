@@ -7,7 +7,7 @@ export type ModelId = (typeof MODEL_IDS)[number];
 export const PRODUCT_TYPE_IDS = ["ecommerce", "social", "video"] as const;
 export type ProductTypeId = (typeof PRODUCT_TYPE_IDS)[number];
 
-export const STAFF_POOLS = ["developers", "ops"] as const;
+export const STAFF_POOLS = ["developers", "ops", "support"] as const;
 export type StaffPool = (typeof STAFF_POOLS)[number];
 
 /** A migration runs through these phases in order. Saved in game state, so don't rename. */
@@ -118,12 +118,21 @@ export interface ProductPricing {
   freeShare: number;
 }
 
+/** How many support tickets a product's users raise. Free users raise them too, but fewer. */
+export interface ProductSupport {
+  /** Tickets each paying user raises per day, on average (0.01 = one ticket per 100 paying users a day). */
+  ticketsPerPaidUser: number;
+  /** The same for each free user. Lower: free users ask for less, but you still answer them. */
+  ticketsPerFreeUser: number;
+}
+
 export interface ProductTypeConfig {
   name: string;
   /** Short description of how this product behaves. */
   profile: string;
   growth: GrowthProfile;
   pricing: ProductPricing;
+  support: ProductSupport;
   /** The fixed list of 3–5 features this product can have. */
   features: FeatureConfig[];
 }
@@ -177,6 +186,36 @@ export interface PricingConfig {
   maxGrowthBoost: number;
   /** How strongly a price above the fair price puts new users on the free tier. 0 for no effect. */
   paidShareSensitivity: number;
+}
+
+/**
+ * Customer care, the company's job on every model: even on SaaS the provider fixes the platform but doesn't answer
+ * your customers. Each day users raise tickets (see ProductSupport), plus a burst for every hour down; support staff
+ * clear what they can and the rest carries over as a backlog.
+ *
+ * Satisfaction % moves a share of the way each day towards a target set by the backlog against the user count:
+ * 100% with no backlog, falling in a straight line to 0% when the backlog reaches backlogPerUserAtZero tickets per
+ * user. Below goodSatisfaction it slows growth and makes users leave, more the lower it goes.
+ */
+export interface SupportConfig {
+  /** Tickets one support person clears a day. */
+  ticketsPerPerson: number;
+  /** Extra tickets per user for each hour the service is down, from outages of any kind. */
+  ticketsPerUserPerHourDown: number;
+  /** A burst is logged when it adds at least this share of the day's usual tickets (0.5 = half as many again). */
+  bigBurstShare: number;
+  /** Backlog per user at which the satisfaction target reaches 0% (0.05 = one open ticket per 20 users). */
+  backlogPerUserAtZero: number;
+  /** Share of the gap to the target that satisfaction closes each day (0.2 = a fifth). Higher moves faster. */
+  satisfactionSpeed: number;
+  /** At or above this %, satisfaction has no effect on growth or churn. Falling below it is logged. */
+  goodSatisfaction: number;
+  /** Falling below this % is logged as a warning. Only a log threshold: the effects are set by goodSatisfaction. */
+  poorSatisfaction: number;
+  /** Growth is multiplied by this at 0% satisfaction, rising in a straight line to 1 at goodSatisfaction. */
+  growthAtZero: number;
+  /** Share of users who leave each day at 0% satisfaction, falling in a straight line to none at goodSatisfaction. */
+  churnAtZero: number;
 }
 
 /** SaaS add-ons: bought from the provider instead of built. */
@@ -301,6 +340,7 @@ export interface GameConfig {
   outage: OutageConfig;
   billing: BillingConfig;
   pricing: PricingConfig;
+  support: SupportConfig;
   addons: AddonConfig;
   migration: MigrationConfig;
   /** Scripted events, in the order they're logged on a day when more than one is on. */
@@ -374,6 +414,8 @@ export const defaultConfig: GameConfig = {
       },
       // Shoppers mostly pay: a shop's free tier is browsing without an account.
       pricing: { fairPrice: 5, freeShare: 0.3 },
+      // Orders go wrong: paying shoppers raise the most tickets of any product.
+      support: { ticketsPerPaidUser: 0.012, ticketsPerFreeUser: 0.003 },
       features: [
         {
           id: "checkout",
@@ -422,6 +464,7 @@ export const defaultConfig: GameConfig = {
       },
       // Mostly free, like most social networks: a few pay for extras.
       pricing: { fairPrice: 6, freeShare: 0.8 },
+      support: { ticketsPerPaidUser: 0.01, ticketsPerFreeUser: 0.002 },
       features: [
         {
           id: "messaging",
@@ -469,6 +512,7 @@ export const defaultConfig: GameConfig = {
         loadNoise: 0.15,
       },
       pricing: { fairPrice: 9, freeShare: 0.6 },
+      support: { ticketsPerPaidUser: 0.01, ticketsPerFreeUser: 0.003 },
       features: [
         {
           id: "hd",
@@ -508,11 +552,24 @@ export const defaultConfig: GameConfig = {
   staff: {
     developers: { name: "Developers", personName: "developer", dayRate: 160, startingCount: 2 },
     ops: { name: "Ops staff", personName: "ops person", dayRate: 140, startingCount: 1 },
+    // One to start, enough for the first few weeks: more are needed as users grow.
+    support: { name: "Support staff", personName: "support person", dayRate: 100, startingCount: 1 },
   },
   capacity: { unstaffedShare: 0.4 },
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25 },
   billing: { daysPerMonth: 30 },
   pricing: { maxPrice: 1_000, growthSensitivity: 1, maxGrowthBoost: 2, paidShareSensitivity: 1 },
+  support: {
+    ticketsPerPerson: 30,
+    ticketsPerUserPerHourDown: 0.002,
+    bigBurstShare: 0.5,
+    backlogPerUserAtZero: 0.05,
+    satisfactionSpeed: 0.2,
+    goodSatisfaction: 70,
+    poorSatisfaction: 40,
+    growthAtZero: 0.3,
+    churnAtZero: 0.02,
+  },
   addons: { minConfigDevelopers: 2 },
   migration: {
     phases: {

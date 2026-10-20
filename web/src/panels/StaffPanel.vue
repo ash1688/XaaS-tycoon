@@ -1,11 +1,18 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import type { StaffPool } from "@xaas/sim";
-import { formatCash } from "../api";
+import { formatCash, formatCount } from "../api";
 import { useGame } from "../game";
 
-// Developers and ops: hire, let go, and retrain someone into the other team.
+// Developers, ops and support: hire, let go, and retrain someone into another team.
 const game = useGame();
-const otherPool = (pool: StaffPool): StaffPool => (pool === "developers" ? "ops" : "developers");
+// Every move from one team to another, developers and ops first as they're the usual swap.
+const moves = computed(() => {
+  const pools = game.meta?.staff ?? [];
+  return pools.flatMap((to) => pools.filter((from) => from.id !== to.id).map((from) => ({ from, to })));
+});
+const moveOrder = (from: StaffPool, to: StaffPool) => (from === "support" || to === "support" ? 1 : 0);
+const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.from.id, a.to.id) - moveOrder(b.from.id, b.to.id)));
 </script>
 
 <template>
@@ -21,6 +28,11 @@ const otherPool = (pool: StaffPool): StaffPool => (pool === "developers" ? "ops"
         <div class="staff-info">
           <strong>{{ pool.name }}</strong>
           <span class="muted">{{ formatCash(pool.dayRate) }} each a day</span>
+          <span v-if="pool.id === 'support'" class="muted" data-testid="support-hint">
+            Each clears {{ formatCount(game.meta.ticketsPerPerson) }} tickets a day. Your users raise about
+            {{ formatCount(game.company.usualTickets) }} a day, so you need
+            {{ game.supportNeeded }}<template v-if="game.company.backlog">, plus more to clear the backlog</template>.
+          </span>
         </div>
         <div class="counter">
           <button
@@ -44,17 +56,17 @@ const otherPool = (pool: StaffPool): StaffPool => (pool === "developers" ? "ops"
       </li>
     </ul>
     <div class="move-staff" data-testid="move-staff">
-      <span class="muted">Retrain someone into the other team (no cost, any time):</span>
+      <span class="muted">Retrain someone into another team (no cost, any time):</span>
       <div class="move-buttons">
         <button
-          v-for="pool in game.meta.staff"
-          :key="pool.id"
+          v-for="{ from, to } in sortedMoves"
+          :key="`${from.id}-${to.id}`"
           class="ghost"
-          :disabled="game.busy || game.over || game.company[otherPool(pool.id)] < 1"
-          :aria-label="`Move one ${game.personName(otherPool(pool.id))} to ${pool.name.toLowerCase()}`"
-          @click="game.act({ type: 'moveStaff', to: pool.id })"
+          :disabled="game.busy || game.over || game.company[from.id] < 1"
+          :aria-label="`Move one ${from.personName} to ${to.name.toLowerCase()}`"
+          @click="game.act({ type: 'moveStaff', from: from.id, to: to.id })"
         >
-          {{ game.personName(otherPool(pool.id)) }} → {{ pool.name.toLowerCase() }}
+          {{ from.personName }} → {{ to.name.toLowerCase() }}
         </button>
       </div>
     </div>

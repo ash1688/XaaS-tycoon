@@ -13,7 +13,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 10;
+export const GAME_STATE_VERSION = 11;
 
 /** Money spent in each category. */
 export type Spend = Record<SpendCategory, number>;
@@ -101,6 +101,8 @@ export interface GameState {
   rng: number;
   developers: number;
   ops: number;
+  /** Support staff: they answer customers' tickets, on every model. */
+  support: number;
   /** Every user, paying or free. Free users add load and per-user fees just like paying ones. */
   users: number;
   /** The users who pay. The rest of `users` are on the free tier. */
@@ -137,6 +139,16 @@ export interface GameState {
   addonPriceRise: number;
   /** Features the platform can't provide, each slowing growth until the company migrates off that model. */
   featureGaps: FeatureGap[];
+  /** Tickets raised on the day just played, bursts included. */
+  ticketsToday: number;
+  /** Of today's tickets, those from bursts (outages, and later price backlash). */
+  burstTickets: number;
+  /** Tickets support cleared on the day just played, from the backlog and today's. */
+  clearedToday: number;
+  /** Tickets still unanswered at the end of the day just played. They carry over. */
+  backlog: number;
+  /** Customer satisfaction, 0–100. Moves a share of the way each day towards a target set by the backlog. */
+  satisfaction: number;
 }
 
 /** Something the player does between days. */
@@ -147,8 +159,11 @@ export type Action =
   | { type: "buildFeature"; feature: string }
   /** Buys one of the product's features as an add-on, active at once. SaaS only, with a configuration team. */
   | { type: "buyAddon"; feature: string }
-  /** Moves one person from the other pool into this one. Any time, including during a migration. */
-  | { type: "moveStaff"; to: StaffPool }
+  /**
+   * Moves one person from one pool into another. Any time, including during a migration. Without `from`, a move
+   * into developers comes from ops and any other move from developers.
+   */
+  | { type: "moveStaff"; to: StaffPool; from?: StaffPool }
   /** Starts a migration to another model. One at a time; it runs in the background. */
   | { type: "startMigration"; model: ModelId }
   /** Sets the monthly price paying users pay, from the next day played. Above 0 and at most the configured maximum. */
@@ -170,7 +185,7 @@ export interface LogEntry {
    * Set on entries that need to stand out, such as an outage or bankruptcy. "income" marks money coming in, which the
    * ledger counts as income rather than spend.
    */
-  kind?: "outage" | "bankrupt" | "finished" | "feature" | "migration" | "event" | "income";
+  kind?: "outage" | "bankrupt" | "finished" | "feature" | "migration" | "event" | "income" | "support";
 }
 
 export interface DayLog {
