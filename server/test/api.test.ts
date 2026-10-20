@@ -7,10 +7,11 @@ import type {
   ActionBody,
   CompanyView,
   ConfigErrorView,
-  ConfigView,
   ContinueResult,
   MetaView,
   MigrationQuoteView,
+  PresetsView,
+  PresetView,
   PricePreviewView,
   SummaryView,
   TeacherCodeView,
@@ -110,6 +111,17 @@ async function newCode() {
   const res = await app.inject({ method: "POST", url: "/api/teacher/codes", cookies: await teacherCookie() });
   expect(res.statusCode).toBe(201);
   return res.json<TeacherCodeView>().code;
+}
+
+/** Makes new games use these overrides: saves them as a preset and makes it the active one. Returns its id. */
+async function useOverrides(overrides: object, name = "Test") {
+  const cookies = await teacherCookie();
+  const created = await app.inject({ method: "POST", url: "/api/teacher/presets", payload: { name, overrides }, cookies });
+  expect(created.statusCode).toBe(201);
+  const { id } = created.json<PresetView>();
+  const activated = await app.inject({ method: "POST", url: `/api/teacher/presets/${id}/activate`, cookies });
+  expect(activated.statusCode).toBe(200);
+  return id;
 }
 
 async function newCompany(code: string, body: object = { name: "Acme", productType: "ecommerce", model: "iaas" }) {
@@ -1368,7 +1380,7 @@ describe("teacher dashboard", () => {
     });
     expect(res.statusCode).toBe(200);
     const student = (await app.inject({ method: "GET", url: `/api/codes/${code}/companies/${company.id}/summary` })).json();
-    expect(res.json<TeacherSummaryView>()).toEqual({ code, status: "active", summary: student });
+    expect(res.json<TeacherSummaryView>()).toEqual({ code, status: "active", preset: "Default", summary: student });
   });
 
   it("is 404 for an unknown or malformed company id", async () => {
@@ -2302,15 +2314,7 @@ describe("meta", () => {
 describe("pricing and income", () => {
   async function setup(overrides?: object) {
     // A teacher's overrides apply to new games, so a test that needs paying users sets the free share that way.
-    if (overrides) {
-      const saved = await app.inject({
-        method: "PUT",
-        url: "/api/teacher/config",
-        payload: { overrides },
-        cookies: await teacherCookie(),
-      });
-      expect(saved.statusCode).toBe(200);
-    }
+    if (overrides) await useOverrides(overrides);
     const code = await newCode();
     const company = (await newCompany(code)).json<CompanyView>();
     const url = `/api/codes/${code}/companies/${company.id}`;
@@ -2458,63 +2462,125 @@ describe("pricing and income", () => {
     expect(dear.conversion.drivers.find((d) => d.id === "price")).toMatchObject({ effect: "hurting", value: 2 });
     expect(dear.conversion.rate).toBeLessThan(after.conversion.rate);
 
-    // Back to the base config for the tests after.
-    await app.inject({ method: "PUT", url: "/api/teacher/config", payload: { overrides: {} }, cookies: await teacherCookie() });
   });
 });
 
-describe("teacher config", () => {
-  async function teacher(method: "GET" | "PUT" | "POST", url: string, payload?: object) {
+describe("config presets", () => {
+  async function teacher(method: "GET" | "POST" | "PATCH" | "DELETE", url: string, payload?: object) {
     return app.inject({ method, url, payload, cookies: await teacherCookie() });
   }
-  const save = (overrides: object) => teacher("PUT", "/api/teacher/config", { overrides });
+  const list = async () => (await teacher("GET", "/api/teacher/presets")).json<PresetsView>();
+  const create = (payload: object) => teacher("POST", "/api/teacher/presets", payload);
+  const update = (id: string, payload: object) => teacher("PATCH", `/api/teacher/presets/${id}`, payload);
+  const activate = (id: string) => teacher("POST", `/api/teacher/presets/${id}/activate`);
+  const get = async (id: string) => (await teacher("GET", `/api/teacher/presets/${id}`)).json<PresetView>();
+  const meta = async () => (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
 
-  it("requires a teacher session", async () => {
-    expect((await app.inject({ method: "GET", url: "/api/teacher/config" })).statusCode).toBe(401);
-    const put = await app.inject({ method: "PUT", url: "/api/teacher/config", payload: { overrides: {} } });
-    expect(put.statusCode).toBe(401);
-    expect((await app.inject({ method: "POST", url: "/api/teacher/config/reset" })).statusCode).toBe(401);
+  it("requires a teacher session on every preset route", async () => {
+    const id = "00000000-0000-0000-0000-000000000000";
+    const routes: [string, string, object?][] = [
+      ["GET", "/api/teacher/presets"],
+      ["GET", "/api/teacher/presets/default"],
+      ["POST", "/api/teacher/presets", { name: "Easy" }],
+      ["PATCH", `/api/teacher/presets/${id}`, { name: "Easy" }],
+      ["DELETE", `/api/teacher/presets/${id}`],
+      ["POST", "/api/teacher/presets/default/activate"],
+    ];
+    for (const [method, url, payload] of routes) {
+      const res = await app.inject({ method: method as "GET", url, payload });
+      expect(res.statusCode, `${method} ${url}`).toBe(401);
+    }
   });
 
-  it("lists every field with defaults from the server's base config, and no overrides at first", async () => {
-    const res = await teacher("GET", "/api/teacher/config");
-    expect(res.statusCode).toBe(200);
-    const view = res.json<ConfigView>();
+  it("starts with only Default, built in and active, its fields defaulting to the server's base config", async () => {
+    expect(await list()).toEqual({
+      active: "default",
+      maxNameLength: 40,
+      presets: [{ id: "default", name: "Default", builtIn: true, active: true, changed: 0, updatedAt: null }],
+    });
+    const view = await get("default");
     expect(view.overrides).toEqual({});
-    expect(view.preset).toBe("Custom");
     const field = (path: string) => view.fields.find((f) => f.path === path);
     expect(field("startingCash")).toMatchObject({ group: "Money", default: 1000, min: 0 });
     expect(field("staff.developers.dayRate")).toMatchObject({ group: "People", default: 10 });
+    expect(view.values).toMatchObject({ startingCash: 1000, "staff.developers.dayRate": 10 });
     // The test config has no events, so no event fields.
     expect(view.fields.some((f) => f.path.startsWith("events."))).toBe(false);
   });
 
-  it("saves valid overrides, dropping any equal to the default", async () => {
-    const res = await save({ startingCash: 5000, "staff.developers.dayRate": 10, "models.iaas.monthlyCost": 900 });
-    expect(res.statusCode).toBe(200);
-    expect(res.json<ConfigView>().overrides).toEqual({ startingCash: 5000, "models.iaas.monthlyCost": 900 });
-    expect((await teacher("GET", "/api/teacher/config")).json<ConfigView>().overrides).toEqual({
-      startingCash: 5000,
-      "models.iaas.monthlyCost": 900,
+  it("creates a preset from values, dropping any equal to the default, and resolves it", async () => {
+    const res = await create({
+      name: "  Easy   mode ",
+      overrides: { startingCash: 5000, "staff.developers.dayRate": 10, "models.iaas.monthlyCost": 900 },
     });
-    expect((await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>().startingCash).toBe(5000);
+    expect(res.statusCode).toBe(201);
+    const view = res.json<PresetView>();
+    expect(view).toMatchObject({ name: "Easy mode", builtIn: false, active: false, changed: 2 });
+    expect(view.overrides).toEqual({ startingCash: 5000, "models.iaas.monthlyCost": 900 });
+    expect(view.values).toMatchObject({ startingCash: 5000, "staff.developers.dayRate": 10 });
+    expect(await get(view.id)).toEqual(view);
+    // Listed after Default, but not active until chosen: new games still use the defaults.
+    expect((await list()).presets.map((p) => [p.name, p.active])).toEqual([
+      ["Default", true],
+      ["Easy mode", false],
+    ]);
+    expect((await meta()).startingCash).toBe(1000);
   });
 
-  it("replaces the overrides on each save", async () => {
-    await save({ startingCash: 5000 });
-    const res = await save({ "staff.ops.dayRate": 8 });
-    expect(res.json<ConfigView>().overrides).toEqual({ "staff.ops.dayRate": 8 });
+  it("saves another preset as a copy (save as), Default included", async () => {
+    const easy = (await create({ name: "Easy", overrides: { startingCash: 5000 } })).json<PresetView>();
+    const copy = await create({ name: "Lesson 3", from: easy.id });
+    expect(copy.statusCode).toBe(201);
+    expect(copy.json<PresetView>().overrides).toEqual({ startingCash: 5000 });
+    const fromDefault = (await create({ name: "Blank" })).json<PresetView>();
+    expect(fromDefault.overrides).toEqual({});
+    expect((await create({ name: "Nope", from: "00000000-0000-0000-0000-000000000000" })).statusCode).toBe(404);
+    // A copy is its own preset: changing it leaves the original alone.
+    await update(copy.json<PresetView>().id, { overrides: { startingCash: 9000 } });
+    expect((await get(easy.id)).overrides).toEqual({ startingCash: 5000 });
   });
 
-  it("rejects invalid overrides with an error per field, saving none of them", async () => {
-    await save({ startingCash: 5000 });
-    const res = await save({
+  it("keeps names unique whatever their case, trimmed, capped, and never Default", async () => {
+    const easy = (await create({ name: "Easy" })).json<PresetView>();
+    const clash = await create({ name: " easy " });
+    expect(clash.statusCode).toBe(409);
+    expect(clash.json().error).toBe("name_taken");
+    for (const name of ["", "   ", "default", "x".repeat(41)]) {
+      const res = await create({ name });
+      expect(res.statusCode, JSON.stringify(name)).toBe(400);
+      expect(res.json().error).toBe("invalid_name");
+    }
+    expect((await create({ name: "x".repeat(40) })).statusCode).toBe(201);
+    // Renaming to another's name clashes too; to its own name in another case doesn't.
+    const hard = (await create({ name: "Hard" })).json<PresetView>();
+    expect((await update(hard.id, { name: "EASY" })).statusCode).toBe(409);
+    const renamed = await update(easy.id, { name: "EASY" });
+    expect(renamed.statusCode).toBe(200);
+    expect(renamed.json<PresetView>().name).toBe("EASY");
+  });
+
+  it("renames a preset and replaces its values", async () => {
+    const easy = (await create({ name: "Easy", overrides: { startingCash: 5000 } })).json<PresetView>();
+    const res = await update(easy.id, { name: "Lesson 3", overrides: { "staff.ops.dayRate": 8 } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json<PresetView>()).toMatchObject({ name: "Lesson 3", overrides: { "staff.ops.dayRate": 8 } });
+    // A rename alone keeps the values.
+    const renamed = (await update(easy.id, { name: "Lesson 4" })).json<PresetView>();
+    expect(renamed.overrides).toEqual({ "staff.ops.dayRate": 8 });
+    expect((await update(easy.id, {})).statusCode).toBe(400);
+    expect((await update("00000000-0000-0000-0000-000000000000", { name: "X" })).statusCode).toBe(404);
+  });
+
+  it("rejects invalid values with an error per field, saving none of them", async () => {
+    const easy = (await create({ name: "Easy", overrides: { startingCash: 5000 } })).json<PresetView>();
+    const bad = {
       startingCash: 7000,
       "staff.ops.dayRate": -5,
       "models.nope.capacity": 1,
       "staff.developers.startingCount": 1.5,
       "outage.baseHours": "3",
-    });
+    };
+    const res = await update(easy.id, { overrides: bad });
     expect(res.statusCode).toBe(400);
     const body = res.json<ConfigErrorView>();
     expect(body.error).toBe("invalid_config");
@@ -2525,35 +2591,66 @@ describe("teacher config", () => {
       "staff.ops.dayRate",
     ]);
     expect(body.message).toMatch(/4 settings/);
-    expect((await teacher("GET", "/api/teacher/config")).json<ConfigView>().overrides).toEqual({ startingCash: 5000 });
+    expect((await get(easy.id)).overrides).toEqual({ startingCash: 5000 });
+    // Creating with bad values makes nothing.
+    expect((await create({ name: "Bad", overrides: bad })).statusCode).toBe(400);
+    expect((await list()).presets).toHaveLength(2);
   });
 
-  it("rejects a body without overrides", async () => {
-    expect((await teacher("PUT", "/api/teacher/config", {})).statusCode).toBe(400);
+  it("keeps Default read-only", async () => {
+    for (const res of [
+      await update("default", { name: "Mine" }),
+      await update("default", { overrides: { startingCash: 5000 } }),
+      await teacher("DELETE", "/api/teacher/presets/default"),
+    ]) {
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error).toBe("read_only");
+    }
+    expect((await get("default")).overrides).toEqual({});
   });
 
-  it("resets every field to its default", async () => {
-    await save({ startingCash: 5000, "staff.ops.dayRate": 8 });
-    const res = await teacher("POST", "/api/teacher/config/reset");
-    expect(res.statusCode).toBe(200);
-    expect(res.json<ConfigView>().overrides).toEqual({});
-    expect((await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>().startingCash).toBe(1000);
+  it("makes one preset active at a time, Default included, and refuses to delete the active one", async () => {
+    const easy = (await create({ name: "Easy", overrides: { startingCash: 5000 } })).json<PresetView>();
+    const hard = (await create({ name: "Hard", overrides: { startingCash: 500 } })).json<PresetView>();
+
+    const activated = await activate(easy.id);
+    expect(activated.statusCode).toBe(200);
+    expect(activated.json<PresetsView>().active).toBe(easy.id);
+    expect((await meta()).startingCash).toBe(5000);
+
+    const switched = (await activate(hard.id)).json<PresetsView>();
+    expect(switched.presets.filter((p) => p.active).map((p) => p.name)).toEqual(["Hard"]);
+    expect((await meta()).startingCash).toBe(500);
+
+    const refused = await teacher("DELETE", `/api/teacher/presets/${hard.id}`);
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json().error).toBe("preset_active");
+
+    const deleted = await teacher("DELETE", `/api/teacher/presets/${easy.id}`);
+    expect(deleted.statusCode).toBe(200);
+    expect(deleted.json<PresetsView>().presets.map((p) => p.name)).toEqual(["Default", "Hard"]);
+    expect((await teacher("DELETE", `/api/teacher/presets/${easy.id}`)).statusCode).toBe(404);
+
+    // Back to Default: no preset row is active, and new games get the base config.
+    expect((await activate("default")).json<PresetsView>().active).toBe("default");
+    expect((await meta()).startingCash).toBe(1000);
+    expect((await teacher("DELETE", `/api/teacher/presets/${hard.id}`)).statusCode).toBe(200);
+    expect((await activate("00000000-0000-0000-0000-000000000000")).statusCode).toBe(404);
   });
 
-  it("snapshots the config into a new game, so later edits don't change it", async () => {
+  it("records the active preset's name and config in a new game, unchanged by later edits, renames or deletes", async () => {
     const code = await newCode();
     const before = (await newCompany(code)).json<CompanyView>();
-    expect(before.cash).toBe(1000);
+    expect(before).toMatchObject({ cash: 1000, preset: "Default" });
 
-    await save({ startingCash: 5000, "staff.developers.dayRate": 50, finalDay: 40 });
+    const easy = await useOverrides({ startingCash: 5000, "staff.developers.dayRate": 50, finalDay: 40 }, "Easy");
     const after = (await newCompany(code, { name: "Beta", productType: "social", model: "iaas" })).json<CompanyView>();
-    expect(after.cash).toBe(5000);
-    expect(after.finalDay).toBe(40);
+    expect(after).toMatchObject({ cash: 5000, finalDay: 40, preset: "Easy" });
     const [row] = await testDb.db.select().from(companies).where(eq(companies.id, after.id));
-    expect(row!.config).toMatchObject({ startingCash: 5000, finalDay: 40 });
+    expect(row!).toMatchObject({ preset: "Easy", config: { startingCash: 5000, finalDay: 40 } });
 
-    // Edited again: neither game changes.
-    await save({ startingCash: 9000, "staff.developers.dayRate": 70 });
+    // Edited and renamed: neither game changes.
+    await update(easy, { name: "Easier", overrides: { startingCash: 9000, "staff.developers.dayRate": 70 } });
     const hire = (id: string) =>
       app.inject({
         method: "POST",
@@ -2561,7 +2658,8 @@ describe("teacher config", () => {
         payload: { type: "hire", pool: "developers" } satisfies ActionBody,
       });
     expect((await hire(before.id)).json<CompanyView>().dailyStaffCost).toBe(10);
-    expect((await hire(after.id)).json<CompanyView>().dailyStaffCost).toBe(50);
+    const hired = (await hire(after.id)).json<CompanyView>();
+    expect(hired).toMatchObject({ dailyStaffCost: 50, preset: "Easy" });
 
     const played = await app.inject({ method: "POST", url: `/api/codes/${code}/companies/${after.id}/continue` });
     expect(played.json<ContinueResult>().company).toMatchObject({ finalDay: 40, cash: 5000 - 50 - 25 });
@@ -2571,12 +2669,41 @@ describe("teacher config", () => {
       (await app.inject({ method: "GET", url: `/api/codes/${code}/companies/${id}/meta` })).json<MetaView>();
     expect((await metaOf(before.id)).staff.find((s) => s.id === "developers")!.dayRate).toBe(10);
     expect(await metaOf(after.id)).toMatchObject({ startingCash: 5000, finalDay: 40 });
-    expect((await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>().startingCash).toBe(9000);
+    expect((await meta()).startingCash).toBe(9000);
 
-    // And the teacher's dashboard shows each game's own length.
+    // Deleted (once it's no longer active): the game still shows the name it started with.
+    await activate("default");
+    expect((await teacher("DELETE", `/api/teacher/presets/${easy}`)).statusCode).toBe(200);
+    const third = (await newCompany(code, { name: "Gamma", productType: "video", model: "iaas" })).json<CompanyView>();
+    expect(third.preset).toBe("Default");
+
+    // The dashboard and the teacher's view of a game show each game's own length and preset.
     const games = (await teacher("GET", "/api/teacher/games")).json<TeacherGamesView>();
-    const finalDays = Object.fromEntries(games.codes[0]!.companies.map((c) => [c.name, c.finalDay]));
-    expect(finalDays).toEqual({ Acme: sim.config.finalDay, Beta: 40 });
+    const shown = Object.fromEntries(games.codes[0]!.companies.map((c) => [c.name, [c.finalDay, c.preset]]));
+    expect(shown).toEqual({ Acme: [sim.config.finalDay, "Default"], Beta: [40, "Easy"], Gamma: [sim.config.finalDay, "Default"] });
+    const summary = (await teacher("GET", `/api/teacher/companies/${after.id}/summary`)).json<TeacherSummaryView>();
+    expect(summary.preset).toBe("Easy");
+    const own = (await app.inject({ method: "GET", url: `/api/codes/${code}/companies/${after.id}` })).json<CompanyView>();
+    expect(own.preset).toBe("Easy");
+  });
+
+  it("names the preset of games started before presets had names when the server starts", async () => {
+    const code = await newCode();
+    const plain = (await newCompany(code)).json<CompanyView>();
+    await useOverrides({ startingCash: 5000 });
+    const custom = (await newCompany(code, { name: "Beta", productType: "social", model: "iaas" })).json<CompanyView>();
+    const noConfig = (await newCompany(code, { name: "Gamma", productType: "video", model: "iaas" })).json<CompanyView>();
+    await testDb.db.update(companies).set({ preset: null });
+    await testDb.db.update(companies).set({ config: null }).where(eq(companies.id, noConfig.id));
+
+    const restarted = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), sim, rateLimit: false });
+    await restarted.close();
+    const rows = await testDb.db.select({ id: companies.id, preset: companies.preset }).from(companies);
+    expect(Object.fromEntries(rows.map((r) => [r.id, r.preset]))).toEqual({
+      [plain.id]: "Default",
+      [custom.id]: "Custom",
+      [noConfig.id]: "Default",
+    });
   });
 
   it("refuses the per-game meta for an unknown company", async () => {

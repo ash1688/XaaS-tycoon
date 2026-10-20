@@ -1481,7 +1481,7 @@ fieldset > p {
 /* Fixed columns, so every code's table lines up with the others. Scrolls sideways on a phone. */
 .live-table {
   width: 100%;
-  min-width: 46rem;
+  min-width: 52rem;
   table-layout: fixed;
   border-collapse: collapse;
   margin-top: 0.5rem;
@@ -1489,33 +1489,39 @@ fieldset > p {
 }
 
 .live-table th:nth-child(1) {
-  width: 20%;
+  width: 18%;
 }
 
 .live-table th:nth-child(2) {
-  width: 10%;
-}
-
-.live-table th:nth-child(3) {
-  width: 8%;
-}
-
-.live-table th:nth-child(4) {
-  width: 11%;
-}
-
-.live-table th:nth-child(5),
-.live-table th:nth-child(6) {
   width: 9%;
 }
 
+/* Preset. */
+.live-table th:nth-child(3) {
+  width: 11%;
+}
+
+.live-table th:nth-child(4) {
+  width: 7%;
+}
+
+.live-table th:nth-child(5) {
+  width: 10%;
+}
+
+.live-table th:nth-child(6),
 .live-table th:nth-child(7) {
-  width: 12%;
+  width: 8%;
 }
 
 .live-table th:nth-child(8) {
-  width: 21%;
+  width: 11%;
 }
+
+.live-table th:nth-child(9) {
+  width: 18%;
+}
+
 
 .live-controls {
   display: flex;
@@ -1618,6 +1624,12 @@ button.danger-fill {
 
 .live-table .num {
   text-align: right;
+}
+
+/* Preset names can be long, so they wrap rather than cut off. */
+.live-table td.live-preset {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .live-table td small {
@@ -2323,6 +2335,89 @@ body.modal-open {
   font-size: 0.9rem;
 }
 
+/* Config presets: the list, the one open in the editor marked. */
+.config-presets-heading {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 1.1rem;
+}
+
+.preset-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.preset-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.85rem;
+  border-left: 3px solid transparent;
+  border-bottom: 1px solid var(--border);
+}
+
+.preset-item:last-child {
+  border-bottom: 0;
+}
+
+.preset-item.selected {
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.preset-name {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.6rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.preset-name .link-button {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.preset-item.selected .link-button {
+  text-decoration: none;
+  color: var(--text);
+}
+
+.preset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.config-editing h2 {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0 0 0.5rem;
+  overflow-wrap: anywhere;
+}
+
+.preset-name-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.preset-name-form p {
+  margin: 0;
+}
+
+.config-field-input input:read-only {
+  background: var(--bg);
+  color: var(--muted);
+}
+
 /* Save stays in reach however far down the page the teacher is. */
 .config-bar {
   position: sticky;
@@ -2345,7 +2440,12 @@ body.modal-open {
 
 .config-bar-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
+}
+
+.config-bar-actions button {
+  white-space: nowrap;
 }
 
 @media (max-width: 40rem) {

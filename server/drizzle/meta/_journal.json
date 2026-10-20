@@ -29,6 +29,13 @@
       "when": 1792522983483,
       "tag": "0003_config_presets",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792536620335,
+      "tag": "0004_preset_names",
+      "breakpoints": true
     }
   ]
 }

@@ -98,11 +98,13 @@ To try the end of a game without playing 180 days, set `GAME_FINAL_DAY` (for exa
 
 ### Game config
 
-The staff dashboard's **Game config** page (`/staff/config`) edits the game's numbers: starting cash, the bank loan, costs, growth, capacity, staff, migration and event days and effects. They're grouped, and each shows its default, what it does and the range it can take, with a reset per number and a **Reset all**. Saving changes what **games started from then on** use. Each company stores a snapshot of its full config when it starts, and every request about that game runs on that snapshot, so changing the config never alters a game already being played.
+The staff dashboard's **Game config** page (`/staff/config`) edits the game's numbers: starting cash, the bank loan, costs, growth, capacity, staff, migration and event days and effects. They're grouped, and each shows its default, what it does and the range it can take, with a reset per number and a **Reset all**.
+
+The numbers are kept as **named presets**, such as "Easy mode" or "Lesson 3", each storing only the numbers that differ from the defaults. **Default** is built in and read-only; **Save as** copies it, or any preset, to make one you can edit. Presets can be renamed and deleted, except Default and the active one. Exactly one preset is **active**, and it's what **games started from then on** use; there's one for every login code. Each company stores a snapshot of its full config and the name of the preset it came from when it starts, and every request about that game runs on that snapshot, so changing, renaming or deleting a preset never alters a game already being played. The live dashboard and the teacher's view of a game show its preset. Games started before presets had names show "Default" if they began on the default numbers, otherwise "Custom" (the one preset the page saved before), which is kept as a named preset.
 
 How it fits with the env settings:
 
-- **`GAME_FINAL_DAY` sets the base.** The server's base config is the built-in defaults with `GAME_FINAL_DAY` applied. The config page shows that base as each number's default and stores only the numbers that differ from it, so the e2e tests (`GAME_FINAL_DAY=30`) still get 30-day games unless a test changes it. A game length saved on the page wins over `GAME_FINAL_DAY` for new games.
+- **`GAME_FINAL_DAY` sets the base.** The server's base config is the built-in defaults with `GAME_FINAL_DAY` applied. Default is that base, each number's default on the page shows it, and presets store only the numbers that differ from it, so the e2e tests (`GAME_FINAL_DAY=30`) still get 30-day games unless a test changes it. A game length saved in the active preset wins over `GAME_FINAL_DAY` for new games.
 - **Timed flow stays env-only.** `TIMED_FLOW` and `TIMED_FLOW_SECONDS` are how the server runs, not game balance, so they're not on the page.
 
 Adding a number to `GameConfig` (in `sim/src/config.ts`) means listing it in `configFields` in `sim/src/configSchema.ts`, with its group, explanation and range, or adding it to `CONFIG_EXCLUSIONS` with a reason. A test fails until it's one or the other.

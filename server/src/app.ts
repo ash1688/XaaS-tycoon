@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import Fastify, { type FastifyReply } from "fastify";
 import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
-import { and, asc, count, desc, eq, gte, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import {
   applyOverrides,
   configFields,
@@ -36,13 +36,16 @@ import type {
   CodeView,
   CompanyStatus,
   ConfigErrorView,
-  ConfigSaveBody,
-  ConfigView,
   CompanyView,
   ContinueResult,
   MetaView,
   MigrationQuoteView,
   NewCompanyBody,
+  PresetCreateBody,
+  PresetsView,
+  PresetSummaryView,
+  PresetUpdateBody,
+  PresetView,
   PricePreviewView,
   SummaryView,
   TeacherCodeView,
@@ -101,8 +104,12 @@ export const DEFAULT_TIMED_FLOW_SECONDS = 15;
 
 const CODE_PATTERN = /^\d{8}$/;
 
-/** The one editable preset until named presets arrive: what the config page saves. */
+/** The built-in preset: the base config. Read-only, and not a row, so it always exists. */
+export const DEFAULT_PRESET = "Default";
+const DEFAULT_PRESET_ID = "default";
+/** The one preset the config page saved before presets had names. Games started on it are labelled with it. */
 export const CUSTOM_PRESET = "Custom";
+export const MAX_PRESET_NAME_LENGTH = 40;
 
 /** Sims kept for game configs, most recently used last. Most games in a lesson share a config, so a few is plenty. */
 const MAX_CACHED_SIMS = 20;
@@ -117,6 +124,7 @@ const CONFLICT = new Set(["bankrupt", "finished", "retired", "price_locked"]);
 const OLD_VERSION = "old_version";
 
 type CompanyRow = typeof companies.$inferSelect;
+type PresetRow = typeof configPresets.$inferSelect;
 
 function sendError(reply: FastifyReply, status: number, error: string, message: string, details: object = {}) {
   return reply.code(status).send({ ...details, error, message } satisfies ApiError);
@@ -198,19 +206,39 @@ export async function buildApp(opts: AppOptions) {
   const simOf = (row: CompanyRow) => simFor(row.config);
 
   /**
-   * The teacher's saved overrides that new games use, or none. Any that no longer fit the base config (say a test or
-   * env change took a feature away) are skipped rather than breaking new games.
+   * A preset's overrides that still fit the base config. Any that don't (say a test or env change took a feature away)
+   * are skipped rather than breaking new games.
    */
-  async function activeOverrides(q: Pick<Db, "select"> = db): Promise<ConfigOverrides> {
-    const [row] = await q.select().from(configPresets).where(eq(configPresets.active, true));
-    const overrides = row?.overrides ?? {};
+  function usable(overrides: ConfigOverrides): ConfigOverrides {
     const errors = validateOverrides(overrides, base);
     return Object.fromEntries(Object.entries(overrides).filter(([path]) => !errors[path]));
   }
 
-  /** The full config a game started now would use. */
-  async function newGameConfig(q: Pick<Db, "select"> = db) {
-    return applyOverrides(await activeOverrides(q), base);
+  /** The preset new games use, by name, and the full config it makes. With no active row, that's Default. */
+  async function newGameSetup(q: Pick<Db, "select"> = db) {
+    const [row] = await q.select().from(configPresets).where(eq(configPresets.active, true));
+    return { preset: row?.name ?? DEFAULT_PRESET, config: applyOverrides(usable(row?.overrides ?? {}), base) };
+  }
+
+  // Games started before presets had names get one: Default if they started on the base numbers, otherwise the one
+  // preset the config page saved then, Custom.
+  await nameOldGamesPresets();
+  async function nameOldGamesPresets() {
+    const rows = await db
+      .select({ id: companies.id, config: companies.config })
+      .from(companies)
+      .where(isNull(companies.preset));
+    const onDefaults = (config: GameConfig | null) => {
+      try {
+        return !config || Object.keys(diffFromDefaults(config, base)).length === 0;
+      } catch {
+        return false;
+      }
+    };
+    for (const preset of [DEFAULT_PRESET, CUSTOM_PRESET]) {
+      const ids = rows.filter((r) => onDefaults(r.config) === (preset === DEFAULT_PRESET)).map((r) => r.id);
+      if (ids.length) await db.update(companies).set({ preset }).where(inArray(companies.id, ids));
+    }
   }
 
   function view(row: CompanyRow): CompanyView {
@@ -219,6 +247,7 @@ export async function buildApp(opts: AppOptions) {
     return {
       id: row.id,
       name: row.name,
+      preset: row.preset ?? DEFAULT_PRESET,
       productType: state.productType,
       model: state.model,
       day: state.day,
@@ -344,7 +373,7 @@ export async function buildApp(opts: AppOptions) {
   }
 
   // What a game started now would use.
-  app.get("/api/meta", async (): Promise<MetaView> => metaFor(await newGameConfig()));
+  app.get("/api/meta", async (): Promise<MetaView> => metaFor((await newGameSetup()).config));
 
   // --- student (identified by login code) ---
 
@@ -391,8 +420,9 @@ export async function buildApp(opts: AppOptions) {
           .from(companies)
           .where(and(eq(companies.loginCode, code.code), eq(companies.status, "active"), currentVersion));
         if (counted!.active >= maxActiveCompanies) return undefined;
-        // The game keeps the config it starts with, whatever the teacher changes later.
-        const config = await newGameConfig(tx);
+        // The game keeps the config it starts with, and the name of the preset it came from, whatever the teacher
+        // changes later.
+        const { preset, config } = await newGameSetup(tx);
         const sim = simFor(config);
         const state = sim.newGame({ companyName: name, productType, model, seed: randomInt(2 ** 31), takeLoan });
         const [inserted] = await tx
@@ -402,6 +432,7 @@ export async function buildApp(opts: AppOptions) {
             name: state.companyName,
             productType: state.productType,
             config,
+            preset,
             ...columnsFor(sim, state),
           })
           .returning();
@@ -721,6 +752,7 @@ export async function buildApp(opts: AppOptions) {
               archivedAt: companies.archivedAt,
               // From the game's own config, so a game keeps the length it started with.
               finalDay: sql<number | null>`(${companies.config}->>'finalDay')::int`,
+              preset: companies.preset,
             },
           })
           .from(loginCodes)
@@ -740,6 +772,7 @@ export async function buildApp(opts: AppOptions) {
             finalDay: g.finalDay ?? base.finalDay,
             updatedAt: g.updatedAt.toISOString(),
             archivedAt: g.archivedAt?.toISOString() ?? null,
+            preset: g.preset ?? DEFAULT_PRESET,
           });
         }
         return { hours, codes: [...codes.values()] };
@@ -804,61 +837,224 @@ export async function buildApp(opts: AppOptions) {
       const [row] = UUID_PATTERN.test(id) ? await db.select().from(companies).where(eq(companies.id, id)) : [];
       if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
       const status = row.status as CompanyStatus;
-      return { code: row.loginCode, status, summary: simOf(row).summarise(row.state) } satisfies TeacherSummaryView;
+      return {
+        code: row.loginCode,
+        status,
+        preset: row.preset ?? DEFAULT_PRESET,
+        summary: simOf(row).summarise(row.state),
+      } satisfies TeacherSummaryView;
     });
 
-    // The config page: every editable number with its default and range, and the overrides new games use. Changes
-    // apply to games started from then on; each game keeps the config it started with.
-    async function configView(): Promise<ConfigView> {
-      return { preset: CUSTOM_PRESET, fields: configFields(base), overrides: await activeOverrides() };
-    }
+    // Config presets: named sets of numbers for the game, each stored as the numbers that differ from the defaults.
+    // Default is built in and read-only. The active preset is what games started from then on use; each game keeps
+    // the config it started with, so changing or deleting a preset never touches a game already started.
+    const READ_ONLY = "Default is built in and can't be changed. Save it as a new preset to make changes.";
 
-    teacher.get("/api/teacher/config", configView);
+    teacher.get("/api/teacher/presets", presetsView);
 
-    // Replaces the overrides. Values equal to the default are dropped, so only real changes are kept.
-    teacher.put<{ Body: ConfigSaveBody }>(
-      "/api/teacher/config",
+    teacher.get<{ Params: { id: string } }>("/api/teacher/presets/:id", async (req, reply) => {
+      const row = await findPreset(req.params.id);
+      if (row === undefined) return unknownPreset(reply);
+      return presetView(row);
+    });
+
+    // A new preset: the overrides sent (the config page's current values), or a copy of another preset ("save as").
+    teacher.post<{ Body: PresetCreateBody }>(
+      "/api/teacher/presets",
       {
         schema: {
           // Values are checked by validateOverrides, for an error per field rather than the first one AJV finds.
-          body: { type: "object", required: ["overrides"], properties: { overrides: { type: "object" } } },
+          body: {
+            type: "object",
+            required: ["name"],
+            properties: { name: { type: "string" }, from: { type: "string" }, overrides: { type: "object" } },
+            additionalProperties: false,
+          },
         },
       },
       async (req, reply) => {
-        const fields = validateOverrides(req.body.overrides, base);
-        const count = Object.keys(fields).length;
-        if (count) {
-          return reply.code(400).send({
-            error: "invalid_config",
-            message: `${count} setting${count === 1 ? " needs" : "s need"} fixing before saving.`,
-            fields,
-          } satisfies ConfigErrorView);
+        const name = await checkName(reply, req.body.name);
+        if (name === undefined) return reply;
+        let overrides = req.body.overrides;
+        if (overrides) {
+          if (invalidConfig(reply, overrides)) return reply;
+        } else {
+          const from = await findPreset(req.body.from ?? DEFAULT_PRESET_ID);
+          if (from === undefined) return unknownPreset(reply);
+          overrides = from?.overrides ?? {};
         }
-        await saveOverrides(diffFromDefaults(applyOverrides(req.body.overrides, base), base));
-        return configView();
+        const row = await db
+          .insert(configPresets)
+          .values({ name, overrides: cleaned(overrides) })
+          .returning()
+          .catch(nameTaken);
+        if (!row) return sendError(reply, 409, "name_taken", takenMessage(name));
+        return reply.code(201).send(await presetView(row[0]!));
       },
     );
 
-    // Every field back to its default.
-    teacher.post("/api/teacher/config/reset", async () => {
-      await saveOverrides({});
-      return configView();
+    // Renames a preset, replaces its numbers, or both. Values equal to the default are dropped.
+    teacher.patch<{ Params: { id: string }; Body: PresetUpdateBody }>(
+      "/api/teacher/presets/:id",
+      {
+        schema: {
+          body: {
+            type: "object",
+            properties: { name: { type: "string" }, overrides: { type: "object" } },
+            additionalProperties: false,
+            minProperties: 1,
+          },
+        },
+      },
+      async (req, reply) => {
+        const row = await findPreset(req.params.id);
+        if (row === undefined) return unknownPreset(reply);
+        if (row === null) return sendError(reply, 403, "read_only", READ_ONLY);
+        const { overrides } = req.body;
+        const name = req.body.name === undefined ? row.name : await checkName(reply, req.body.name, row.id);
+        if (name === undefined || (overrides && invalidConfig(reply, overrides))) return reply;
+        const updated = await db
+          .update(configPresets)
+          .set({ name, ...(overrides && { overrides: cleaned(overrides) }), updatedAt: new Date() })
+          .where(eq(configPresets.id, row.id))
+          .returning()
+          .catch(nameTaken);
+        if (!updated) return sendError(reply, 409, "name_taken", takenMessage(name));
+        return presetView(updated[0]!);
+      },
+    );
+
+    // Neither Default nor the active preset can go: new games always have a preset to use.
+    teacher.delete<{ Params: { id: string } }>("/api/teacher/presets/:id", async (req, reply) => {
+      const row = await findPreset(req.params.id);
+      if (row === undefined) return unknownPreset(reply);
+      if (row === null) return sendError(reply, 403, "read_only", READ_ONLY);
+      const [deleted] = await db
+        .delete(configPresets)
+        .where(and(eq(configPresets.id, row.id), eq(configPresets.active, false)))
+        .returning({ id: configPresets.id });
+      if (!deleted) {
+        return sendError(
+          reply,
+          409,
+          "preset_active",
+          `New games use “${row.name}”. Make another preset active before deleting it.`,
+        );
+      }
+      return presetsView();
+    });
+
+    // New games use this preset from now on. Making Default active leaves no row active.
+    teacher.post<{ Params: { id: string } }>("/api/teacher/presets/:id/activate", async (req, reply) => {
+      const row = await findPreset(req.params.id);
+      if (row === undefined) return unknownPreset(reply);
+      await db.transaction(async (tx) => {
+        await tx.update(configPresets).set({ active: false }).where(eq(configPresets.active, true));
+        if (row) await tx.update(configPresets).set({ active: true }).where(eq(configPresets.id, row.id));
+      });
+      return presetsView();
     });
   });
 
-  /** Stores the config page's overrides as the Custom preset and makes it the one new games use. */
-  async function saveOverrides(overrides: ConfigOverrides) {
-    await db.transaction(async (tx) => {
-      await tx
-        .update(configPresets)
-        .set({ active: false })
-        .where(and(eq(configPresets.active, true), sql`${configPresets.name} <> ${CUSTOM_PRESET}`));
-      await tx
-        .insert(configPresets)
-        .values({ name: CUSTOM_PRESET, overrides, active: true })
-        .onConflictDoUpdate({ target: configPresets.name, set: { overrides, active: true, updatedAt: new Date() } });
-    });
+  /** A preset by id: its row, null for Default, or undefined if there's no such preset. */
+  async function findPreset(id: string): Promise<PresetRow | null | undefined> {
+    if (id === DEFAULT_PRESET_ID) return null;
+    if (!UUID_PATTERN.test(id)) return undefined;
+    const [row] = await db.select().from(configPresets).where(eq(configPresets.id, id));
+    return row;
   }
+
+  const unknownPreset = (reply: FastifyReply) => sendError(reply, 404, "unknown_preset", "That preset wasn't found.");
+
+  function presetSummary(row: PresetRow | null, anyActive: boolean): PresetSummaryView {
+    if (!row) {
+      return { id: DEFAULT_PRESET_ID, name: DEFAULT_PRESET, builtIn: true, active: !anyActive, changed: 0, updatedAt: null };
+    }
+    return {
+      id: row.id,
+      name: row.name,
+      builtIn: false,
+      active: row.active,
+      changed: Object.keys(usable(row.overrides)).length,
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  async function presetsView(): Promise<PresetsView> {
+    const rows = await db.select().from(configPresets).orderBy(sql`lower(${configPresets.name})`);
+    const active = rows.find((r) => r.active);
+    return {
+      active: active?.id ?? DEFAULT_PRESET_ID,
+      presets: [null, ...rows].map((r) => presetSummary(r, !!active)),
+      maxNameLength: MAX_PRESET_NAME_LENGTH,
+    };
+  }
+
+  async function presetView(row: PresetRow | null): Promise<PresetView> {
+    const anyActive = row?.active || (await db.$count(configPresets, eq(configPresets.active, true))) > 0;
+    const overrides = usable(row?.overrides ?? {});
+    const fields = configFields(base);
+    const values = Object.fromEntries(fields.map((f) => [f.path, overrides[f.path] ?? f.default]));
+    return { ...presetSummary(row, anyActive), fields, overrides, values };
+  }
+
+  /**
+   * A preset's name, trimmed, or undefined once a 400 or 409 has been sent: it must have something in it, fit the
+   * limit, not be Default, and not be another preset's name in any case.
+   */
+  async function checkName(reply: FastifyReply, raw: string, ownId?: string) {
+    const name = raw.trim().replace(/\s+/g, " ");
+    const problem = !name
+      ? "Give the preset a name."
+      : name.length > MAX_PRESET_NAME_LENGTH
+        ? `Keep the name to ${MAX_PRESET_NAME_LENGTH} characters or fewer.`
+        : name.toLowerCase() === DEFAULT_PRESET.toLowerCase()
+          ? "Default is the built-in preset's name. Pick another."
+          : undefined;
+    if (problem) {
+      sendError(reply, 400, "invalid_name", problem);
+      return undefined;
+    }
+    const [taken] = await db
+      .select({ id: configPresets.id })
+      .from(configPresets)
+      .where(
+        and(
+          sql`lower(${configPresets.name}) = ${name.toLowerCase()}`,
+          ownId ? ne(configPresets.id, ownId) : undefined,
+        ),
+      );
+    if (taken) {
+      sendError(reply, 409, "name_taken", takenMessage(name));
+      return undefined;
+    }
+    return name;
+  }
+
+  const takenMessage = (name: string) => `There's already a preset called “${name}”. Pick another name.`;
+
+  /** Undefined for a unique-name clash that got past checkName (two saves at once); anything else is rethrown. */
+  function nameTaken(err: unknown): undefined {
+    const code = (e: unknown) => (e as { code?: string } | undefined)?.code;
+    if (code(err) === "23505" || code((err as { cause?: unknown }).cause) === "23505") return undefined;
+    throw err;
+  }
+
+  /** Sends a 400 with an error per field if any override is invalid. True if it did. */
+  function invalidConfig(reply: FastifyReply, overrides: ConfigOverrides) {
+    const fields = validateOverrides(overrides, base);
+    const count = Object.keys(fields).length;
+    if (!count) return false;
+    reply.code(400).send({
+      error: "invalid_config",
+      message: `${count} setting${count === 1 ? " needs" : "s need"} fixing before saving.`,
+      fields,
+    } satisfies ConfigErrorView);
+    return true;
+  }
+
+  /** Only the numbers that differ from the defaults. */
+  const cleaned = (overrides: ConfigOverrides) => diffFromDefaults(applyOverrides(usable(overrides), base), base);
 
   /** Archives or unarchives one game in the teacher's view. False if there's no such game. */
   async function setGameArchived(id: string, archived: boolean) {
