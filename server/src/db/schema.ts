@@ -45,6 +45,10 @@ export const companies = pgTable(
     // this game is made from it, so later changes on the config page never touch a game already started. Null only
     // for games started before configs were snapshotted, which use the base config.
     config: jsonb("config").$type<GameConfig>(),
+    // The name of the preset the config came from ("Default" for the built-in one), kept with the snapshot so renaming
+    // or deleting the preset later doesn't change it. Null only for games started before presets had names; the app
+    // fills those in at start-up.
+    preset: text("preset"),
     // Set when the teacher archives the game, which only moves it from the live dashboard to the Archived tab: the
     // student can keep playing it. Separate from status, which is where the game itself got to.
     archivedAt: timestamp("archived_at", { withTimezone: true }),
@@ -55,9 +59,8 @@ export const companies = pgTable(
 );
 
 /**
- * The teacher's config: overrides on the base config, by path (see configSchema in the sim). For now there's one row,
- * "Custom", edited on the config page. Named presets add more rows. The active row is what new games use; with none
- * active, they use the base config ("Default", built in rather than a row).
+ * The teacher's named presets: each is overrides on the base config, by path (see configSchema in the sim). The active
+ * row is what new games use; with none active, they use the base config ("Default", built in rather than a row).
  */
 export const configPresets = pgTable(
   "config_presets",
@@ -70,6 +73,10 @@ export const configPresets = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  // At most one active preset.
-  (t) => [uniqueIndex("config_presets_one_active_idx").on(t.active).where(sql`${t.active}`)],
+  (t) => [
+    // At most one active preset.
+    uniqueIndex("config_presets_one_active_idx").on(t.active).where(sql`${t.active}`),
+    // Names are unique whatever their case, so "Easy mode" and "easy mode" can't both be listed.
+    uniqueIndex("config_presets_name_lower_idx").on(sql`lower(${t.name})`),
+  ],
 );

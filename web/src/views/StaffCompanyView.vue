@@ -33,7 +33,8 @@ onMounted(async () => {
   <p v-else-if="error" class="error" role="alert">{{ error }}</p>
   <template v-else-if="data">
     <p class="muted staff-company-code">
-      Code <span class="mono">{{ formatCode(data.code) }}</span>
+      Code <span class="mono">{{ formatCode(data.code) }}</span> · Preset
+      <strong data-testid="company-preset">{{ data.preset }}</strong>
     </p>
     <SummaryPanel :summary="data.summary" :model-name="modelName(data.summary.model)" :retired="data.status === 'retired'" />
   </template>

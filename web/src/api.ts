@@ -1,14 +1,17 @@
-import type { ConfigOverrides, SpendCategory } from "@xaas/sim";
+import type { SpendCategory } from "@xaas/sim";
 import type {
   ActionBody,
   ApiError,
   CodeView,
   CompanyView,
-  ConfigView,
   ContinueResult,
   MetaView,
   MigrationQuoteView,
   NewCompanyBody,
+  PresetCreateBody,
+  PresetsView,
+  PresetUpdateBody,
+  PresetView,
   PricePreviewView,
   SummaryView,
   TeacherCodeView,
@@ -89,9 +92,13 @@ export const api = {
   unarchiveCode: (code: string) => request<{ ok: true }>("POST", `/api/teacher/codes/${enc(code)}/unarchive`),
   deleteCode: (code: string) => request<{ ok: true }>("DELETE", `/api/teacher/codes/${enc(code)}`),
   teacherSummary: (id: string) => request<TeacherSummaryView>("GET", `/api/teacher/companies/${enc(id)}/summary`),
-  teacherConfig: () => request<ConfigView>("GET", "/api/teacher/config"),
-  saveConfig: (overrides: ConfigOverrides) => request<ConfigView>("PUT", "/api/teacher/config", { overrides }),
-  resetConfig: () => request<ConfigView>("POST", "/api/teacher/config/reset"),
+  presets: () => request<PresetsView>("GET", "/api/teacher/presets"),
+  preset: (id: string) => request<PresetView>("GET", `/api/teacher/presets/${enc(id)}`),
+  createPreset: (body: PresetCreateBody) => request<PresetView>("POST", "/api/teacher/presets", body),
+  updatePreset: (id: string, body: PresetUpdateBody) =>
+    request<PresetView>("PATCH", `/api/teacher/presets/${enc(id)}`, body),
+  deletePreset: (id: string) => request<PresetsView>("DELETE", `/api/teacher/presets/${enc(id)}`),
+  activatePreset: (id: string) => request<PresetsView>("POST", `/api/teacher/presets/${enc(id)}/activate`),
 };
 
 const money = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 });

@@ -222,6 +222,7 @@ const formatTime = (d: Date) => d.toLocaleTimeString("en-GB", { timeStyle: "shor
               <tr>
                 <th>Company</th>
                 <th>Model</th>
+                <th>Preset</th>
                 <th class="num">Day</th>
                 <th class="num">Cash</th>
                 <th class="num">Users</th>
@@ -247,6 +248,7 @@ const formatTime = (d: Date) => d.toLocaleTimeString("en-GB", { timeStyle: "shor
                     → {{ modelName(g.migratingTo!) }}
                   </span>
                 </td>
+                <td class="live-preset" :title="g.preset" data-testid="live-preset">{{ g.preset }}</td>
                 <td class="num" data-testid="live-day">{{ g.day }}<span class="muted">/{{ g.finalDay }}</span></td>
                 <td :class="['num', { neg: g.cash < 0 }]">{{ formatCash(g.cash) }}</td>
                 <td class="num">{{ formatCount(g.users) }}</td>

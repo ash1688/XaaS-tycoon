@@ -110,6 +110,8 @@ export type CompanyStatus = "active" | "retired" | "bankrupt" | "finished";
 export interface CompanyView {
   id: string;
   name: string;
+  /** The config preset the game started with ("Default" for the built-in numbers). */
+  preset: string;
   productType: ProductTypeId;
   model: ModelId;
   day: number;
@@ -312,6 +314,8 @@ export interface TeacherGameView {
   updatedAt: string;
   /** When the teacher archived it, or null if it isn't. Only the teacher's view: the student can still play it. */
   archivedAt: string | null;
+  /** The config preset the game started with. */
+  preset: string;
 }
 
 /**
@@ -335,20 +339,58 @@ export interface TeacherGamesView {
 export interface TeacherSummaryView {
   code: string;
   status: CompanyStatus;
+  /** The config preset the game started with. */
+  preset: string;
   summary: SummaryView;
 }
 
-/** The teacher's config page: every editable number, and the overrides new games use. */
-export interface ConfigView {
-  /** The preset being edited. For now there's only "Custom". */
-  preset: string;
+/** A config preset in the teacher's list. */
+export interface PresetSummaryView {
+  /** A uuid, or "default" for the built-in Default. */
+  id: string;
+  name: string;
+  /** The built-in Default: the base config, which can't be changed, renamed or deleted. */
+  builtIn: boolean;
+  /** New games use this one. Exactly one preset is active. */
+  active: boolean;
+  /** How many numbers differ from the defaults. */
+  changed: number;
+  /** Null for Default. */
+  updatedAt: string | null;
+}
+
+/** GET /api/teacher/presets: Default first, then the teacher's presets by name. */
+export interface PresetsView {
+  /** The id of the preset new games use. */
+  active: string;
+  presets: PresetSummaryView[];
+  /** The longest a name can be. */
+  maxNameLength: number;
+}
+
+/** GET /api/teacher/presets/:id: one preset with every editable number. */
+export interface PresetView extends PresetSummaryView {
   fields: ConfigField[];
   /** Path → value, for the numbers that differ from each field's default. */
   overrides: ConfigOverrides;
+  /** Path → value for every field: the override, or the default. */
+  values: Record<string, number>;
 }
 
-export interface ConfigSaveBody {
-  overrides: ConfigOverrides;
+/**
+ * POST /api/teacher/presets: a new preset. With overrides, it holds them (the config page's current values); otherwise
+ * it copies the preset `from` ("save as"), which defaults to Default.
+ */
+export interface PresetCreateBody {
+  name: string;
+  from?: string;
+  overrides?: ConfigOverrides;
+}
+
+/** PATCH /api/teacher/presets/:id: rename it, replace its overrides, or both. Default can't be changed. */
+export interface PresetUpdateBody {
+  name?: string;
+  overrides?: ConfigOverrides;
 }
 
 /** A 400 from saving the config: what's wrong with each field, by path. */
