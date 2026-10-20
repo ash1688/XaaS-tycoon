@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-
-// Named to run after smoke.spec.ts, whose first test takes the oldest login code.
+import { createCode } from "./staff.ts";
 
 test("on IaaS, renting an app server and a load balancer grows the CU capacity bar after Continue", async ({
   browser,
@@ -11,8 +10,7 @@ test("on IaaS, renting an app server and a load balancer grows the CU capacity b
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
 
   const created = await request.post(`/api/codes/${code}/companies`, {
     data: { name: "Racks Ltd", productType: "social", model: "iaas" },

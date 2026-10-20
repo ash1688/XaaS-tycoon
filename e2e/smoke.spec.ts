@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import postgres from "postgres";
 import { E2E_DATABASE_URL, E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
+import { createCode } from "./staff.ts";
 
 // The game's pages are reached through its nav bar.
 const goTo = (page: Page, name: string) =>
@@ -21,8 +22,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
   expect(code).toMatch(/^\d{8}$/);
 
   // Student, in a separate browser context (no teacher cookie)
@@ -176,8 +176,7 @@ test("a company that runs out of cash goes bankrupt and can't continue", async (
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
 
   const created = await request.post(`/api/codes/${code}/companies`, {
     data: { name: "Broke Ltd", productType: "social", model: "iaas" },
@@ -223,8 +222,7 @@ test("a SaaS company buys an add-on and pays for it per user", async ({ browser,
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
 
   const created = await request.post(`/api/codes/${code}/companies`, {
     data: { name: "Shopfront Ltd", productType: "social", model: "saas" },
@@ -274,8 +272,7 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
 
   const created = await request.post(`/api/codes/${code}/companies`, {
     data: { name: "Movers Ltd", productType: "social", model: "iaas" },
@@ -367,8 +364,7 @@ test("a migration that overruns shows the extra days", async ({ browser, request
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
 
   const created = await request.post(`/api/codes/${code}/companies`, {
     data: { name: "Slippers Ltd", productType: "social", model: "iaas" },
@@ -396,8 +392,7 @@ test("leaving SaaS warns that add-ons will be lost, then leaves them behind", as
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
 
   const created = await request.post(`/api/codes/${code}/companies`, {
     data: { name: "Locked In Ltd", productType: "social", model: "saas" },
@@ -449,8 +444,7 @@ test("a scripted event shows a card that names the layer and highlights it in th
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
 
   const company = async (name: string, model: string) => {
     // On-prem's kit costs more than the starting cash, so it takes the bank loan.
@@ -514,8 +508,7 @@ test("on SaaS, a feature the platform can't provide shows a card, then stays on 
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
 
   const created = await request.post(`/api/codes/${code}/companies`, {
     data: { name: "Walled Garden Ltd", productType: "social", model: "saas" },
@@ -566,8 +559,7 @@ test("a company plays to the final day and sees its summary, again when reopened
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
 
   const created = await request.post(`/api/codes/${code}/companies`, {
     data: { name: "Finishers Ltd", productType: "social", model: "iaas" },
@@ -657,8 +649,7 @@ test("a code runs up to 3 active companies; retiring one moves it to history and
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}`);
@@ -711,8 +702,7 @@ test("the teacher archives a game, finds it under Archived, then deletes it", as
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
 
   const created = await request.post(`/api/codes/${code}/companies`, {
     data: { name: "Archive Me Ltd", productType: "ecommerce", model: "paas" },
@@ -758,8 +748,7 @@ test("a Home card opens an accessible modal with its controls, and Continue work
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
 
   const created = await request.post(`/api/codes/${code}/companies`, {
     data: { name: "Modal Ltd", productType: "social", model: "iaas" },
@@ -817,8 +806,7 @@ test("a student sets a price, plays a day and sees the income on Finance", async
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
 
   const created = await request.post(`/api/codes/${code}/companies`, {
     data: { name: "Pricey Ltd", productType: "social", model: "iaas" },
@@ -877,8 +865,7 @@ test("a student previews prices live, raises the price, and sees the backlash an
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
   const created = await request.post(`/api/codes/${code}/companies`, {
     data: { name: "Wave Ltd", productType: "social", model: "iaas" },
   });
@@ -941,8 +928,7 @@ test("a SaaS company without support builds a backlog, hires support from Home a
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
 
   // A shop on SaaS: the provider runs the platform, but answering customers is still the company's job. Let its one
   // support person go, so nobody answers the shoppers' tickets.
@@ -1003,8 +989,7 @@ test("free users start paying each day, and Customers shows what's helping or hu
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
 
   // A social network: 800 of its 1,000 users are free.
   const created = await request.post(`/api/codes/${code}/companies`, {

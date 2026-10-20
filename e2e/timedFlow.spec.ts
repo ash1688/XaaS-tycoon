@@ -2,14 +2,14 @@
 import { expect, test, type APIRequestContext, type Browser } from "@playwright/test";
 import postgres from "postgres";
 import { E2E_DATABASE_URL, E2E_FINAL_DAY, E2E_TEACHER_PASSWORD, E2E_TIMED_FLOW_SECONDS } from "../playwright.config.ts";
+import { createCode } from "./staff.ts";
 
 async function newCompany(browser: Browser, request: APIRequestContext, name: string) {
   const teacher = await (await browser.newContext()).newPage();
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
   const created = await request.post(`/api/codes/${code}/companies`, {
     data: { name, productType: "social", model: "iaas" },
   });

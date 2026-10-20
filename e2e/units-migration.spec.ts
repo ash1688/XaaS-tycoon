@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-
-// Named to run after smoke.spec.ts, whose first test takes the oldest login code.
+import { createCode } from "./staff.ts";
 
 test("migrating from IaaS to PaaS quotes the new setup item by item, then shows both setups during the move", async ({
   browser,
@@ -11,8 +10,7 @@ test("migrating from IaaS to PaaS quotes the new setup item by item, then shows 
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
   const created = await request.post(`/api/codes/${code}/companies`, {
     data: { name: "Setup Movers", productType: "social", model: "iaas" },
   });

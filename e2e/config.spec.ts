@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
+import { createCode } from "./staff.ts";
 
 // Every spec shares the e2e database, so however a test ends, Default goes back to being active, the presets go, and
 // so do its code and games. Other specs pick the newest code from the list, and expect a fresh one.
@@ -24,8 +25,7 @@ test("the teacher saves a preset and makes it active: new games use it, a game a
 }) => {
   const teacher = await (await browser.newContext()).newPage();
   await signIn(teacher);
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  code = await createCode(teacher);
 
   // A game started on the defaults: £15,000 less IaaS's £2,000 upfront.
   const created = await request.post(`/api/codes/${code}/companies`, {

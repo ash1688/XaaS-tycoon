@@ -1,15 +1,13 @@
 import { expect, test, type Browser, type APIRequestContext } from "@playwright/test";
 import { E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-
-// Named to run after smoke.spec.ts, whose first test takes the oldest login code.
+import { createCode } from "./staff.ts";
 
 async function newCompany(browser: Browser, request: APIRequestContext, name: string, model: string) {
   const teacher = await (await browser.newContext()).newPage();
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
   const created = await request.post(`/api/codes/${code}/companies`, { data: { name, productType: "social", model } });
   const { id } = await created.json();
   const student = await (await browser.newContext()).newPage();
