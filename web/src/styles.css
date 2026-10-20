@@ -321,6 +321,23 @@ fieldset > p {
   padding: 0.75rem 2rem;
 }
 
+/* Timed flow (off by default): Play/Pause, a manual Continue, and the countdown to the next day. */
+.timed-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.timed-flow .continue {
+  min-width: 7.5rem;
+}
+
+.timed-flow p {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
 .day-log {
   margin-top: 1.25rem;
 }

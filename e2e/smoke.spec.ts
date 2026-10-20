@@ -69,6 +69,9 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await expect(student.getByTestId("feature-progress-photos")).toContainText("0 of 16 developer-days");
   await expect(student.getByRole("button", { name: "Build Groups" })).toBeDisabled();
 
+  // Timed flow is off by default: only the Continue button, no Play/Pause or countdown.
+  await expect(student.getByTestId("timed-flow")).toHaveCount(0);
+  await expect(student.getByRole("button", { name: "Play" })).toHaveCount(0);
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
   // £200 IaaS running costs (£6,000 a month ÷ 30) + 3 developers × £160 + 1 ops × £140.

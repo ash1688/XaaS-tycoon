@@ -33,6 +33,7 @@ import type {
   TeacherGamesView,
   TeacherGameView,
   TeacherSummaryView,
+  TimedFlowView,
 } from "./api-types.ts";
 
 export interface AppOptions {
@@ -47,12 +48,18 @@ export interface AppOptions {
   maxActiveCompanies?: number;
   /** How far back, in hours, the teacher's dashboard looks unless the teacher picks another window. Defaults to 3. */
   dashboardHours?: number;
+  /**
+   * Timed flow: the game page plays a day every `seconds` on its own, with Play/Pause, by calling continue on a timer.
+   * Off unless set, so students press Continue a day at a time.
+   */
+  timedFlow?: TimedFlowView;
 }
 
 export const DEFAULT_MAX_ACTIVE_COMPANIES = 3;
 export const DEFAULT_DASHBOARD_HOURS = 3;
 /** The widest window the dashboard can ask for: a week. */
 export const MAX_DASHBOARD_HOURS = 7 * 24;
+export const DEFAULT_TIMED_FLOW_SECONDS = 15;
 
 const CODE_PATTERN = /^\d{8}$/;
 
@@ -70,6 +77,7 @@ export async function buildApp(opts: AppOptions) {
   const sim = opts.sim ?? createSim();
   const maxActiveCompanies = opts.maxActiveCompanies ?? DEFAULT_MAX_ACTIVE_COMPANIES;
   const dashboardHours = opts.dashboardHours ?? DEFAULT_DASHBOARD_HOURS;
+  const timedFlow = opts.timedFlow ?? { enabled: false, seconds: DEFAULT_TIMED_FLOW_SECONDS };
   const app = Fastify({ logger: opts.logger ?? false });
 
   await app.register(cookie, { secret: opts.sessionSecret });
@@ -141,6 +149,7 @@ export async function buildApp(opts: AppOptions) {
       finalDay: config.finalDay,
       maxCompanyNameLength: config.maxCompanyNameLength,
       maxActiveCompanies,
+      timedFlow,
       productTypes: PRODUCT_TYPE_IDS.map((id) => {
         const { name, profile, features } = config.productTypes[id];
         return {
