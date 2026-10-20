@@ -41,6 +41,14 @@ function modelName(id: string) {
 const productName = (id: string) => meta.value?.productTypes.find((p) => p.id === id)?.name ?? id;
 const migrating = (g: TeacherGameView) => g.status === "active" && g.migratingTo;
 const statusLabel = (s: CompanyStatus) => STATUS_LABELS[s];
+// Below good satisfaction, growth slows and users leave: shown as a problem, like low uptime.
+const lowSatisfaction = (g: TeacherGameView) => g.satisfaction < (meta.value?.goodSatisfaction ?? 70);
+// Signed, so profit or loss doesn't rest on colour alone.
+const signed = (n: number) => `${n < 0 ? "−" : "+"}${formatCash(Math.abs(n))}`;
+function loanLabel(remaining: number | null) {
+  if (remaining === null) return "No";
+  return remaining > 0 ? `${formatCash(remaining)} left` : "Repaid";
+}
 
 function playedAgo(iso: string) {
   const minutes = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
@@ -220,15 +228,19 @@ const formatTime = (d: Date) => d.toLocaleTimeString("en-GB", { timeStyle: "shor
           <table class="live-table">
             <thead>
               <tr>
-                <th>Company</th>
-                <th>Model</th>
-                <th>Preset</th>
-                <th class="num">Day</th>
-                <th class="num">Cash</th>
-                <th class="num">Users</th>
-                <th class="num">Uptime</th>
-                <th>Status</th>
-                <th><span class="visually-hidden">Actions</span></th>
+                <th class="c-company">Company</th>
+                <th class="c-model col-mid">Model</th>
+                <th class="c-preset col-wide">Preset</th>
+                <th class="c-day num">Day</th>
+                <th class="c-cash num col-mid">Cash</th>
+                <th class="c-users num">Users</th>
+                <th class="c-income num">Income a day</th>
+                <th class="c-profit num">Profit</th>
+                <th class="c-satisfaction num">Satisfaction</th>
+                <th class="c-loan col-wide">Loan</th>
+                <th class="c-uptime num col-mid">Uptime</th>
+                <th class="c-status">Status</th>
+                <th class="c-actions"><span class="visually-hidden">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -237,7 +249,7 @@ const formatTime = (d: Date) => d.toLocaleTimeString("en-GB", { timeStyle: "shor
                   <RouterLink :to="`/staff/companies/${g.id}`" class="live-name">{{ g.name }}</RouterLink>
                   <small class="muted">{{ productName(g.productType) }}</small>
                 </td>
-                <td>
+                <td class="col-mid">
                   {{ modelName(g.model) }}
                   <span
                     v-if="migrating(g)"
@@ -248,11 +260,20 @@ const formatTime = (d: Date) => d.toLocaleTimeString("en-GB", { timeStyle: "shor
                     → {{ modelName(g.migratingTo!) }}
                   </span>
                 </td>
-                <td class="live-preset" :title="g.preset" data-testid="live-preset">{{ g.preset }}</td>
+                <td class="live-preset col-wide" :title="g.preset" data-testid="live-preset">{{ g.preset }}</td>
                 <td class="num" data-testid="live-day">{{ g.day }}<span class="muted">/{{ g.finalDay }}</span></td>
-                <td :class="['num', { neg: g.cash < 0 }]">{{ formatCash(g.cash) }}</td>
-                <td class="num">{{ formatCount(g.users) }}</td>
-                <td :class="['num', { neg: g.uptime < LOW_UPTIME }]">{{ formatUptime(g.uptime) }}</td>
+                <td :class="['num', 'col-mid', { neg: g.cash < 0 }]">{{ formatCash(g.cash) }}</td>
+                <td class="num" data-testid="live-users">
+                  {{ formatCount(g.users) }}
+                  <small class="muted" data-testid="live-paid-free">
+                    {{ formatCount(g.paidUsers) }} paid · {{ formatCount(g.freeUsers) }} free
+                  </small>
+                </td>
+                <td class="num" data-testid="live-income">{{ formatCash(g.lastDayIncome) }}</td>
+                <td :class="['num', g.profit < 0 ? 'neg' : 'pos']" data-testid="live-profit">{{ signed(g.profit) }}</td>
+                <td :class="['num', { neg: lowSatisfaction(g) }]" data-testid="live-satisfaction">{{ g.satisfaction }}%</td>
+                <td class="col-wide" data-testid="live-loan">{{ loanLabel(g.loanRemaining) }}</td>
+                <td :class="['num', 'col-mid', { neg: g.uptime < LOW_UPTIME }]">{{ formatUptime(g.uptime) }}</td>
                 <td>
                   <span v-if="g.status !== 'active'" :class="['badge', STATUS_BADGES[g.status]]">
                     {{ statusLabel(g.status) }}

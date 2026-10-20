@@ -1845,7 +1845,7 @@ describe("ledger", () => {
   it("records spend for every day, day 1 first, adding up to the totals", () => {
     const s = withModel({ upfrontCost: 50 });
     const { state } = s.advance(s.applyAction(startOn(s), { type: "hire", pool: "ops" }), 4);
-    expect(state.spendByDay).toEqual([
+    expect(state.spendByDay).toMatchObject([
       { day: 1, staff: 0, infrastructure: 50, addons: 0, debt: 0, income: 0, borrowed: 0 },
       ...[2, 3, 4, 5].map((day) => ({ day, staff: 3, infrastructure: 20, addons: 0, debt: 0, income: 0, borrowed: 0 })),
     ]);
@@ -1938,7 +1938,18 @@ describe("bank loan", () => {
     expect(state.cash).toBe(100_000 + 17_900);
     expect(state.loan).toEqual({ amount: 17_900, day: 1, rate: 0.1, dailyRepayment: 110, total: 19_690, repaid: 0 });
     expect(state.spendByDay).toEqual([
-      { day: 1, staff: 0, infrastructure: 0, addons: 0, debt: 0, income: 0, borrowed: 17_900 },
+      {
+        day: 1,
+        staff: 0,
+        infrastructure: 0,
+        addons: 0,
+        debt: 0,
+        income: 0,
+        borrowed: 17_900,
+        users: 1000,
+        paidUsers: 0,
+        satisfaction: 100,
+      },
     ]);
     expect(state.income).toBe(0);
     expect(rich.startLoanQuote()).toEqual({
@@ -2065,6 +2076,7 @@ describe("bank loan", () => {
     const last = log.at(-1)!.entries;
     expect(last.some((e) => e.category === "debt")).toBe(true);
     expect(last.at(-1)).toMatchObject({ kind: "bankrupt" });
+    expect(sim.summarise(state).loan).toMatchObject({ day: 1, amount: 17_900, fullyRepaid: false });
   });
 
   it("is deterministic", () => {
@@ -2182,6 +2194,9 @@ describe("game end and summary", () => {
       debt: 0,
       income: 0,
       borrowed: 0,
+      users: 1000,
+      paidUsers: 0,
+      satisfaction: 100,
       cash: 99_900,
     });
     expect(days.at(-1)!.cash).toBe(cash);
@@ -2223,12 +2238,112 @@ describe("game end and summary", () => {
     expect(summary.days.at(-1)!.cash).toBe(-20);
     expect(summary.spend.infrastructure).toBe(charges(log, "infrastructure"));
     expect(summary.totalSpend).toBe(1020);
+    // Everyone free, so no income: all loss.
+    expect(summary).toMatchObject({ income: 0, profit: -1020, priceChanges: 0, loan: null, satisfaction: 100 });
+    expect(summary.incomeVsCosts).toHaveLength(52);
+    expect(summary.incomeVsCosts.at(-1)).toMatchObject({ day: 52, totalIncome: 0, totalCosts: 1020 });
+    expect(summary.peak.users).toBe(Math.max(...summary.days.map((d) => d.users)));
   });
 
   it("summarises a game still being played, with no ending", () => {
     const summary = s.summarise(s.advance(begin(), 5).state);
     expect(summary).toMatchObject({ ending: null, day: 6 });
     expect(summary.days).toHaveLength(6);
+  });
+
+  describe("for reflection: income, profit, users, satisfaction, price changes and the loan", () => {
+    // A shop with 60% paying, tickets and no support so satisfaction falls, an app server that carries 1,100 load so
+    // growth brings outages, a price rise on day 5 and the loan on day 10.
+    const busy = createSim({
+      ...shortConfig,
+      servers: iaasCapacity(1_100, shortConfig).servers,
+      productTypes: {
+        ...shortConfig.productTypes,
+        ecommerce: {
+          ...shortConfig.productTypes.ecommerce,
+          pricing: { fairPrice: 30, freeShare: 0.4, conversionRate: 0 },
+          support: { ticketsPerPaidUser: 0.05, ticketsPerFreeUser: 0.01 },
+        },
+      },
+    });
+    // Day by day, so the test can check the summary against every state on the way.
+    const play = () => {
+      let state = busy.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 });
+      const states = [state];
+      while (state.status === "playing") {
+        if (state.day === 5) state = busy.applyAction(state, { type: "setPrice", price: 36 });
+        if (state.day === 10) state = busy.applyAction(state, { type: "takeLoan" });
+        state = busy.advance(state).state;
+        states.push(state);
+      }
+      return { state, states, summary: busy.summarise(state) };
+    };
+
+    it("adds up income and costs, debt included, to the daily figures, and profit is the difference", () => {
+      const { state, summary } = play();
+      expect(state).toMatchObject({ day: 30, status: "finished" });
+      expect(summary.income).toBe(summary.days.reduce((sum, d) => sum + d.income, 0));
+      expect(summary.income).toBeGreaterThan(0);
+      const costs = summary.days.reduce((sum, d) => sum + SPEND_CATEGORIES.reduce((t, c) => t + d[c], 0), 0);
+      expect(summary.totalSpend).toBeCloseTo(costs, 6);
+      expect(summary.spend.debt).toBeGreaterThan(0);
+      expect(summary.profit).toBeCloseTo(summary.income - summary.totalSpend, 6);
+      // The series has each day's figures and running totals, ending on the summary's.
+      expect(summary.incomeVsCosts.map((d) => d.day)).toEqual(summary.days.map((d) => d.day));
+      summary.incomeVsCosts.forEach((d, i) => {
+        const day = summary.days[i]!;
+        expect(d.income).toBe(day.income);
+        expect(d.costs).toBeCloseTo(SPEND_CATEGORIES.reduce((t, c) => t + day[c], 0), 6);
+      });
+      expect(summary.incomeVsCosts.at(-1)!.totalIncome).toBe(summary.income);
+      expect(summary.incomeVsCosts.at(-1)!.totalCosts).toBeCloseTo(summary.totalSpend, 6);
+    });
+
+    it("gives peak users with the paid/free split then, and the split at the end", () => {
+      const { state, states, summary } = play();
+      const most = Math.max(...states.map((st) => st.users));
+      const first = states.find((st) => st.users === most)!;
+      expect(summary.peak).toEqual({ day: first.day, users: most, paidUsers: first.paidUsers });
+      expect(summary).toMatchObject({ users: state.users, paidUsers: state.paidUsers });
+      expect(summary.peak.paidUsers).toBeLessThan(summary.peak.users);
+    });
+
+    it("averages satisfaction over the days played, and gives uptime with the outages", () => {
+      const { state, states, summary } = play();
+      const played = states.filter((st) => st.day > 1);
+      expect(summary.satisfaction).toBeCloseTo(played.reduce((sum, st) => sum + st.satisfaction, 0) / played.length, 9);
+      expect(summary.satisfaction).toBeLessThan(100);
+      expect(summary.outageDays).toBeGreaterThan(0);
+      expect(summary.uptime).toBe(busy.uptime(state));
+      expect(summary.uptime).toBeLessThan(100);
+    });
+
+    it("counts the price changes, and gives the loan: when, how much, and repaid in full by the final day", () => {
+      const { state, summary } = play();
+      expect(summary.priceChanges).toBe(1);
+      expect(summary.loan).toEqual({
+        day: 10,
+        amount: 17_900,
+        total: state.loan!.total,
+        repaid: state.loan!.total,
+        fullyRepaid: true,
+      });
+      expect(summary.spend.debt).toBe(state.loan!.total);
+    });
+
+    it("gives a loan still being repaid as not fully repaid", () => {
+      const day10 = busy.advance(busy.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 }), 9);
+      const midway = busy.advance(busy.applyAction(day10.state, { type: "takeLoan" }), 5).state;
+      expect(busy.summarise(midway).loan).toMatchObject({
+        day: 10,
+        repaid: 5 * midway.loan!.dailyRepayment,
+        fullyRepaid: false,
+      });
+    });
+
+    it("is deterministic", () => {
+      expect(play().summary).toEqual(play().summary);
+    });
   });
 
   it("is deterministic and JSON-serialisable", () => {

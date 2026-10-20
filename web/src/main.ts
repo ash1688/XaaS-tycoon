@@ -35,7 +35,8 @@ const router = createRouter({
         { path: "finance", name: "game-finance", component: FinancePage },
       ],
     },
-    { path: "/staff", component: StaffView },
+    // Wide, so the live dashboard's columns fit on a projector.
+    { path: "/staff", component: StaffView, meta: { wide: true } },
     { path: "/staff/companies/:id", component: StaffCompanyView, props: true },
     { path: "/staff/config", component: StaffConfigView },
   ],

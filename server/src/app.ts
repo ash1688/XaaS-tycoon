@@ -19,12 +19,15 @@ import {
   SERVER_SIZES,
   SERVER_TYPES,
   SimError,
+  SPEND_CATEGORIES,
   STAFF_POOLS,
   validateOverrides,
   type ConfigOverrides,
   type GameConfig,
   type GameState,
+  type Loan,
   type Sim,
+  type Spend,
 } from "@xaas/sim";
 import type { Db } from "./db/client.ts";
 import { companies, configPresets, loginCodes } from "./db/schema.ts";
@@ -754,15 +757,27 @@ export async function buildApp(opts: AppOptions) {
               finalDay: sql<number | null>`(${companies.config}->>'finalDay')::int`,
               preset: companies.preset,
             },
+            // The money and customer figures, read from small parts of the state rather than all of it.
+            money: {
+              income: sql<number | null>`(${companies.state}->>'income')::double precision`,
+              spend: sql<Partial<Spend> | null>`${companies.state}->'spend'`,
+              lastDayIncome: sql<number | null>`(${companies.state}->'spendByDay'->-1->>'income')::double precision`,
+              paidUsers: sql<number | null>`(${companies.state}->>'paidUsers')::int`,
+              satisfaction: sql<number | null>`(${companies.state}->>'satisfaction')::double precision`,
+              loan: sql<Loan | null>`${companies.state}->'loan'`,
+            },
           })
           .from(loginCodes)
           .leftJoin(companies, eq(companies.loginCode, loginCodes.code))
           .where(where)
           .orderBy(desc(loginCodes.createdAt), asc(companies.createdAt));
         const codes = new Map<string, TeacherGamesView["codes"][number]>();
-        for (const { code, codeArchived, game: g } of rows) {
+        for (const { code, codeArchived, game: g, money: m } of rows) {
           if (!codes.has(code)) codes.set(code, { code, archived: codeArchived, companies: [] });
           if (!g) continue;
+          const income = m.income ?? 0;
+          const spent = SPEND_CATEGORIES.reduce((sum, c) => sum + (m.spend?.[c] ?? 0), 0);
+          const paidUsers = m.paidUsers ?? 0;
           codes.get(code)!.companies.push({
             ...g,
             productType: g.productType as TeacherGameView["productType"],
@@ -773,6 +788,12 @@ export async function buildApp(opts: AppOptions) {
             updatedAt: g.updatedAt.toISOString(),
             archivedAt: g.archivedAt?.toISOString() ?? null,
             preset: g.preset ?? DEFAULT_PRESET,
+            paidUsers,
+            freeUsers: Math.max(0, g.users - paidUsers),
+            lastDayIncome: m.lastDayIncome ?? 0,
+            profit: income - spent,
+            satisfaction: Math.round(m.satisfaction ?? 100),
+            loanRemaining: m.loan ? m.loan.total - m.loan.repaid : null,
           });
         }
         return { hours, codes: [...codes.values()] };

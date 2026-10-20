@@ -1339,6 +1339,37 @@ describe("teacher dashboard", () => {
     expect(body.codes[0]!.companies).toMatchObject([{ id: c.id, status: "retired" }]);
   });
 
+  it("gives each game's income on the last day, profit, satisfaction, paid and free users and the loan", async () => {
+    await useOverrides({ "productTypes.ecommerce.pricing.freeShare": 0.5 });
+    const code = await newCode();
+    const body = { name: "Lender", productType: "ecommerce", model: "iaas", takeLoan: true };
+    const lender = (await newCompany(code, body)).json<CompanyView>();
+    const plain = (await newCompany(code, { ...body, name: "Plain", takeLoan: false })).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${lender.id}`;
+    await app.inject({ method: "POST", url: `${url}/actions`, payload: { type: "setPrice", price: 40 } });
+    for (let i = 0; i < 3; i++) await app.inject({ method: "POST", url: `${url}/continue` });
+    const company = (await app.inject({ method: "GET", url })).json<CompanyView>();
+    const summary = (await app.inject({ method: "GET", url: `${url}/summary` })).json<SummaryView>();
+
+    const rows = (await games()).json<TeacherGamesView>().codes[0]!.companies;
+    expect(rows[0]).toMatchObject({
+      id: lender.id,
+      day: 4,
+      paidUsers: company.paidUsers,
+      freeUsers: company.freeUsers,
+      lastDayIncome: summary.days.at(-1)!.income,
+      profit: summary.profit,
+      satisfaction: company.satisfaction,
+      loanRemaining: company.loan!.remaining,
+    });
+    expect(rows[0]!.lastDayIncome).toBeGreaterThan(0);
+    expect(rows[0]!.profit).toBe(company.income - Object.values(company.spend).reduce((a, b) => a + b, 0));
+    expect(rows[0]!.loanRemaining).toBe(company.loan!.total - 3 * company.loan!.dailyRepayment);
+    // No loan, and day 1's income is nothing: no one has paid yet.
+    expect(rows[1]).toMatchObject({ id: plain.id, day: 1, lastDayIncome: 0, loanRemaining: null, satisfaction: 100 });
+    expect(rows[1]!.profit).toBe(0 - plain.spend.infrastructure);
+  });
+
   it("shows the last 3 hours by default", async () => {
     const code = await newCode();
     const recent = (await newCompany(code, { name: "Recent", productType: "ecommerce", model: "iaas" })).json<CompanyView>();
@@ -2355,8 +2386,14 @@ describe("pricing and income", () => {
     expect(company).toMatchObject({ day: 2, income: 1000, cash: 1975 });
     expect(company.paidUsers + company.freeUsers).toBe(company.users);
     const summary = (await app.inject({ method: "GET", url: `${url}/summary` })).json<SummaryView>();
-    expect(summary).toMatchObject({ income: 1000, profit: 975 });
+    expect(summary).toMatchObject({ income: 1000, profit: 975, priceChanges: 1, loan: null });
     expect(summary.days.at(-1)).toMatchObject({ day: 2, income: 1000, cash: 1975 });
+    expect(summary.incomeVsCosts).toEqual([
+      { day: 1, income: 0, costs: 0, totalIncome: 0, totalCosts: 0 },
+      { day: 2, income: 1000, costs: 25, totalIncome: 1000, totalCosts: 25 },
+    ]);
+    expect(summary.peak).toMatchObject({ users: Math.max(...summary.days.map((d) => d.users)) });
+    expect(Math.round(summary.satisfaction)).toBe(company.satisfaction);
   });
 
   it("validates the price: a positive number, at most the game's highest price", async () => {

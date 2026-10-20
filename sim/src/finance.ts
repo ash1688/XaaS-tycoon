@@ -17,6 +17,9 @@ export const risen = (price: number, rise: number) => Math.round(price * rise * 
 const borrowedIn = (entries: LogEntry[]) =>
   entries.reduce((sum, e) => sum + (e.kind === "loan" && !e.category ? e.cashDelta : 0), 0);
 
+/** Where the customers stood at the end of a day, kept with its spend for the summary. */
+const customersAt = ({ users, paidUsers, satisfaction }: GameState) => ({ users, paidUsers, satisfaction });
+
 /** Finance and the ledger: where every day's entries land in cash and spend, and where a game ends. */
 export function createFinance(config: GameConfig) {
   /**
@@ -41,7 +44,10 @@ export function createFinance(config: GameConfig) {
       cash,
       spend,
       income: state.income + dayIncome,
-      spendByDay: [...state.spendByDay, { day, ...daySpend, income: dayIncome, borrowed: borrowedIn(entries) }],
+      spendByDay: [
+        ...state.spendByDay,
+        { day, ...daySpend, income: dayIncome, borrowed: borrowedIn(entries), ...customersAt(state) },
+      ],
     };
     if (cash < 0) {
       return {
@@ -81,7 +87,7 @@ export function createFinance(config: GameConfig) {
               borrowed: last.borrowed + borrowed,
             },
           ]
-        : [...state.spendByDay, { day: state.day, ...daySpend, income: 0, borrowed }];
+        : [...state.spendByDay, { day: state.day, ...daySpend, income: 0, borrowed, ...customersAt(state) }];
     return { ...state, cash: state.cash + entries.reduce((sum, e) => sum + e.cashDelta, 0), spend, spendByDay };
   }
 

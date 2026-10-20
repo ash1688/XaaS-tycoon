@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, useId } from "vue";
-import type { SummaryDay } from "@xaas/sim";
+import { SPEND_CATEGORIES, type SummaryDay } from "@xaas/sim";
 import { formatCash } from "../api";
 import { dayTicks, formatAxisCash, niceTicks, useWidth } from "../chart";
 
@@ -18,10 +18,11 @@ const plotH = HEIGHT - M.top - M.bottom;
 
 const lastDay = computed(() => Math.max(props.finalDay, props.days.at(-1)?.day ?? 1));
 const band = computed(() => plotW.value / lastDay.value);
-// Cash before the first day's charges, so the line starts with the drop from any upfront cost.
+// Cash before the first day's charges and any loan taken at the start, so the line starts at the starting cash.
 const opening = computed(() => {
   const first = props.days[0];
-  return first && { day: first.day, cash: first.cash + first.staff + first.infrastructure + first.addons - first.income };
+  const spent = first && SPEND_CATEGORIES.reduce((sum, c) => sum + first[c], 0);
+  return first && { day: first.day, cash: first.cash + spent! - first.income - first.borrowed };
 });
 const yTicks = computed(() => {
   const cash = [...props.days.map((d) => d.cash), opening.value?.cash ?? 0];

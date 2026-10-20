@@ -49,7 +49,7 @@ export type {
   TierView,
   UnitsView,
 } from "./servers.ts";
-export type { GameSummary, SummaryDay } from "./summary.ts";
+export type { GameSummary, IncomeCostDay, LoanSummary, PeakUsers, SummaryDay } from "./summary.ts";
 export {
   GAME_STATE_VERSION,
   isCurrentState,

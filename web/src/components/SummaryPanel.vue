@@ -5,6 +5,7 @@ import type { SummaryView } from "@xaas/server/api-types";
 import { formatCash, formatCount, formatUptime } from "../api";
 import CostChart from "./CostChart.vue";
 import CashChart from "./CashChart.vue";
+import IncomeChart from "./IncomeChart.vue";
 
 // How a company did, from its summary. Takes everything it shows as props, so the teacher's dashboard can show it too.
 // retired: the student stopped playing it, which the summary's ending can't tell from a game still being played.
@@ -18,6 +19,11 @@ const CATEGORY_LABELS: Record<SpendCategory, string> = {
 };
 const share = (c: SpendCategory) =>
   props.summary.totalSpend ? Math.round((100 * props.summary.spend[c]) / props.summary.totalSpend) : 0;
+const loss = computed(() => props.summary.profit < 0);
+// The sign says profit or loss as well as the colour and the label.
+const signed = (n: number) => `${n < 0 ? "−" : "+"}${formatCash(Math.abs(n))}`;
+const free = (users: number, paid: number) => users - paid;
+const loan = computed(() => props.summary.loan);
 const biggest = computed(() =>
   SPEND_CATEGORIES.reduce((a, b) => (props.summary.spend[b] > props.summary.spend[a] ? b : a)),
 );
@@ -36,38 +42,78 @@ const biggest = computed(() =>
       · ended on {{ modelName }}
     </p>
 
+    <div :class="['summary-headline', loss ? 'loss' : 'profit']" data-testid="summary-headline">
+      <span class="headline-label" data-testid="summary-result">{{ loss ? "Loss" : "Profit" }}</span>
+      <span class="headline-value" data-testid="summary-profit">{{ signed(summary.profit) }}</span>
+      <span class="headline-sum">
+        Income <strong data-testid="summary-income">{{ formatCash(summary.income) }}</strong>
+        − costs <strong data-testid="summary-costs">{{ formatCash(summary.totalSpend) }}</strong>
+      </span>
+    </div>
+
     <div class="stats">
       <div class="stat">
         <span class="label">Final cash</span>
         <span :class="['value', { neg: summary.cash < 0 }]" data-testid="summary-cash">{{ formatCash(summary.cash) }}</span>
       </div>
       <div class="stat">
-        <span class="label">Users</span>
+        <span class="label">Peak users</span>
+        <span class="value" data-testid="summary-peak">{{ formatCount(summary.peak.users) }}</span>
+        <small data-testid="summary-peak-split">
+          day {{ summary.peak.day }}: {{ formatCount(summary.peak.paidUsers) }} paying,
+          {{ formatCount(free(summary.peak.users, summary.peak.paidUsers)) }} free
+        </small>
+      </div>
+      <div class="stat">
+        <span class="label">Users at the end</span>
         <span class="value" data-testid="summary-users">{{ formatCount(summary.users) }}</span>
-        <small>{{ formatCount(summary.paidUsers) }} paying</small>
+        <small>
+          {{ formatCount(summary.paidUsers) }} paying, {{ formatCount(free(summary.users, summary.paidUsers)) }} free
+        </small>
       </div>
       <div class="stat">
-        <span class="label">Income</span>
-        <span class="value pos" data-testid="summary-income">{{ formatCash(summary.income) }}</span>
-      </div>
-      <div class="stat">
-        <span class="label">{{ summary.profit < 0 ? "Loss" : "Profit" }}</span>
-        <span :class="['value', summary.profit < 0 ? 'neg' : 'pos']" data-testid="summary-profit">
-          {{ formatCash(summary.profit) }}
-        </span>
+        <span class="label">Satisfaction</span>
+        <span class="value" data-testid="summary-satisfaction">{{ Math.round(summary.satisfaction) }}%</span>
+        <small>on average</small>
       </div>
       <div class="stat">
         <span class="label">Uptime</span>
         <span class="value" data-testid="summary-uptime">{{ formatUptime(summary.uptime) }}</span>
-        <small v-if="summary.outageDays">
-          {{ summary.outageDays }} outage day{{ summary.outageDays === 1 ? "" : "s" }}
+        <small>
+          on average<template v-if="summary.outageDays">
+            · {{ summary.outageDays }} outage day{{ summary.outageDays === 1 ? "" : "s" }}</template>
         </small>
+      </div>
+      <div class="stat">
+        <span class="label">Price changes</span>
+        <span class="value" data-testid="summary-price-changes">{{ summary.priceChanges }}</span>
       </div>
       <div class="stat">
         <span class="label">Migrations</span>
         <span class="value" data-testid="summary-migrations">{{ summary.migrations }}</span>
       </div>
+      <div class="stat">
+        <span class="label">Bank loan</span>
+        <template v-if="loan">
+          <span class="value" data-testid="summary-loan">{{ formatCash(loan.amount) }}</span>
+          <small data-testid="summary-loan-status">
+            {{ loan.day === 1 ? "taken at the start" : `taken on day ${loan.day}` }} ·
+            {{ loan.fullyRepaid ? "repaid in full" : `${formatCash(loan.repaid)} of ${formatCash(loan.total)} repaid` }}
+          </small>
+        </template>
+        <template v-else>
+          <span class="value" data-testid="summary-loan">None</span>
+          <small data-testid="summary-loan-status">not taken</small>
+        </template>
+      </div>
     </div>
+
+    <h3 class="summary-subhead">Income against costs</h3>
+    <p class="muted summary-note">
+      Everything paying users paid, and everything you spent, added up day by day. While the income line is above the
+      costs line you're in profit overall; the gap at the end is your {{ loss ? "loss" : "profit" }}.
+    </p>
+    <IncomeChart :days="summary.incomeVsCosts" :final-day="summary.finalDay" />
 
     <h3 class="row-between summary-subhead">
       <span>Where the money went</span>
