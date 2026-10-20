@@ -23,6 +23,7 @@ import {
   type NewGameParams,
 } from "./state.ts";
 import { createSummary, type GameSummary } from "./summary.ts";
+import { createSupport } from "./support.ts";
 
 // The sim's one public interface is createSim. Its modules are internal; only the types and helpers the server and
 // web client need are re-exported here.
@@ -80,6 +81,10 @@ export interface Sim {
   fairPrice(state: GameState): number;
   /** Load the company can serve in a day with its current model and staff. */
   capacity(state: GameState): number;
+  /** Tickets the support staff can clear in a day: support staff × tickets each. */
+  dailyClearance(state: GameState): number;
+  /** Tickets today's users would raise in a day before any burst: paid and free users × their rates. */
+  usualTickets(state: GameState): number;
   /** Share of time up across every day played, as a percentage. 100 before the first day. */
   uptime(state: GameState): number;
   /** The product's features, in config order, with each one's progress. */
@@ -103,7 +108,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   const events = createEvents(config);
   const features = createFeatures(config);
   const pricing = createPricing(config);
-  const customers = createCustomers(config, features, events, pricing);
+  const support = createSupport(config);
+  const customers = createCustomers(config, features, events, pricing, support);
   const infra = createInfrastructure(config, customers, events);
   const staff = createStaff(config);
   const finance = createFinance(config);
@@ -133,7 +139,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       rng,
       developers: config.staff.developers.startingCount,
       ops: config.staff.ops.startingCount,
+      support: config.staff.support.startingCount,
       ...customers.startingUsers(productType, 1),
+      ...support.startingSupport(),
       spend: noSpend(),
       spendByDay: [],
       features: {},
@@ -185,7 +193,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       case "buyAddon":
         return features.buyAddon(state, action.feature);
       case "moveStaff":
-        return staff.moveStaff(state, action.to);
+        return staff.moveStaff(state, action.to, action.from);
       case "startMigration":
         return migration.startMigration(state, action.model);
       case "setPrice":
@@ -206,6 +214,12 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const served = infra.serveLoad(state, day, today);
     const { users, paidUsers, rng } = customers.grow(state, day, served.hoursDown > 0, served.rng);
 
+    // Support answers what it can of today's tickets: the users' usual ones plus every burst. Bursts come from
+    // downtime here; price backlash (#46) adds its own to this list. Satisfaction moves after, and sets tomorrow's
+    // growth and churn.
+    const bursts = [...support.outageBursts(state, served.hoursDown)];
+    const care = support.supportDay(state, bursts);
+
     // Developers work on the current build. A feature finished today helps growth from tomorrow.
     const build = features.buildDay(state);
 
@@ -217,6 +231,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const entries: LogEntry[] = [
       ...recorded.entries,
       ...(served.outage ? [served.outage] : []),
+      ...care.entries,
       ...build.entries,
       ...pricing.incomeEntries(state),
       ...infra.infrastructureEntries(state, state.model, state.users),
@@ -237,6 +252,11 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       downtimeHours: state.downtimeHours + served.hoursDown,
       features: build.features,
       events: recorded.records,
+      ticketsToday: care.ticketsToday,
+      burstTickets: care.burstTickets,
+      clearedToday: care.clearedToday,
+      backlog: care.backlog,
+      satisfaction: care.satisfaction,
     };
     // The migration moves on after the day is played and billed, so a model switch takes effect from tomorrow.
     const migrated = migration.migrationDay(played);
@@ -273,6 +293,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     dailyIncome: (s) => pricing.dailyIncome(load(s)),
     fairPrice: (s) => pricing.fairPrice(load(s).productType),
     capacity: (s) => infra.capacity(load(s)),
+    dailyClearance: (s) => support.dailyClearance(load(s)),
+    usualTickets: (s) => support.usualTickets(load(s)),
     uptime: (s) => infra.uptime(load(s)),
     features: (s) => features.features(load(s)),
     migration: (s) => migration.migration(load(s)),

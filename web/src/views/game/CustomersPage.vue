@@ -2,8 +2,9 @@
 import { computed } from "vue";
 import { formatCash, formatCount, formatPrice, formatUptime } from "../../api";
 import { useGame } from "../../game";
+import SupportPanel from "../../panels/SupportPanel.vue";
 
-// Customers: who's using the product, paying and free.
+// Customers: who's using the product, paying and free, and how happy they are with support.
 const game = useGame();
 const userChange = computed(() =>
   game.company && game.previousUsers !== undefined ? game.company.users - game.previousUsers : undefined,
@@ -60,11 +61,13 @@ const activeFeatures = computed(
       </p>
       <p>
         Your users get {{ game.productName(game.company.productType).toLowerCase() }} as SaaS, whatever you run it on.
-        They grow every day: each feature you add speeds that up, and outages and feature gaps slow it down.
+        They grow every day: each feature you add speeds that up, and outages, feature gaps and unhappy customers slow
+        it down.
       </p>
       <p v-for="gap in game.featureGaps" :key="gap.id" class="gap-note">
         <span class="badge">Feature gap</span> They want {{ gap.feature }}, and you can't give it to them yet.
       </p>
     </section>
+    <SupportPanel />
   </div>
 </template>

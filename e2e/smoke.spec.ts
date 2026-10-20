@@ -80,7 +80,8 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await expect(student.getByTestId("ops-needed")).toContainText("Understaffed");
   await student.getByRole("button", { name: "Hire one developer" }).click();
   await expect(student.getByTestId("developers-count")).toHaveText("3");
-  await expect(student.getByTestId("staff-cost")).toHaveText("£620");
+  await expect(student.getByTestId("support-count")).toHaveText("1");
+  await expect(student.getByTestId("staff-cost")).toHaveText("£720");
 
   // Features: IaaS builds them in developer-days, one at a time.
   await goTo(student, "Product");
@@ -105,22 +106,22 @@ test("teacher creates a code, student starts a game and presses Continue", async
 
   // Spend so far, split by category.
   await goTo(student, "Finance");
-  await expect(student.getByTestId("spend-staff")).toHaveText("£620");
+  await expect(student.getByTestId("spend-staff")).toHaveText("£720");
   await expect(student.getByTestId("spend-infrastructure")).toHaveText("£2,200");
   await expect(student.getByTestId("spend-addons")).toHaveText("£0");
-  await expect(student.getByTestId("spend-total")).toHaveText("£2,820");
+  await expect(student.getByTestId("spend-total")).toHaveText("£2,920");
   await expect(student.getByTestId("cash-chart")).toBeVisible();
 
   await goTo(student, "Home");
-  // £200 IaaS running costs (£6,000 a month ÷ 30) + 3 developers × £160 + 1 ops × £140 out, and £40 in: 200 of the
-  // social network's 1,000 users pay £6 a month.
-  await expect(student.getByTestId("cash")).toHaveText("£247,220");
+  // £200 IaaS running costs (£6,000 a month ÷ 30) + 3 developers × £160 + 1 ops × £140 + 1 support × £100 out, and £40
+  // in: 200 of the social network's 1,000 users pay £6 a month.
+  await expect(student.getByTestId("cash")).toHaveText("£247,120");
   // Users grow each day; load stays well under capacity, so uptime stays at 100%.
   await expect(student.getByTestId("users")).not.toHaveText("1,000");
   await expect(student.getByTestId("users")).toHaveText(/^1,\d{3}$/);
   await expect(student.getByTestId("uptime")).toHaveText("100%");
   // The day log card has each category's total; its modal has every line.
-  await expect(student.getByTestId("home-day-log").locator('[data-category="staff"]')).toContainText("£620");
+  await expect(student.getByTestId("home-day-log").locator('[data-category="staff"]')).toContainText("£720");
   const dayLog = await openDayLog(student);
   await expect(dayLog.locator('[data-category="staff"]')).toContainText("Developers pay (3)");
   await expect(dayLog.locator('[data-category="infrastructure"]')).toContainText("running costs");
@@ -149,7 +150,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   const row = live.locator(`[data-code="${code}"] tr`, { hasText: "Playwright Ltd" });
   await expect(row.getByTestId("live-day")).toHaveText(`2/${E2E_FINAL_DAY}`);
   await expect(row).toContainText("IaaS");
-  await expect(row).toContainText("£247,220");
+  await expect(row).toContainText("£247,120");
   await expect(row).toContainText("Active");
 
   // Teacher sees the company counted against the code.
@@ -160,7 +161,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await teacher.getByRole("link", { name: "Playwright Ltd" }).click();
   await expect(teacher.getByRole("heading", { name: "How Playwright Ltd did" })).toBeVisible();
   await expect(teacher.getByTestId("summary")).toContainText(`So far: day 2 of ${E2E_FINAL_DAY}`);
-  await expect(teacher.getByTestId("summary-cash")).toHaveText("£247,220");
+  await expect(teacher.getByTestId("summary-cash")).toHaveText("£247,120");
   await teacher.getByRole("link", { name: "← Staff dashboard" }).click();
   await expect(teacher.getByTestId("live-dashboard")).toBeVisible();
 });
@@ -792,7 +793,7 @@ test("a Home card opens an accessible modal with its controls, and Continue work
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
   await expect(student).toHaveURL(new RegExp(`/play/${code}/${id}/finance$`));
-  await expect(student.getByTestId("spend-staff")).toHaveText("£600");
+  await expect(student.getByTestId("spend-staff")).toHaveText("£700");
 });
 
 test("a student sets a price, plays a day and sees the income on Finance", async ({ browser, request }) => {
@@ -844,9 +845,74 @@ test("a student sets a price, plays a day and sees the income on Finance", async
   await expect(sheet).toContainText("Day 2");
   await expect(student.getByTestId("balance-day-income")).toHaveText("£200");
   await expect(student.getByTestId("balance-income")).toHaveText("£200");
-  // £200 in, against IaaS's £2,000 upfront and £200 a day, and 2 developers and 1 ops person.
-  await expect(student.getByTestId("balance-profit")).toHaveText("−£2,460");
-  await expect(student.getByTestId("balance-day-profit")).toHaveText("−£460");
+  // £200 in, against IaaS's £2,000 upfront and £200 a day, and 2 developers, 1 ops person and 1 support person.
+  await expect(student.getByTestId("balance-profit")).toHaveText("−£2,560");
+  await expect(student.getByTestId("balance-day-profit")).toHaveText("−£560");
   await expect(student.getByTestId("cash-chart")).toBeVisible();
   await expect((await openDayLog(student)).getByTestId("log-income")).toHaveText("+£200");
+});
+
+test("a SaaS company without support builds a backlog, hires support from Home and sees it cleared", async ({
+  browser,
+  request,
+}) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  await teacher.getByRole("button", { name: "Create code" }).click();
+  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+
+  // A shop on SaaS: the provider runs the platform, but answering customers is still the company's job. Let its one
+  // support person go, so nobody answers the shoppers' tickets.
+  const created = await request.post(`/api/codes/${code}/companies`, {
+    data: { name: "Helpdesk Ltd", productType: "ecommerce", model: "saas" },
+  });
+  const { id } = await created.json();
+  await request.post(`/api/codes/${code}/companies/${id}/actions`, { data: { type: "letGo", pool: "support" } });
+
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${id}`);
+  await expect(student.getByTestId("home-satisfaction")).toHaveText("100%");
+  await expect(student.getByTestId("home-backlog")).toContainText("Backlog 0 tickets");
+  for (let day = 2; day <= 4; day++) {
+    await student.getByRole("button", { name: "Continue" }).click();
+    await expect(student.getByTestId("day")).toContainText(`${day} of ${E2E_FINAL_DAY}`);
+  }
+  // Three days of unanswered tickets: a backlog, and satisfaction on its way down.
+  await expect(student.getByTestId("home-backlog")).not.toContainText("Backlog 0 tickets");
+  await expect(student.getByTestId("home-satisfaction")).not.toHaveText("100%");
+  await expect(student.getByTestId("home-alerts")).toContainText("Support: 1 short");
+
+  // The Satisfaction card opens a modal with a quick hire.
+  await student.getByRole("button", { name: "Satisfaction" }).click();
+  const modal = student.getByRole("dialog", { name: "Satisfaction" });
+  await expect(modal.getByTestId("backlog")).not.toHaveText("0");
+  for (const count of ["1", "2", "3"]) {
+    await modal.getByRole("button", { name: "Hire one support person" }).click();
+    await expect(modal.getByTestId("support-count")).toHaveText(count);
+  }
+  await modal.getByRole("button", { name: "Close" }).click();
+  await expect(modal).toHaveCount(0);
+
+  await student.getByRole("button", { name: "Continue" }).click();
+  await expect(student.getByTestId("day")).toContainText(`5 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("home-backlog")).toContainText("Backlog 0 tickets");
+  await expect(student.getByTestId("home-satisfaction")).toHaveText(/^\d{1,3}%$/);
+
+  // Customers shows the day's tickets, what support cleared, the backlog and the satisfaction meter.
+  await goTo(student, "Customers");
+  const care = student.getByTestId("support");
+  await expect(care.getByTestId("satisfaction")).toHaveText(/^\d{1,3}%$/);
+  await expect(care.getByTestId("satisfaction-change")).toContainText("on day 5");
+  await expect(care.getByTestId("backlog")).toHaveText("0");
+  await expect(care.getByTestId("tickets-today")).toHaveText(/^\d+$/);
+  await expect(care.getByTestId("cleared-today")).not.toHaveText("0");
+  await expect(care.getByRole("meter", { name: "Customer satisfaction" })).toBeVisible();
+
+  // People has the support pool with its day rate and how many tickets each person clears.
+  await goTo(student, "People");
+  await expect(student.getByTestId("support-count")).toHaveText("3");
+  await expect(student.locator('[data-pool="support"]')).toContainText("£100 each a day");
+  await expect(student.getByTestId("support-hint")).toContainText("Each clears 30 tickets a day");
 });

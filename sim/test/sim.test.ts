@@ -15,6 +15,7 @@ import {
   type GameState,
   type LogEntry,
   type Sim,
+  type StaffPool,
 } from "../src/index.ts";
 
 const comparison = { upfrontCost: "", monthlyCost: "", opsNeeded: "", control: "" };
@@ -37,6 +38,8 @@ const features = [
 
 // Everyone free unless a test says otherwise, so income only shows up where a test looks for it.
 const pricing = { fairPrice: 30, freeShare: 1 };
+// No tickets unless a test says otherwise, so satisfaction stays at 100% and never touches growth.
+const support = { ticketsPerPaidUser: 0, ticketsPerFreeUser: 0 };
 
 function costs(monthlyCost: number) {
   return { upfrontCost: 0, monthlyCost, monthlyCostPerUser: 0, exitPenalty: 0 };
@@ -64,20 +67,40 @@ const config: GameConfig = {
         seasonalSpike: { firstDay: 10, every: 10, length: 3, loadMultiplier: 3, growthMultiplier: 3 },
       },
       pricing,
+      support,
       features,
     },
-    social: { name: "Social", profile: "", growth: { ...growth, dailyGrowth: 0.06 }, pricing, features },
-    video: { name: "Video", profile: "", growth: { ...growth, dailyGrowth: 0.02, loadPerUser: 5 }, pricing, features },
+    social: { name: "Social", profile: "", growth: { ...growth, dailyGrowth: 0.06 }, pricing, support, features },
+    video: {
+      name: "Video",
+      profile: "",
+      growth: { ...growth, dailyGrowth: 0.02, loadPerUser: 5 },
+      pricing,
+      support,
+      features,
+    },
   },
   // No starting staff, so the model's running cost is the only charge unless a test hires someone.
   staff: {
     developers: { name: "Developers", personName: "developer", dayRate: 7, startingCount: 0 },
     ops: { name: "Ops", personName: "ops person", dayRate: 3, startingCount: 0 },
+    support: { name: "Support", personName: "support person", dayRate: 2, startingCount: 0 },
   },
   capacity: { unstaffedShare: 0.4 },
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25 },
   billing: { daysPerMonth: 30 },
   pricing: { maxPrice: 1_000, growthSensitivity: 1, maxGrowthBoost: 2, paidShareSensitivity: 1 },
+  support: {
+    ticketsPerPerson: 10,
+    ticketsPerUserPerHourDown: 0.01,
+    bigBurstShare: 0.5,
+    backlogPerUserAtZero: 0.05,
+    satisfactionSpeed: 0.2,
+    goodSatisfaction: 70,
+    poorSatisfaction: 40,
+    growthAtZero: 0.3,
+    churnAtZero: 0.02,
+  },
   addons: { minConfigDevelopers: 1 },
   migration: {
     phases: {
@@ -206,8 +229,8 @@ describe("advance", () => {
 });
 
 describe("staff", () => {
-  const hire = (pool: "developers" | "ops"): Action => ({ type: "hire", pool });
-  const letGo = (pool: "developers" | "ops"): Action => ({ type: "letGo", pool });
+  const hire = (pool: StaffPool): Action => ({ type: "hire", pool });
+  const letGo = (pool: StaffPool): Action => ({ type: "letGo", pool });
   const apply = (state = start(), ...actions: Action[]) => actions.reduce((s, a) => sim.applyAction(s, a), state);
 
   it("starts with the configured headcount", () => {
@@ -216,15 +239,16 @@ describe("staff", () => {
       staff: {
         developers: { ...config.staff.developers, startingCount: 2 },
         ops: { ...config.staff.ops, startingCount: 1 },
+        support: { ...config.staff.support, startingCount: 3 },
       },
     });
     const state = staffed.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1 });
-    expect(state).toMatchObject({ developers: 2, ops: 1 });
+    expect(state).toMatchObject({ developers: 2, ops: 1, support: 3 });
   });
 
   it("hires and lets go each pool separately", () => {
-    const state = apply(start(), hire("developers"), hire("developers"), hire("ops"), letGo("developers"));
-    expect(state).toMatchObject({ developers: 1, ops: 1 });
+    const state = apply(start(), hire("developers"), hire("developers"), hire("ops"), hire("support"), letGo("developers"));
+    expect(state).toMatchObject({ developers: 1, ops: 1, support: 1 });
   });
 
   it("does not move time on or touch cash", () => {
@@ -232,7 +256,7 @@ describe("staff", () => {
     expect(state).toMatchObject({ day: 1, cash: 1000 });
   });
 
-  it.each(["developers", "ops"] as const)("rejects letting go below zero %s", (pool) => {
+  it.each(["developers", "ops", "support"] as const)("rejects letting go below zero %s", (pool) => {
     expect(() => apply(start(), letGo(pool))).toThrow(expect.objectContaining({ code: "no_staff" }));
     expect(apply(start(), hire(pool), letGo(pool))[pool]).toBe(0);
   });
@@ -252,14 +276,15 @@ describe("staff", () => {
   });
 
   it("charges headcount × day rate on advance, one log entry per pool", () => {
-    const staffed = apply(start(), hire("developers"), hire("developers"), hire("ops"));
-    expect(sim.dailyStaffCost(staffed)).toBe(2 * 7 + 3);
+    const staffed = apply(start(), hire("developers"), hire("developers"), hire("ops"), hire("support"));
+    expect(sim.dailyStaffCost(staffed)).toBe(2 * 7 + 3 + 2);
     const { state, log } = sim.advance(staffed);
-    expect(state.cash).toBe(1000 - 20 - 14 - 3);
+    expect(state.cash).toBe(1000 - 20 - 14 - 3 - 2);
     expect(log[0]!.entries).toEqual([
       { text: "IaaS running costs (£600 a month)", cashDelta: -20, category: "infrastructure" },
       { text: "Developers pay (2)", cashDelta: -14, category: "staff" },
       { text: "Ops pay (1)", cashDelta: -3, category: "staff" },
+      { text: "Support pay (1)", cashDelta: -2, category: "staff" },
     ]);
   });
 
@@ -1002,10 +1027,20 @@ describe("default config", () => {
     const start = sim180.newGame({ companyName: "Acme", productType, model, seed: 7 });
     return sim180.advance(ops === undefined ? start : { ...start, ops }, defaultConfig.finalDay - 1).state;
   };
+  // Plays to the end with the ops the model needs, hiring support each day to keep up with the usual tickets.
+  const runStaffed = (productType: string, model: string) => {
+    const ops = sim180.opsNeeded(model as (typeof MODEL_IDS)[number]);
+    let state = { ...sim180.newGame({ companyName: "Acme", productType, model, seed: 7 }), ops };
+    while (state.status === "playing") {
+      const needed = Math.ceil((sim180.usualTickets(state) * 1.2) / defaultConfig.support.ticketsPerPerson);
+      state = sim180.advance({ ...state, support: Math.max(state.support, needed) }).state;
+    }
+    return state;
+  };
 
   it("lets every product reach day 180 without outages when fully staffed on IaaS, bar the provider's", () => {
     for (const p of ["ecommerce", "social", "video"]) {
-      const state = run(p, "iaas", sim180.opsNeeded("iaas"));
+      const state = runStaffed(p, "iaas");
       // The provider outage is the one an IaaS company can't staff its way out of.
       expect(state.outageDays).toBe(1);
       expect(state.users).toBeGreaterThan(defaultConfig.productTypes[p as "social"].growth.startingUsers * 5);
@@ -1019,9 +1054,26 @@ describe("default config", () => {
   it("lets every model and product reach day 180 with starting developers and the ops it needs", () => {
     for (const model of MODEL_IDS) {
       for (const p of ["ecommerce", "social", "video"]) {
-        const state = run(p, model, sim180.opsNeeded(model));
+        const state = runStaffed(p, model);
         expect(state).toMatchObject({ day: defaultConfig.finalDay, status: "finished" });
+        expect(state.satisfaction).toBeGreaterThan(defaultConfig.support.goodSatisfaction);
       }
+    }
+  });
+
+  it("makes support matter: a company that never hires more ends with unhappy customers and fewer users", () => {
+    for (const p of ["ecommerce", "social", "video"]) {
+      const neglected = run(p, "iaas", sim180.opsNeeded("iaas"));
+      expect(neglected.satisfaction).toBeLessThan(defaultConfig.support.poorSatisfaction);
+      expect(neglected.users).toBeLessThan(runStaffed(p, "iaas").users / 2);
+    }
+  });
+
+  it("is happy at the start: one support person keeps up with every product's first tickets", () => {
+    for (const p of PRODUCT_TYPE_IDS) {
+      const state = sim180.newGame({ companyName: "Acme", productType: p, model: "iaas", seed: 7 });
+      expect(sim180.usualTickets(state)).toBeLessThanOrEqual(sim180.dailyClearance(state));
+      expect(sim180.advance(state, 7).state).toMatchObject({ backlog: 0, satisfaction: 100 });
     }
   });
 
@@ -2311,6 +2363,260 @@ describe("pricing and income", () => {
     const before = begin();
     const copy = structuredClone(before);
     s.advance(s.applyAction(before, setPrice(40)), 3);
+    expect(before).toEqual(copy);
+  });
+});
+
+describe("support, tickets and satisfaction", () => {
+  // 1,000 users, half paying: 500 × 0.05 + 500 × 0.01 = 30 tickets a day. Each support person clears 10. No growth, so
+  // the day's tickets only change where users leave.
+  const ticketed = (overrides: Partial<GameConfig["support"]> = {}, freeShare = 0.5, extra: Partial<GameConfig> = {}) =>
+    createSim({
+      ...config,
+      productTypes: {
+        ...config.productTypes,
+        social: {
+          ...config.productTypes.social,
+          growth: { ...growth, dailyGrowth: 0 },
+          pricing: { fairPrice: 30, freeShare },
+          support: { ticketsPerPaidUser: 0.05, ticketsPerFreeUser: 0.01 },
+        },
+      },
+      support: { ...config.support, ...overrides },
+      ...extra,
+    });
+  const s = ticketed();
+  const begin = (sm: Sim, model = "iaas", support = 0) => ({
+    ...sm.newGame({ companyName: "Acme", productType: "social", model, seed: 42 }),
+    ops: sm.opsNeeded(model as (typeof MODEL_IDS)[number]),
+    support,
+  });
+  const supportLog = (log: DayLog[]) => log.flatMap((d) => d.entries.filter((e) => e.kind === "support").map((e) => e.text));
+  const withCapacity = (capacity: number) =>
+    ticketed({}, 0.5, { models: { ...config.models, iaas: { ...config.models.iaas, capacity } } });
+
+  it("starts with no tickets, no backlog and happy customers", () => {
+    expect(begin(s)).toMatchObject({ ticketsToday: 0, clearedToday: 0, backlog: 0, satisfaction: 100 });
+  });
+
+  it("raises tickets each day from users × the product's rates", () => {
+    expect(s.usualTickets(begin(s))).toBe(30);
+    expect(s.advance(begin(s, "iaas", 3)).state).toMatchObject({ ticketsToday: 30, clearedToday: 30, backlog: 0 });
+  });
+
+  it("scales tickets with users", () => {
+    const state = begin(s);
+    const doubled = { ...state, users: state.users * 2, paidUsers: state.paidUsers * 2 };
+    expect(s.advance(doubled).state.ticketsToday).toBe(2 * s.advance(state).state.ticketsToday);
+    // As users grow, so do the day's tickets.
+    const growing = createSim({ ...s.config, productTypes: { ...s.config.productTypes, social: { ...s.config.productTypes.social, growth } } });
+    const later = growing.advance(begin(growing, "iaas", 10), 20).state;
+    expect(later.users).toBeGreaterThan(state.users);
+    expect(later.ticketsToday).toBeGreaterThan(30);
+  });
+
+  it("raises fewer tickets from free users than paying ones", () => {
+    const allFree = ticketed({}, 1);
+    const allPaid = ticketed({}, 0);
+    expect(allFree.advance(begin(allFree)).state.ticketsToday).toBe(10);
+    expect(allPaid.advance(begin(allPaid)).state.ticketsToday).toBe(50);
+    // But free users still raise some: you pay for them to use the service.
+    expect(allFree.usualTickets(begin(allFree))).toBeGreaterThan(0);
+  });
+
+  it("adds a burst for an outage, bigger the longer it's down, and logs a big one", () => {
+    const small = withCapacity(800);
+    const tiny = withCapacity(400);
+    const one = small.advance(begin(small, "iaas", 10)).state;
+    const worse = tiny.advance(begin(tiny, "iaas", 10)).state;
+    // 1,000 users × 0.01 per hour down.
+    expect(one.downtimeHours).toBeGreaterThan(0);
+    expect(one.burstTickets).toBe(Math.round(1000 * 0.01 * one.downtimeHours));
+    expect(worse.downtimeHours).toBeGreaterThan(one.downtimeHours);
+    expect(worse.burstTickets).toBeGreaterThan(one.burstTickets);
+    expect(worse.ticketsToday).toBe(30 + worse.burstTickets);
+    const { log } = tiny.advance(begin(tiny, "iaas", 10));
+    expect(supportLog(log)[0]).toMatch(/^Ticket burst: \d+ extra tickets after \d+ hours down\./);
+    // No outage, no burst.
+    expect(s.advance(begin(s, "iaas", 10)).state.burstTickets).toBe(0);
+  });
+
+  it("adds a burst for a provider outage, on every model it hits", () => {
+    const down = { downtimeHours: 5, detail: "You waited for the provider." };
+    const outage: EventConfig = {
+      id: "providerOutage",
+      name: "Provider outage",
+      description: "The provider's data centre went down.",
+      layer: "facilities",
+      schedule: { type: "fixed", days: [2] },
+      days: 1,
+      effects: { onprem: { detail: "Your own building." }, iaas: down, paas: down, saas: down },
+    };
+    const sm = ticketed({}, 0.5, { events: [outage] });
+    for (const model of ["iaas", "paas", "saas"]) {
+      const { state, log } = sm.advance(begin(sm, model, 10));
+      // 1,000 users × 5 hours × 0.01 = 50 extra tickets, more than the usual 30.
+      expect(state, model).toMatchObject({ burstTickets: 50, ticketsToday: 80 });
+      expect(supportLog(log)).toContainEqual(expect.stringContaining("Ticket burst: 50 extra tickets after 5 hours down"));
+    }
+    expect(sm.advance(begin(sm, "onprem", 10)).state.burstTickets).toBe(0);
+  });
+
+  it("only logs a burst that's big against the day's usual tickets", () => {
+    const quiet = createSim({ ...withCapacity(800).config, support: { ...config.support, ticketsPerUserPerHourDown: 0.001 } });
+    const { state, log } = quiet.advance(begin(quiet, "iaas", 10));
+    expect(state.burstTickets).toBeGreaterThan(0);
+    expect(state.burstTickets).toBeLessThan(15);
+    expect(state.downtimeHours).toBeGreaterThan(0);
+    expect(supportLog(log)).toEqual([]);
+  });
+
+  it("clears tickets per support person and carries the rest over as a backlog when understaffed", () => {
+    const state = s.advance(begin(s, "iaas", 1), 3).state;
+    expect(s.dailyClearance(state)).toBe(10);
+    expect(state.clearedToday).toBe(10);
+    // 30 a day in, 10 a day out.
+    expect(state.backlog).toBe(3 * 30 - 3 * 10);
+    expect(s.advance(begin(s, "iaas", 0), 3).state).toMatchObject({ clearedToday: 0, backlog: 90 });
+    // Enough staff clears the backlog, oldest tickets and today's alike.
+    const caught = s.advance({ ...state, support: 20 }).state;
+    expect(caught).toMatchObject({ clearedToday: 60 + caught.ticketsToday, backlog: 0 });
+  });
+
+  it("lowers satisfaction as the backlog grows, smoothly, and logs it crossing below good and poor", () => {
+    let state = begin(s);
+    const history = [state.satisfaction];
+    const log: DayLog[] = [];
+    for (let i = 0; i < 20; i++) {
+      const result = s.advance(state);
+      state = result.state;
+      log.push(...result.log);
+      history.push(state.satisfaction);
+    }
+    for (let i = 1; i < history.length; i++) {
+      expect(history[i]).toBeLessThanOrEqual(history[i - 1]!);
+      // Never jumps: at most the speed's share of the whole range in a day.
+      expect(history[i - 1]! - history[i]!).toBeLessThanOrEqual(20);
+    }
+    expect(state.satisfaction).toBeLessThan(config.support.poorSatisfaction);
+    expect(supportLog(log)).toEqual([expect.stringContaining("fell below 70%"), expect.stringContaining("fell below 40%")]);
+  });
+
+  it("recovers once the backlog is cleared, and logs it coming back", () => {
+    let state = { ...s.advance(begin(s), 20).state, support: 20 };
+    const history = [state.satisfaction];
+    const log: DayLog[] = [];
+    for (let i = 0; i < 25; i++) {
+      const result = s.advance(state);
+      state = result.state;
+      log.push(...result.log);
+      history.push(state.satisfaction);
+    }
+    expect(state.backlog).toBe(0);
+    // It rises every day once the old tickets are cleared, a few days in.
+    for (let i = 5; i < history.length; i++) expect(history[i]).toBeGreaterThan(history[i - 1]!);
+    expect(state.satisfaction).toBeGreaterThan(95);
+    expect(supportLog(log)).toEqual([expect.stringContaining("back above 40%"), expect.stringContaining("back above 70%")]);
+  });
+
+  it("moves faster with a higher satisfaction speed", () => {
+    const quick = ticketed({ satisfactionSpeed: 0.5 });
+    expect(quick.advance(begin(quick), 5).state.satisfaction).toBeLessThan(s.advance(begin(s), 5).state.satisfaction);
+  });
+
+  describe("effect on users", () => {
+    // No tickets here, so satisfaction only changes where a test sets it. A full market, so nobody new arrives and
+    // every change is churn.
+    const full = createSim({
+      ...config,
+      productTypes: {
+        ...config.productTypes,
+        social: { ...config.productTypes.social, growth: { ...growth, startingUsers: 1000, marketSize: 1000 } },
+      },
+    });
+    const at = (sm: Sim, satisfaction: number) => ({
+      ...sm.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 42 }),
+      ops: 2,
+      satisfaction,
+    });
+
+    it("makes users leave when satisfaction is low, more the lower it is, and none when it's good", () => {
+      expect(full.advance(at(full, 100)).state.users).toBe(1000);
+      expect(full.advance(at(full, 70)).state.users).toBe(1000);
+      // 2% a day at 0%, half that at half of good.
+      expect(full.advance(at(full, 0)).state.users).toBe(980);
+      expect(full.advance(at(full, 35)).state.users).toBe(990);
+    });
+
+    it("loses paid and free users alike", () => {
+      expect(full.advance({ ...at(full, 0), paidUsers: 400 }).state).toMatchObject({ users: 980, paidUsers: 392 });
+    });
+
+    it("slows growth when satisfaction is low", () => {
+      const grown = (satisfaction: number) => sim.advance({ ...start(), satisfaction }).state.users - start().users;
+      expect(grown(100)).toBeGreaterThan(0);
+      expect(grown(70)).toBe(grown(100));
+      expect(grown(20)).toBeLessThan(grown(100) * 0.6);
+      const over = (satisfaction: number) => sim.advance({ ...start(), satisfaction }, 30).state.users;
+      expect(over(10)).toBeLessThan(over(100));
+    });
+
+    it("takes the churn and growth cut from config", () => {
+      const harsh = createSim({ ...full.config, support: { ...config.support, churnAtZero: 0.1 } });
+      expect(harsh.advance(at(harsh, 0)).state.users).toBe(900);
+      const gentle = createSim({ ...config, support: { ...config.support, growthAtZero: 1, churnAtZero: 0 } });
+      const state = gentle.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 42 });
+      expect(gentle.advance({ ...state, satisfaction: 0 }).state.users).toBe(gentle.advance(state).state.users);
+    });
+  });
+
+  it("is the company's job on every model, SaaS included: the provider doesn't answer your customers", () => {
+    const onSaas = s.advance(begin(s, "saas", 0), 15).state;
+    expect(onSaas.backlog).toBeGreaterThan(300);
+    expect(onSaas.satisfaction).toBeLessThan(70);
+    for (const model of MODEL_IDS) {
+      // The same tickets, backlog and satisfaction on every model: support doesn't depend on who runs the platform.
+      const neglected = s.advance(begin(s, model, 0), 15).state;
+      expect(neglected, model).toMatchObject({ backlog: onSaas.backlog, satisfaction: onSaas.satisfaction });
+      const staffed = s.advance(begin(s, model, 3), 15).state;
+      expect(staffed.backlog, model).toBe(0);
+      expect(staffed.satisfaction, model).toBe(100);
+    }
+  });
+
+  it("pays support staff their day rate", () => {
+    const { log } = s.advance(begin(s, "iaas", 2));
+    expect(log[0]!.entries).toContainEqual({ text: "Support pay (2)", cashDelta: -4, category: "staff" });
+  });
+
+  it("moves people into and out of support", () => {
+    const state = { ...begin(s), developers: 2, ops: 1, support: 1 };
+    expect(s.applyAction(state, { type: "moveStaff", from: "developers", to: "support" })).toMatchObject({
+      developers: 1,
+      support: 2,
+    });
+    expect(s.applyAction(state, { type: "moveStaff", from: "support", to: "ops" })).toMatchObject({ support: 0, ops: 2 });
+    expect(() => s.applyAction({ ...state, support: 0 }, { type: "moveStaff", from: "support", to: "ops" })).toThrow(
+      expect.objectContaining({ code: "no_staff" }),
+    );
+    expect(() => s.applyAction(state, { type: "moveStaff", from: "ops", to: "ops" })).toThrow(
+      expect.objectContaining({ code: "same_pool" }),
+    );
+    // Without a from, a move into support comes from developers.
+    expect(s.applyAction(state, { type: "moveStaff", to: "support" })).toMatchObject({ developers: 1, support: 2 });
+  });
+
+  it("is deterministic, and resumes identically after a JSON round trip", () => {
+    const play = () => s.advance(begin(s, "iaas", 2), 30);
+    expect(play()).toEqual(play());
+    const part = s.advance(begin(s, "iaas", 2), 12).state;
+    expect(s.advance(JSON.parse(JSON.stringify(part)) as GameState, 18).state).toEqual(play().state);
+  });
+
+  it("does not mutate the input state", () => {
+    const before = begin(s);
+    const copy = structuredClone(before);
+    s.advance(before, 5);
     expect(before).toEqual(copy);
   });
 });

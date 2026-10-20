@@ -4,12 +4,19 @@ import type { Features } from "./features.ts";
 import type { Pricing } from "./pricing.ts";
 import { vary } from "./rng.ts";
 import type { GameState } from "./state.ts";
+import type { Support } from "./support.ts";
 
 /**
  * Customers: the product's users, paying and free, how fast they grow, and the load they put on the servers. Every
  * user adds load, free or not.
  */
-export function createCustomers(config: GameConfig, features: Features, events: Events, pricing: Pricing) {
+export function createCustomers(
+  config: GameConfig,
+  features: Features,
+  events: Events,
+  pricing: Pricing,
+  support: Support,
+) {
   function startingUsers(productType: ProductTypeId, day: number) {
     const users = config.productTypes[productType].growth.startingUsers;
     return {
@@ -45,12 +52,19 @@ export function createCustomers(config: GameConfig, features: Features, events: 
       ...events.gapGrowth(state),
       // The price against the product's fair price.
       pricing.priceGrowth(state),
+      // Customer satisfaction, from yesterday: low satisfaction slows growth.
+      support.satisfactionGrowth(state),
     ];
   }
 
+  /** Each share of users who leave in a day. Added together. Later mechanics (price waves) add their own here. */
+  function churnShares(state: GameState): number[] {
+    return [support.satisfactionChurn(state)];
+  }
+
   /**
-   * The users at the end of a day, and how many of them pay. Growth slows as the market fills up, on an outage day
-   * and at a high price.
+   * The users at the end of a day, and how many of them pay. Some leave first (churn), paid and free alike; then new
+   * users arrive. Growth slows as the market fills up, on an outage day, at a high price and with low satisfaction.
    */
   function grow(state: GameState, day: number, outage: boolean, rng: number) {
     const profile = config.productTypes[state.productType].growth;
@@ -59,8 +73,12 @@ export function createCustomers(config: GameConfig, features: Features, events: 
       (r, f) => r * f,
       profile.dailyGrowth * (1 - state.users / profile.marketSize) * growthVariation,
     );
-    const users = Math.max(0, state.users + Math.round(state.users * rate));
-    return { users, paidUsers: pricing.paidUsersAfter(state, users), rng: next };
+    const churnShare = Math.min(1, churnShares(state).reduce((sum, c) => sum + c, 0));
+    const churned = Math.round(state.users * churnShare);
+    const stayed = state.users - churned;
+    const kept: GameState = { ...state, users: stayed, paidUsers: pricing.paidUsersAfter(state, stayed) };
+    const users = Math.max(0, stayed + Math.round(state.users * rate));
+    return { users, paidUsers: pricing.paidUsersAfter(kept, users), churned, rng: next };
   }
 
   return { startingUsers, baseLoad, grow };

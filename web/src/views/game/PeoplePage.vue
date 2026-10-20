@@ -23,6 +23,13 @@ const game = useGame();
           <strong>Ops staff</strong>
           <span class="muted">Keep the infrastructure running. Too few and capacity is cut.</span>
         </li>
+        <li>
+          <strong>Support staff</strong>
+          <span class="muted">
+            Answer your customers' tickets, on every model, SaaS included. Too few and a backlog builds, satisfaction
+            falls and users leave.
+          </span>
+        </li>
       </ul>
       <table class="compare ops-by-model">
         <caption class="muted">Ops staff each model needs</caption>
