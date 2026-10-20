@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { formatCount, formatUptime } from "../../api";
+import { formatCash, formatCount, formatPrice, formatUptime } from "../../api";
 import { useGame } from "../../game";
 
-// Customers: who's using the product. Users for now.
+// Customers: who's using the product, paying and free.
 const game = useGame();
 const userChange = computed(() =>
   game.company && game.previousUsers !== undefined ? game.company.users - game.previousUsers : undefined,
+);
+const paidPercent = computed(() =>
+  game.company && game.company.users ? Math.round((100 * game.company.paidUsers) / game.company.users) : 0,
 );
 const activeFeatures = computed(
   () => game.company?.features.filter((f) => f.status === "built" || f.status === "addon").length ?? 0,
@@ -26,6 +29,16 @@ const activeFeatures = computed(
           </small>
         </div>
         <div class="stat">
+          <span class="label">Paying</span>
+          <span class="value" data-testid="paid-users">{{ formatCount(game.company.paidUsers) }}</span>
+          <small>{{ paidPercent }}% of users</small>
+        </div>
+        <div class="stat">
+          <span class="label">Free</span>
+          <span class="value" data-testid="free-users">{{ formatCount(game.company.freeUsers) }}</span>
+          <small>{{ 100 - paidPercent }}% of users</small>
+        </div>
+        <div class="stat">
           <span class="label">Uptime</span>
           <span class="value">{{ formatUptime(game.company.uptime) }}</span>
           <small v-if="game.company.outageDays">
@@ -37,6 +50,14 @@ const activeFeatures = computed(
           <span class="value">{{ activeFeatures }} <small>of {{ game.company.features.length }}</small></span>
         </div>
       </div>
+      <div v-if="game.company.users" class="paid-bar" aria-hidden="true">
+        <span class="paid" :style="{ width: `${paidPercent}%` }"></span>
+      </div>
+      <p>
+        Paying users bring in {{ formatCash(game.company.dailyIncome) }} a day at
+        {{ formatPrice(game.company.price) }} a month. Free users pay nothing, but they still put load on your servers
+        and, on SaaS, the provider bills you for them per user like everyone else.
+      </p>
       <p>
         Your users get {{ game.productName(game.company.productType).toLowerCase() }} as SaaS, whatever you run it on.
         They grow every day: each feature you add speeds that up, and outages and feature gaps slow it down.

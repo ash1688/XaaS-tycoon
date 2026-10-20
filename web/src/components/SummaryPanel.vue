@@ -43,6 +43,17 @@ const biggest = computed(() =>
       <div class="stat">
         <span class="label">Users</span>
         <span class="value" data-testid="summary-users">{{ formatCount(summary.users) }}</span>
+        <small>{{ formatCount(summary.paidUsers) }} paying</small>
+      </div>
+      <div class="stat">
+        <span class="label">Income</span>
+        <span class="value pos" data-testid="summary-income">{{ formatCash(summary.income) }}</span>
+      </div>
+      <div class="stat">
+        <span class="label">{{ summary.profit < 0 ? "Loss" : "Profit" }}</span>
+        <span :class="['value', summary.profit < 0 ? 'neg' : 'pos']" data-testid="summary-profit">
+          {{ formatCash(summary.profit) }}
+        </span>
       </div>
       <div class="stat">
         <span class="label">Uptime</span>

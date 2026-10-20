@@ -17,16 +17,27 @@ export const risen = (price: number, rise: number) => Math.round(price * rise * 
 export function createFinance(config: GameConfig) {
   /**
    * The ledger. Applies a day's entries to cash, adds each charge to its category's running total and the day's
-   * spend, and ends the game if cash has gone below zero or this was the final day. Returns the entries with any
-   * notice of the end added. Going bankrupt on the final day counts as bankrupt.
+   * spend, and income to its own total, apart from the costs, so profit is income − spend. Then ends the game if cash
+   * has gone below zero or this was the final day. Returns the entries with any notice of the end added. Going
+   * bankrupt on the final day counts as bankrupt.
    */
   function settle(state: GameState, day: number, entries: LogEntry[]): { state: GameState; entries: LogEntry[] } {
     const daySpend = noSpend();
-    for (const e of entries) if (e.category) daySpend[e.category] -= e.cashDelta;
+    let dayIncome = 0;
+    for (const e of entries) {
+      if (e.category) daySpend[e.category] -= e.cashDelta;
+      else if (e.kind === "income") dayIncome += e.cashDelta;
+    }
     const spend = noSpend();
     for (const c of SPEND_CATEGORIES) spend[c] = state.spend[c] + daySpend[c];
     const cash = state.cash + entries.reduce((sum, e) => sum + e.cashDelta, 0);
-    const settled: GameState = { ...state, cash, spend, spendByDay: [...state.spendByDay, { day, ...daySpend }] };
+    const settled: GameState = {
+      ...state,
+      cash,
+      spend,
+      income: state.income + dayIncome,
+      spendByDay: [...state.spendByDay, { day, ...daySpend, income: dayIncome }],
+    };
     if (cash < 0) {
       return {
         state: { ...settled, status: "bankrupt" },

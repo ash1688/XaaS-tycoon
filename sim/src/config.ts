@@ -107,11 +107,23 @@ export interface FeatureConfig {
   addonPricePerUser: number;
 }
 
+/** What a product's users expect to pay, and how many use it for free. */
+export interface ProductPricing {
+  /**
+   * The monthly price users think the product is worth. A new company starts at it. Charging more slows growth and
+   * puts more new users on the free tier; charging less does the opposite (see PricingConfig).
+   */
+  fairPrice: number;
+  /** Share of users on the free tier, at the start and among new users at the fair price (0.7 = 70% free). */
+  freeShare: number;
+}
+
 export interface ProductTypeConfig {
   name: string;
   /** Short description of how this product behaves. */
   profile: string;
   growth: GrowthProfile;
+  pricing: ProductPricing;
   /** The fixed list of 3–5 features this product can have. */
   features: FeatureConfig[];
 }
@@ -145,6 +157,26 @@ export interface CapacityConfig {
  */
 export interface BillingConfig {
   daysPerMonth: number;
+}
+
+/**
+ * The monthly price the student charges each paying user, and how users react to it. Each paying user pays a day's
+ * share of it every day, by the same rule as monthly costs: price ÷ daysPerMonth. Free users pay nothing, but still
+ * add load and, on SaaS, per-user and add-on fees.
+ *
+ * How the price compares with the product's fair price sets two factors each day, from ratio = price ÷ fair price:
+ * growth is multiplied by ratio ^ −growthSensitivity (at most maxGrowthBoost), and the paid share of new users,
+ * 1 − freeShare at the fair price, is multiplied by ratio ^ −paidShareSensitivity (at most every new user pays).
+ */
+export interface PricingConfig {
+  /** The highest monthly price a student can set. High on purpose, so they find the limit for themselves. */
+  maxPrice: number;
+  /** How strongly a price above the fair price slows growth, and one below it speeds growth up. 0 for no effect. */
+  growthSensitivity: number;
+  /** The most a low price can multiply growth by. */
+  maxGrowthBoost: number;
+  /** How strongly a price above the fair price puts new users on the free tier. 0 for no effect. */
+  paidShareSensitivity: number;
 }
 
 /** SaaS add-ons: bought from the provider instead of built. */
@@ -268,6 +300,7 @@ export interface GameConfig {
   capacity: CapacityConfig;
   outage: OutageConfig;
   billing: BillingConfig;
+  pricing: PricingConfig;
   addons: AddonConfig;
   migration: MigrationConfig;
   /** Scripted events, in the order they're logged on a day when more than one is on. */
@@ -275,7 +308,8 @@ export interface GameConfig {
 }
 
 export const defaultConfig: GameConfig = {
-  // There's no revenue in the alpha, so this has to carry a sensible setup to day 180 with room for mistakes.
+  // Set when there was no income, to carry a sensible setup to day 180 with room for mistakes. Lowered once the loan
+  // arrives (#52).
   startingCash: 250_000,
   finalDay: 180,
   maxCompanyNameLength: 40,
@@ -338,6 +372,8 @@ export const defaultConfig: GameConfig = {
         loadNoise: 0.1,
         seasonalSpike: { firstDay: 45, every: 45, length: 5, loadMultiplier: 1.6, growthMultiplier: 2 },
       },
+      // Shoppers mostly pay: a shop's free tier is browsing without an account.
+      pricing: { fairPrice: 5, freeShare: 0.3 },
       features: [
         {
           id: "checkout",
@@ -384,6 +420,8 @@ export const defaultConfig: GameConfig = {
         loadPerUser: 1.5,
         loadNoise: 0.05,
       },
+      // Mostly free, like most social networks: a few pay for extras.
+      pricing: { fairPrice: 6, freeShare: 0.8 },
       features: [
         {
           id: "messaging",
@@ -430,6 +468,7 @@ export const defaultConfig: GameConfig = {
         loadPerUser: 4,
         loadNoise: 0.15,
       },
+      pricing: { fairPrice: 9, freeShare: 0.6 },
       features: [
         {
           id: "hd",
@@ -473,6 +512,7 @@ export const defaultConfig: GameConfig = {
   capacity: { unstaffedShare: 0.4 },
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25 },
   billing: { daysPerMonth: 30 },
+  pricing: { maxPrice: 1_000, growthSensitivity: 1, maxGrowthBoost: 2, paidShareSensitivity: 1 },
   addons: { minConfigDevelopers: 2 },
   migration: {
     phases: {

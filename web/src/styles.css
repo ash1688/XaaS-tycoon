@@ -2306,3 +2306,82 @@ body.modal-open {
     min-width: 0;
   }
 }
+
+/* Pricing: the price form in its modal. */
+.price-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.price-form input {
+  max-width: 14rem;
+}
+
+.price-form p {
+  margin: 0;
+}
+
+/* The balance sheet: income, then costs by category, with profit or loss underneath. */
+.balance {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.balance th,
+.balance td {
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.balance .num {
+  text-align: right;
+}
+
+.balance tbody th {
+  font-weight: 400;
+}
+
+.balance .cost-row th .swatch {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-right: 0.5rem;
+  border-radius: 3px;
+  background: var(--cat);
+}
+
+.balance .subtotal th,
+.balance .subtotal td {
+  color: var(--muted);
+}
+
+.balance tfoot th,
+.balance tfoot td {
+  font-weight: 700;
+  border-bottom: 0;
+  border-top: 2px solid var(--text);
+}
+
+/* Paying against free users, as one bar. */
+.paid-bar {
+  height: 0.9rem;
+  margin: 0 0 1rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--accent-soft);
+}
+
+.paid-bar .paid {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+/* Income in the day log, in the colour for money coming in. */
+.log-group.income {
+  --cat: var(--pos);
+}

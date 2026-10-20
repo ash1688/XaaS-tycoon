@@ -6,6 +6,7 @@ import { createFinance, noSpend } from "./finance.ts";
 import { createInfrastructure } from "./infrastructure.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
 import { isNameAllowed } from "./nameFilter.ts";
+import { createPricing } from "./pricing.ts";
 import { seedRng } from "./rng.ts";
 import { createStaff } from "./staff.ts";
 import {
@@ -73,6 +74,10 @@ export interface Sim {
   monthlyInfrastructureCost(state: GameState): number;
   /** What the active add-ons cost per month at today's users. */
   monthlyAddonCost(state: GameState): number;
+  /** What paying users pay per day at today's paid users and price: paid users × price ÷ daysPerMonth. */
+  dailyIncome(state: GameState): number;
+  /** The monthly price users think the product is worth. Pricing above it slows growth and means fewer new payers. */
+  fairPrice(state: GameState): number;
   /** Load the company can serve in a day with its current model and staff. */
   capacity(state: GameState): number;
   /** Share of time up across every day played, as a percentage. 100 before the first day. */
@@ -97,7 +102,8 @@ export interface Sim {
 export function createSim(config: GameConfig = defaultConfig): Sim {
   const events = createEvents(config);
   const features = createFeatures(config);
-  const customers = createCustomers(config, features, events);
+  const pricing = createPricing(config);
+  const customers = createCustomers(config, features, events, pricing);
   const infra = createInfrastructure(config, customers, events);
   const staff = createStaff(config);
   const finance = createFinance(config);
@@ -182,6 +188,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         return staff.moveStaff(state, action.to);
       case "startMigration":
         return migration.startMigration(state, action.model);
+      case "setPrice":
+        return pricing.setPrice(state, action.price);
       default:
         throw new SimError("unknown_action", "That action isn't recognised.");
     }
@@ -196,7 +204,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
 
     // Today's load against capacity, then growth, which slows on an outage day.
     const served = infra.serveLoad(state, day, today);
-    const [users, rng] = customers.grow(state, day, served.hoursDown > 0, served.rng);
+    const { users, paidUsers, rng } = customers.grow(state, day, served.hoursDown > 0, served.rng);
 
     // Developers work on the current build. A feature finished today helps growth from tomorrow.
     const build = features.buildDay(state);
@@ -205,10 +213,12 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     // the model being left is billed pro rata up to the day you leave. During a migration the new model is billed as
     // well (see migrationCharges).
     const recorded = events.record(state, today, served.overloaded);
+    // Income comes from the users paying at the start of the day, at today's price, like the per-user fees.
     const entries: LogEntry[] = [
       ...recorded.entries,
       ...(served.outage ? [served.outage] : []),
       ...build.entries,
+      ...pricing.incomeEntries(state),
       ...infra.infrastructureEntries(state, state.model, state.users),
       ...migration.migrationCharges(state),
       ...features.addonEntries(state),
@@ -221,6 +231,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       day,
       rng,
       users,
+      paidUsers,
       load: served.load,
       outageDays: state.outageDays + (served.hoursDown > 0 ? 1 : 0),
       downtimeHours: state.downtimeHours + served.hoursDown,
@@ -259,6 +270,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     dailyStaffCost: (s) => staff.dailyStaffCost(load(s)),
     monthlyInfrastructureCost: (s) => infra.monthlyInfrastructureCost(load(s)),
     monthlyAddonCost: (s) => features.monthlyAddonCost(load(s)),
+    dailyIncome: (s) => pricing.dailyIncome(load(s)),
+    fairPrice: (s) => pricing.fairPrice(load(s).productType),
     capacity: (s) => infra.capacity(load(s)),
     uptime: (s) => infra.uptime(load(s)),
     features: (s) => features.features(load(s)),

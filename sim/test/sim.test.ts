@@ -35,6 +35,9 @@ const features = [
   { id: "search", name: "Search", blurb: "", devDays: 4, growthMultiplier: 1.1, addonPricePerUser: 0.06 },
 ];
 
+// Everyone free unless a test says otherwise, so income only shows up where a test looks for it.
+const pricing = { fairPrice: 30, freeShare: 1 };
+
 function costs(monthlyCost: number) {
   return { upfrontCost: 0, monthlyCost, monthlyCostPerUser: 0, exitPenalty: 0 };
 }
@@ -60,10 +63,11 @@ const config: GameConfig = {
         dailyGrowth: 0.02,
         seasonalSpike: { firstDay: 10, every: 10, length: 3, loadMultiplier: 3, growthMultiplier: 3 },
       },
+      pricing,
       features,
     },
-    social: { name: "Social", profile: "", growth: { ...growth, dailyGrowth: 0.06 }, features },
-    video: { name: "Video", profile: "", growth: { ...growth, dailyGrowth: 0.02, loadPerUser: 5 }, features },
+    social: { name: "Social", profile: "", growth: { ...growth, dailyGrowth: 0.06 }, pricing, features },
+    video: { name: "Video", profile: "", growth: { ...growth, dailyGrowth: 0.02, loadPerUser: 5 }, pricing, features },
   },
   // No starting staff, so the model's running cost is the only charge unless a test hires someone.
   staff: {
@@ -73,6 +77,7 @@ const config: GameConfig = {
   capacity: { unstaffedShare: 0.4 },
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25 },
   billing: { daysPerMonth: 30 },
+  pricing: { maxPrice: 1_000, growthSensitivity: 1, maxGrowthBoost: 2, paidShareSensitivity: 1 },
   addons: { minConfigDevelopers: 1 },
   migration: {
     phases: {
@@ -770,8 +775,8 @@ describe("ledger", () => {
     const s = withModel({ upfrontCost: 50 });
     const { state } = s.advance(s.applyAction(startOn(s), { type: "hire", pool: "ops" }), 4);
     expect(state.spendByDay).toEqual([
-      { day: 1, staff: 0, infrastructure: 50, addons: 0 },
-      ...[2, 3, 4, 5].map((day) => ({ day, staff: 3, infrastructure: 20, addons: 0 })),
+      { day: 1, staff: 0, infrastructure: 50, addons: 0, income: 0 },
+      ...[2, 3, 4, 5].map((day) => ({ day, staff: 3, infrastructure: 20, addons: 0, income: 0 })),
     ]);
     for (const c of SPEND_CATEGORIES) {
       expect(state.spendByDay.reduce((sum, d) => sum + d[c], 0)).toBe(state.spend[c]);
@@ -936,7 +941,7 @@ describe("game end and summary", () => {
   it("gives the cash left after each day, ending on the final cash", () => {
     const { state } = s.advance(begin(), 29);
     const { days, cash } = s.summarise(state);
-    expect(days[0]).toEqual({ day: 1, staff: 0, infrastructure: 100, addons: 0, cash: 99_900 });
+    expect(days[0]).toEqual({ day: 1, staff: 0, infrastructure: 100, addons: 0, income: 0, cash: 99_900 });
     expect(days.at(-1)!.cash).toBe(cash);
     for (let i = 1; i < days.length; i++) {
       const d = days[i]!;
@@ -2126,5 +2131,186 @@ describe("default events", () => {
     };
     expect(run("onprem").outageDays).toBeGreaterThan(0);
     expect(run("paas").outageDays).toBe(0);
+  });
+});
+
+describe("pricing and income", () => {
+  // Each product with its own free share and fair price.
+  const priced = (
+    overrides: Partial<GameConfig["pricing"]> = {},
+    freeShares = { ecommerce: 0.4, social: 0.8, video: 0.5 },
+  ) =>
+    createSim({
+      ...config,
+      pricing: { ...config.pricing, ...overrides },
+      productTypes: {
+        ecommerce: { ...config.productTypes.ecommerce, pricing: { fairPrice: 30, freeShare: freeShares.ecommerce } },
+        social: { ...config.productTypes.social, pricing: { fairPrice: 6, freeShare: freeShares.social } },
+        video: { ...config.productTypes.video, pricing: { fairPrice: 9, freeShare: freeShares.video } },
+      },
+    });
+  const s = priced();
+  const begin = (sm = s, productType = "ecommerce", model = "iaas", seed = 42) =>
+    sm.newGame({ companyName: "Acme", productType, model, seed });
+  const setPrice = (price: number): Action => ({ type: "setPrice", price });
+  const incomeEntries = (log: DayLog[]) => log.flatMap((d) => d.entries).filter((e) => e.kind === "income");
+
+  it("starts each product at its fair price, with its own share of free users", () => {
+    const states = Object.fromEntries(PRODUCT_TYPE_IDS.map((p) => [p, begin(s, p)]));
+    expect(states.ecommerce).toMatchObject({ users: 1000, paidUsers: 600, price: 30, income: 0 });
+    expect(states.social).toMatchObject({ users: 1000, paidUsers: 200, price: 6 });
+    expect(states.video).toMatchObject({ users: 1000, paidUsers: 500, price: 9 });
+    expect(s.fairPrice(states.social!)).toBe(6);
+  });
+
+  it("pays paid users × monthly price ÷ 30 a day, logged as income", () => {
+    const state = s.applyAction(begin(), setPrice(15));
+    // 600 paying users at £15 a month: £300 a day.
+    expect(s.dailyIncome(state)).toBe(300);
+    const { state: after, log } = s.advance(state);
+    expect(incomeEntries(log)).toEqual([
+      { text: "Income: 600 paying users at £15 a month", cashDelta: 300, kind: "income" },
+    ]);
+    expect(after.income).toBe(300);
+    expect(after.spendByDay.at(-1)!.income).toBe(300);
+  });
+
+  it("pays nothing for free users", () => {
+    const allFree = priced({}, { ecommerce: 1, social: 1, video: 1 });
+    const { state, log } = allFree.advance(begin(allFree), 10);
+    expect(state.paidUsers).toBe(0);
+    expect(state.income).toBe(0);
+    expect(incomeEntries(log)).toEqual([]);
+  });
+
+  it("rounds each day's income to the pound", () => {
+    // 600 × £9.99 ÷ 30 = £199.80.
+    expect(s.dailyIncome(s.applyAction(begin(), setPrice(9.99)))).toBe(200);
+  });
+
+  it("changes the price without moving time on or touching cash, and charges it from the next day", () => {
+    const before = begin();
+    const state = s.applyAction(before, setPrice(60));
+    expect(state).toMatchObject({ day: before.day, cash: before.cash, price: 60 });
+    expect(incomeEntries(s.advance(state).log)[0]!.cashDelta).toBe(1200);
+  });
+
+  it.each([
+    [0, "bad_price"],
+    [-5, "bad_price"],
+    [Number.NaN, "bad_price"],
+    [1000.01, "price_too_high"],
+  ])("rejects a price of %d", (price, code) => {
+    expect(() => s.applyAction(begin(), setPrice(price))).toThrow(expect.objectContaining({ code }));
+  });
+
+  it("accepts the configured maximum, which is high, and keeps a price to the penny", () => {
+    expect(s.applyAction(begin(), setPrice(1000)).price).toBe(1000);
+    expect(s.applyAction(begin(), setPrice(12.345)).price).toBe(12.35);
+    const low = priced({ maxPrice: 50 });
+    expect(() => low.applyAction(begin(low), setPrice(51))).toThrow(expect.objectContaining({ code: "price_too_high" }));
+  });
+
+  it("keeps income apart from the cost categories, so cash is starting cash + income − spend", () => {
+    const { state } = s.advance(s.applyAction(begin(), { type: "hire", pool: "ops" }), 20);
+    const spent = SPEND_CATEGORIES.reduce((sum, c) => sum + state.spend[c], 0);
+    expect(state.income).toBeGreaterThan(0);
+    expect(state.cash).toBe(1000 + state.income - spent);
+    expect(state.spendByDay.reduce((sum, d) => sum + d.income, 0)).toBe(state.income);
+    const summary = s.summarise(state);
+    expect(summary).toMatchObject({ income: state.income, profit: state.income - spent, paidUsers: state.paidUsers });
+    // The cash after each day steps by that day's income less its spend.
+    for (let i = 1; i < summary.days.length; i++) {
+      const d = summary.days[i]!;
+      expect(d.cash - summary.days[i - 1]!.cash).toBe(d.income - d.staff - d.infrastructure - d.addons);
+    }
+  });
+
+  it("puts load on the servers from free users as well as paying ones", () => {
+    const firstDay = (free: number) => {
+      const sm = priced({}, { ecommerce: free, social: free, video: free });
+      // No load noise, so load is exactly users × load per user.
+      const video = sm.config.productTypes.video;
+      const quiet = createSim({
+        ...sm.config,
+        productTypes: { ...sm.config.productTypes, video: { ...video, growth: { ...video.growth, loadNoise: 0 } } },
+      });
+      return quiet.advance(begin(quiet, "video")).state;
+    };
+    const [mostlyPaid, mostlyFree] = [0, 0.9].map(firstDay);
+    expect(mostlyFree!.paidUsers).toBeLessThan(mostlyPaid!.paidUsers);
+    // Video has 5 load per user: 1,000 users make 5,000 load however many pay.
+    expect(mostlyFree!.load).toBe(5000);
+    expect(mostlyPaid!.load).toBe(5000);
+  });
+
+  it("bills SaaS per-user and add-on fees on free users too", () => {
+    const sm = createSim({
+      ...s.config,
+      models: { ...s.config.models, saas: { ...s.config.models.saas, monthlyCost: 0, monthlyCostPerUser: 0.3 } },
+      productTypes: {
+        ...s.config.productTypes,
+        ecommerce: { ...s.config.productTypes.ecommerce, pricing: { fairPrice: 30, freeShare: 0.9 } },
+      },
+    });
+    let state = begin(sm, "ecommerce", "saas");
+    state = sm.applyAction(state, { type: "hire", pool: "developers" });
+    state = sm.applyAction(state, { type: "buyAddon", feature: "checkout" });
+    expect(state.paidUsers).toBe(100);
+    const charged = sm.advance(state).log[0]!.entries.filter((e) => e.category && e.category !== "staff");
+    // All 1,000 users at £0.30 a month, not just the 100 paying: £10 a day each.
+    expect(charged).toEqual([
+      { text: "SaaS per-user fee (1,000 users at £0.30 a month)", cashDelta: -10, category: "infrastructure" },
+      { text: "Add-on: Checkout (1,000 users at £0.30 a month)", cashDelta: -10, category: "addons" },
+    ]);
+  });
+
+  it("grows slower at a higher price, with a smaller share of new users paying", () => {
+    const run = (price: number) => {
+      const start = begin(s, "social");
+      const { state } = s.advance(s.applyAction(start, setPrice(price)), 30);
+      const grown = state.users - start.users;
+      return { grown, paidShare: (state.paidUsers - start.paidUsers) / grown };
+    };
+    const fair = run(6);
+    const dear = run(12);
+    expect(dear.grown).toBeLessThan(fair.grown * 0.7);
+    expect(dear.paidShare).toBeLessThan(fair.paidShare * 0.7);
+    // At the fair price, new users pay at the product's paid share: 20% on this social network.
+    expect(fair.paidShare).toBeCloseTo(0.2, 1);
+  });
+
+  it("grows faster at a lower price, up to the configured boost", () => {
+    const grown = (sm: Sim, price: number) => {
+      const start = begin(sm, "social");
+      return sm.advance(sm.applyAction(start, setPrice(price)), 20).state.users - start.users;
+    };
+    expect(grown(s, 3)).toBeGreaterThan(grown(s, 6) * 1.3);
+    // With no boost allowed, a cut doesn't help growth.
+    const capped = priced({ maxGrowthBoost: 1 });
+    expect(grown(capped, 3)).toBe(grown(capped, 6));
+  });
+
+  it("has no effect on growth or payers with zero sensitivity", () => {
+    const flat = priced({ growthSensitivity: 0, paidShareSensitivity: 0 });
+    const play = (price: number) => flat.advance(flat.applyAction(begin(flat, "social"), setPrice(price)), 20).state;
+    const [fair, dear] = [play(6), play(60)];
+    expect(dear.users).toBe(fair.users);
+    expect(dear.paidUsers).toBe(fair.paidUsers);
+  });
+
+  it("is deterministic for the same seed and actions, and resumes identically after a JSON round trip", () => {
+    const play = () => s.advance(s.applyAction(begin(s, "video"), setPrice(14)), 25);
+    expect(play()).toEqual(play());
+    const part = s.advance(s.applyAction(begin(s, "video"), setPrice(14)), 10).state;
+    const resumed = s.advance(JSON.parse(JSON.stringify(part)) as GameState, 15).state;
+    expect(resumed).toEqual(play().state);
+  });
+
+  it("does not mutate the input state", () => {
+    const before = begin();
+    const copy = structuredClone(before);
+    s.advance(s.applyAction(before, setPrice(40)), 3);
+    expect(before).toEqual(copy);
   });
 });

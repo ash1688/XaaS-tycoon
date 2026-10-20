@@ -82,6 +82,12 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add(`models.${m}.monthlyCostPerUser`, "Money", s, "Monthly cost per user", "Extra per user per month, billed daily on that day's users.", PER_USER);
     add(`models.${m}.exitPenalty`, "Money", s, "Exit penalty", "The provider's fee for leaving, charged when a migration away completes.", POUNDS);
   }
+  add("pricing.maxPrice", "Money", "", "Highest monthly price", "The most a student can charge each paying user a month. High on purpose.", range(1, 100_000, 1));
+  for (const p of PRODUCT_TYPE_IDS) {
+    const product = base.productTypes[p];
+    if (!product) continue;
+    add(`productTypes.${p}.pricing.fairPrice`, "Money", product.name, "Fair price", "The monthly price users think it's worth, and where a new company starts.", range(0.01, 10_000, 0.01));
+  }
   for (const p of PRODUCT_TYPE_IDS) {
     for (const f of base.productTypes[p]?.features ?? []) {
       const at = `productTypes.${p}.features.${f.id}`;
@@ -104,11 +110,15 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add(`${g}.seasonalSpike.every`, "Customers", s, "Seasonal spike: every (days)", "Days from the start of one busy season to the next.", GAME_DAY);
     add(`${g}.seasonalSpike.length`, "Customers", s, "Seasonal spike: length (days)", "How many days each busy season lasts.", GAME_DAY);
     add(`${g}.seasonalSpike.growthMultiplier`, "Customers", s, "Seasonal spike: growth multiplier", "Growth is multiplied by this during a busy season.", MULTIPLIER);
+    add(`productTypes.${p}.pricing.freeShare`, "Customers", s, "Free share", "Share of users on the free tier, at the start and among new users at the fair price.", SHARE);
     for (const f of product.features) {
       add(`productTypes.${p}.features.${f.id}.growthMultiplier`, "Customers", s, `${f.name}: growth multiplier`, "Once built or bought, daily growth is multiplied by this (1.1 = 10% faster).", range(0, 5, 0.01));
     }
   }
   add("outage.growthMultiplier", "Customers", "", "Growth on an outage day", "Growth is multiplied by this on a day with an outage.", SHARE);
+  add("pricing.growthSensitivity", "Customers", "", "Price effect on growth", "Growth is multiplied by (price ÷ fair price) to minus this. 0 for no effect.", range(0, 5, 0.05));
+  add("pricing.maxGrowthBoost", "Customers", "", "Most a low price speeds growth", "A price below the fair price multiplies growth by at most this.", range(1, 10, 0.05));
+  add("pricing.paidShareSensitivity", "Customers", "", "Price effect on new payers", "The paid share of new users is multiplied by (price ÷ fair price) to minus this.", range(0, 5, 0.05));
 
   // Infrastructure
   for (const m of MODEL_IDS) {
@@ -229,6 +239,12 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
   const config = applyOverrides(overrides as ConfigOverrides, base);
   const pairs: [low: string, high: string, message: string][] = [
     ["migration.overrun.minDays", "migration.overrun.maxDays", "The most extra days can't be fewer than the fewest."],
+    // A new company starts at the fair price, so it has to be one the student could set.
+    ...PRODUCT_TYPE_IDS.filter((p) => base.productTypes[p]).map((p): [string, string, string] => [
+      `productTypes.${p}.pricing.fairPrice`,
+      "pricing.maxPrice",
+      "The highest price can't be below a product's fair price.",
+    ]),
     ...base.events
       .filter((e) => e.schedule.type === "seeded")
       .map((e): [string, string, string] => [

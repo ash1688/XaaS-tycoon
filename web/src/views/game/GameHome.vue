@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { formatCash, formatCount, formatUptime } from "../../api";
+import { formatCash, formatCount, formatPrice, formatUptime } from "../../api";
 import { days, useGame } from "../../game";
 import OverviewCard from "../../components/OverviewCard.vue";
 import SummaryPanel from "../../components/SummaryPanel.vue";
@@ -150,6 +150,46 @@ const alerts = computed(() => {
         <template #detail>
           <SpendPanel />
           <p class="modal-link"><RouterLink :to="page('finance')">Open Finance</RouterLink></p>
+        </template>
+      </OverviewCard>
+
+      <OverviewCard title="Income">
+        <p class="overview-value pos" data-testid="home-income">
+          {{ formatCash(game.company.dailyIncome) }} <small>a day</small>
+        </p>
+        <p class="muted" data-testid="home-paid-free">
+          {{ formatCount(game.company.paidUsers) }} paying, {{ formatCount(game.company.freeUsers) }} free, at
+          {{ formatPrice(game.company.price) }} a month. {{ formatCash(game.company.income) }} so far.
+        </p>
+        <template #detail>
+          <div class="stats">
+            <div class="stat">
+              <span class="label">Income a day</span>
+              <span class="value pos">{{ formatCash(game.company.dailyIncome) }}</span>
+              <small>{{ formatCash(game.company.income) }} so far</small>
+            </div>
+            <div class="stat">
+              <span class="label">Paying</span>
+              <span class="value">{{ formatCount(game.company.paidUsers) }}</span>
+            </div>
+            <div class="stat">
+              <span class="label">Free</span>
+              <span class="value">{{ formatCount(game.company.freeUsers) }}</span>
+            </div>
+            <div class="stat">
+              <span class="label">Monthly price</span>
+              <span class="value">{{ formatPrice(game.company.price) }}</span>
+              <small>Fair price {{ formatPrice(game.company.fairPrice) }}</small>
+            </div>
+          </div>
+          <p>
+            Each paying user pays a day's share of your monthly price. Free users pay nothing but still cost you load
+            and, on SaaS, per-user fees. Pricing above the fair price slows growth and means fewer new users pay.
+          </p>
+          <p class="modal-link">
+            <RouterLink :to="page('product')">Change the price on Product</RouterLink> ·
+            <RouterLink :to="page('finance')">Open Finance</RouterLink>
+          </p>
         </template>
       </OverviewCard>
 

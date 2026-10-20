@@ -21,7 +21,7 @@ const band = computed(() => plotW.value / lastDay.value);
 // Cash before the first day's charges, so the line starts with the drop from any upfront cost.
 const opening = computed(() => {
   const first = props.days[0];
-  return first && { day: first.day, cash: first.cash + first.staff + first.infrastructure + first.addons };
+  return first && { day: first.day, cash: first.cash + first.staff + first.infrastructure + first.addons - first.income };
 });
 const yTicks = computed(() => {
   const cash = [...props.days.map((d) => d.cash), opening.value?.cash ?? 0];
