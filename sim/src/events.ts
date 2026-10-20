@@ -110,14 +110,15 @@ export function createEvents(config: GameConfig) {
   }
 
   /**
-   * Whether capacity grows to meet an event's load on a day. On a model with servers the extra ones take its
-   * readyDays to arrive, so not until that many days into the event.
+   * Whether capacity grows to meet an event's load on a day. The extra servers take the model's readyDays to arrive,
+   * so not until that many days into the event: at once on PaaS. Only a model with servers scales: on SaaS there's
+   * no capacity limit to grow.
    */
   function scales(state: GameState, event: EventConfig, outcome: EventOutcome, model: ModelId, day: number): boolean {
     if (!event.load) return false;
     const servers = config.models[model].servers;
-    if (!servers) return outcome.scaleCostPerLoad !== undefined;
-    return outcome.scaleCostPerUnit !== undefined && dayOfEvent(state, event.id, day) >= servers.readyDays;
+    if (!servers) return false;
+    return outcome.scaleCostPerUnit !== undefined && dayOfEvent(state, event.id, day) >= (servers.readyDays ?? 0);
   }
 
   /** How an event plays out on a model, short of ops or not. */

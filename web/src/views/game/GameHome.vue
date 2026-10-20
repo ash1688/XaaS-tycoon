@@ -48,7 +48,9 @@ const alerts = computed(() => {
     list.push({
       id: "understaffed",
       text: `Understaffed: ${c.opsNeeded - c.ops} ops short`,
-      detail: `${game.modelName(c.model)} needs ${c.opsNeeded} ops staff. Until you have them, capacity is cut.`,
+      detail: game.provider
+        ? `${game.modelName(c.model)} needs ${c.opsNeeded} ops staff to keep the service running.`
+        : `${game.modelName(c.model)} needs ${c.opsNeeded} ops staff. Until you have them, capacity is cut.`,
       page: "people",
       pageName: "People",
     });
@@ -81,7 +83,7 @@ const alerts = computed(() => {
       id: "load",
       text: game.loadLevel === "over" ? "Over capacity" : "Close to capacity",
       detail: game.tightest
-        ? `${game.tightest.name} (${game.tightest.unit}) is at ${game.tightest.percent}% of capacity. Over 100% is an outage: ${game.addVerb} more ${game.tightest.servers}.`
+        ? `${game.tightest.name} (${game.tightest.unit}) is at ${game.tightest.percent}% of capacity. Over 100% is an outage: ${game.tierFix(game.tightest.id)}.`
         : `Load is ${game.loadPercent}% of capacity. Over 100% is an outage.`,
       page: "infrastructure",
       pageName: "Infrastructure",
@@ -341,7 +343,25 @@ const alerts = computed(() => {
         </p>
         <template #detail>
           <CapacityPanel />
-          <p class="modal-link"><RouterLink :to="page('infrastructure')">{{ game.buysServers ? "Buy" : "Rent" }} servers on Infrastructure</RouterLink></p>
+          <p class="modal-link">
+            <RouterLink :to="page('infrastructure')">
+              {{ game.managed ? "Scale your platform" : game.buysServers ? "Buy servers" : "Rent servers" }} on Infrastructure
+            </RouterLink>
+          </p>
+        </template>
+      </OverviewCard>
+
+      <OverviewCard v-else-if="game.provider" title="Capacity">
+        <p class="overview-value" data-testid="home-provider">Unlimited <small>provider-managed</small></p>
+        <p class="muted" data-testid="home-capacity">
+          The provider scales for you: no servers, no limit. You pay
+          {{ formatPrice(game.provider.perUserFee) }} a user a month instead,
+          {{ formatCash(game.provider.monthlyPerUserBill) }} a month for your {{ formatCount(game.provider.users) }} users,
+          free ones included. Uptime <strong data-testid="uptime">{{ formatUptime(game.company.uptime) }}</strong>.
+        </p>
+        <template #detail>
+          <CapacityPanel />
+          <p class="modal-link"><RouterLink :to="page('infrastructure')">Open Infrastructure</RouterLink></p>
         </template>
       </OverviewCard>
 
@@ -352,7 +372,7 @@ const alerts = computed(() => {
         </div>
         <p class="muted" data-testid="home-capacity">
           Load {{ game.loadPercent }}% of capacity ({{ formatCount(game.company.load) }} /
-          {{ formatCount(game.company.capacity) }}).
+          {{ formatCount(game.company.capacity ?? 0) }}).
           <template v-if="game.company.outageDays">
             {{ game.company.outageDays }} outage day{{ game.company.outageDays === 1 ? "" : "s" }}.
           </template>

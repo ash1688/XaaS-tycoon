@@ -1,9 +1,11 @@
 import {
+  MANAGED_SERVICES,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
   SERVER_SIZES,
   SERVER_TYPES,
   STAFF_POOLS,
+  type ManagedService,
   type MigrationPhase,
   type ModelId,
   type ProductTypeId,
@@ -17,7 +19,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 15;
+export const GAME_STATE_VERSION = 16;
 
 /** Money spent in each category. */
 export type Spend = Record<SpendCategory, number>;
@@ -264,7 +266,17 @@ export type Action =
    */
   | { type: "buyServer"; server: ServerType; size: ServerSize }
   /** Sells back a bought server that has arrived, refunding the configured share of what it cost, at once. */
-  | { type: "sellServer"; id: number };
+  | { type: "sellServer"; id: number }
+  /**
+   * Sets how many app instances run, on PaaS: from 1 to the platform's most. The change is instant, serving from the
+   * next day played, and billed monthly a day's share at a time from then.
+   */
+  | { type: "setInstances"; count: number }
+  /**
+   * Sets the size of a managed service on PaaS, at once, like an instance count. The cache can be turned off with
+   * a null size; the database can't.
+   */
+  | { type: "setManagedService"; service: ManagedService; size: ServerSize | null };
 
 export interface NewGameParams {
   companyName: string;
@@ -329,6 +341,10 @@ export function isServerType(v: string): v is ServerType {
 
 export function isServerSize(v: string): v is ServerSize {
   return (SERVER_SIZES as readonly string[]).includes(v);
+}
+
+export function isManagedService(v: string): v is ManagedService {
+  return (MANAGED_SERVICES as readonly string[]).includes(v);
 }
 
 export function isStaffPool(v: string): v is StaffPool {

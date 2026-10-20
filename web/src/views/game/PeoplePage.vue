@@ -23,7 +23,8 @@ const game = useGame();
           <strong>Ops staff</strong>
           <span class="muted">
             Keep the infrastructure running. Too few and capacity is cut. On IaaS and on-prem, every server you run needs a
-            share of someone's time.
+            share of someone's time. On PaaS and SaaS the provider runs the servers, so a small fixed team keeps the
+            service running.
           </span>
         </li>
         <li>

@@ -1,4 +1,4 @@
-import type { EventConfig, GameConfig, ModelId } from "./config.ts";
+import type { GameConfig, ModelId } from "./config.ts";
 import type { Customers } from "./customers.ts";
 import type { EventToday, Events } from "./events.ts";
 import { count, pounds, risen } from "./finance.ts";
@@ -10,11 +10,30 @@ import type { GameState, LogEntry, UnitDemand } from "./state.ts";
 const tidy = (n: number) => Math.round(n * 100) / 100;
 
 /**
+ * Capacity on a model with no servers and no capacity limit (SaaS): the provider scales, and you pay per user, free
+ * users included.
+ */
+export interface ProviderView {
+  /** Every user, free ones included: each is billed. */
+  users: number;
+  freeUsers: number;
+  /** The provider's monthly fee per user, after any price rises. */
+  perUserFee: number;
+  /** What today's users cost a month at that fee. */
+  monthlyPerUserBill: number;
+  /** The provider's flat monthly bill, after any price rises. */
+  monthlyCost: number;
+}
+
+/**
  * Infrastructure: what each model costs to run, the ops it needs, the load the company can serve, and the outages
- * when it can't. A model with servers serves CU and DBU demand with them (see Servers); the others have a fixed
- * capacity for load.
+ * when it can't. A model with servers serves CU and DBU demand with them (see Servers). A model without them has no
+ * capacity limit (SaaS), unless a test config gives it a fixed capacity for load.
  */
 export function createInfrastructure(config: GameConfig, customers: Customers, events: Events, servers: Servers) {
+  /** No servers and no fixed capacity: the provider scales, so capacity is never the constraint. */
+  const unlimited = (model: ModelId) => !servers.hasServers(model) && config.models[model].capacity === undefined;
+
   /** Ops staff a model needs to start with: on a model with servers, for its starter setup. */
   const opsNeeded = (model: ModelId) => servers.modelOpsNeeded(model);
 
@@ -95,9 +114,11 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
 
   /**
    * Capacity with the current model and staff, before any event scales it. On a model with servers, the load its
-   * ready servers can carry at the product's usual mix of demand: the users they serve × load per user.
+   * ready servers can carry at the product's usual mix of demand: the users they serve × load per user. Unlimited
+   * (Infinity) on a model with no capacity limit.
    */
   function baseCapacity(state: GameState): number {
+    if (unlimited(state.model)) return Infinity;
     if (servers.hasServers(state.model)) {
       const users = servers.usersSupported(unitCapacity(state, state.day + 1), state.productType);
       const load = users * config.productTypes[state.productType].growth.loadPerUser;
@@ -106,9 +127,26 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     return Math.round(capacityFactor(state) * (config.models[state.model].capacity ?? 0));
   }
 
-  /** As baseCapacity, but on a day an event scaled the company up, capacity met that day's load. */
-  function capacity(state: GameState): number {
+  /**
+   * As baseCapacity, but on a day an event scaled the company up, capacity met that day's load. Null on a model with
+   * no capacity limit.
+   */
+  function capacity(state: GameState): number | null {
+    if (unlimited(state.model)) return null;
     return events.scaledUp(state) ? Math.max(baseCapacity(state), state.load) : baseCapacity(state);
+  }
+
+  /** On a model with no capacity limit (SaaS), what the provider bills for the users it scales to; otherwise null. */
+  function provider(state: GameState): ProviderView | null {
+    if (!unlimited(state.model)) return null;
+    const { monthlyCost, monthlyCostPerUser } = modelPrices(state, state.model);
+    return {
+      users: state.users,
+      freeUsers: state.users - state.paidUsers,
+      perUserFee: monthlyCostPerUser,
+      monthlyPerUserBill: Math.round(state.users * monthlyCostPerUser),
+      monthlyCost,
+    };
   }
 
   /**
@@ -149,9 +187,9 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
 
   /**
    * A day's load against capacity. Today's load and CU and DBU demand come from the users at the start of the day,
-   * plus any an event brings. A model that scales grows to meet the load, and is charged for it; otherwise the usual
-   * capacity rules decide whether there's an outage: on a model with servers, against the weakest tier. Draws once
-   * from the RNG.
+   * plus any an event brings. On a model with servers, the weakest tier decides whether there's an outage, unless an
+   * event scales it up (charged for); a model with no capacity limit never runs out, so only events take it down.
+   * Draws once from the RNG.
    */
   function serveLoad(state: GameState, day: number, today: EventToday[]) {
     const profile = config.productTypes[state.productType].growth;
@@ -159,13 +197,10 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     let load = Math.round(customers.baseLoad(state.productType, state.users, day) * loadVariation);
     const base = customers.baseDemand(state.productType, state.users, day);
     let unitMultiplier = loadVariation;
-    const scaling: { event: EventConfig; extraLoad: number; costPerLoad: number }[] = [];
-    for (const { event, outcome, scales } of today) {
+    for (const { event } of today) {
       if (!event.load) continue;
-      const before = load;
       load = Math.round(load * event.load.multiplier + event.load.extra);
       unitMultiplier *= event.load.unitMultiplier ?? event.load.multiplier;
-      if (scales) scaling.push({ event, extraLoad: load - before, costPerLoad: outcome.scaleCostPerLoad ?? 0 });
     }
     const demand: UnitDemand = { cu: tidy(base.cu * unitMultiplier), dbu: tidy(base.dbu * unitMultiplier) };
     const eventHours = today.reduce((sum, t) => sum + (t.outcome.downtimeHours ?? 0), 0);
@@ -182,19 +217,11 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
       return { load, demand, rng, overloaded: served.overloaded, hoursDown, charges: served.charges, outage };
     }
 
-    const cap = scaling.length ? Math.max(baseCapacity(state), load) : baseCapacity(state);
+    // With no capacity limit, the load always fits: only an event takes the service down.
+    const cap = baseCapacity(state);
     const overloaded = load > cap;
     const hoursDown = Math.min(24, (overloaded ? overloadHours(load / cap) : 0) + eventHours);
-
-    // Charges for scaling up to meet an event.
     const charges: LogEntry[] = [];
-    for (const { event, extraLoad, costPerLoad } of scaling) {
-      const cost = Math.round(extraLoad * costPerLoad);
-      if (cost > 0) {
-        const text = `${event.name}: scaled up for ${count.format(extraLoad)} extra load`;
-        charges.push({ text, cashDelta: -cost, category: "infrastructure" });
-      }
-    }
     let outage: LogEntry | undefined;
     if (hoursDown > 0) {
       const percent = Math.round((100 * load) / cap);
@@ -205,8 +232,9 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
   }
 
   /**
-   * A day's CU and DBU demand against the servers. An event that scales rents extra VMs for whatever is over
-   * capacity, charged per unit, so there's no overload; otherwise the binding tier's ratio sets any outage.
+   * A day's CU and DBU demand against the servers. An event that scales rents extra VMs (or on a managed platform,
+   * the platform scales itself) for whatever is over capacity, charged per unit, so there's no overload; otherwise the
+   * binding tier's ratio sets any outage.
    */
   function serveUnits(state: GameState, day: number, demand: UnitDemand, today: EventToday[]) {
     const cap: UnitCapacity = unitCapacity(state, day);
@@ -219,7 +247,10 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
       const cost = Math.round((cu + dbu) * (scaler.outcome.scaleCostPerUnit ?? 0));
       if (cost > 0) {
         const extra = [cu > 0 && `${count.format(Math.ceil(cu))} CU`, dbu > 0 && `${count.format(Math.ceil(dbu))} DBU`];
-        const text = `${scaler.event.name}: extra VMs for ${extra.filter(Boolean).join(" and ")} over capacity`;
+        const what = extra.filter(Boolean).join(" and ");
+        const text = servers.isManaged(state.model)
+          ? `${scaler.event.name}: the platform scaled up for ${what} over your setup`
+          : `${scaler.event.name}: extra VMs for ${what} over capacity`;
         charges.push({ text, cashDelta: -cost, category: "infrastructure" });
       }
       return { ratio: 0, overloaded: false, charges, cause: "" };
@@ -240,6 +271,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     dailyInfrastructure,
     monthlyInfrastructureCost,
     capacity,
+    provider,
     units,
     uptime,
     serveLoad,

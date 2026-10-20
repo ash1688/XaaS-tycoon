@@ -73,7 +73,7 @@ const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.fr
     <p :class="['ops-needed', { warn: game.understaffed }]" data-testid="ops-needed">
       <span>{{ game.modelName(game.company.model) }} needs <strong>{{ game.company.opsNeeded }}</strong> ops staff.</span>
       <span v-if="game.understaffed" class="badge">
-        Understaffed: {{ game.company.opsNeeded - game.company.ops }} short, capacity cut
+        Understaffed: {{ game.company.opsNeeded - game.company.ops }} short{{ game.provider ? "" : ", capacity cut" }}
       </span>
     </p>
   </section>

@@ -4,12 +4,12 @@ import { createCustomers } from "./customers.ts";
 import { createEvents, type EventView, type FeatureGapView } from "./events.ts";
 import { createFeatures, type FeatureView } from "./features.ts";
 import { createFinance, noSpend } from "./finance.ts";
-import { createInfrastructure } from "./infrastructure.ts";
+import { createInfrastructure, type ProviderView } from "./infrastructure.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
 import { isNameAllowed } from "./nameFilter.ts";
 import { createPricing, type PricePreview, type PriceWaveView } from "./pricing.ts";
 import { seedRng } from "./rng.ts";
-import { createServers, type ServerOption, type ServerView, type UnitsView } from "./servers.ts";
+import { createServers, type ManagedView, type ServerOption, type ServerView, type UnitsView } from "./servers.ts";
 import { createStaff } from "./staff.ts";
 import {
   GAME_STATE_VERSION,
@@ -32,13 +32,24 @@ import { createSupport } from "./support.ts";
 export type { ConversionDriver, ConversionDriverId, ConversionView } from "./conversion.ts";
 export type { EventView, FeatureGapView } from "./events.ts";
 export type { FeatureStatus, FeatureView } from "./features.ts";
+export type { ProviderView } from "./infrastructure.ts";
 export type { LostAddon, MigrationQuote, MigrationView } from "./migration.ts";
 export type { PricePreview, PriceWaveView } from "./pricing.ts";
-export type { LoadBalancerView, ServerOption, ServerView, TierView, UnitsView } from "./servers.ts";
+export type {
+  LoadBalancerView,
+  ManagedOption,
+  ManagedServiceView,
+  ManagedView,
+  ServerOption,
+  ServerView,
+  TierView,
+  UnitsView,
+} from "./servers.ts";
 export type { GameSummary, SummaryDay } from "./summary.ts";
 export {
   GAME_STATE_VERSION,
   isCurrentState,
+  isManagedService,
   isModelId,
   isProductTypeId,
   isServerSize,
@@ -79,14 +90,20 @@ export interface Sim {
   applyAction(state: GameState, action: Action): GameState;
   /** The only way time moves. Continue calls it with 1. */
   advance(state: GameState, days?: number): AdvanceResult;
-  /** Ops staff a model needs to keep running: on a model with servers, for the starter setup a company gets. */
+  /**
+   * Ops staff a model needs to keep running: its fixed number (the few on PaaS and SaaS), plus on a model with
+   * servers, the starter setup's.
+   */
   opsNeeded(model: ModelId): number;
   /**
    * Everything adopting a model costs up front: its upfront cost, plus on a model that buys its servers, the starter
    * kit at its purchase prices.
    */
   upfrontCost(model: ModelId): number;
-  /** Ops staff the company needs now: on a model with servers, for the servers it has, ready or not. */
+  /**
+   * Ops staff the company needs now: the model's fixed number, plus on a model with servers, the servers' shares.
+   * Managed services need none.
+   */
   opsNeededNow(state: GameState): number;
   /** What the current headcount costs per day. */
   dailyStaffCost(state: GameState): number;
@@ -110,18 +127,28 @@ export interface Sim {
   priceLockDaysLeft(state: GameState): number;
   /**
    * Load the company can serve in a day with its current model and staff. On a model with servers, the load its ready
-   * servers carry at the product's usual demand.
+   * servers carry at the product's usual demand. Null on SaaS, which has no capacity limit.
    */
-  capacity(state: GameState): number;
+  capacity(state: GameState): number | null;
   /**
    * On a model with servers, CU, DBU and CH demand on the day just played against what the ready servers give, the
-   * tier that runs out first, and load balancers against app servers. Null on a model with a fixed capacity.
+   * tier that runs out first, and load balancers against app servers. Null on SaaS, which has no servers.
    */
   units(state: GameState): UnitsView | null;
-  /** The company's servers, ready or not, oldest first. Empty on a model without servers. */
+  /** The company's servers, ready or not, oldest first: on PaaS its instances and managed services. Empty on SaaS. */
   servers(state: GameState): ServerView[];
-  /** Every server type and size the company can add on its model, with units and price. Empty without servers. */
+  /**
+   * Every server type and size the company can add one at a time on its model, with units and price. Empty on PaaS,
+   * which sets instances and service sizes (see managed), and on SaaS.
+   */
   serverOptions(state: GameState): ServerOption[];
+  /**
+   * On PaaS: the instance count, the managed database and cache with the sizes they come in, and what they cost.
+   * Null on any other model.
+   */
+  managed(state: GameState): ManagedView | null;
+  /** On SaaS: capacity is the provider's, so what you pay for it is the per-user bill. Null on any other model. */
+  provider(state: GameState): ProviderView | null;
   /** Tickets the support staff can clear in a day: support staff × tickets each. */
   dailyClearance(state: GameState): number;
   /** Tickets today's users would raise in a day before any burst: paid and free users × their rates. */
@@ -259,6 +286,10 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         return servers.buyServer(state, action.server, action.size);
       case "sellServer":
         return servers.sellServer(state, action.id);
+      case "setInstances":
+        return servers.setInstances(state, action.count);
+      case "setManagedService":
+        return servers.setManagedService(state, action.service, action.size);
       default:
         throw new SimError("unknown_action", "That action isn't recognised.");
     }
@@ -375,6 +406,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     units: (s) => infra.units(load(s)),
     servers: (s) => servers.servers(load(s)),
     serverOptions: (s) => servers.serverOptions(load(s)),
+    managed: (s) => servers.managed(load(s)),
+    provider: (s) => infra.provider(load(s)),
     dailyClearance: (s) => support.dailyClearance(load(s)),
     usualTickets: (s) => support.usualTickets(load(s)),
     conversion: (s) => conversion.conversion(load(s)),

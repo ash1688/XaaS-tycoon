@@ -65,8 +65,7 @@ const HOURS = range(0, 24, 1);
  */
 const EFFECT_FIELDS: Record<string, { label: string; help: string } & Range> = {
   opsNeeded: { label: "ops needed", help: "Ops staff needed to deal with it; with fewer, the short-of-ops outcome happens.", ...HEADCOUNT },
-  scaleCostPerLoad: { label: "cost per unit of extra load", help: "What scaling up to meet the extra load costs, per unit of load.", ...range(0, 1, 0.01) },
-  scaleCostPerUnit: { label: "cost per CU or DBU over capacity", help: "What the extra servers that meet it cost, per CU and DBU of demand over capacity, from the day they're ready.", ...range(0, 1_000, 1) },
+  scaleCostPerUnit: { label: "cost per CU or DBU over capacity", help: "What scaling up to meet it costs, per CU and DBU of demand over capacity, from the day the extra servers are ready (at once on PaaS).", ...range(0, 1_000, 1) },
   downtimeHours: { label: "hours down", help: "Hours of downtime on top of any outage from load.", ...HOURS },
   "cost.amount": { label: "clean-up cost", help: "A one-off charge for dealing with it.", ...POUNDS },
   "priceRise.percent": { label: "price rise %", help: "The provider's prices go up by this percent for good.", ...range(0, 200, 1) },
@@ -101,7 +100,10 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     for (const t of SERVER_TYPES) {
       for (const size of SERVER_SIZES) {
         const name = base.servers.types[t]?.name ?? t;
-        if (servers.purchase) {
+        if (servers.managed) {
+          const managedName = t === "app" ? "App instance" : `Managed ${name.toLowerCase()}`;
+          add(`models.${m}.servers.monthlyCost.${t}.${size}`, "Money", MODEL_LABELS[m], `${managedName} (${size}): monthly price`, "What one costs a month, billed daily. The provider runs it, so it's ready at once and needs no ops.", range(0, 100_000, 10));
+        } else if (servers.purchase) {
           add(`models.${m}.servers.purchase.price.${t}.${size}`, "Money", MODEL_LABELS[m], `${name} (${size}): purchase price`, "What buying one of these servers costs, charged at once (capex).", range(0, 1_000_000, 100));
           add(`models.${m}.servers.monthlyCost.${t}.${size}`, "Money", MODEL_LABELS[m], `${name} (${size}): running cost a month`, "Power and upkeep for one of these servers, billed daily from the day after it arrives.", range(0, 100_000, 5));
         } else {
@@ -196,9 +198,6 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("support.churnAtZero", "Customers", "Support", "Churn at 0% satisfaction", "Share of users who leave each day at 0% satisfaction, falling to none at good satisfaction.", range(0, 0.5, 0.001));
 
   // Infrastructure
-  for (const m of MODEL_IDS) {
-    add(`models.${m}.capacity`, "Infrastructure", MODEL_LABELS[m], "Capacity", "Load the model serves in a day when fully staffed.", range(0, 10_000_000, 1_000));
-  }
   for (const p of PRODUCT_TYPE_IDS) {
     const product = base.productTypes[p];
     if (!product) continue;
@@ -233,8 +232,25 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     } else {
       add(`models.${m}.servers.readyDays`, "Infrastructure", MODEL_LABELS[m], "Days until a server is ready", "Days from adding a server to it being ready (1 = the next day). It serves from the day after.", range(0, 60, 1));
     }
+    if (servers.managed) {
+      add(`models.${m}.servers.managed.maxInstances`, "Infrastructure", MODEL_LABELS[m], "Most app instances", "The most app instances a company can run on the platform.", range(1, 100, 1));
+      for (const t of ["database", "cache"] as const) {
+        for (const size of SERVER_SIZES) {
+          const unit = t === "database" ? "DBU" : "CH";
+          add(`models.${m}.servers.managed.units.${t}.${size}`, "Infrastructure", MODEL_LABELS[m], `Managed ${t} (${size}): ${unit}`, `The ${unit} a managed ${t} of this size gives. You run only one, so the sizes go higher than a server's.`, range(0, 10_000, 1));
+        }
+      }
+    }
     servers.starter.forEach((s, i) => {
       const name = base.servers.types[s.type]?.name.toLowerCase() ?? s.type;
+      if (servers.managed) {
+        if (s.type === "app") {
+          add(`models.${m}.servers.starter.${i}.count`, "Infrastructure", MODEL_LABELS[m], "Starter setup: app instances", "How many app instances a new company on this model starts with, ready for the first day. A migration onto it gets them too.", range(1, 100, 1));
+        } else {
+          add(`models.${m}.servers.starter.${i}.count`, "Infrastructure", MODEL_LABELS[m], `Starter setup: ${s.size} managed ${name} (0 or 1)`, "Whether a new company on this model starts with this managed service, ready for the first day. A migration onto it gets it too.", range(0, 1, 1));
+        }
+        return;
+      }
       const help = servers.purchase
         ? "How many a new company on this model starts with, bought at their purchase prices on top of the upfront cost. A migration onto it buys them too."
         : "How many a new company on this model starts with, ready for the first day. A migration onto it gets them too.";
@@ -252,7 +268,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add(`staff.${pool}.startingCount`, "People", s, "Starting headcount", "How many a new company starts with.", HEADCOUNT);
   }
   for (const m of MODEL_IDS) {
-    add(`models.${m}.opsNeeded`, "People", MODEL_LABELS[m], "Ops needed", "Ops staff this model needs to run at full capacity.", HEADCOUNT);
+    add(`models.${m}.opsNeeded`, "People", MODEL_LABELS[m], "Ops needed", "Ops staff this model needs to keep the service running, however big it gets. Too few cuts capacity on a model with servers.", HEADCOUNT);
     for (const t of SERVER_TYPES) {
       const name = base.servers.types[t]?.name ?? t;
       add(`models.${m}.servers.opsPerServer.${t}`, "People", MODEL_LABELS[m], `Ops per ${name.toLowerCase()}`, "Ops staff each one needs. Ops needed is the total over every server, rounded up.", range(0, 5, 0.05));

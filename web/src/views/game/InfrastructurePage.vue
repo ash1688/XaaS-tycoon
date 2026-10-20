@@ -3,11 +3,15 @@ import { nextTick, watch } from "vue";
 import { useRoute } from "vue-router";
 import CapacityPanel from "../../panels/CapacityPanel.vue";
 import MigrationPanel from "../../panels/MigrationPanel.vue";
+import PlatformPanel from "../../panels/PlatformPanel.vue";
 import ServersPanel from "../../panels/ServersPanel.vue";
 import StackPanel from "../../panels/StackPanel.vue";
+import { useGame } from "../../game";
 
-// Infrastructure: load and capacity (on IaaS, CU, DBU and CH, and the servers that give them), who looks after each layer, and migration. A link to #layer-<id>, such as an
-// event card's, scrolls to that layer of the stack and focuses it.
+// Infrastructure: load and capacity (CU, DBU and CH, and the servers that give them: bought on-prem, rented on IaaS,
+// instances and managed services on PaaS; on SaaS, the provider's), who looks after each layer, and migration. A link
+// to #layer-<id>, such as an event card's, scrolls to that layer of the stack and focuses it.
+const game = useGame();
 const route = useRoute();
 watch(
   () => route.hash,
@@ -25,7 +29,8 @@ watch(
 <template>
   <div class="page-grid">
     <CapacityPanel />
-    <ServersPanel />
+    <PlatformPanel v-if="game.managed" />
+    <ServersPanel v-else />
     <StackPanel />
     <MigrationPanel class="span-all" />
   </div>

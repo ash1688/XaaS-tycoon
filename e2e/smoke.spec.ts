@@ -297,12 +297,13 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
   const quote = student.getByTestId("migration-quote");
   await expect(quote).toContainText("You switch on day 15");
   await expect(student.getByTestId("quote-days")).toHaveText("14 days");
-  // Default config: PaaS is £1,000 upfront and £300 a day; IaaS £74 a day with its starter VMs, and £3,000 to leave.
+  // Default config: PaaS is £1,000 upfront and £110 a day with its starter instance and managed database; IaaS £74 a
+  // day with its starter VMs, and £3,000 to leave.
   await expect(student.getByTestId("quote-upfront")).toHaveText("£1,000");
-  await expect(student.getByTestId("quote-double")).toHaveText("£4,200");
+  await expect(student.getByTestId("quote-double")).toHaveText("£1,540");
   await expect(student.getByTestId("quote-pro-rata")).toHaveText("£1,036");
   await expect(student.getByTestId("quote-exit")).toHaveText("£3,000");
-  await expect(student.getByTestId("quote-total")).toHaveText("£9,236");
+  await expect(student.getByTestId("quote-total")).toHaveText("£6,576");
   await expect(student.getByTestId("quote-overrun")).toContainText("chance of 2–5 extra days");
   // Nothing has started or been charged yet.
   const company = async () => (await request.get(`/api/codes/${code}/companies/${id}`)).json();
@@ -355,7 +356,7 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
   await goTo(student, "People");
   await expect(student.getByTestId("ops-needed")).toContainText("needs 1 ops staff");
   await goTo(student, "Finance");
-  await expect(student.getByTestId("model-costs")).toContainText("£9,000 a month");
+  await expect(student.getByTestId("model-costs")).toContainText("£1,500 a month plus your instances and managed services");
   dayLog = await openDayLog(student);
   await expect(dayLog).toContainText("Migration complete");
   await expect(dayLog).toContainText("Exit penalty: leaving Rent VMs (IaaS)");
