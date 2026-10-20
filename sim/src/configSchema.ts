@@ -4,7 +4,16 @@
 // A path names one number in the config, dot-separated. Lists of things with an id (features, events) are keyed by
 // id, other lists by position: "models.iaas.monthlyCost", "productTypes.video.features.hd.devDays",
 // "events.osPatch.schedule.days.0". Overrides are a flat map of path to number: only the numbers that differ.
-import { MIGRATION_PHASES, MODEL_IDS, PRODUCT_TYPE_IDS, STAFF_POOLS, defaultConfig, type GameConfig } from "./config.ts";
+import {
+  MIGRATION_PHASES,
+  MODEL_IDS,
+  PRODUCT_TYPE_IDS,
+  SERVER_SIZES,
+  SERVER_TYPES,
+  STAFF_POOLS,
+  defaultConfig,
+  type GameConfig,
+} from "./config.ts";
 
 export const CONFIG_GROUPS = ["Money", "Customers", "Infrastructure", "People", "Migration", "Events"] as const;
 export type ConfigGroup = (typeof CONFIG_GROUPS)[number];
@@ -57,6 +66,7 @@ const HOURS = range(0, 24, 1);
 const EFFECT_FIELDS: Record<string, { label: string; help: string } & Range> = {
   opsNeeded: { label: "ops needed", help: "Ops staff needed to deal with it; with fewer, the short-of-ops outcome happens.", ...HEADCOUNT },
   scaleCostPerLoad: { label: "cost per unit of extra load", help: "What scaling up to meet the extra load costs, per unit of load.", ...range(0, 1, 0.01) },
+  scaleCostPerUnit: { label: "cost per CU or DBU over capacity", help: "What the extra servers that meet it cost, per CU and DBU of demand over capacity, from the day they're ready.", ...range(0, 1_000, 1) },
   downtimeHours: { label: "hours down", help: "Hours of downtime on top of any outage from load.", ...HOURS },
   "cost.amount": { label: "clean-up cost", help: "A one-off charge for dealing with it.", ...POUNDS },
   "priceRise.percent": { label: "price rise %", help: "The provider's prices go up by this percent for good.", ...range(0, 200, 1) },
@@ -81,6 +91,16 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add(`models.${m}.monthlyCost`, "Money", s, "Monthly cost", "The provider's fixed bill (power and upkeep on-prem), billed daily.", range(0, 200_000, 100));
     add(`models.${m}.monthlyCostPerUser`, "Money", s, "Monthly cost per user", "Extra per user per month, billed daily on that day's users.", PER_USER);
     add(`models.${m}.exitPenalty`, "Money", s, "Exit penalty", "The provider's fee for leaving, charged when a migration away completes.", POUNDS);
+  }
+  for (const m of MODEL_IDS) {
+    const servers = base.models[m]?.servers;
+    if (!servers) continue;
+    for (const t of SERVER_TYPES) {
+      for (const size of SERVER_SIZES) {
+        const name = base.servers.types[t]?.name ?? t;
+        add(`models.${m}.servers.monthlyCost.${t}.${size}`, "Money", MODEL_LABELS[m], `${name} (${size}): monthly price`, "What one of these servers costs a month, billed daily from the day after it's added.", range(0, 100_000, 10));
+      }
+    }
   }
   add("pricing.maxPrice", "Money", "", "Highest monthly price", "The most a student can charge each paying user a month. High on purpose.", range(1, 100_000, 1));
   for (const p of PRODUCT_TYPE_IDS) {
@@ -176,6 +196,33 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add(`${g}.loadNoise`, "Infrastructure", product.name, "Load variation", "Daily load varies randomly by up to this share either way.", SHARE);
     add(`${g}.seasonalSpike.loadMultiplier`, "Infrastructure", product.name, "Seasonal spike: load multiplier", "Load is multiplied by this during a busy season.", MULTIPLIER);
   }
+  for (const p of PRODUCT_TYPE_IDS) {
+    const product = base.productTypes[p];
+    if (!product) continue;
+    const UNIT_DEMAND = range(0, 1, 0.0005);
+    add(`productTypes.${p}.demand.cuPerUser`, "Infrastructure", product.name, "CU per user", "Compute units each user needs from app servers, paying or free (0.004 = 250 users a CU).", UNIT_DEMAND);
+    add(`productTypes.${p}.demand.dbuPerUser`, "Infrastructure", product.name, "DBU per user", "Database units each user needs, paying or free, before any cache.", UNIT_DEMAND);
+  }
+  const S = "Servers";
+  for (const t of SERVER_TYPES) {
+    const type = base.servers.types[t];
+    if (!type) continue;
+    const unit = t === "app" ? "CU" : t === "database" ? "DBU" : t === "cache" ? "CH" : "app servers served";
+    for (const size of SERVER_SIZES) {
+      add(`servers.types.${t}.units.${size}`, "Infrastructure", S, `${type.name} (${size}): ${unit}`, t === "loadBalancer" ? "How many app servers one load balancer of this size can serve." : `The ${unit} one server of this size gives.`, range(0, 10_000, 1));
+    }
+  }
+  add("servers.loadBalancerFrom", "Infrastructure", S, "Load balancers needed from", "App servers from which load balancers are needed. Without one, traffic reaches only one app server.", range(1, 20, 1));
+  add("servers.cacheableShare", "Infrastructure", S, "Cacheable share of database demand", "The most of the database demand caches can take, one cache hit for one DBU.", SHARE);
+  for (const m of MODEL_IDS) {
+    const servers = base.models[m]?.servers;
+    if (!servers) continue;
+    add(`models.${m}.servers.readyDays`, "Infrastructure", MODEL_LABELS[m], "Days until a server is ready", "Days from adding a server to it being ready (1 = the next day). It serves from the day after.", range(0, 60, 1));
+    servers.starter.forEach((s, i) => {
+      const name = base.servers.types[s.type]?.name.toLowerCase() ?? s.type;
+      add(`models.${m}.servers.starter.${i}.count`, "Infrastructure", MODEL_LABELS[m], `Starter setup: ${s.size} ${name}s`, "How many a new company on this model starts with, ready for the first day. A migration onto it gets them too.", HEADCOUNT);
+    });
+  }
   add("capacity.unstaffedShare", "Infrastructure", "", "Capacity with no ops", "Share of capacity a model keeps with no ops at all, rising with ops up to full.", SHARE);
   add("outage.baseHours", "Infrastructure", "", "Outage hours", "Hours down on any day load exceeds capacity.", HOURS);
   add("outage.hoursPerOverload", "Infrastructure", "", "Extra hours per 100% overload", "Extra hours down per 100% of load over capacity, up to 24 a day.", range(0, 100, 1));
@@ -188,6 +235,10 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   }
   for (const m of MODEL_IDS) {
     add(`models.${m}.opsNeeded`, "People", MODEL_LABELS[m], "Ops needed", "Ops staff this model needs to run at full capacity.", HEADCOUNT);
+    for (const t of SERVER_TYPES) {
+      const name = base.servers.types[t]?.name ?? t;
+      add(`models.${m}.servers.opsPerServer.${t}`, "People", MODEL_LABELS[m], `Ops per ${name.toLowerCase()}`, "Ops staff each one needs. Ops needed is the total over every server, rounded up.", range(0, 5, 0.05));
+    }
   }
   for (const p of PRODUCT_TYPE_IDS) {
     for (const f of base.productTypes[p]?.features ?? []) {
@@ -223,6 +274,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add(`${at}.days`, "Events", s, "Days it lasts", "Days it lasts from the day it fires.", range(1, 30, 1));
     add(`${at}.load.multiplier`, "Events", s, "Load multiplier", "While it's on, the day's load is multiplied by this…", MULTIPLIER);
     add(`${at}.load.extra`, "Events", s, "Extra load", "…and this much load is added.", range(0, 1_000_000, 1_000));
+    add(`${at}.load.unitMultiplier`, "Events", s, "CU and DBU demand multiplier", "On a model with servers, CU and DBU demand are multiplied by this while it's on.", MULTIPLIER);
     for (const m of MODEL_IDS) {
       if (!event.effects[m]) continue;
       for (const [rel, meta] of Object.entries(EFFECT_FIELDS)) {

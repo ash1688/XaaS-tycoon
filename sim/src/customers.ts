@@ -3,7 +3,7 @@ import type { Events } from "./events.ts";
 import type { Features } from "./features.ts";
 import type { Pricing } from "./pricing.ts";
 import { vary } from "./rng.ts";
-import type { GameState } from "./state.ts";
+import type { GameState, UnitDemand } from "./state.ts";
 import type { Support } from "./support.ts";
 
 /**
@@ -23,6 +23,7 @@ export function createCustomers(
       users,
       ...pricing.startingPricing(productType, users),
       load: Math.round(baseLoad(productType, users, day)),
+      demand: baseDemand(productType, users, day),
       outageDays: 0,
       downtimeHours: 0,
     };
@@ -33,11 +34,22 @@ export function createCustomers(
     return !!spike && day >= spike.firstDay && (day - spike.firstDay) % spike.every < spike.length;
   }
 
+  /** What the seasonal spike multiplies load and demand by on a day: 1 outside one. */
+  function spikeMultiplier(productType: ProductTypeId, day: number): number {
+    const spike = config.productTypes[productType].growth.seasonalSpike;
+    return spike && inSpike(productType, day) ? spike.loadMultiplier : 1;
+  }
+
   /** Load from a product's users on a given day, before random variation. */
   function baseLoad(productType: ProductTypeId, users: number, day: number): number {
-    const { loadPerUser, seasonalSpike } = config.productTypes[productType].growth;
-    const spike = seasonalSpike && inSpike(productType, day) ? seasonalSpike.loadMultiplier : 1;
-    return users * loadPerUser * spike;
+    return users * config.productTypes[productType].growth.loadPerUser * spikeMultiplier(productType, day);
+  }
+
+  /** CU and DBU demand from a product's users on a given day, before random variation. It spikes like load. */
+  function baseDemand(productType: ProductTypeId, users: number, day: number): UnitDemand {
+    const { cuPerUser, dbuPerUser } = config.productTypes[productType].demand;
+    const spike = spikeMultiplier(productType, day);
+    return { cu: users * cuPerUser * spike, dbu: users * dbuPerUser * spike };
   }
 
   /** Each factor scales the day's growth. Later mechanics (reputation) add their own here. */
@@ -81,7 +93,7 @@ export function createCustomers(
     return { users, paidUsers: pricing.paidUsersAfter(kept, users), churned, rng: next };
   }
 
-  return { startingUsers, baseLoad, grow };
+  return { startingUsers, baseLoad, baseDemand, grow };
 }
 
 export type Customers = ReturnType<typeof createCustomers>;

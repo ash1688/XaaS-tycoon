@@ -6,6 +6,8 @@ import {
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
   responsibilityStack,
+  SERVER_SIZES,
+  SERVER_TYPES,
   SPEND_CATEGORIES,
   SimError,
   type Action,
@@ -14,6 +16,9 @@ import {
   type GameConfig,
   type GameState,
   type LogEntry,
+  type ModelId,
+  type ServerSize,
+  type ServerType,
   type Sim,
   type StaffPool,
 } from "../src/index.ts";
@@ -40,6 +45,23 @@ const features = [
 const pricing = { fairPrice: 30, freeShare: 1, conversionRate: 0 };
 // No tickets unless a test says otherwise, so satisfaction stays at 100% and never touches growth.
 const support = { ticketsPerPaidUser: 0, ticketsPerFreeUser: 0 };
+
+// Units 10 a CU and DBU at 1,000 users, so a massive server serves 1,000,000: the starter setup never runs out unless a
+// test makes it. Video needs five times the compute, like its load.
+const demand = { cuPerUser: 0.01, dbuPerUser: 0.01 };
+const sizes = (small: number, medium: number, large: number, massive: number) => ({ small, medium, large, massive });
+// Rent a month: £30 small, £60 medium, £90 large (£1, £2 and £3 a day). Massive is free, so the starter setup costs
+// nothing and IaaS bills only its flat monthly cost unless a test rents more.
+const rent = () => sizes(30, 60, 90, 0);
+const iaasServers = {
+  monthlyCost: { app: rent(), database: rent(), cache: rent(), loadBalancer: rent() },
+  readyDays: 1,
+  opsPerServer: { app: 1, database: 1, cache: 0.5, loadBalancer: 0.5 },
+  starter: [
+    { type: "app" as const, size: "massive" as const, count: 1 },
+    { type: "database" as const, size: "massive" as const, count: 1 },
+  ],
+};
 
 function costs(monthlyCost: number) {
   return { upfrontCost: 0, monthlyCost, monthlyCostPerUser: 0, exitPenalty: 0 };
@@ -71,7 +93,8 @@ const config: GameConfig = {
   // No upfront or per-user costs, so each model costs a flat monthly ÷ 30 a day unless a test adds them.
   models: {
     onprem: { name: "On-prem", blurb: "", comparison, ...costs(300), opsNeeded: 3, capacity: 1_000_000 },
-    iaas: { name: "IaaS", blurb: "", comparison, ...costs(600), opsNeeded: 2, capacity: 1_000_000 },
+    // IaaS rents VMs: its capacity and ops needed come from its servers.
+    iaas: { name: "IaaS", blurb: "", comparison, ...costs(600), servers: iaasServers },
     paas: { name: "PaaS", blurb: "", comparison, ...costs(900), opsNeeded: 1, capacity: 1_000_000 },
     saas: { name: "SaaS", blurb: "", comparison, ...costs(150), opsNeeded: 0, capacity: 1_000_000 },
   },
@@ -84,15 +107,17 @@ const config: GameConfig = {
         dailyGrowth: 0.02,
         seasonalSpike: { firstDay: 10, every: 10, length: 3, loadMultiplier: 3, growthMultiplier: 3 },
       },
+      demand,
       pricing,
       support,
       features,
     },
-    social: { name: "Social", profile: "", growth: { ...growth, dailyGrowth: 0.06 }, pricing, support, features },
+    social: { name: "Social", profile: "", growth: { ...growth, dailyGrowth: 0.06 }, demand, pricing, support, features },
     video: {
       name: "Video",
       profile: "",
       growth: { ...growth, dailyGrowth: 0.02, loadPerUser: 5 },
+      demand: { cuPerUser: 0.05, dbuPerUser: 0.01 },
       pricing,
       support,
       features,
@@ -105,6 +130,16 @@ const config: GameConfig = {
     support: { name: "Support", personName: "support person", dayRate: 2, startingCount: 0 },
   },
   capacity: { unstaffedShare: 0.4 },
+  servers: {
+    types: {
+      app: { name: "App server", blurb: "", units: sizes(10, 100, 1_000, 10_000) },
+      database: { name: "Database", blurb: "", units: sizes(10, 100, 1_000, 10_000) },
+      cache: { name: "Cache", blurb: "", units: sizes(10, 100, 1_000, 10_000) },
+      loadBalancer: { name: "Load balancer", blurb: "", units: sizes(2, 4, 8, 16) },
+    },
+    loadBalancerFrom: 2,
+    cacheableShare: 0.5,
+  },
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25 },
   billing: { daysPerMonth: 30 },
   // No price waves unless a test says otherwise, so a price change only has its ongoing effect on growth and payers.
@@ -144,6 +179,19 @@ const config: GameConfig = {
 };
 
 const sim = createSim(config);
+
+/**
+ * A config whose IaaS starter app server carries this much load at 1 a user: its CU is load ÷ 100, at 0.01 CU a user.
+ * The database stays far bigger, so compute is the tier that runs out.
+ */
+const iaasCapacity = (load: number, base: GameConfig = config): GameConfig => {
+  const app = base.servers.types.app;
+  return {
+    ...base,
+    servers: { ...base.servers, types: { ...base.servers.types, app: { ...app, units: { ...app.units, massive: load / 100 } } } },
+  };
+};
+
 const start = () => sim.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 });
 
 describe("newGame", () => {
@@ -336,9 +384,11 @@ describe("staff", () => {
     expect(MODEL_IDS.map((m) => sim.opsNeeded(m))).toEqual([3, 2, 1, 0]);
   });
 
-  it("needs fewer ops from on-prem to IaaS to PaaS, and none on SaaS, by default", () => {
+  it("needs fewer ops on IaaS's starter VMs than on-prem, and none on SaaS, by default", () => {
     const needed = MODEL_IDS.map((m) => createSim(defaultConfig).opsNeeded(m));
-    for (let i = 1; i < needed.length; i++) expect(needed[i]).toBeLessThan(needed[i - 1]!);
+    expect(needed[1]).toBeLessThan(needed[0]!);
+    expect(needed[2]).toBeLessThanOrEqual(needed[1]!);
+    expect(needed[2]).toBeGreaterThan(0);
     expect(createSim(defaultConfig).opsNeeded("saas")).toBe(0);
   });
 });
@@ -728,11 +778,329 @@ describe("capacity and outages", () => {
   });
 
   it("causes outages when understaffed that full staffing avoids", () => {
-    const s = createSim({ ...config, models: { ...config.models, iaas: { ...config.models.iaas, capacity: 3000 } } });
+    const s = createSim(iaasCapacity(3000));
     const start = s.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 42 });
     const staffed = { ...start, ops: 2 };
     expect(s.advance(start, 10).state.outageDays).toBeGreaterThan(0);
     expect(s.advance(staffed, 10).state.outageDays).toBe(0);
+  });
+});
+
+describe("servers on IaaS", () => {
+  // No growth or variation, so demand is exactly users × 0.01 CU and DBU: 1,000 users need 10 of each. Cash for a
+  // month or two of rent and ops.
+  const still = { dailyGrowth: 0, growthNoise: 0, loadNoise: 0 };
+  const flatConfig: GameConfig = {
+    ...config,
+    startingCash: 100_000,
+    productTypes: {
+      ...config.productTypes,
+      social: { ...config.productTypes.social, growth: { ...config.productTypes.social.growth, ...still } },
+    },
+  };
+  const flat = createSim(flatConfig);
+  // Plenty of ops, so no tier is cut for missing staff unless a test says so.
+  const begin = (s: Sim = flat, model = "iaas") => ({
+    ...s.newGame({ companyName: "Acme", productType: "social", model, seed: 42 }),
+    ops: 10,
+  });
+  type Kind = [type: ServerType, size: ServerSize];
+  /** The state with exactly these servers, all ready. */
+  const fleet = (state: GameState, ...servers: Kind[]): GameState => ({
+    ...state,
+    servers: servers.map(([type, size], i) => ({ id: i + 1, type, size, readyDay: state.day })),
+    nextServerId: servers.length + 1,
+  });
+  const withUsers = (state: GameState, users: number) => ({ ...state, users, paidUsers: 0 });
+  const rent = (state: GameState, server: ServerType, size: ServerSize, s: Sim = flat) =>
+    s.applyAction(state, { type: "rentServer", server, size });
+  const outages = (log: DayLog[]) => log.flatMap((d) => d.entries.filter((e) => e.kind === "outage").map((e) => e.text));
+  const rentLines = (log: DayLog[]) => log.flatMap((d) => d.entries.filter((e) => e.text.includes(" rent: ")));
+  const BIG_DB: Kind = ["database", "massive"];
+  const BIG_APP: Kind = ["app", "massive"];
+
+  it("starts a new IaaS game with the configured starter setup, ready for the first day", () => {
+    const state = begin();
+    expect(flat.servers(state)).toEqual([
+      { id: 1, type: "app", size: "massive", name: "App server", status: "ready", readyDay: 1, units: 10_000, monthlyCost: 0 },
+      { id: 2, type: "database", size: "massive", name: "Database", status: "ready", readyDay: 1, units: 10_000, monthlyCost: 0 },
+    ]);
+    expect(flat.units(state)).toMatchObject({ cu: { demand: 10, capacity: 10_000 }, dbu: { demand: 10, capacity: 10_000 } });
+  });
+
+  it("gives each size its units from config, and offers every type and size with its units and price", () => {
+    for (const size of SERVER_SIZES) {
+      const units = flat.units(fleet(begin(), ["app", size], ["database", size], ["cache", size]))!;
+      const expected = config.servers.types.app.units[size];
+      expect(units.cu.capacity).toBe(expected);
+      expect(units.dbu.capacity).toBe(expected);
+      expect(units.ch.capacity).toBe(expected);
+    }
+    const options = flat.serverOptions(begin());
+    expect(options).toHaveLength(SERVER_TYPES.length * SERVER_SIZES.length);
+    expect(options.find((o) => o.type === "database" && o.size === "large")).toMatchObject({
+      name: "Database",
+      units: 1_000,
+      monthlyCost: 90,
+    });
+  });
+
+  it("caps capacity at the weakest tier, and has an outage when demand is over it", () => {
+    // 1,500 users need 15 CU and 15 DBU.
+    const dbBound = withUsers(fleet(begin(), BIG_APP, ["database", "small"]), 1_500);
+    const units = flat.units(flat.advance(dbBound).state)!;
+    expect(units.binding).toBe("dbu");
+    expect(units.usersSupported).toBe(1_000);
+    expect(outages(flat.advance(dbBound).log)).toEqual([expect.stringMatching(/^Outage: the database \(DBU\) hit 150% of capacity\./)]);
+
+    const cuBound = withUsers(fleet(begin(), ["app", "small"], BIG_DB), 1_500);
+    expect(flat.units(flat.advance(cuBound).state)!.binding).toBe("cu");
+    expect(outages(flat.advance(cuBound).log)).toEqual([expect.stringMatching(/^Outage: compute \(CU\) hit 150% of capacity\./)]);
+    // Within both tiers, no outage: big enough on one tier doesn't make up for the other.
+    expect(outages(flat.advance(withUsers(fleet(begin(), BIG_APP, BIG_DB), 1_500)).log)).toEqual([]);
+    // The single capacity figure is the binding tier's, as load: 1,000 users at 1 load each.
+    expect(flat.capacity(dbBound)).toBe(1_000);
+  });
+
+  it("takes database demand off with a cache, one hit a DBU, up to the cacheable share", () => {
+    // 1,500 users need 15 DBU: a cache can take half, 7.5, leaving 7.5 for a 10 DBU database.
+    const cached = withUsers(fleet(begin(), BIG_APP, ["database", "small"], ["cache", "small"]), 1_500);
+    const { state, log } = flat.advance(cached);
+    expect(outages(log)).toEqual([]);
+    expect(flat.units(state)).toMatchObject({
+      dbu: { demand: 7.5, capacity: 10, beforeCache: 15 },
+      ch: { demand: 7.5, capacity: 10, absorbed: 7.5 },
+    });
+    // A database with a cache serves twice what it does alone, here.
+    expect(flat.units(state)!.usersSupported).toBe(2_000);
+    // However big the cache, half the demand still reaches the database: 3,000 users leave 15 DBU for its 10.
+    const bigCache = withUsers(fleet(begin(), BIG_APP, ["database", "small"], ["cache", "massive"]), 3_000);
+    expect(outages(flat.advance(bigCache).log)).toHaveLength(1);
+    // A small cache takes all it can hold: 2,000 users leave 20 - 10 for the database.
+    const full = flat.advance(withUsers(fleet(begin(), BIG_APP, ["database", "small"], ["cache", "small"]), 2_000)).state;
+    expect(flat.units(full)).toMatchObject({ dbu: { demand: 10 }, ch: { demand: 10, absorbed: 10 } });
+  });
+
+  it("needs load balancers from 2 app servers, and counts only the app servers they cover", () => {
+    const lb = (state: GameState) => flat.units(state)!.loadBalancer;
+    const one = fleet(begin(), ["app", "small"], BIG_DB);
+    expect(lb(one)).toMatchObject({ appServers: 1, needed: false, counted: 1, uncovered: 0 });
+    expect(flat.units(one)!.cu.capacity).toBe(10);
+
+    // Two app servers and no load balancer: traffic reaches only one, the biggest.
+    const two = fleet(begin(), ["app", "small"], ["app", "medium"], BIG_DB);
+    expect(lb(two)).toMatchObject({ appServers: 2, loadBalancers: 0, needed: true, coverage: 0, counted: 1, uncovered: 1 });
+    expect(flat.units(two)!.cu.capacity).toBe(100);
+
+    const balanced = fleet(begin(), ["app", "small"], ["app", "medium"], ["loadBalancer", "small"], BIG_DB);
+    expect(lb(balanced)).toMatchObject({ coverage: 2, counted: 2, uncovered: 0 });
+    expect(flat.units(balanced)!.cu.capacity).toBe(110);
+
+    // A small load balancer serves 2: a third app server beyond it doesn't count, until a second covers it.
+    const three = fleet(begin(), ["app", "small"], ["app", "small"], ["app", "small"], ["loadBalancer", "small"], BIG_DB);
+    expect(lb(three)).toMatchObject({ appServers: 3, counted: 2, uncovered: 1 });
+    expect(flat.units(three)!.cu.capacity).toBe(20);
+    expect(flat.units({ ...three, servers: [...three.servers, { id: 9, type: "loadBalancer", size: "small", readyDay: 1 }] })!.cu.capacity).toBe(30);
+
+    // Uncovered app servers can't stop an outage.
+    const crowded = withUsers(fleet(begin(), ["app", "small"], ["app", "small"], BIG_DB), 1_500);
+    expect(outages(flat.advance(crowded).log)).toHaveLength(1);
+    expect(outages(flat.advance(rent(crowded, "loadBalancer", "small")).log)).toHaveLength(1);
+    expect(outages(flat.advance(flat.advance(rent(crowded, "loadBalancer", "small")).state).log)).toHaveLength(0);
+  });
+
+  it("rents a VM without moving time on or touching cash, ready the next day", () => {
+    const before = fleet(begin(), BIG_DB);
+    const rented = rent(before, "app", "small");
+    expect(rented).toMatchObject({ day: before.day, cash: before.cash, nextServerId: before.nextServerId + 1 });
+    expect(flat.servers(rented).at(-1)).toMatchObject({ type: "app", size: "small", status: "pending", readyDay: 2 });
+    // Not ready yet: it isn't serving.
+    expect(flat.units(rented)!.cu.capacity).toBe(0);
+    const next = flat.advance(rented);
+    expect(flat.servers(next.state).at(-1)!.status).toBe("ready");
+    expect(flat.units(next.state)!.cu.capacity).toBe(10);
+    // The day it was set up ran without it.
+    expect(outages(next.log)).toHaveLength(1);
+    expect(outages(flat.advance(next.state).log)).toHaveLength(0);
+  });
+
+  it("bills each VM monthly, a day's share at a time from the next day played, in infrastructure", () => {
+    // A small app server is £30 a month: £1 a day. The starter's massive servers are free here.
+    const rented = rent(rent(begin(), "app", "small"), "app", "small");
+    const { state, log } = flat.advance(rented, 30);
+    const lines = rentLines(log);
+    expect(lines).toHaveLength(30);
+    expect(lines[0]).toEqual({ text: "App server (small) rent: 2 × £30 a month", cashDelta: -2, category: "infrastructure" });
+    // A month of days bills the monthly price, on top of IaaS's own £20 a day.
+    const without = flat.advance(begin(), 30).state;
+    expect(without.spend.infrastructure - state.spend.infrastructure).toBe(-60);
+    expect(flat.monthlyInfrastructureCost(rented)).toBe(flat.monthlyInfrastructureCost(begin()) + 60);
+  });
+
+  it("cancels pro rata: rent stops from the next day, so you pay only for the days you had it", () => {
+    const rented = rent(fleet(begin(), BIG_APP, BIG_DB), "database", "medium");
+    const id = rented.servers.at(-1)!.id;
+    const ten = flat.advance(rented, 10).state;
+    const cancelled = flat.applyAction(ten, { type: "cancelServer", id });
+    expect(cancelled).toMatchObject({ day: ten.day, cash: ten.cash });
+    expect(flat.servers(cancelled).map((s) => s.id)).not.toContain(id);
+    const { state, log } = flat.advance(cancelled, 20);
+    expect(rentLines(log)).toEqual([]);
+    // A medium database is £60 a month: 10 days of it is £20.
+    const without = flat.advance(fleet(begin(), BIG_APP, BIG_DB), 30).state;
+    expect(state.spend.infrastructure - without.spend.infrastructure).toBe(20);
+    // Cancelling one still being set up, before any day is played, costs nothing.
+    const changedMind = flat.applyAction(rented, { type: "cancelServer", id });
+    expect(flat.advance(changedMind, 5).state.spend).toEqual(flat.advance(fleet(begin(), BIG_APP, BIG_DB), 5).state.spend);
+  });
+
+  it("derives ops needed from the servers, ready or not, and cuts every tier when short", () => {
+    // 1 ops for each app server and database, 0.5 for each cache and load balancer, rounded up.
+    const state = begin();
+    expect(flat.opsNeededNow(state)).toBe(2);
+    expect(flat.opsNeeded("iaas")).toBe(2);
+    const cached = rent(state, "cache", "small");
+    expect(flat.opsNeededNow(cached)).toBe(3);
+    expect(flat.opsNeededNow(rent(cached, "loadBalancer", "small"))).toBe(3);
+    expect(flat.opsNeededNow(rent(rent(cached, "loadBalancer", "small"), "app", "small"))).toBe(4);
+    expect(flat.opsNeededNow(fleet(state))).toBe(0);
+    // With 1 of the 2 ops needed, each tier keeps 40% + 60% × ½ = 70%.
+    expect(flat.units({ ...state, ops: 1 })).toMatchObject({ cu: { capacity: 7_000 }, dbu: { capacity: 7_000 } });
+    expect(flat.units({ ...state, ops: 2 })).toMatchObject({ cu: { capacity: 10_000 } });
+  });
+
+  it("counts free users' demand as well as paying ones'", () => {
+    const allPaid = { ...withUsers(begin(), 2_000), paidUsers: 2_000 };
+    const allFree = withUsers(begin(), 2_000);
+    expect(flat.advance(allFree).state.demand).toEqual(flat.advance(allPaid).state.demand);
+    expect(flat.advance(allFree).state.demand).toEqual({ cu: 20, dbu: 20 });
+    expect(flat.advance(withUsers(begin(), 4_000)).state.demand).toEqual({ cu: 40, dbu: 40 });
+  });
+
+  it("sets compute-heavy demand per product from config", () => {
+    const video = createSim({
+      ...flatConfig,
+      productTypes: { ...flatConfig.productTypes, video: { ...flatConfig.productTypes.video, growth: { ...growth, ...still, loadPerUser: 5 } } },
+    });
+    const state = video.advance({ ...video.newGame({ companyName: "Acme", productType: "video", model: "iaas", seed: 1 }), ops: 10 }).state;
+    expect(state.demand).toEqual({ cu: 50, dbu: 10 });
+  });
+
+  it("leaves on-prem, PaaS and SaaS on their fixed capacity, with no servers to rent", () => {
+    for (const model of ["onprem", "paas", "saas"] as const) {
+      const state = begin(flat, model);
+      expect(state.servers).toEqual([]);
+      expect(flat.servers(state)).toEqual([]);
+      expect(flat.units(state)).toBeNull();
+      expect(flat.serverOptions(state)).toEqual([]);
+      expect(flat.capacity(state)).toBe(1_000_000);
+      expect(flat.opsNeededNow(state)).toBe(config.models[model].opsNeeded);
+      expect(() => rent(state, "app", "small")).toThrow(expect.objectContaining({ code: "no_servers" }));
+      // Load still decides outages there, whatever the CU and DBU.
+      const tight = createSim({ ...config, models: { ...config.models, [model]: { ...config.models[model], capacity: 800 } } });
+      expect(tight.advance(begin(tight, model)).state.outageDays).toBe(1);
+    }
+  });
+
+  it("rejects unknown types, sizes and servers, without changing anything", () => {
+    const state = begin();
+    const copy = structuredClone(state);
+    const code = (action: Action) => {
+      try {
+        flat.applyAction(state, action);
+      } catch (e) {
+        return (e as SimError).code;
+      }
+    };
+    expect(code({ type: "rentServer", server: "mainframe" as ServerType, size: "small" })).toBe("unknown_server");
+    expect(code({ type: "rentServer", server: "app", size: "huge" as ServerSize })).toBe("unknown_server");
+    expect(code({ type: "cancelServer", id: 99 })).toBe("unknown_server");
+    rent(state, "app", "small");
+    flat.applyAction(state, { type: "cancelServer", id: 1 });
+    expect(state).toEqual(copy);
+  });
+
+  describe("migrating, until migration sizes the setup to demand", () => {
+    // A starter that costs something: a small app server and database, £1 a day each.
+    const smallStarter = createSim({
+      ...config,
+      models: {
+        ...config.models,
+        iaas: {
+          ...config.models.iaas,
+          servers: {
+            ...config.models.iaas.servers!,
+            starter: [
+              { type: "app", size: "small", count: 1 },
+              { type: "database", size: "small", count: 1 },
+            ],
+          },
+        },
+      },
+    });
+    const migrate = (state: GameState, model: ModelId) => smallStarter.applyAction(state, { type: "startMigration", model });
+
+    it("gets the starter setup on moving onto IaaS, serving from the next day, and double-bills its rent", () => {
+      const paas = { ...smallStarter.newGame({ companyName: "Acme", productType: "social", model: "paas", seed: 1 }), ops: 3 };
+      const moving = migrate(paas, "iaas");
+      const quote = smallStarter.migrationQuote(paas, "iaas");
+      // IaaS's £20 a day plus £2 of rent, for 14 days.
+      expect(quote.doubleBilling).toBe(14 * 22);
+      const { state, log } = smallStarter.advance(moving, 14);
+      expect(state.model).toBe("iaas");
+      expect(rentLines(log)).toHaveLength(28);
+      expect(smallStarter.servers(state).map((s) => [s.type, s.size, s.status])).toEqual([
+        ["app", "small", "ready"],
+        ["database", "small", "ready"],
+      ]);
+      expect(log.at(-1)!.entries.map((e) => e.text)).toContain(
+        "Your IaaS starter setup is ready for tomorrow: 1 small app server, 1 small database. Rent more VMs as you grow.",
+      );
+      expect(smallStarter.units(state)!.cu.capacity).toBeGreaterThan(0);
+    });
+
+    it("drops the VMs on leaving IaaS, so their rent stops", () => {
+      const iaas = { ...smallStarter.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 1 }), ops: 3 };
+      const extra = smallStarter.applyAction(iaas, { type: "rentServer", server: "cache", size: "small" });
+      const { state, log } = smallStarter.advance(migrate(extra, "paas"), 15);
+      expect(state).toMatchObject({ model: "paas", servers: [] });
+      expect(log[13]!.entries.map((e) => e.text)).toContain(
+        "Your 3 rented VMs were cancelled: you paid rent only for the days you had them.",
+      );
+      // Rent on every day up to and including the day you leave, and none after.
+      expect(rentLines(log.slice(0, 14)).length).toBeGreaterThan(0);
+      expect(rentLines(log.slice(14))).toEqual([]);
+      expect(smallStarter.units(state)).toBeNull();
+    });
+  });
+
+  it("is deterministic, and resumes identically after a JSON round trip", () => {
+    const run = (state: GameState) => {
+      let s = flat.advance(rent(state, "app", "small"), 5).state;
+      s = flat.applyAction(s, { type: "cancelServer", id: s.servers[0]!.id });
+      return flat.advance(rent(s, "cache", "medium"), 5);
+    };
+    expect(run(begin())).toEqual(run(begin()));
+    const half = flat.advance(rent(begin(), "loadBalancer", "small"), 3).state;
+    expect(flat.advance(JSON.parse(JSON.stringify(half)), 5)).toEqual(flat.advance(half, 5));
+  });
+
+  it("starts every product on IaaS with room to grow by default, run by one ops person", () => {
+    const s = createSim(defaultConfig);
+    expect(s.opsNeeded("iaas")).toBe(1);
+    for (const p of PRODUCT_TYPE_IDS) {
+      const state = s.newGame({ companyName: "Acme", productType: p, model: "iaas", seed: 1 });
+      expect(s.units(state)!.usersSupported, p).toBeGreaterThan(state.users * 1.5);
+      expect(s.capacity(state), p).toBeGreaterThan(state.load * 1.5);
+    }
+    // One CU serves the same users whatever the size, and bigger VMs cost less per unit.
+    const { units } = defaultConfig.servers.types.app;
+    const prices = defaultConfig.models.iaas.servers!.monthlyCost.app;
+    for (let i = 1; i < SERVER_SIZES.length; i++) {
+      const [smaller, bigger] = [SERVER_SIZES[i - 1]!, SERVER_SIZES[i]!];
+      expect(units[bigger]).toBeGreaterThan(units[smaller]);
+      expect(prices[bigger] / units[bigger]).toBeLessThan(prices[smaller] / units[smaller]);
+    }
   });
 });
 
@@ -1054,22 +1422,43 @@ describe("default config", () => {
     const start = sim180.newGame({ companyName: "Acme", productType, model, seed: 7 });
     return sim180.advance(ops === undefined ? start : { ...start, ops }, defaultConfig.finalDay - 1).state;
   };
-  // Plays to the end with the ops the model needs, hiring support each day to keep up with the usual tickets.
-  const runStaffed = (productType: string, model: string) => {
-    const ops = sim180.opsNeeded(model as (typeof MODEL_IDS)[number]);
-    let state = { ...sim180.newGame({ companyName: "Acme", productType, model, seed: 7 }), ops };
+  // On servers, rents a massive one for any tier past half its capacity, enough headroom for load variation and the
+  // seasonal spike: a cache while it has room to take more off the database, then a database.
+  const rentAhead = (state: GameState): GameState => {
+    const units = sim180.units(state);
+    if (!units) return state;
+    const rent = (server: "app" | "database" | "cache" | "loadBalancer") =>
+      rentAhead(sim180.applyAction(state, { type: "rentServer", server, size: "massive" }));
+    const { cu, dbu, ch, loadBalancer } = units;
+    const pending = sim180.servers(state).some((s) => s.status === "pending");
+    if (pending) return state;
+    if (loadBalancer.uncovered > 0) return rent("loadBalancer");
+    if (cu.demand > cu.capacity / 2) return rent("app");
+    if (dbu.demand > dbu.capacity / 2) return rent(ch.absorbed < ch.demand && ch.capacity < dbu.capacity ? "cache" : "database");
+    return state;
+  };
+  // Plays to the end with the ops the model needs, hiring support each day to keep up with the usual tickets, and on
+  // servers renting ahead of demand.
+  // Without hireSupport, it keeps its starting support staff. onDay sees each day played.
+  const runStaffed = (productType: string, model: string, hireSupport = true, onDay?: (state: GameState) => void) => {
+    let state = sim180.newGame({ companyName: "Acme", productType, model, seed: 7 });
     while (state.status === "playing") {
-      const needed = Math.ceil((sim180.usualTickets(state) * 1.2) / defaultConfig.support.ticketsPerPerson);
-      state = sim180.advance({ ...state, support: Math.max(state.support, needed) }).state;
+      state = rentAhead(state);
+      const needed = hireSupport ? Math.ceil((sim180.usualTickets(state) * 1.2) / defaultConfig.support.ticketsPerPerson) : 0;
+      state = { ...state, ops: Math.max(state.ops, sim180.opsNeededNow(state)), support: Math.max(state.support, needed) };
+      state = sim180.advance(state).state;
+      onDay?.(state);
     }
     return state;
   };
 
-  it("lets every product reach day 180 without outages when fully staffed on IaaS, bar the provider's", () => {
+  it("lets every product reach day 180 on IaaS renting ahead, down only for the provider and each spike's first day", () => {
     for (const p of ["ecommerce", "social", "video"]) {
       const state = runStaffed(p, "iaas");
-      // The provider outage is the one an IaaS company can't staff its way out of.
-      expect(state.outageDays).toBe(1);
+      // The provider outage is the one an IaaS company can't staff its way out of. A traffic spike triples demand, and
+      // the extra VMs are only ready the next day, so its first day can be down too: the spike fires twice.
+      expect(state.outageDays).toBeGreaterThanOrEqual(1);
+      expect(state.outageDays).toBeLessThanOrEqual(3);
       expect(state.users).toBeGreaterThan(defaultConfig.productTypes[p as "social"].growth.startingUsers * 5);
     }
   });
@@ -1088,10 +1477,12 @@ describe("default config", () => {
     }
   });
 
-  it("makes support matter: a company that never hires more ends with unhappy customers and fewer users", () => {
+  it("makes support matter: a company that never hires more has unhappy customers and ends with fewer users", () => {
     for (const p of ["ecommerce", "social", "video"]) {
-      const neglected = run(p, "iaas", sim180.opsNeeded("iaas"));
-      expect(neglected.satisfaction).toBeLessThan(defaultConfig.support.poorSatisfaction);
+      let lowest = 100;
+      const neglected = runStaffed(p, "iaas", false, (s) => (lowest = Math.min(lowest, s.satisfaction)));
+      // Users leave until support can keep up again, so satisfaction can recover by the end.
+      expect(lowest).toBeLessThan(defaultConfig.support.poorSatisfaction);
       expect(neglected.users).toBeLessThan(runStaffed(p, "iaas").users / 2);
     }
   });
@@ -1255,6 +1646,7 @@ describe("migration", () => {
       [6, "Migration to PaaS: Planning done. Testing next, 2 days."],
       [8, "Migration to PaaS: Testing done. Moving infrastructure next, 7 days."],
       [15, "Migration complete: you're now on PaaS, which needs 1 ops staff."],
+      [15, "Your 2 rented VMs were cancelled: you paid rent only for the days you had them."],
     ]);
   });
 
@@ -1282,14 +1674,8 @@ describe("migration", () => {
   });
 
   it("switches the stack, ops needed and capacity to the new model on completion", () => {
-    const s = createSim({
-      ...config,
-      models: {
-        ...config.models,
-        iaas: { ...config.models.iaas, capacity: 3000 },
-        paas: { ...config.models.paas, capacity: 5000 },
-      },
-    });
+    const base = iaasCapacity(3000);
+    const s = createSim({ ...base, models: { ...base.models, paas: { ...base.models.paas, capacity: 5000 } } });
     const before = s.applyAction({ ...start(), ops: 1 }, migrate("paas"));
     // IaaS needs 2 ops: with 1, capacity is 40% + 60% × ½ of 3,000.
     expect(s.capacity(before)).toBe(2100);
@@ -1698,7 +2084,8 @@ describe("default migration config", () => {
 });
 
 describe("scripted events", () => {
-  // A spike so big it overloads any model that can't scale, lasting 2 days from day 3.
+  // A spike so big it overloads any model that can't scale, lasting 2 days from day 3: on servers, 2,000 times the
+  // CU and DBU demand, 20,000 CU against the starter's 10,000.
   const spike: EventConfig = {
     id: "spike",
     name: "Traffic spike",
@@ -1706,12 +2093,12 @@ describe("scripted events", () => {
     layer: "runtime",
     schedule: { type: "fixed", days: [3] },
     days: 2,
-    load: { multiplier: 2, extra: 1_000_000 },
+    load: { multiplier: 2, extra: 1_000_000, unitMultiplier: 2_000 },
     effects: {
       onprem: { detail: "Your kit can't grow." },
       iaas: {
         opsNeeded: 2,
-        scaleCostPerLoad: 0.0001,
+        scaleCostPerUnit: 0.01,
         detail: "Your ops team added VMs.",
         shortOfOps: { detail: "Nobody to add VMs." },
       },
@@ -1819,10 +2206,31 @@ describe("scripted events", () => {
       expect(s.capacity(play(s, "paas", 4, 1).state)).toBe(1_000_000);
     });
 
-    it("scales IaaS when there are enough ops, and is charged for it", () => {
+    it("scales IaaS from its second day with enough ops: extra VMs are ready the next day, and charged per unit", () => {
       const { state, log } = play(s, "iaas", 5, 2);
-      expect(state.outageDays).toBe(0);
-      expect(charges(log, "scaled up")).toHaveLength(2);
+      // Day 3 runs on the servers you have; from day 4 the extra VMs meet it.
+      expect(log.filter((d) => d.entries.some((e) => e.kind === "outage")).map((d) => d.day)).toEqual([3]);
+      expect(state.outageDays).toBe(1);
+      const burst = charges(log, "Traffic spike: extra VMs");
+      expect(burst.map((e) => log.find((d) => d.entries.includes(e))!.day)).toEqual([4]);
+      // About 20,000 CU and 20,000 DBU of demand against 10,000 of each: 20,000 units over, at 1p.
+      expect(-burst[0]!.cashDelta).toBeGreaterThan(150);
+      expect(-burst[0]!.cashDelta).toBeLessThan(250);
+      expect(burst[0]!.text).toMatch(/^Traffic spike: extra VMs for [\d,]+ CU and [\d,]+ DBU over capacity$/);
+      // On the day it scaled, capacity met the demand, extra VMs included; back to the rented servers after.
+      const scaled = play(s, "iaas", 3, 2).state;
+      expect(s.units(scaled)).toMatchObject({ burst: true });
+      expect(s.units(scaled)!.cu.capacity).toBe(s.units(scaled)!.cu.demand);
+      expect(s.units(play(s, "iaas", 4, 2).state)).toMatchObject({ burst: false, cu: { capacity: 10_000 } });
+    });
+
+    it("multiplies CU and DBU demand on servers, and outages count against the weakest tier", () => {
+      const quietDay = play(quiet, "iaas", 2, 2).state;
+      const spikeDay = play(s, "iaas", 2, 2).state;
+      expect(spikeDay.demand.cu / quietDay.demand.cu).toBeCloseTo(2_000, -1);
+      expect(spikeDay.demand.dbu / quietDay.demand.dbu).toBeCloseTo(2_000, -1);
+      const outage = play(s, "iaas", 2, 2).log[1]!.entries.find((e) => e.kind === "outage")!;
+      expect(outage.text).toMatch(/^Outage: compute \(CU\) hit \d+% of capacity\./);
     });
 
     it("degrades IaaS short of ops: an outage, and no scaling charge", () => {
@@ -2419,8 +2827,7 @@ describe("support, tickets and satisfaction", () => {
     support,
   });
   const supportLog = (log: DayLog[]) => log.flatMap((d) => d.entries.filter((e) => e.kind === "support").map((e) => e.text));
-  const withCapacity = (capacity: number) =>
-    ticketed({}, 0.5, { models: { ...config.models, iaas: { ...config.models.iaas, capacity } } });
+  const withCapacity = (capacity: number) => ticketed({}, 0.5, { servers: iaasCapacity(capacity).servers });
 
   it("starts with no tickets, no backlog and happy customers", () => {
     expect(begin(s)).toMatchObject({ ticketsToday: 0, clearedToday: 0, backlog: 0, satisfaction: 100 });
@@ -2958,7 +3365,7 @@ describe("free-to-paid conversion", () => {
 
   it("falls with recent outages and recovers once the uptime window has passed", () => {
     // 10,000 users at 1 load each on 5,000 capacity: an outage every day.
-    const overloaded = converting({}, { models: { ...config.models, iaas: { ...config.models.iaas, capacity: 5_000 } } });
+    const overloaded = converting({}, { servers: iaasCapacity(5_000).servers });
     const good = s.advance(begin(), 3).state;
     const bad = overloaded.advance(begin(overloaded), 3).state;
     expect(bad.recentHoursDown).toHaveLength(3);

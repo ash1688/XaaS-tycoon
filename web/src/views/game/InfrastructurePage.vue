@@ -3,9 +3,10 @@ import { nextTick, watch } from "vue";
 import { useRoute } from "vue-router";
 import CapacityPanel from "../../panels/CapacityPanel.vue";
 import MigrationPanel from "../../panels/MigrationPanel.vue";
+import ServersPanel from "../../panels/ServersPanel.vue";
 import StackPanel from "../../panels/StackPanel.vue";
 
-// Infrastructure: load and capacity, who looks after each layer, and migration. A link to #layer-<id>, such as an
+// Infrastructure: load and capacity (on IaaS, CU, DBU and CH, and the servers that give them), who looks after each layer, and migration. A link to #layer-<id>, such as an
 // event card's, scrolls to that layer of the stack and focuses it.
 const route = useRoute();
 watch(
@@ -24,6 +25,7 @@ watch(
 <template>
   <div class="page-grid">
     <CapacityPanel />
+    <ServersPanel />
     <StackPanel />
     <MigrationPanel class="span-all" />
   </div>

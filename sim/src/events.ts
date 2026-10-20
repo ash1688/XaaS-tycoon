@@ -47,6 +47,8 @@ export interface EventToday {
   event: EventConfig;
   shortOfOps: boolean;
   outcome: EventOutcome;
+  /** Capacity grows to meet the event's load today (see EventOutcome.scaleCostPerLoad and scaleCostPerUnit). */
+  scales: boolean;
 }
 
 const NO_EFFECT: EventEffect = { detail: "" };
@@ -96,8 +98,26 @@ export function createEvents(config: GameConfig) {
     return eventsOn(state, day, state.model).map((event) => {
       const needed = event.effects[state.model]?.opsNeeded;
       const shortOfOps = needed !== undefined && state.ops < needed;
-      return { event, shortOfOps, outcome: outcomeFor(event, state.model, shortOfOps) };
+      const outcome = outcomeFor(event, state.model, shortOfOps);
+      return { event, shortOfOps, outcome, scales: scales(state, event, outcome, state.model, day) };
     });
+  }
+
+  /** Days since an event that's on during a day fired: 0 on the day it fires. */
+  function dayOfEvent(state: GameState, id: string, day: number): number {
+    const fired = state.schedule.filter((s) => s.event === id && s.day <= day).at(-1);
+    return fired ? day - fired.day : 0;
+  }
+
+  /**
+   * Whether capacity grows to meet an event's load on a day. On a model with servers the extra ones take its
+   * readyDays to arrive, so not until that many days into the event.
+   */
+  function scales(state: GameState, event: EventConfig, outcome: EventOutcome, model: ModelId, day: number): boolean {
+    if (!event.load) return false;
+    const servers = config.models[model].servers;
+    if (!servers) return outcome.scaleCostPerLoad !== undefined;
+    return outcome.scaleCostPerUnit !== undefined && dayOfEvent(state, event.id, day) >= servers.readyDays;
   }
 
   /** How an event plays out on a model, short of ops or not. */
@@ -110,7 +130,7 @@ export function createEvents(config: GameConfig) {
   const scaledUp = (state: GameState) =>
     state.events.some((r) => {
       const event = eventConfig(r.event);
-      return event?.load && outcomeFor(event, r.model, r.shortOfOps).scaleCostPerLoad !== undefined;
+      return !!event && scales(state, event, outcomeFor(event, r.model, r.shortOfOps), r.model, state.day);
     });
 
   /** The outcome that opened a feature gap, if its event is still in config. */
