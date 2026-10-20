@@ -81,6 +81,11 @@ export interface Sim {
   advance(state: GameState, days?: number): AdvanceResult;
   /** Ops staff a model needs to keep running: on a model with servers, for the starter setup a company gets. */
   opsNeeded(model: ModelId): number;
+  /**
+   * Everything adopting a model costs up front: its upfront cost, plus on a model that buys its servers, the starter
+   * kit at its purchase prices.
+   */
+  upfrontCost(model: ModelId): number;
   /** Ops staff the company needs now: on a model with servers, for the servers it has, ready or not. */
   opsNeededNow(state: GameState): number;
   /** What the current headcount costs per day. */
@@ -152,10 +157,10 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   const support = createSupport(config);
   const customers = createCustomers(config, features, events, pricing, support);
   const conversion = createConversion(config, features, pricing);
-  const servers = createServers(config);
+  const finance = createFinance(config);
+  const servers = createServers(config, finance);
   const infra = createInfrastructure(config, customers, events, servers);
   const staff = createStaff(config);
-  const finance = createFinance(config);
   const migration = createMigration(config, infra, features, events, servers);
   const summary = createSummary(config, infra);
 
@@ -250,6 +255,10 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         return servers.rentServer(state, action.server, action.size);
       case "cancelServer":
         return servers.cancelServer(state, action.id);
+      case "buyServer":
+        return servers.buyServer(state, action.server, action.size);
+      case "sellServer":
+        return servers.sellServer(state, action.id);
       default:
         throw new SimError("unknown_action", "That action isn't recognised.");
     }
@@ -352,6 +361,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     applyAction,
     advance,
     opsNeeded: infra.opsNeeded,
+    upfrontCost: infra.upfrontCost,
     opsNeededNow: (s) => infra.opsNeededNow(load(s)),
     dailyStaffCost: (s) => staff.dailyStaffCost(load(s)),
     monthlyInfrastructureCost: (s) => infra.monthlyInfrastructureCost(load(s)),

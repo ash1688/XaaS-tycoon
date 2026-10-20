@@ -757,6 +757,111 @@ describe("servers on IaaS", () => {
   });
 });
 
+describe("servers on-prem", () => {
+  // The default on-prem kit, with cash to buy it: a £30,000 server room plus a large app server (£2,100) and database
+  // (£2,700), 10 days to arrive and 40% back on selling.
+  const ownSim = createSim({ ...sim.config, startingCash: 100_000 });
+  const onprem = defaultConfig.models.onprem.servers!;
+  let ownApp: Awaited<ReturnType<typeof buildApp>>;
+
+  beforeAll(async () => {
+    ownApp = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), sim: ownSim });
+  });
+
+  afterAll(async () => {
+    await ownApp?.close();
+  });
+
+  async function setup(model = "onprem") {
+    const code = await newCode();
+    const created = await ownApp.inject({
+      method: "POST",
+      url: `/api/codes/${code}/companies`,
+      payload: { name: "Acme", productType: "social", model },
+    });
+    const company = created.json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const act = (payload: object) => ownApp.inject({ method: "POST", url: `${url}/actions`, payload });
+    const get = async () => (await ownApp.inject({ method: "GET", url })).json<CompanyView>();
+    const next = async () => (await ownApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    return { company, act, get, next };
+  }
+
+  it("starts with the starter kit bought on top of the server room, and offers kit to buy", async () => {
+    const { company } = await setup();
+    expect(company.cash).toBe(100_000 - 30_000 - 2_100 - 2_700);
+    expect(company.spend.infrastructure).toBe(34_800);
+    expect(company.servers).toEqual([
+      expect.objectContaining({ id: 1, type: "app", size: "large", status: "ready", daysLeft: 0, paid: 2_100, sellBack: 840 }),
+      expect.objectContaining({ id: 2, type: "database", size: "large", status: "ready", daysLeft: 0, paid: 2_700, sellBack: 1_080 }),
+    ]);
+    expect(company.serverOptions).toHaveLength(16);
+    expect(company.serverOptions).toContainEqual(
+      expect.objectContaining({
+        type: "cache",
+        size: "small",
+        units: 10,
+        price: onprem.purchase!.price.cache.small,
+        monthlyCost: onprem.monthlyCost.cache.small,
+        sellBackShare: 0.4,
+        readyDays: 10,
+      }),
+    );
+    const meta = (await ownApp.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.models.find((m) => m.id === "onprem")!.upfrontCost).toBe(34_800);
+  });
+
+  it("buys kit, charging it at once, on order with the days left until it arrives", async () => {
+    const { company: before, act, get, next } = await setup();
+    const res = await act({ type: "buyServer", server: "app", size: "small" });
+    expect(res.statusCode).toBe(200);
+    const bought = res.json<CompanyView>();
+    expect(bought.cash).toBe(before.cash - onprem.purchase!.price.app.small);
+    expect(bought.servers.at(-1)).toMatchObject({ id: 3, type: "app", size: "small", status: "pending", daysLeft: 10 });
+    // On order: no capacity and no ops needed until it arrives.
+    expect(bought.units).toEqual(before.units);
+    expect(bought.opsNeeded).toBe(before.opsNeeded);
+    expect((await get()).servers.at(-1)).toMatchObject({ status: "pending", daysLeft: 10 });
+    const { company } = await next();
+    expect(company.servers.at(-1)).toMatchObject({ status: "pending", daysLeft: 9 });
+  });
+
+  it("sells kit back for its share, but not kit still on order", async () => {
+    const { company: before, act, get } = await setup();
+    await act({ type: "buyServer", server: "cache", size: "small" });
+    const onOrder = await act({ type: "sellServer", id: 3 });
+    expect(onOrder.statusCode).toBe(400);
+    expect(onOrder.json()).toMatchObject({ error: "on_order" });
+    const sold = await act({ type: "sellServer", id: 2 });
+    expect(sold.statusCode).toBe(200);
+    expect(sold.json<CompanyView>().cash).toBe(before.cash - onprem.purchase!.price.cache.small + 1_080);
+    expect((await get()).servers.map((s) => s.id)).toEqual([1, 3]);
+  });
+
+  it("validates the body, and only buys and sells on-prem", async () => {
+    const { act, get } = await setup();
+    for (const payload of [
+      { type: "buyServer", server: "app" },
+      { type: "buyServer", size: "small" },
+      { type: "buyServer", server: "mainframe", size: "small" },
+      { type: "sellServer" },
+      { type: "sellServer", id: 0 },
+      { type: "sellServer", id: "one" },
+    ]) {
+      expect((await act(payload)).statusCode, JSON.stringify(payload)).toBe(400);
+    }
+    expect((await act({ type: "rentServer", server: "app", size: "small" })).json()).toMatchObject({ error: "not_for_rent" });
+    expect((await act({ type: "cancelServer", id: 1 })).json()).toMatchObject({ error: "not_rented" });
+    expect((await get()).servers).toHaveLength(2);
+
+    const iaas = await setup("iaas");
+    const refused = await iaas.act({ type: "buyServer", server: "app", size: "small" });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toMatchObject({ error: "not_for_sale" });
+    expect(iaas.company.servers.every((s) => s.paid === null && s.sellBack === null)).toBe(true);
+  });
+});
+
 describe("ledger and bankruptcy", () => {
   async function setup() {
     const code = await newCode();
@@ -1644,7 +1749,12 @@ describe("scripted events", () => {
     startingCash: 100_000,
     events: [
       { ...event("osPatch"), schedule: { type: "fixed", days: [2] } },
-      { ...event("trafficSpike"), schedule: { type: "fixed", days: [3] } },
+      // Demand is light here, so the spike multiplies it 50 times to be more than on-prem's starter kit can serve.
+      {
+        ...event("trafficSpike"),
+        schedule: { type: "fixed", days: [3] },
+        load: { ...event("trafficSpike").load!, unitMultiplier: 50 },
+      },
     ],
   });
   let eventApp: Awaited<ReturnType<typeof buildApp>>;
@@ -1899,8 +2009,8 @@ describe("meta", () => {
       ["ops", 4],
       ["support", 3],
     ]);
-    // IaaS's from its starter VMs.
-    expect(meta.models.map((m) => m.opsNeeded)).toEqual([3, 1, 1, 0]);
+    // On-prem's and IaaS's from their starter servers.
+    expect(meta.models.map((m) => m.opsNeeded)).toEqual([2, 1, 1, 0]);
   });
 
   it("includes each model's upfront and monthly costs", async () => {

@@ -87,7 +87,10 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("billing.daysPerMonth", "Money", "", "Days in a billing month", "Monthly costs are charged a day at a time: the monthly cost ÷ this.", range(28, 31, 1));
   for (const m of MODEL_IDS) {
     const s = MODEL_LABELS[m];
-    add(`models.${m}.upfrontCost`, "Money", s, "Upfront cost", "Charged once on moving to this model, such as buying servers.", POUNDS);
+    const upfrontHelp = base.models[m]?.servers?.purchase
+      ? "Charged once on moving to this model: the server room. The starter servers are bought on top, at their purchase prices."
+      : "Charged once on moving to this model.";
+    add(`models.${m}.upfrontCost`, "Money", s, "Upfront cost", upfrontHelp, POUNDS);
     add(`models.${m}.monthlyCost`, "Money", s, "Monthly cost", "The provider's fixed bill (power and upkeep on-prem), billed daily.", range(0, 200_000, 100));
     add(`models.${m}.monthlyCostPerUser`, "Money", s, "Monthly cost per user", "Extra per user per month, billed daily on that day's users.", PER_USER);
     add(`models.${m}.exitPenalty`, "Money", s, "Exit penalty", "The provider's fee for leaving, charged when a migration away completes.", POUNDS);
@@ -98,8 +101,16 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     for (const t of SERVER_TYPES) {
       for (const size of SERVER_SIZES) {
         const name = base.servers.types[t]?.name ?? t;
-        add(`models.${m}.servers.monthlyCost.${t}.${size}`, "Money", MODEL_LABELS[m], `${name} (${size}): monthly price`, "What one of these servers costs a month, billed daily from the day after it's added.", range(0, 100_000, 10));
+        if (servers.purchase) {
+          add(`models.${m}.servers.purchase.price.${t}.${size}`, "Money", MODEL_LABELS[m], `${name} (${size}): purchase price`, "What buying one of these servers costs, charged at once (capex).", range(0, 1_000_000, 100));
+          add(`models.${m}.servers.monthlyCost.${t}.${size}`, "Money", MODEL_LABELS[m], `${name} (${size}): running cost a month`, "Power and upkeep for one of these servers, billed daily from the day after it arrives.", range(0, 100_000, 5));
+        } else {
+          add(`models.${m}.servers.monthlyCost.${t}.${size}`, "Money", MODEL_LABELS[m], `${name} (${size}): monthly price`, "What one of these servers costs a month, billed daily from the day after it's added.", range(0, 100_000, 10));
+        }
       }
+    }
+    if (servers.purchase) {
+      add(`models.${m}.servers.purchase.sellBackShare`, "Money", MODEL_LABELS[m], "Sell-back share", "Share of what a server cost that selling it back refunds (0.4 = 40%), so bought kit is sold at a loss.", SHARE);
     }
   }
   add("pricing.maxPrice", "Money", "", "Highest monthly price", "The most a student can charge each paying user a month. High on purpose.", range(1, 100_000, 1));
@@ -217,10 +228,17 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   for (const m of MODEL_IDS) {
     const servers = base.models[m]?.servers;
     if (!servers) continue;
-    add(`models.${m}.servers.readyDays`, "Infrastructure", MODEL_LABELS[m], "Days until a server is ready", "Days from adding a server to it being ready (1 = the next day). It serves from the day after.", range(0, 60, 1));
+    if (servers.purchase) {
+      add(`models.${m}.servers.readyDays`, "Infrastructure", MODEL_LABELS[m], "Delivery time (days)", "Days from buying a server to it arriving. It's on order until then, and serves from the day after.", range(0, 60, 1));
+    } else {
+      add(`models.${m}.servers.readyDays`, "Infrastructure", MODEL_LABELS[m], "Days until a server is ready", "Days from adding a server to it being ready (1 = the next day). It serves from the day after.", range(0, 60, 1));
+    }
     servers.starter.forEach((s, i) => {
       const name = base.servers.types[s.type]?.name.toLowerCase() ?? s.type;
-      add(`models.${m}.servers.starter.${i}.count`, "Infrastructure", MODEL_LABELS[m], `Starter setup: ${s.size} ${name}s`, "How many a new company on this model starts with, ready for the first day. A migration onto it gets them too.", HEADCOUNT);
+      const help = servers.purchase
+        ? "How many a new company on this model starts with, bought at their purchase prices on top of the upfront cost. A migration onto it buys them too."
+        : "How many a new company on this model starts with, ready for the first day. A migration onto it gets them too.";
+      add(`models.${m}.servers.starter.${i}.count`, "Infrastructure", MODEL_LABELS[m], `Starter setup: ${s.size} ${name}s`, help, HEADCOUNT);
     });
   }
   add("capacity.unstaffedShare", "Infrastructure", "", "Capacity with no ops", "Share of capacity a model keeps with no ops at all, rising with ops up to full.", SHARE);

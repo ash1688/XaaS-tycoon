@@ -31,7 +31,7 @@ export interface MigrationQuote {
   to: ModelId;
   /** Days the migration takes if it doesn't overrun. The model switches at the end of the last one. */
   days: number;
-  /** The new model's upfront cost, charged on the migration's first day. */
+  /** The new model's upfront cost, with any starter kit it buys, charged on the migration's first day. */
   upfrontCost: number;
   /** The new provider's running costs for every day of the migration, on top of the old one's. */
   doubleBilling: number;
@@ -92,7 +92,7 @@ export function createMigration(
     const to = migrationTarget(state, target);
     const days = MIGRATION_PHASES.reduce((sum, p) => sum + config.migration.phases[p].days, 0);
     // Priced by the same daily rules a day is billed by, so the rounding matches too.
-    const upfrontCost = config.models[to].upfrontCost;
+    const upfrontCost = infra.upfrontCost(to);
     const doubleBilling = config.migration.billNewFromStart ? days * infra.dailyInfrastructure(state, to, state.users) : 0;
     const proRata = days * infra.dailyInfrastructure(state, state.model, state.users);
     const exitPenalty = config.models[state.model].exitPenalty;
@@ -181,8 +181,10 @@ export function createMigration(
       return { state: { ...state, rng, migration: moved }, entries };
     }
     // Until migration sizes the new setup to demand (#51), the servers go with the model: those on the model being
-    // left are dropped, which stops their rent from tomorrow (pro rata, like the model's own bill), and a model with
-    // servers gets its starter setup, ready for tomorrow and billed from then.
+    // left are dropped, which stops their rent from tomorrow (pro rata, like the model's own bill), or for bought kit
+    // sells it back at a loss; and a model with servers gets its starter setup, ready for tomorrow and billed from
+    // then. Bought starter kit was paid for on the migration's first day, with the upfront cost, so it has arrived:
+    // a migration takes longer than delivery.
     const setup = servers.starter(m.to, state.day, state.nextServerId);
     const switched: GameState = {
       ...state,
@@ -201,14 +203,11 @@ export function createMigration(
         kind: "migration",
       },
     ];
-    if (state.servers.length) {
-      const n = state.servers.length;
-      const text = `Your ${n} rented VM${n === 1 ? " was" : "s were"} cancelled: you paid rent only for the days you had them.`;
-      entries.push({ text, cashDelta: 0, kind: "migration" });
-    }
+    entries.push(...servers.leaveEntries(state));
     if (setup.servers.length) {
       const list = (modelServersList(m.to) ?? []).join(", ");
-      const text = `Your ${toName} starter setup is ready for tomorrow: ${list}. Rent more VMs as you grow.`;
+      const more = config.models[m.to].servers?.purchase ? "Buy more servers" : "Rent more VMs";
+      const text = `Your ${toName} starter setup is ready for tomorrow: ${list}. ${more} as you grow.`;
       entries.push({ text, cashDelta: 0, kind: "migration" });
     }
     // Charged once, on the day you leave. The old provider's pro-rata share for today was billed with the rest.

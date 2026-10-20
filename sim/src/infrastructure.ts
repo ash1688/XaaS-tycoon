@@ -18,11 +18,20 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
   /** Ops staff a model needs to start with: on a model with servers, for its starter setup. */
   const opsNeeded = (model: ModelId) => servers.modelOpsNeeded(model);
 
+  /**
+   * What adopting a model costs up front: its upfront cost and, on a model that buys its servers, the starter kit at
+   * its purchase prices. The model's upfront cost is the rest of the setup (the server room), so nothing is charged
+   * twice.
+   */
   function upfrontEntries(modelId: ModelId): LogEntry[] {
     const { name, upfrontCost } = config.models[modelId];
-    if (upfrontCost === 0) return [];
-    return [{ text: `Upfront cost: ${name}`, cashDelta: -upfrontCost, category: "infrastructure" }];
+    const model: LogEntry[] =
+      upfrontCost === 0 ? [] : [{ text: `Upfront cost: ${name}`, cashDelta: -upfrontCost, category: "infrastructure" }];
+    return [...model, ...servers.starterPurchases(modelId)];
   }
+
+  /** Everything adopting a model costs up front. */
+  const upfrontCost = (modelId: ModelId) => -upfrontEntries(modelId).reduce((sum, e) => sum + e.cashDelta, 0);
 
   /** A model's monthly and per-user prices, after any provider price rises. */
   function modelPrices(state: GameState, modelId: ModelId) {
@@ -226,6 +235,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     opsNeeded,
     opsNeededNow: servers.opsNeeded,
     upfrontEntries,
+    upfrontCost,
     infrastructureEntries,
     dailyInfrastructure,
     monthlyInfrastructureCost,

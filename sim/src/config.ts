@@ -46,7 +46,10 @@ export interface ModelConfig {
   /** One-line description shown when choosing a model. */
   blurb: string;
   comparison: ModelComparison;
-  /** Charged once when a company adopts this model, such as buying servers (capex). */
+  /**
+   * Charged once when a company adopts this model (capex). On a model that buys its servers, it's the server room
+   * (racks, networking, power and cooling): the starter servers are bought on top, at their purchase prices.
+   */
   upfrontCost: number;
   /** Fixed provider bill (or power and upkeep on-prem) per month, billed as a daily share (opex). */
   monthlyCost: number;
@@ -60,8 +63,8 @@ export interface ModelConfig {
   /** Load the model can serve in a day when fully staffed. Only for a model without servers, which uses units. */
   capacity?: number;
   /**
-   * How the model gets capacity from servers measured in units; left out for a fixed capacity. IaaS rents VMs.
-   * On-prem, PaaS and SaaS keep a fixed capacity until their own slices.
+   * How the model gets capacity from servers measured in units; left out for a fixed capacity. IaaS rents VMs and
+   * on-prem buys servers. PaaS and SaaS keep a fixed capacity until their own slice.
    */
   servers?: ModelServersConfig;
   /**
@@ -79,20 +82,42 @@ export interface ServerCount {
 }
 
 /**
- * How a model gets servers. Each one is billed monthly, a day's share at a time like the model's own monthly cost,
- * from the first day played after it's added until the day it's cancelled. So cancelling is pro rata: you pay only
- * for the days you had it. Prices go up with the provider's price rises.
+ * Servers bought outright (capex), on a model that owns its kit. The purchase price is charged the moment you buy,
+ * and the server arrives after the model's readyDays. An order can't be cancelled: once the server arrives you can
+ * sell it back, at sellBackShare of what you paid, so bought kit is a sunk cost.
+ */
+export interface ServerPurchaseConfig {
+  /** Purchase price of one server, by type and size. */
+  price: Record<ServerType, Record<ServerSize, number>>;
+  /** Share of the purchase price you get back on selling a server (0.4 = 40%). */
+  sellBackShare: number;
+}
+
+/**
+ * How a model gets servers. Each one is billed monthly, a day's share at a time like the model's own monthly cost. A
+ * rented one is billed from the first day played after it's added until the day it's cancelled, so cancelling is pro
+ * rata: you pay only for the days you had it. A bought one (see `purchase`) costs its power and upkeep from the day
+ * after it arrives until it's sold. Prices go up with the provider's price rises.
  */
 export interface ModelServersConfig {
-  /** Monthly price of one server, by type and size. */
+  /** Monthly price of one server, by type and size: rent, or on a model that buys them, power and upkeep. */
   monthlyCost: Record<ServerType, Record<ServerSize, number>>;
-  /** Days from adding a server to it being ready. 1 is the next day: it serves load from the day after that. */
+  /**
+   * Days from adding a server to it being ready: 1 is the next day, and it serves load from the day after that. On a
+   * model that buys its servers, the delivery time.
+   */
   readyDays: number;
-  /** Ops staff each server of a type needs. Ops needed is the total over every server, rounded up. */
+  /**
+   * Ops staff each server of a type needs. Ops needed is the total over every server, rounded up: rented ones whether
+   * ready or not, bought ones once they've arrived.
+   */
   opsPerServer: Record<ServerType, number>;
+  /** Set on a model that buys its servers rather than renting them. */
+  purchase?: ServerPurchaseConfig;
   /**
    * The servers a new company on this model starts with, ready for the first day. Until migration sizes a setup to
-   * demand (#51), a migration onto the model gets these too.
+   * demand (#51), a migration onto the model gets these too. On a model that buys its servers, they're bought along
+   * with the model's upfront cost, at their purchase prices.
    */
   starter: ServerCount[];
 }
@@ -531,12 +556,40 @@ export const defaultConfig: GameConfig = {
       name: "Own servers (on-prem)",
       blurb: "Buy and run your own kit.",
       comparison: { upfrontCost: "High", monthlyCost: "Low–medium", opsNeeded: "High", control: "Full" },
-      upfrontCost: 40_000,
+      // The server room: racks, networking, power and cooling. The starter servers are bought on top (£4,800), so a new
+      // on-prem company pays £34,800 up front, close to the £40,000 it paid before it had servers.
+      upfrontCost: 30_000,
+      // The premises, bandwidth and the room's own power. Each server's power and upkeep is on top.
       monthlyCost: 1_500,
       monthlyCostPerUser: 0,
-      opsNeeded: 3,
-      capacity: 80_000,
       exitPenalty: 0,
+      // Placeholders, balanced in #55. A server costs three months' rent of the same VM and a tenth of that rent a month
+      // to run, so buying pays off after about three and a half months: worth it early in a game, not late. Selling one
+      // back gets 40% of what you paid. Kit you rack, power and patch yourself needs more ops than a VM.
+      servers: {
+        purchase: {
+          price: {
+            app: { small: 1_200, medium: 1_650, large: 2_100, massive: 2_550 },
+            database: { small: 1_500, medium: 2_100, large: 2_700, massive: 3_300 },
+            cache: { small: 450, medium: 600, large: 750, massive: 900 },
+            loadBalancer: { small: 600, medium: 900, large: 1_350, massive: 1_800 },
+          },
+          sellBackShare: 0.4,
+        },
+        monthlyCost: {
+          app: { small: 40, medium: 55, large: 70, massive: 85 },
+          database: { small: 50, medium: 70, large: 90, massive: 110 },
+          cache: { small: 15, medium: 20, large: 25, massive: 30 },
+          loadBalancer: { small: 20, medium: 30, large: 45, massive: 60 },
+        },
+        readyDays: 10,
+        opsPerServer: { app: 0.6, database: 0.6, cache: 0.3, loadBalancer: 0.3 },
+        // Bigger than IaaS's, since more takes 10 days to arrive: room for every product to grow for a few weeks.
+        starter: [
+          { type: "app", size: "large", count: 1 },
+          { type: "database", size: "large", count: 1 },
+        ],
+      },
     },
     iaas: {
       name: "Rent VMs (IaaS)",
@@ -850,7 +903,8 @@ export const defaultConfig: GameConfig = {
       load: { multiplier: 2, extra: 80_000, unitMultiplier: 3 },
       effects: {
         onprem: {
-          detail: "You own the hardware, and new servers take weeks to arrive, so capacity can't grow to meet it.",
+          detail:
+            "You own the hardware, and new servers take days to arrive, so you can't buy your way out: your kit melted under the load.",
         },
         iaas: {
           opsNeeded: 2,
