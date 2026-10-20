@@ -11,6 +11,7 @@ import {
   diffFromDefaults,
   GAME_STATE_VERSION,
   isCurrentState,
+  MANAGED_SERVICES,
   MIGRATION_PHASES,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
@@ -251,6 +252,8 @@ export async function buildApp(opts: AppOptions) {
       units: sim.units(state),
       servers: sim.servers(state),
       serverOptions: sim.serverOptions(state),
+      managed: sim.managed(state),
+      provider: sim.provider(state),
       uptime: sim.uptime(state),
       outageDays: state.outageDays,
       monthlyInfrastructureCost: sim.monthlyInfrastructureCost(state),
@@ -494,6 +497,8 @@ export async function buildApp(opts: AppOptions) {
                 "cancelServer",
                 "buyServer",
                 "sellServer",
+                "setInstances",
+                "setManagedService",
               ],
             },
             pool: { enum: [...STAFF_POOLS] },
@@ -507,10 +512,15 @@ export async function buildApp(opts: AppOptions) {
             // setPrice: the monthly price. The sim checks it against the game's highest price.
             price: { type: "number", exclusiveMinimum: 0 },
             // rentServer and buyServer: the type and size of server. The sim checks the model rents or buys them.
+            // setManagedService uses size too, where null turns the cache off; it's refused for the others below.
             server: { enum: [...SERVER_TYPES] },
-            size: { enum: [...SERVER_SIZES] },
+            size: { enum: [...SERVER_SIZES, null] },
             // cancelServer and sellServer: one of the company's servers, by id. The sim checks it's theirs.
             id: { type: "integer", minimum: 1 },
+            // setInstances: how many app instances to run on PaaS. The sim checks it against the platform's most.
+            count: { type: "integer", minimum: 1 },
+            // setManagedService: a managed service on PaaS and its size, or null to turn the cache off.
+            service: { enum: [...MANAGED_SERVICES] },
           },
           allOf: [
             { if: { properties: { type: { enum: ["hire", "letGo"] } } }, then: { required: ["pool"] } },
@@ -520,6 +530,12 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { const: "setPrice" } } }, then: { required: ["price"] } },
             { if: { properties: { type: { enum: ["rentServer", "buyServer"] } } }, then: { required: ["server", "size"] } },
             { if: { properties: { type: { enum: ["cancelServer", "sellServer"] } } }, then: { required: ["id"] } },
+            { if: { properties: { type: { const: "setInstances" } } }, then: { required: ["count"] } },
+            {
+              if: { properties: { type: { const: "setManagedService" } } },
+              then: { required: ["service", "size"] },
+              else: { properties: { size: { enum: [...SERVER_SIZES] } } },
+            },
           ],
           additionalProperties: false,
         },

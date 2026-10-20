@@ -21,13 +21,14 @@ import { setupTestDb } from "./testDb.ts";
 
 const PASSWORD = "test-teacher-password";
 const iaasServers = defaultConfig.models.iaas.servers!;
+const paasServers = defaultConfig.models.paas.servers!;
 const LIGHT_DEMAND = { cuPerUser: 0.0005, dbuPerUser: 0.0005 };
 const sim = createSim({
   ...defaultConfig,
   startingCash: 1000,
   // IaaS costs a flat 25 a day (750 a month), with nothing upfront, unless a test says otherwise: its starter VMs (a
   // medium app server and database, needing 1 ops) are free here. Leaving it costs 200, and PaaS 100 upfront and 10 a
-  // day, so a migration between them fits in the starting cash.
+  // day, its starter instance and managed database free too, so a migration between them fits in the starting cash.
   models: {
     ...defaultConfig.models,
     iaas: {
@@ -45,7 +46,20 @@ const sim = createSim({
         },
       },
     },
-    paas: { ...defaultConfig.models.paas, upfrontCost: 100, monthlyCost: 300, monthlyCostPerUser: 0 },
+    paas: {
+      ...defaultConfig.models.paas,
+      upfrontCost: 100,
+      monthlyCost: 300,
+      monthlyCostPerUser: 0,
+      servers: {
+        ...paasServers,
+        monthlyCost: {
+          ...paasServers.monthlyCost,
+          app: { medium: 0 },
+          database: { ...paasServers.monthlyCost.database, small: 0 },
+        },
+      },
+    },
   },
   // Seeds are random here, so migrations never overrun.
   migration: { ...defaultConfig.migration, overrun: { ...defaultConfig.migration.overrun, chance: 0 } },
@@ -628,7 +642,7 @@ describe("users, capacity and uptime", () => {
   it("raises capacity when ops are hired", async () => {
     const { company, url } = await setup();
     const res = await app.inject({ method: "POST", url: `${url}/actions`, payload: { type: "hire", pool: "ops" } });
-    expect(res.json<CompanyView>().capacity).toBeGreaterThan(company.capacity);
+    expect(res.json<CompanyView>().capacity!).toBeGreaterThan(company.capacity!);
   });
 
   it("logs an outage and saves the lower uptime when load is over capacity", async () => {
@@ -749,9 +763,9 @@ describe("servers on IaaS", () => {
     expect(unknown.json()).toMatchObject({ error: "unknown_server" });
     expect((await app.inject({ method: "GET", url })).json<CompanyView>().servers).toHaveLength(2);
 
-    const paas = await setup("paas");
-    expect(paas.company).toMatchObject({ servers: [], units: null, serverOptions: [] });
-    const refused = await paas.act({ type: "rentServer", server: "app", size: "small" });
+    const saas = await setup("saas");
+    expect(saas.company).toMatchObject({ servers: [], units: null, serverOptions: [], managed: null, capacity: null });
+    const refused = await saas.act({ type: "rentServer", server: "app", size: "small" });
     expect(refused.statusCode).toBe(400);
     expect(refused.json()).toMatchObject({ error: "no_servers" });
   });
@@ -802,7 +816,7 @@ describe("servers on-prem", () => {
         size: "small",
         units: 10,
         price: onprem.purchase!.price.cache.small,
-        monthlyCost: onprem.monthlyCost.cache.small,
+        monthlyCost: onprem.monthlyCost.cache!.small,
         sellBackShare: 0.4,
         readyDays: 10,
       }),
@@ -859,6 +873,106 @@ describe("servers on-prem", () => {
     expect(refused.statusCode).toBe(400);
     expect(refused.json()).toMatchObject({ error: "not_for_sale" });
     expect(iaas.company.servers.every((s) => s.paid === null && s.sellBack === null)).toBe(true);
+  });
+});
+
+describe("PaaS managed services and SaaS with no servers", () => {
+  // PaaS's starter instance and managed database are free here; the other sizes have their default prices.
+  async function setup(model = "paas") {
+    const code = await newCode();
+    const company = (await newCompany(code, { name: "Acme", productType: "ecommerce", model })).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
+    const get = async () => (await app.inject({ method: "GET", url })).json<CompanyView>();
+    const next = async () => (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    return { company, act, get, next };
+  }
+
+  it("shows PaaS's instances and managed services, with a built-in load balancer and nothing to rent", async () => {
+    const { company } = await setup();
+    const managed = paasServers.managed!;
+    expect(company.managed).toMatchObject({
+      instances: 1,
+      maxInstances: managed.maxInstances,
+      instanceSize: "medium",
+      instanceUnits: 15,
+      database: { size: "small", units: managed.units.database.small },
+      cache: null,
+    });
+    expect(company.managed!.database.options).toHaveLength(4);
+    expect(company.managed!.cacheOptions).toContainEqual({
+      size: "large",
+      units: managed.units.cache.large,
+      monthlyCost: paasServers.monthlyCost.cache!.large,
+    });
+    expect(company.servers.map((s) => s.name)).toEqual(["App instance", "Managed database"]);
+    expect(company.units!.loadBalancer).toMatchObject({ builtIn: true, needed: false });
+    expect(company).toMatchObject({ serverOptions: [], provider: null, opsNeeded: 1 });
+  });
+
+  it("raises the instance count and managed sizes at once, saved, with no extra ops", async () => {
+    const { company: before, act, get } = await setup();
+    const res = await act({ type: "setInstances", count: 4 });
+    expect(res.statusCode).toBe(200);
+    const scaled = res.json<CompanyView>();
+    expect(scaled.managed!.instances).toBe(4);
+    // Ready at once: 4 instances' CU, before any Continue (cut for the missing ops person, as before).
+    expect(scaled.units!.cu.capacity).toBeCloseTo(4 * before.units!.cu.capacity, 5);
+    expect(scaled.servers.every((s) => s.status === "ready")).toBe(true);
+    const db = (await act({ type: "setManagedService", service: "database", size: "large" })).json<CompanyView>();
+    expect(db.managed!.database).toMatchObject({ size: "large", units: paasServers.managed!.units.database.large });
+    const cached = (await act({ type: "setManagedService", service: "cache", size: "small" })).json<CompanyView>();
+    expect(cached.managed!.cache).toMatchObject({ size: "small" });
+    expect(cached.opsNeeded).toBe(1);
+    // Instances are free here: the platform's £300, the large database and the small cache.
+    expect(cached.monthlyInfrastructureCost).toBe(
+      300 + paasServers.monthlyCost.database!.large! + paasServers.monthlyCost.cache!.small!,
+    );
+    const off = (await act({ type: "setManagedService", service: "cache", size: null })).json<CompanyView>();
+    expect(off.managed!.cache).toBeNull();
+    expect((await get()).managed).toEqual(off.managed);
+  });
+
+  it("validates the PaaS actions, and the sim refuses what doesn't fit", async () => {
+    const { act } = await setup();
+    for (const payload of [
+      { type: "setInstances" },
+      { type: "setInstances", count: 0 },
+      { type: "setInstances", count: 2.5 },
+      { type: "setInstances", count: "two" },
+      { type: "setManagedService", size: "small" },
+      { type: "setManagedService", service: "database" },
+      { type: "setManagedService", service: "queue", size: "small" },
+      { type: "setManagedService", service: "cache", size: "huge" },
+      { type: "rentServer", server: "app", size: null },
+    ]) {
+      expect((await act(payload)).statusCode, JSON.stringify(payload)).toBe(400);
+    }
+    const tooMany = await act({ type: "setInstances", count: paasServers.managed!.maxInstances + 1 });
+    expect(tooMany.json()).toMatchObject({ error: "bad_instances" });
+    const noDb = await act({ type: "setManagedService", service: "database", size: null });
+    expect(noDb.json()).toMatchObject({ error: "database_required" });
+    const rent = await act({ type: "rentServer", server: "loadBalancer", size: "small" });
+    expect(rent.json()).toMatchObject({ error: "managed" });
+    const iaas = await setup("iaas");
+    const elsewhere = await iaas.act({ type: "setInstances", count: 2 });
+    expect(elsewhere.statusCode).toBe(400);
+    expect(elsewhere.json()).toMatchObject({ error: "not_managed" });
+  });
+
+  it("shows SaaS as unlimited and provider-managed, with the per-user bill", async () => {
+    const perUser = defaultConfig.models.saas.monthlyCostPerUser;
+    const { company, next } = await setup("saas");
+    expect(company).toMatchObject({ capacity: null, units: null, servers: [], managed: null, opsNeeded: 1 });
+    expect(company.provider).toEqual({
+      users: company.users,
+      freeUsers: company.freeUsers,
+      perUserFee: perUser,
+      monthlyPerUserBill: Math.round(company.users * perUser),
+      monthlyCost: defaultConfig.models.saas.monthlyCost,
+    });
+    const { company: later } = await next();
+    expect(later).toMatchObject({ capacity: null, outageDays: 0 });
   });
 });
 
@@ -1858,9 +1972,11 @@ describe("scripted events", () => {
       expect.objectContaining({ id: "trafficSpike", owner: "provider", hit: false }),
     ]);
     expect(company.outageDays).toBe(0);
-    // Scaled to meet the day's load.
+    // Scaled to meet the day's demand, from the spike's first day: the platform does it at once.
     expect(company.capacity).toBe(company.load);
-    const burst = log[0]!.entries.find((e) => e.text.startsWith("Traffic spike: scaled up"));
+    expect(company.units).toMatchObject({ burst: true });
+    expect(company.units!.cu.capacity).toBe(company.units!.cu.demand);
+    const burst = log[0]!.entries.find((e) => e.text.startsWith("Traffic spike: the platform scaled up for"));
     expect(burst).toMatchObject({ category: "infrastructure" });
     expect(burst!.cashDelta).toBeLessThan(0);
   });
@@ -2009,8 +2125,8 @@ describe("meta", () => {
       ["ops", 4],
       ["support", 3],
     ]);
-    // On-prem's and IaaS's from their starter servers.
-    expect(meta.models.map((m) => m.opsNeeded)).toEqual([2, 1, 1, 0]);
+    // On-prem's and IaaS's from their starter servers; PaaS's and SaaS's a small fixed number.
+    expect(meta.models.map((m) => m.opsNeeded)).toEqual([2, 1, 1, 1]);
   });
 
   it("includes each model's upfront and monthly costs", async () => {
@@ -2039,7 +2155,7 @@ describe("meta", () => {
     }
     expect(owner("saas", "application")).toBe("shared");
     expect(owner("iaas", "os")).toBe("you");
-    expect(meta.models.find((m: { id: string }) => m.id === "saas").comparison.opsNeeded).toBe("None");
+    expect(meta.models.find((m: { id: string }) => m.id === "saas").comparison.opsNeeded).toBe("Very low");
   });
 });
 

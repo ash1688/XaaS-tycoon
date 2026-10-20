@@ -66,11 +66,20 @@ export function createMigration(
   events: Events,
   servers: Servers,
 ) {
-  /** A model's starter setup in words: "1 medium app server, 1 medium database". */
-  const modelServersList = (model: ModelId) =>
-    config.models[model].servers?.starter
+  /**
+   * A model's starter setup in words: "1 medium app server, 1 medium database", or on a managed platform "1 app
+   * instance, 1 small managed database".
+   */
+  const modelServersList = (model: ModelId) => {
+    const managed = servers.isManaged(model);
+    return config.models[model].servers?.starter
       .filter((s) => s.count > 0)
-      .map((s) => `${s.count} ${s.size} ${config.servers.types[s.type].name.toLowerCase()}${s.count === 1 ? "" : "s"}`);
+      .map((s) => {
+        const plural = s.count === 1 ? "" : "s";
+        if (managed && s.type === "app") return `${s.count} app instance${plural}`;
+        return `${s.count} ${s.size} ${(managed ? servers.managedName(s.type) : config.servers.types[s.type].name).toLowerCase()}${plural}`;
+      });
+  };
 
   /** Checks a migration to this model can start, and returns it as a model id. */
   function migrationTarget(state: GameState, to: string): ModelId {
@@ -181,10 +190,11 @@ export function createMigration(
       return { state: { ...state, rng, migration: moved }, entries };
     }
     // Until migration sizes the new setup to demand (#51), the servers go with the model: those on the model being
-    // left are dropped, which stops their rent from tomorrow (pro rata, like the model's own bill), or for bought kit
-    // sells it back at a loss; and a model with servers gets its starter setup, ready for tomorrow and billed from
-    // then. Bought starter kit was paid for on the migration's first day, with the upfront cost, so it has arrived:
-    // a migration takes longer than delivery.
+    // left are dropped, which stops their rent from tomorrow (pro rata, like the model's own bill; on PaaS, instances
+    // and managed services too), or for bought kit sells it back at a loss; and a model with servers gets its starter
+    // setup, ready for tomorrow and billed from then (on PaaS, its starter instances and managed database). Bought
+    // starter kit was paid for on the migration's first day, with the upfront cost, so it has arrived: a migration
+    // takes longer than delivery. SaaS has no servers, so moving there drops them all and capacity is the provider's.
     const setup = servers.starter(m.to, state.day, state.nextServerId);
     const switched: GameState = {
       ...state,
@@ -206,7 +216,11 @@ export function createMigration(
     entries.push(...servers.leaveEntries(state));
     if (setup.servers.length) {
       const list = (modelServersList(m.to) ?? []).join(", ");
-      const more = config.models[m.to].servers?.purchase ? "Buy more servers" : "Rent more VMs";
+      const more = servers.isManaged(m.to)
+        ? "Raise your instance count"
+        : config.models[m.to].servers?.purchase
+          ? "Buy more servers"
+          : "Rent more VMs";
       const text = `Your ${toName} starter setup is ready for tomorrow: ${list}. ${more} as you grow.`;
       entries.push({ text, cashDelta: 0, kind: "migration" });
     }

@@ -2748,3 +2748,75 @@ body.modal-open {
 .sell-note {
   font-size: 1.05rem;
 }
+
+/* PaaS: the platform runs the servers. Managed services are the provider's, in its colour. */
+select {
+  font: inherit;
+  max-width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+select:disabled {
+  opacity: 0.5;
+}
+
+.platform-list label {
+  font-weight: 700;
+}
+
+.platform-note {
+  margin: 1rem 0 0;
+  font-size: 0.95rem;
+}
+
+.managed-note {
+  color: var(--provider);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.provider-badge {
+  background: var(--provider-soft);
+  color: var(--provider);
+}
+
+/* SaaS: capacity is the provider's, shown as the per-user bill. */
+.provider-status {
+  background: var(--provider-soft);
+}
+
+.provider-bill {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+}
+
+.provider-bill div {
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.provider-bill dt {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.provider-bill dd {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.provider-bill small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 400;
+}

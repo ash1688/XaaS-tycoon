@@ -69,10 +69,13 @@ export function createGame(code: string, id: string) {
 
   const understaffed = computed(() => !!company.value && company.value.ops < company.value.opsNeeded);
 
-  // Servers in units, on a model with them (IaaS): CU, DBU and CH demand against capacity. Over 100% on CU or DBU is
-  // an outage; the cache just takes what it can. A tier with no capacity and some demand shows as 999%, bar the cache:
-  // with none, nothing is waiting on it.
+  // Servers in units, on a model with them (on-prem, IaaS and PaaS): CU, DBU and CH demand against capacity. Over 100%
+  // on CU or DBU is an outage; the cache just takes what it can. A tier with no capacity and some demand shows as 999%,
+  // bar the cache: with none, nothing is waiting on it.
   const units = computed(() => company.value?.units ?? null);
+  // PaaS: an instance count and managed services the provider runs. SaaS: no servers and no limit, billed per user.
+  const managed = computed(() => company.value?.managed ?? null);
+  const provider = computed(() => company.value?.provider ?? null);
   const tiers = computed((): Tier[] => {
     const u = units.value;
     if (!u) return [];
@@ -87,10 +90,19 @@ export function createGame(code: string, id: string) {
   // On-prem buys its servers rather than renting them: they're on order, adding nothing, until they arrive.
   const buysServers = computed(() => company.value?.serverOptions[0]?.price != null);
   const addVerb = computed(() => (buysServers.value ? "buy" : "rent"));
+  // What to do about a tier running short: on PaaS, scale the platform; elsewhere, rent or buy more servers.
+  const tierFix = (tier: UnitTier) => {
+    if (managed.value) {
+      return tier === "cu" ? "raise your instance count" : "pick a bigger managed database, or add a cache";
+    }
+    return `${addVerb.value} more ${TIER_INFO.find((t) => t.id === tier)?.servers ?? "servers"}`;
+  };
   const onOrder = computed(() => (buysServers.value ? (company.value?.servers ?? []).filter((s) => s.status === "pending") : []));
+  // With no capacity limit (SaaS), load never comes close.
   const loadPercent = computed(() => {
     if (tightest.value) return tightest.value.percent;
-    return company.value ? Math.round((100 * company.value.load) / company.value.capacity) : 0;
+    const c = company.value;
+    return c && c.capacity ? Math.round((100 * c.load) / c.capacity) : 0;
   });
   // Over 100% is an outage; close to it is a warning that one is coming.
   const loadLevel = computed(() => levelOf(loadPercent.value));
@@ -289,10 +301,13 @@ export function createGame(code: string, id: string) {
     summary,
     understaffed,
     units,
+    managed,
+    provider,
     tiers,
     tightest,
     buysServers,
     addVerb,
+    tierFix,
     onOrder,
     loadPercent,
     loadLevel,

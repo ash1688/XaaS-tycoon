@@ -2,13 +2,23 @@ import {
   SERVER_SIZES,
   SERVER_TYPES,
   type GameConfig,
+  type ManagedService,
   type ModelId,
   type ProductTypeId,
   type ServerSize,
   type ServerType,
 } from "./config.ts";
 import { count, pounds, risen, type Finance } from "./finance.ts";
-import { isServerSize, isServerType, SimError, type GameState, type LogEntry, type Server, type UnitDemand } from "./state.ts";
+import {
+  isManagedService,
+  isServerSize,
+  isServerType,
+  SimError,
+  type GameState,
+  type LogEntry,
+  type Server,
+  type UnitDemand,
+} from "./state.ts";
 
 /** One of the company's servers, for the screen. */
 export interface ServerView {
@@ -62,6 +72,8 @@ export interface TierView {
 
 /** Load balancers against the app servers they serve. */
 export interface LoadBalancerView {
+  /** The platform's load balancer is built in and free, and serves every instance (PaaS): none are ever needed. */
+  builtIn: boolean;
   /** Ready app servers. */
   appServers: number;
   /** Ready load balancers. */
@@ -94,6 +106,41 @@ export interface UnitsView {
   burst: boolean;
 }
 
+/** One size of a managed service, for the picker. */
+export interface ManagedOption {
+  size: ServerSize;
+  /** DBU for a database, CH for a cache. */
+  units: number;
+  /** A month, after any provider price rises. */
+  monthlyCost: number;
+}
+
+/** A managed service the company runs: its size, units and price. */
+export interface ManagedServiceView extends ManagedOption {
+  /** Every size it comes in, smallest first. */
+  options: ManagedOption[];
+}
+
+/**
+ * The company's setup on a managed platform (PaaS): app instances, all one size, and the managed database and cache
+ * the provider runs. Changes are instant, managed services need no ops, and the load balancer is built in and free.
+ */
+export interface ManagedView {
+  instances: number;
+  maxInstances: number;
+  instanceSize: ServerSize;
+  /** CU each instance gives. */
+  instanceUnits: number;
+  /** One instance a month, after any provider price rises. */
+  instanceMonthlyCost: number;
+  database: ManagedServiceView;
+  /** Null with no cache, which is allowed: options are on cacheOptions then. */
+  cache: ManagedServiceView | null;
+  cacheOptions: ManagedOption[];
+  /** Instances and managed services a month, after any provider price rises. The platform's own bill is apart. */
+  monthlyCost: number;
+}
+
 /** Units servers give on a day, after any cut for missing ops. */
 export interface UnitCapacity {
   cu: number;
@@ -117,21 +164,32 @@ export interface UnitServe {
 }
 
 /**
- * Servers in units: the servers a company has on a model that uses them (IaaS rents VMs, on-prem buys kit), what they
- * cost, the ops they need and the CU, DBU and CH they give. A model without servers config keeps its fixed capacity,
- * so has none.
+ * Servers in units: the servers a company has on a model that uses them (IaaS rents VMs, on-prem buys kit, PaaS runs
+ * app instances and managed services), what they cost, the ops they need and the CU, DBU and CH they give. A model
+ * without servers config (SaaS) has none: there's no capacity limit there.
  *
  * Bought kit is paid for the moment it's bought, and is on order until it arrives after the model's readyDays: until
  * then it gives no units, needs no ops and costs nothing to run. An order can't be cancelled, since the kit is yours
  * once it's ordered; once it arrives it can be sold back at the configured share of what it cost.
+ *
+ * On a managed model (PaaS) the company doesn't rent servers one by one: it sets an instance count and picks the size
+ * of each managed service. They're rented in all but name, so billed the same way, but ready at once, needing no ops,
+ * and with the load balancer built in.
  */
 export function createServers(config: GameConfig, finance: Finance) {
   const modelServers = (model: ModelId) => config.models[model].servers;
   const hasServers = (model: ModelId) => !!modelServers(model);
   const purchaseOf = (model: ModelId) => modelServers(model)?.purchase;
+  const managedOf = (model: ModelId) => modelServers(model)?.managed;
   /** Whether a model buys its servers rather than renting them. */
   const buys = (model: ModelId) => !!purchaseOf(model);
-  const unitsOf = (s: Pick<Server, "type" | "size">) => config.servers.types[s.type].units[s.size];
+  /** Units a server gives on a model: a managed database or cache has the platform's own. */
+  const unitsOn = (model: ModelId, s: Pick<Server, "type" | "size">) => {
+    const managed = managedOf(model);
+    if (managed && isManagedService(s.type)) return managed.units[s.type][s.size];
+    return config.servers.types[s.type].units[s.size];
+  };
+  const readyDaysOf = (model: ModelId) => modelServers(model)?.readyDays ?? 0;
   const nameOf = (type: ServerType) => config.servers.types[type].name;
   const plural = (n: number, size: ServerSize, type: ServerType) =>
     `${count.format(n)} ${size} ${nameOf(type).toLowerCase()}${n === 1 ? "" : "s"}`;
@@ -154,6 +212,11 @@ export function createServers(config: GameConfig, finance: Finance) {
   /**
    * A model's starter setup as servers, numbered from nextId and ready at the end of readyDay. On a model that buys
    * its servers, each is marked as paid for at its purchase price (see starterPurchases).
+   *
+   * Migration uses this for the model it moves to until #51 sizes the setup to demand. A `sizeSetupFor(model,
+   * demand)` belongs next to it, returning the same shape: on IaaS and on-prem, enough servers of each type for the
+   * CU and DBU demand; on PaaS, ceil(CU ÷ instance CU) instances and the smallest managed database (and cache) that
+   * covers the DBU; on SaaS, nothing.
    */
   function starter(model: ModelId, readyDay: number, nextId = 1): { servers: Server[]; nextServerId: number } {
     const servers: Server[] = [];
@@ -187,9 +250,9 @@ export function createServers(config: GameConfig, finance: Finance) {
   const serversOn = (state: GameState, model: ModelId) =>
     model === state.model ? state.servers : starter(model, state.day).servers;
 
-  /** A server's monthly price on a model, after the provider's price rises. */
+  /** A server's monthly price on a model, after the provider's price rises. One the model doesn't price is free. */
   function monthlyCost(state: GameState, model: ModelId, type: ServerType, size: ServerSize): number {
-    const price = modelServers(model)?.monthlyCost[type][size] ?? 0;
+    const price = modelServers(model)?.monthlyCost[type]?.[size] ?? 0;
     return risen(price, state.priceRises[model] ?? 1);
   }
 
@@ -202,14 +265,18 @@ export function createServers(config: GameConfig, finance: Finance) {
     const servers = serversOn(state, model).filter((s) => inService(model, s, state.day));
     const share = days / config.billing.daysPerMonth;
     const what = buys(model) ? "power and upkeep" : "rent";
+    const managed = !!managedOf(model);
     const entries: LogEntry[] = [];
     for (const type of SERVER_TYPES) {
       for (const size of SERVER_SIZES) {
         const n = servers.filter((s) => s.type === type && s.size === size).length;
         const price = monthlyCost(state, model, type, size);
         if (n === 0 || price === 0) continue;
+        const text = managed
+          ? `${managedName(type)} (${size}): ${count.format(n)} × ${pounds(price)} a month`
+          : `${nameOf(type)} (${size}) ${what}: ${count.format(n)} × ${pounds(price)} a month`;
         entries.push({
-          text: `${nameOf(type)} (${size}) ${what}: ${count.format(n)} × ${pounds(price)} a month`,
+          text,
           cashDelta: -Math.round(n * price * share),
           category: "infrastructure",
         });
@@ -223,36 +290,49 @@ export function createServers(config: GameConfig, finance: Finance) {
       .filter((s) => inService(state.model, s, state.day))
       .reduce((sum, s) => sum + monthlyCost(state, state.model, s.type, s.size), 0);
 
-  /** Ops staff some servers need on a model: the total of each one's share, rounded up. */
+  /**
+   * Ops staff some servers need on a model: the model's fixed number (the few PaaS and SaaS need to keep the service
+   * running), plus the total of each server's share, rounded up. Managed services have no share: the provider runs
+   * them.
+   */
   function opsFor(model: ModelId, servers: Pick<Server, "type">[]): number {
+    const fixed = config.models[model].opsNeeded ?? 0;
     const perServer = modelServers(model)?.opsPerServer;
-    if (!perServer) return 0;
+    if (!perServer) return fixed;
     // Shares like 0.1 don't add up exactly, so the total is rounded to a millionth before rounding up.
-    return Math.ceil(Math.round(servers.reduce((sum, s) => sum + perServer[s.type], 0) * 1e6) / 1e6);
+    return fixed + Math.ceil(Math.round(servers.reduce((sum, s) => sum + perServer[s.type], 0) * 1e6) / 1e6);
   }
 
   /**
-   * Ops the company needs now: from its servers on a model with them (rented ones ready or not, bought ones once
-   * they've arrived), otherwise the model's fixed number.
+   * Ops the company needs now: the model's fixed number, plus on a model with servers their shares (rented ones ready
+   * or not, bought ones once they've arrived).
    */
   const opsNeeded = (state: GameState) =>
-    hasServers(state.model)
-      ? opsFor(state.model, state.servers.filter((s) => inService(state.model, s, state.day)))
-      : (config.models[state.model].opsNeeded ?? 0);
+    opsFor(state.model, state.servers.filter((s) => inService(state.model, s, state.day)));
 
-  /** Ops a model needs to start with: its starter setup's, or its fixed number. */
-  const modelOpsNeeded = (model: ModelId) =>
-    hasServers(model) ? opsFor(model, starter(model, 0).servers) : (config.models[model].opsNeeded ?? 0);
+  /** Ops a model needs to start with: its fixed number, plus its starter setup's. */
+  const modelOpsNeeded = (model: ModelId) => opsFor(model, starter(model, 0).servers);
+
+  /** Refuses renting, cancelling, buying or selling single servers on a managed platform. */
+  function refuseManaged(state: GameState) {
+    if (!managedOf(state.model)) return;
+    const { name } = config.models[state.model];
+    throw new SimError(
+      "managed",
+      `On ${name} the platform runs the servers: set your instance count and managed service sizes instead.`,
+    );
+  }
 
   function rentServer(state: GameState, type: string, size: string): GameState {
     const servers = modelServers(state.model);
     const { name } = config.models[state.model];
     if (!servers) throw new SimError("no_servers", `You don't rent VMs on ${name}.`);
+    refuseManaged(state);
     if (servers.purchase) throw new SimError("not_for_rent", `On ${name} you buy your servers rather than renting them.`);
     if (!isServerType(type) || !isServerSize(size)) {
       throw new SimError("unknown_server", "Pick a server type and size from the list.");
     }
-    const server: Server = { id: state.nextServerId, type, size, readyDay: state.day + servers.readyDays };
+    const server: Server = { id: state.nextServerId, type, size, readyDay: state.day + readyDaysOf(state.model) };
     return { ...state, servers: [...state.servers, server], nextServerId: state.nextServerId + 1 };
   }
 
@@ -264,6 +344,7 @@ export function createServers(config: GameConfig, finance: Finance) {
   }
 
   function cancelServer(state: GameState, id: number): GameState {
+    refuseManaged(state);
     ownServer(state, id);
     if (buys(state.model)) throw new SimError("not_rented", "You own that server, so there's no rent to cancel: sell it back instead.");
     return { ...state, servers: state.servers.filter((s) => s.id !== id) };
@@ -274,7 +355,12 @@ export function createServers(config: GameConfig, finance: Finance) {
     const servers = modelServers(state.model);
     const { name } = config.models[state.model];
     if (!servers?.purchase) {
-      throw new SimError("not_for_sale", servers ? `On ${name} you rent VMs rather than buying servers.` : `You don't buy servers on ${name}.`);
+      const why = servers?.managed
+        ? `On ${name} the platform runs the servers: set your instance count and managed service sizes instead.`
+        : servers
+          ? `On ${name} you rent VMs rather than buying servers.`
+          : `You don't buy servers on ${name}.`;
+      throw new SimError("not_for_sale", why);
     }
     if (!isServerType(type) || !isServerSize(size)) {
       throw new SimError("unknown_server", "Pick a server type and size from the list.");
@@ -283,9 +369,10 @@ export function createServers(config: GameConfig, finance: Finance) {
     if (price > state.cash) {
       throw new SimError("cant_afford", `That costs ${pounds(price)} up front and you have ${pounds(state.cash)}.`);
     }
-    const server: Server = { id: state.nextServerId, type, size, readyDay: state.day + servers.readyDays, paid: price };
+    const days = readyDaysOf(state.model);
+    const server: Server = { id: state.nextServerId, type, size, readyDay: state.day + days, paid: price };
     const bought = { ...state, servers: [...state.servers, server], nextServerId: state.nextServerId + 1 };
-    const text = `Bought ${plural(1, size, type)}, arriving in ${servers.readyDays} days`;
+    const text = `Bought ${plural(1, size, type)}, arriving in ${days} days`;
     return finance.chargeNow(bought, [{ text, cashDelta: -price, category: "infrastructure" }]);
   }
 
@@ -312,14 +399,108 @@ export function createServers(config: GameConfig, finance: Finance) {
     return finance.chargeNow(sold, [{ text, cashDelta: refund, category: "infrastructure" }]);
   }
 
+  /** The name of a server on a managed platform: "App instance", "Managed database". */
+  const managedName = (type: ServerType) =>
+    type === "app" ? "App instance" : `Managed ${nameOf(type).toLowerCase()}`;
+
+  /** The company's servers of a type, on its model. */
+  const ofType = (state: GameState, type: ServerType) => state.servers.filter((s) => s.type === type);
+
+  /** Checks the company is on a managed platform, and returns its config. */
+  function managedConfig(state: GameState) {
+    const managed = managedOf(state.model);
+    if (!managed) {
+      const { name } = config.models[state.model];
+      throw new SimError("not_managed", `${name} doesn't run instances and managed services for you.`);
+    }
+    return managed;
+  }
+
+  /**
+   * Sets how many app instances run on a managed platform. New ones are ready at once, serving from the next day
+   * played; fewer drops the newest first. Billed a day's share at a time like any rent, so a change is pro rata.
+   */
+  function setInstances(state: GameState, n: number): GameState {
+    const managed = managedConfig(state);
+    if (!Number.isInteger(n) || n < 1 || n > managed.maxInstances) {
+      throw new SimError("bad_instances", `Run between 1 and ${managed.maxInstances} app instances.`);
+    }
+    const apps = ofType(state, "app");
+    if (n <= apps.length) {
+      const dropped = new Set(apps.slice(n).map((s) => s.id));
+      return { ...state, servers: state.servers.filter((s) => !dropped.has(s.id)) };
+    }
+    let id = state.nextServerId;
+    const added: Server[] = Array.from({ length: n - apps.length }, () => ({
+      id: id++,
+      type: "app" as const,
+      size: managed.instanceSize,
+      readyDay: state.day,
+    }));
+    return { ...state, servers: [...state.servers, ...added], nextServerId: id };
+  }
+
+  /**
+   * Sets the size of a managed service on a managed platform, ready at once like an instance. The cache can be turned
+   * off (a null size); the database can't, since every product stores data.
+   */
+  function setManagedService(state: GameState, service: string, size: string | null): GameState {
+    managedConfig(state);
+    if (!isManagedService(service)) throw new SimError("unknown_service", "Pick the database or the cache.");
+    if (size !== null && !isServerSize(size)) throw new SimError("unknown_size", "Pick a size from the list.");
+    if (size === null && service === "database") {
+      throw new SimError("database_required", "Your product needs a database: pick a size rather than turning it off.");
+    }
+    const current = ofType(state, service);
+    if (current.length === (size ? 1 : 0) && current.every((s) => s.size === size)) return state;
+    const kept = state.servers.filter((s) => s.type !== service);
+    if (!size) return { ...state, servers: kept };
+    const server: Server = { id: state.nextServerId, type: service, size, readyDay: state.day };
+    return { ...state, servers: [...kept, server], nextServerId: state.nextServerId + 1 };
+  }
+
+  /** The company's setup on a managed platform, or null on any other model. */
+  function managed(state: GameState): ManagedView | null {
+    const platform = managedOf(state.model);
+    if (!platform) return null;
+    const option = (type: ManagedService, size: ServerSize): ManagedOption => ({
+      size,
+      units: platform.units[type][size],
+      monthlyCost: monthlyCost(state, state.model, type, size),
+    });
+    const options = (type: ManagedService) => SERVER_SIZES.map((size) => option(type, size));
+    const view = (type: ManagedService): ManagedServiceView | null => {
+      const s = ofType(state, type)[0];
+      return s ? { ...option(type, s.size), options: options(type) } : null;
+    };
+    // A teacher's starter setup might leave the database out: shown as the smallest with nothing running, to pick one.
+    const noDatabase = { ...option("database", "small"), units: 0, monthlyCost: 0, options: options("database") };
+    return {
+      instances: ofType(state, "app").length,
+      maxInstances: platform.maxInstances,
+      instanceSize: platform.instanceSize,
+      instanceUnits: unitsOn(state.model, { type: "app", size: platform.instanceSize }),
+      instanceMonthlyCost: monthlyCost(state, state.model, "app", platform.instanceSize),
+      database: view("database") ?? noDatabase,
+      cache: view("cache"),
+      cacheOptions: options("cache"),
+      monthlyCost: monthlyServerCost(state),
+    };
+  }
+
   /**
    * What happens to the company's servers when a migration off its model completes, until migration sizes the new
-   * setup (#51): rented VMs are cancelled, their rent having been billed up to the day you leave; bought kit is sold
-   * back at the configured share, kit still on order included (the order goes with the move).
+   * setup (#51): rented VMs, and a platform's instances and managed services, are cancelled, their rent having been
+   * billed up to the day you leave; bought kit is sold back at the configured share, kit still on order included (the
+   * order goes with the move).
    */
   function leaveEntries(state: GameState): LogEntry[] {
     const n = state.servers.length;
     if (n === 0) return [];
+    if (managedOf(state.model)) {
+      const text = `Your app instances and managed services were cancelled: you paid for them only for the days you had them.`;
+      return [{ text, cashDelta: 0, kind: "migration" }];
+    }
     if (!buys(state.model)) {
       const text = `Your ${n} rented VM${n === 1 ? " was" : "s were"} cancelled: you paid rent only for the days you had them.`;
       return [{ text, cashDelta: 0, kind: "migration" }];
@@ -333,16 +514,18 @@ export function createServers(config: GameConfig, finance: Finance) {
 
   /**
    * Units the servers serving a day give, each tier scaled by `factor` (the cut for missing ops). Only servers ready
-   * before the day count, and of the app servers only those the load balancers cover, biggest first.
+   * before the day count, and of the app servers only those the load balancers cover, biggest first. A platform's
+   * built-in load balancer covers every instance.
    */
   function capacityOn(state: GameState, day: number, factor: number): UnitCapacity {
     const ready = state.servers.filter((s) => s.readyDay < day);
-    const of = (type: ServerType) => ready.filter((s) => s.type === type).map(unitsOf);
+    const of = (type: ServerType) => ready.filter((s) => s.type === type).map((s) => unitsOn(state.model, s));
     const sum = (units: number[]) => units.reduce((a, b) => a + b, 0);
     const apps = of("app").sort((a, b) => b - a);
     const balancers = of("loadBalancer");
     const coverage = sum(balancers);
-    const needed = apps.length >= config.servers.loadBalancerFrom;
+    const builtIn = !!managedOf(state.model);
+    const needed = !builtIn && apps.length >= config.servers.loadBalancerFrom;
     // With no load balancer, traffic only reaches one app server.
     const counted = needed ? Math.min(apps.length, Math.max(1, coverage)) : apps.length;
     return {
@@ -350,6 +533,7 @@ export function createServers(config: GameConfig, finance: Finance) {
       dbu: sum(of("database")) * factor,
       ch: sum(of("cache")) * factor,
       loadBalancer: {
+        builtIn,
         appServers: apps.length,
         loadBalancers: balancers.length,
         needed,
@@ -389,43 +573,50 @@ export function createServers(config: GameConfig, finance: Finance) {
 
   function servers(state: GameState): ServerView[] {
     const bought = buys(state.model);
+    const managed = !!managedOf(state.model);
     return state.servers.map((s) => ({
       id: s.id,
       type: s.type,
       size: s.size,
-      name: nameOf(s.type),
+      name: managed ? managedName(s.type) : nameOf(s.type),
       status: s.readyDay <= state.day ? "ready" : "pending",
       readyDay: s.readyDay,
       daysLeft: Math.max(0, s.readyDay - state.day),
-      units: unitsOf(s),
+      units: unitsOn(state.model, s),
       monthlyCost: monthlyCost(state, state.model, s.type, s.size),
       paid: bought ? (s.paid ?? 0) : null,
       sellBack: bought ? sellBackValue(state.model, s) : null,
     }));
   }
 
-  /** Every type and size the company can add on its model, in config order. None on a model without servers. */
+  /**
+   * Every type and size the company can add one at a time on its model, in config order. None on a model without
+   * servers, or on a managed platform, where it sets instances and service sizes instead (see managed).
+   */
   function serverOptions(state: GameState): ServerOption[] {
     const servers = modelServers(state.model);
-    if (!servers) return [];
+    if (!servers || servers.managed) return [];
     return SERVER_TYPES.flatMap((type) =>
       SERVER_SIZES.map((size) => ({
         type,
         size,
         name: nameOf(type),
         blurb: config.servers.types[type].blurb,
-        units: unitsOf({ type, size }),
+        units: unitsOn(state.model, { type, size }),
         monthlyCost: monthlyCost(state, state.model, type, size),
         price: servers.purchase ? purchasePrice(state, state.model, type, size) : null,
         sellBackShare: servers.purchase?.sellBackShare ?? null,
-        readyDays: servers.readyDays,
-        ops: servers.opsPerServer[type],
+        readyDays: readyDaysOf(state.model),
+        ops: servers.opsPerServer?.[type] ?? 0,
       })),
     );
   }
 
   return {
     hasServers,
+    isManaged: (model: ModelId) => !!managedOf(model),
+    readyDaysOf,
+    managedName,
     starter,
     starterPurchases,
     serverEntries,
@@ -437,6 +628,9 @@ export function createServers(config: GameConfig, finance: Finance) {
     buyServer,
     sellServer,
     leaveEntries,
+    setInstances,
+    setManagedService,
+    managed,
     capacityOn,
     serve,
     usersSupported,

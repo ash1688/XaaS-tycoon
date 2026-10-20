@@ -56,15 +56,19 @@ export interface ModelConfig {
   /** Extra per user per month, billed as a daily share on that day's users. SaaS charges per user. */
   monthlyCostPerUser: number;
   /**
-   * Ops/sysadmins this model needs to keep running. Fewer as the provider manages more layers. Only for a model
-   * without servers: with them, ops needed come from the servers (see ModelServersConfig.opsPerServer).
+   * Ops/sysadmins this model needs whatever it runs on: the few PaaS and SaaS need to keep the service running. On a
+   * model with servers, the servers' own ops (see ModelServersConfig.opsPerServer) are added on top.
    */
   opsNeeded?: number;
-  /** Load the model can serve in a day when fully staffed. Only for a model without servers, which uses units. */
+  /**
+   * Load the model can serve in a day when fully staffed: a fixed capacity, for a model without servers. No model in
+   * the default config has one any more. A model with neither this nor servers has no capacity limit at all (SaaS):
+   * the provider scales, so capacity is never the constraint.
+   */
   capacity?: number;
   /**
-   * How the model gets capacity from servers measured in units; left out for a fixed capacity. IaaS rents VMs and
-   * on-prem buys servers. PaaS and SaaS keep a fixed capacity until their own slice.
+   * How the model gets capacity from servers measured in units. IaaS rents VMs, on-prem buys servers and PaaS sets an
+   * instance count and managed service sizes. Left out on SaaS, which has no servers and no capacity limit.
    */
   servers?: ModelServersConfig;
   /**
@@ -100,26 +104,58 @@ export interface ServerPurchaseConfig {
  * after it arrives until it's sold. Prices go up with the provider's price rises.
  */
 export interface ModelServersConfig {
-  /** Monthly price of one server, by type and size: rent, or on a model that buys them, power and upkeep. */
-  monthlyCost: Record<ServerType, Record<ServerSize, number>>;
+  /**
+   * Monthly price of one server, by type and size: rent, or on a model that buys them, power and upkeep. A type or
+   * size left out costs nothing: on PaaS the load balancer is built in and free, and app instances come in one size.
+   */
+  monthlyCost: Partial<Record<ServerType, Partial<Record<ServerSize, number>>>>;
   /**
    * Days from adding a server to it being ready: 1 is the next day, and it serves load from the day after that. On a
-   * model that buys its servers, the delivery time.
+   * model that buys its servers, the delivery time. Left out (0) on a managed model, where changes are instant.
    */
-  readyDays: number;
+  readyDays?: number;
   /**
    * Ops staff each server of a type needs. Ops needed is the total over every server, rounded up: rented ones whether
-   * ready or not, bought ones once they've arrived.
+   * ready or not, bought ones once they've arrived. Left out on a managed model: the provider runs them, so they need
+   * no ops (the model's own opsNeeded still applies).
    */
-  opsPerServer: Record<ServerType, number>;
+  opsPerServer?: Record<ServerType, number>;
   /** Set on a model that buys its servers rather than renting them. */
   purchase?: ServerPurchaseConfig;
+  /** Set on a model whose platform runs the servers for you (PaaS). */
+  managed?: ManagedServersConfig;
   /**
    * The servers a new company on this model starts with, ready for the first day. Until migration sizes a setup to
    * demand (#51), a migration onto the model gets these too. On a model that buys its servers, they're bought along
    * with the model's upfront cost, at their purchase prices.
    */
   starter: ServerCount[];
+}
+
+/** The services a platform runs for you, one of each at a size you pick. The database is required, the cache isn't. */
+export const MANAGED_SERVICES = ["database", "cache"] as const;
+export type ManagedService = (typeof MANAGED_SERVICES)[number];
+
+/**
+ * A platform that runs the servers for you (PaaS). You set how many app instances to run, all one size, and pick the
+ * size of one managed database and, if you like, one managed cache. The provider runs them, so they need no ops, and a
+ * change takes effect at once. The load balancer is built in and free, so every instance counts however many you run.
+ * Each is billed monthly, a day's share at a time, at the model's server prices (monthlyCost): more per unit than the
+ * same units on IaaS, since the provider's work is in the price.
+ *
+ * Instances are app servers of instanceSize in game state, and the managed services databases and caches, so the
+ * same unit rules (weakest tier, cache hits) apply.
+ */
+export interface ManagedServersConfig {
+  /** The size every app instance is: each gives that size's CU (see ServersConfig.types.app). */
+  instanceSize: ServerSize;
+  /** The most app instances a company can run. */
+  maxInstances: number;
+  /**
+   * Units each size of managed database and cache gives, in place of a server's. A managed service scales up further
+   * than one server of the same size, since you only ever run one.
+   */
+  units: Record<ManagedService, Record<ServerSize, number>>;
 }
 
 /** One server type: what it's called and the units each size gives. */
@@ -456,15 +492,11 @@ export interface EventOutcome {
   /** Why it played out like this on this model, for the student. Follows the line naming the responsible layer. */
   detail: string;
   /**
-   * Capacity grows to meet the event's extra load, so the load causes no outage, charged per unit of load the event
-   * adds (infrastructure). 0 scales for free. Left out, capacity stays as it is, so the extra load can cause an
-   * outage by the usual capacity rules.
-   */
-  scaleCostPerLoad?: number;
-  /**
-   * The same on a model with servers: extra servers meet the CU and DBU demand over capacity, charged per unit over
-   * (infrastructure). They take the model's readyDays to arrive, so they only help from that many days into the
-   * event: on IaaS, its first day runs on the servers you have.
+   * Capacity grows to meet the event's extra demand, so it causes no outage: extra servers meet the CU and DBU demand
+   * over capacity, charged per unit over (infrastructure). They take the model's readyDays to arrive, so they only
+   * help from that many days into the event: on IaaS its first day runs on the servers you have, while the PaaS
+   * platform scales at once. Left out, capacity stays as it is, so the extra demand can cause an outage by the usual
+   * capacity rules. (SaaS has no capacity limit, so needs neither.)
    */
   scaleCostPerUnit?: number;
   /** Hours down, on top of any outage from load. Counts as an outage. */
@@ -622,21 +654,46 @@ export const defaultConfig: GameConfig = {
       blurb: "Hand over your code; the platform runs it.",
       comparison: { upfrontCost: "Low", monthlyCost: "Medium–high", opsNeeded: "Low", control: "Medium" },
       upfrontCost: 1_000,
-      monthlyCost: 9_000,
+      // The platform account. Instances and managed services are billed on top.
+      monthlyCost: 1_500,
       monthlyCostPerUser: 0,
+      // A small, fixed team to deploy and keep the service running, however many instances: the platform runs them.
       opsNeeded: 1,
-      capacity: 100_000,
       exitPenalty: 4_000,
+      // Placeholders, balanced in #55. A unit costs about half as much again as on IaaS (an instance is £53 a CU, a
+      // medium VM £37): the provider's ops are in the price. A managed database or cache doubles its units with each
+      // size, so one is enough for any product's whole market.
+      servers: {
+        monthlyCost: {
+          app: { medium: 800 },
+          database: { small: 1_000, medium: 1_800, large: 3_400, massive: 6_400 },
+          cache: { small: 300, medium: 550, large: 1_000, massive: 1_900 },
+        },
+        managed: {
+          instanceSize: "medium",
+          maxInstances: 20,
+          units: {
+            database: { small: 15, medium: 30, large: 60, massive: 120 },
+            cache: { small: 15, medium: 30, large: 60, massive: 120 },
+          },
+        },
+        // One instance and a small managed database: enough for every product's starting users with room to grow.
+        starter: [
+          { type: "app", size: "medium", count: 1 },
+          { type: "database", size: "small", count: 1 },
+        ],
+      },
     },
     saas: {
       name: "Build on a SaaS platform (SaaS)",
       blurb: "Build inside someone else's SaaS platform, like a shop on Shopify.",
-      comparison: { upfrontCost: "Low", monthlyCost: "Per user, plus add-ons", opsNeeded: "None", control: "Low" },
+      comparison: { upfrontCost: "Low", monthlyCost: "Per user, plus add-ons", opsNeeded: "Very low", control: "Low" },
       upfrontCost: 500,
       monthlyCost: 1_500,
+      // Every user, free ones included. There are no servers and no capacity limit: the provider scales.
       monthlyCostPerUser: 0.5,
-      opsNeeded: 0,
-      capacity: 100_000,
+      // One person for the settings and integrations that keep the shop running.
+      opsNeeded: 1,
       exitPenalty: 2_000,
     },
   },
@@ -899,7 +956,7 @@ export const defaultConfig: GameConfig = {
       // Somewhere in the game, never in the first weeks.
       schedule: { type: "seeded", count: 2, fromDay: 20, toDay: 170 },
       days: 2,
-      // More than any model's normal capacity, so only a model that scales stays up. On servers, triple the demand.
+      // Triple the CU and DBU demand: more than a sensible setup carries, so only a model that scales stays up.
       load: { multiplier: 2, extra: 80_000, unitMultiplier: 3 },
       effects: {
         onprem: {
@@ -917,11 +974,12 @@ export const defaultConfig: GameConfig = {
           },
         },
         paas: {
-          scaleCostPerLoad: 0.05,
-          detail: "The platform scaled up by itself, so you stayed up, but it bills you for the extra capacity.",
+          // At once, but dearer than renting your own VMs ahead (and than IaaS's £25 from its second day).
+          scaleCostPerUnit: 30,
+          detail:
+            "The platform scaled up by itself from the first minute, so you stayed up, but it bills you for every CU and DBU over your setup.",
         },
         saas: {
-          scaleCostPerLoad: 0,
           detail: "The SaaS provider absorbed it on their platform. You pay per user, so the burst cost you nothing.",
         },
       },

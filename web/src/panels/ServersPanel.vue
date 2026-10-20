@@ -129,7 +129,7 @@ async function cancel() {
 </script>
 
 <template>
-  <section v-if="game.company && game.units" class="card" aria-labelledby="servers-heading" data-testid="servers-panel">
+  <section v-if="game.company && game.units && !game.managed" class="card" aria-labelledby="servers-heading" data-testid="servers-panel">
     <div class="row-between panel-head">
       <h2 id="servers-heading">Servers</h2>
       <span v-if="buying" class="muted">

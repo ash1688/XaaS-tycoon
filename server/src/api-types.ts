@@ -10,6 +10,7 @@ import type {
   FeatureGapView,
   FeatureView,
   GameSummary,
+  ManagedView,
   MigrationPhase,
   MigrationQuote,
   MigrationView,
@@ -18,6 +19,7 @@ import type {
   PriceWaveView,
   ModelId,
   ProductTypeId,
+  ProviderView,
   ServerOption,
   ServerView,
   Spend,
@@ -167,26 +169,36 @@ export interface CompanyView {
   load: number;
   /**
    * Load the company can serve in a day with its current model and staff. On a model with servers, the load its ready
-   * servers carry at the product's usual demand: see units for each tier.
+   * servers carry at the product's usual demand: see units for each tier. Null on SaaS: no limit, the provider scales.
    */
-  capacity: number;
+  capacity: number | null;
   /**
-   * On a model with servers (IaaS and on-prem): CU, DBU (after the cache) and CH demand on the day just played against what the
-   * ready servers give, the binding tier that runs out first, the users the servers can serve, and load balancer
-   * coverage of the app servers. Null on a model with a fixed capacity.
+   * On a model with servers (on-prem, IaaS and PaaS): CU, DBU (after the cache) and CH demand on the day just played
+   * against what the ready servers give, the binding tier that runs out first, the users the servers can serve, and
+   * load balancer coverage of the app servers (built in on PaaS). Null on SaaS, which has no servers.
    */
   units: UnitsView | null;
   /**
    * The company's servers (type, size, ready or pending with the days left, units and monthly price; for bought kit,
-   * what it cost and what selling it back would refund), oldest first. On-prem, pending servers are on order. Empty
-   * without servers.
+   * what it cost and what selling it back would refund), oldest first. On-prem, pending servers are on order; on PaaS,
+   * they're the app instances and managed services. Empty on SaaS.
    */
   servers: ServerView[];
   /**
-   * What the company can add on its model, every type and size with its units and monthly price; on-prem, the purchase
-   * price, sell-back share and delivery days too. Empty without servers.
+   * What the company can add one at a time on its model, every type and size with its units and monthly price;
+   * on-prem, the purchase price, sell-back share and delivery days too. Empty on PaaS (see managed) and SaaS.
    */
   serverOptions: ServerOption[];
+  /**
+   * On PaaS: the app instance count and the managed database and cache, each with the sizes it comes in and its price.
+   * Changes are instant, managed services need no ops, and the load balancer is built in. Null on other models.
+   */
+  managed: ManagedView | null;
+  /**
+   * On SaaS: unlimited, provider-managed capacity, paid for through the per-user fee (free users included), shown as
+   * that bill. Null on other models.
+   */
+  provider: ProviderView | null;
   /** Percentage of time up across every day played. */
   uptime: number;
   outageDays: number;
