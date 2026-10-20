@@ -33,7 +33,7 @@ const satisfactionChange = computed(() =>
       <div class="stat">
         <span class="label">Tickets today</span>
         <span class="value" data-testid="tickets-today">{{ formatCount(game.company.ticketsToday) }}</span>
-        <small v-if="game.company.burstTickets">{{ formatCount(game.company.burstTickets) }} from outages</small>
+        <small v-if="game.company.burstTickets">{{ formatCount(game.company.burstTickets) }} in bursts</small>
       </div>
       <div class="stat">
         <span class="label">Cleared</span>

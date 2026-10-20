@@ -13,6 +13,8 @@ import type {
   MigrationQuote,
   MigrationView,
   ModelComparison,
+  PricePreview,
+  PriceWaveView,
   ModelId,
   ProductTypeId,
   Spend,
@@ -23,6 +25,8 @@ import type {
 export interface ApiError {
   error: string;
   message: string;
+  /** A 409 "price_locked" from setPrice: days until the price can be changed again. */
+  daysLeft?: number;
 }
 
 /** Timed flow: when enabled, the game page has Play/Pause and plays a day every `seconds`. */
@@ -69,6 +73,9 @@ export interface MetaView {
   poorSatisfaction: number;
   /** The highest monthly price a company can set. */
   maxPrice: number;
+  /** Days a price change's wave lasts, and days the price is locked after a change. */
+  priceWaveDays: number;
+  priceLockDays: number;
   /** A migration's phases in order, and how long each takes before any overrun. */
   migrationPhases: { id: MigrationPhase; name: string; days: number }[];
 }
@@ -115,6 +122,13 @@ export interface CompanyView {
   dailyIncome: number;
   /** Everything paying users have paid so far. */
   income: number;
+  /**
+   * The wave from the last price change while it's under way, or null: rise or cut, wave days played of its length,
+   * what it has done so far and its whole plan day by day.
+   */
+  priceWave: PriceWaveView | null;
+  /** Days until the price can be changed again after the last change. 0 when it can. */
+  priceLockDaysLeft: number;
   /** Tickets raised on the day just played, bursts included. */
   ticketsToday: number;
   /** Of today's tickets, those from bursts such as outages. */
@@ -166,6 +180,14 @@ export interface CompanyView {
  * rata, exit penalty, total), the odds of an overrun, and the add-ons lost when leaving SaaS, for the confirm step.
  */
 export type MigrationQuoteView = MigrationQuote;
+
+/**
+ * GET .../price-preview?price=: what setting that monthly price would do if nothing else changed. Income a day now and
+ * once the wave settles, users and paying users after it, the wave's totals (paying users leaving and dropping to
+ * free; new users and upgrades on a cut; backlash tickets) and its day-by-day shape, and whether the price is locked.
+ * Changes nothing.
+ */
+export type PricePreviewView = PricePreview;
 
 /**
  * GET .../summary: how the company did. Final cash, users and uptime, spend by category, migrations, and spend and

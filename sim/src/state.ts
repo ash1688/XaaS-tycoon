@@ -13,7 +13,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 11;
+export const GAME_STATE_VERSION = 12;
 
 /** Money spent in each category. */
 export type Spend = Record<SpendCategory, number>;
@@ -80,6 +80,49 @@ export interface FeatureGap {
 }
 
 /**
+ * What a price wave does on one of its days, or over all of them. A rise makes paying users leave or drop to free and
+ * raises backlash tickets; a cut brings new users and turns free users into payers.
+ */
+export interface WaveEffect {
+  /** Paying users who leave altogether. */
+  left: number;
+  /** Paying users who drop to the free tier. */
+  toFree: number;
+  /** New users who join. */
+  joined: number;
+  /** Of the new users, those who pay. */
+  joinedPaid: number;
+  /** Free users who start paying. */
+  upgraded: number;
+  /** Backlash support tickets. */
+  tickets: number;
+}
+
+/**
+ * A price change's wave of reactions. Planned in full when the price changes, from the users then, so the preview
+ * shows exactly what happens if nothing else changes; each day applies its share.
+ */
+export interface PriceWave {
+  direction: "rise" | "cut";
+  from: number;
+  to: number;
+  /** The first day played at the new price: the wave's day 1. */
+  firstDay: number;
+  /** The plan: what each day of the wave does, day 1 first. */
+  days: WaveEffect[];
+  /** What it has done so far. Less than the plan only where users had already gone. */
+  done: WaveEffect;
+}
+
+/** A price change, for the summary. */
+export interface PriceChange {
+  /** The first day played at the new price. */
+  day: number;
+  from: number;
+  to: number;
+}
+
+/**
  * A bankrupt game is over, and so is a finished one: one that has played the configured final day. Either way it
  * accepts no more actions or advances. The final day is the last day played, so a 180-day game plays day 180 in full
  * (billed, with its events) and finishes at the end of it.
@@ -109,6 +152,12 @@ export interface GameState {
   paidUsers: number;
   /** The monthly price each paying user pays, a day's share at a time. A change applies from the next day played. */
   price: number;
+  /** The wave from the last price change, kept after it ends; null before any change. */
+  priceWave: PriceWave | null;
+  /** The price can't be changed again until this day has been played. 0 before any change. */
+  priceLockedUntil: number;
+  /** Every price change made, oldest first. */
+  priceChanges: PriceChange[];
   /** Everything paying users have paid so far. Not part of spend: profit is income − spend. */
   income: number;
   /** Load on the day just played. */
@@ -185,7 +234,7 @@ export interface LogEntry {
    * Set on entries that need to stand out, such as an outage or bankruptcy. "income" marks money coming in, which the
    * ledger counts as income rather than spend.
    */
-  kind?: "outage" | "bankrupt" | "finished" | "feature" | "migration" | "event" | "income" | "support";
+  kind?: "outage" | "bankrupt" | "finished" | "feature" | "migration" | "event" | "income" | "support" | "price";
 }
 
 export interface DayLog {
@@ -202,10 +251,14 @@ export interface AdvanceResult {
 export class SimError extends Error {
   readonly code: string;
 
-  constructor(code: string, message: string) {
+  /** Numbers that say more, sent with the error: daysLeft on a locked price. */
+  readonly details: Record<string, number>;
+
+  constructor(code: string, message: string, details: Record<string, number> = {}) {
     super(message);
     this.name = "SimError";
     this.code = code;
+    this.details = details;
   }
 }
 

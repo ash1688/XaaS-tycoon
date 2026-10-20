@@ -120,6 +120,22 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("pricing.maxGrowthBoost", "Customers", "", "Most a low price speeds growth", "A price below the fair price multiplies growth by at most this.", range(1, 10, 0.05));
   add("pricing.paidShareSensitivity", "Customers", "", "Price effect on new payers", "The paid share of new users is multiplied by (price ÷ fair price) to minus this.", range(0, 5, 0.05));
 
+  // Customers: price waves and the price lock
+  const W = "Price changes";
+  add("pricing.waveDays", "Customers", W, "Wave length (days)", "Days a price change's wave of reactions lasts: a small reaction on day 1, then the main effect.", range(1, 60, 1));
+  add("pricing.lockDays", "Customers", W, "Price lock (days)", "Days the price can't be changed again after a change.", range(0, 90, 1));
+  add("pricing.firstDayShare", "Customers", W, "First-day share", "Share of a wave's whole effect that lands on its first day.", SHARE);
+  add("pricing.waveCurve", "Customers", W, "Wave curve", "Wave size grows with (change ÷ fair price) to this power. Above 1, small changes barely register and big jumps hit hard.", range(0.5, 4, 0.05));
+  add("pricing.riseStrength", "Customers", W, "Rise strength", "A rise affects this × (rise ÷ fair price)^curve of paying users, before the extra hit and the cap.", range(0, 5, 0.05));
+  add("pricing.dearness", "Customers", W, "Extra hit when already dear", "A rise's effect is multiplied by (new price ÷ fair price) to this power. 0 for no effect.", range(0, 5, 0.05));
+  add("pricing.maxRiseShare", "Customers", W, "Most payers one rise can lose", "The biggest share of paying users one rise can affect.", SHARE);
+  add("pricing.dropToFreeShare", "Customers", W, "Drop to free share", "Of the paying users a rise affects, the share who drop to free. The rest leave.", SHARE);
+  add("pricing.backlashTicketsPerUser", "Customers", W, "Backlash tickets per user", "Support tickets each affected user raises over a rise's backlash.", range(0, 20, 0.1));
+  add("pricing.cutGainStrength", "Customers", W, "Cut: new users", "A cut brings this × (cut ÷ fair price)^curve new users, as a share of users, before the cap.", range(0, 5, 0.05));
+  add("pricing.maxCutGain", "Customers", W, "Cut: most new users", "The most new users one cut can bring, as a share of users.", range(0, 5, 0.05));
+  add("pricing.cutUpgradeStrength", "Customers", W, "Cut: upgrades", "A cut turns this × (cut ÷ fair price)^curve of free users into payers, before the cap.", range(0, 5, 0.05));
+  add("pricing.maxCutUpgrade", "Customers", W, "Cut: most upgrades", "The most of the free users one cut can turn into payers.", SHARE);
+
   // Customers: support tickets and satisfaction
   const TICKET_RATE = range(0, 1, 0.001);
   for (const p of PRODUCT_TYPE_IDS) {

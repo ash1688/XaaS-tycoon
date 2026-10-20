@@ -9,6 +9,7 @@ import DayLog from "../../panels/DayLog.vue";
 import EventCards from "../../panels/EventCards.vue";
 import FeaturesPanel from "../../panels/FeaturesPanel.vue";
 import MigrationPanel from "../../panels/MigrationPanel.vue";
+import PriceWavePanel from "../../panels/PriceWavePanel.vue";
 import SpendPanel from "../../panels/SpendPanel.vue";
 import StaffPanel from "../../panels/StaffPanel.vue";
 import SupportPanel from "../../panels/SupportPanel.vue";
@@ -64,6 +65,14 @@ const alerts = computed(() => {
       id: "support",
       text: `Support: ${game.supportShort} short`,
       detail: `Your users raise about ${formatCount(c.usualTickets)} tickets a day: ${game.supportNeeded} support staff keep up. Fewer, and a backlog builds.`,
+      page: "customers",
+      pageName: "Customers",
+    });
+  if (c.priceWave?.direction === "rise")
+    list.push({
+      id: "price-wave",
+      text: c.priceWave.day ? `Price backlash: day ${c.priceWave.day} of ${c.priceWave.length}` : "Price backlash starts tomorrow",
+      detail: `Customers are reacting to your rise to ${formatPrice(c.priceWave.to)}: paying users leave or drop to free, and complaints add support tickets.`,
       page: "customers",
       pageName: "Customers",
     });
@@ -206,6 +215,43 @@ const alerts = computed(() => {
           <p class="modal-link">
             <RouterLink :to="page('product')">Change the price on Product</RouterLink> ·
             <RouterLink :to="page('finance')">Open Finance</RouterLink>
+          </p>
+        </template>
+      </OverviewCard>
+
+      <OverviewCard
+        v-if="game.company.priceWave && !game.over"
+        :title="game.company.priceWave.direction === 'rise' ? 'Price backlash' : 'Price cut wave'"
+        :tone="game.company.priceWave.direction === 'rise' ? 'warn' : 'ok'"
+      >
+        <p class="overview-value" data-testid="home-wave">
+          <template v-if="game.company.priceWave.day">
+            Day {{ game.company.priceWave.day }} <small>of {{ game.company.priceWave.length }}</small>
+          </template>
+          <template v-else>Starts tomorrow</template>
+        </p>
+        <div class="meter" aria-hidden="true">
+          <div
+            :class="['meter-fill', game.company.priceWave.direction === 'rise' ? 'over' : 'ok']"
+            :style="{ width: `${(100 * game.company.priceWave.day) / game.company.priceWave.length}%` }"
+          ></div>
+        </div>
+        <p class="muted">
+          <template v-if="game.company.priceWave.direction === 'rise'">
+            {{ formatCount(game.company.priceWave.done.left) }} paying users left,
+            {{ formatCount(game.company.priceWave.done.toFree) }} dropped to free so far.
+          </template>
+          <template v-else>
+            {{ formatCount(game.company.priceWave.done.joined) }} joined,
+            {{ formatCount(game.company.priceWave.done.upgraded) }} upgraded so far.
+          </template>
+          Price locked for {{ days(game.company.priceLockDaysLeft) }}.
+        </p>
+        <template #detail>
+          <PriceWavePanel />
+          <p class="modal-link">
+            <RouterLink :to="page('product')">Open Product</RouterLink> ·
+            <RouterLink :to="page('customers')">Open Customers</RouterLink>
           </p>
         </template>
       </OverviewCard>

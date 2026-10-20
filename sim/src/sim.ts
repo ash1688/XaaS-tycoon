@@ -6,7 +6,7 @@ import { createFinance, noSpend } from "./finance.ts";
 import { createInfrastructure } from "./infrastructure.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
 import { isNameAllowed } from "./nameFilter.ts";
-import { createPricing } from "./pricing.ts";
+import { createPricing, type PricePreview, type PriceWaveView } from "./pricing.ts";
 import { seedRng } from "./rng.ts";
 import { createStaff } from "./staff.ts";
 import {
@@ -30,6 +30,7 @@ import { createSupport } from "./support.ts";
 export type { EventView, FeatureGapView } from "./events.ts";
 export type { FeatureStatus, FeatureView } from "./features.ts";
 export type { LostAddon, MigrationQuote, MigrationView } from "./migration.ts";
+export type { PricePreview, PriceWaveView } from "./pricing.ts";
 export type { GameSummary, SummaryDay } from "./summary.ts";
 export {
   GAME_STATE_VERSION,
@@ -51,8 +52,11 @@ export {
   type LogEntry,
   type Migration,
   type NewGameParams,
+  type PriceChange,
+  type PriceWave,
   type ScheduledEvent,
   type Spend,
+  type WaveEffect,
 } from "./state.ts";
 
 export interface Sim {
@@ -79,6 +83,16 @@ export interface Sim {
   dailyIncome(state: GameState): number;
   /** The monthly price users think the product is worth. Pricing above it slows growth and means fewer new payers. */
   fairPrice(state: GameState): number;
+  /**
+   * What changing the price would do if nothing else changed: income a day once the wave settles, paying users
+   * leaving and dropping to free, new users and upgrades on a cut, and the wave day by day. Changes nothing, and works
+   * while the price is locked (saying so). Rejects the prices setPrice does.
+   */
+  pricePreview(state: GameState, price: number): PricePreview;
+  /** The price wave under way, or null. */
+  priceWave(state: GameState): PriceWaveView | null;
+  /** Days until the price can be changed again: 0 when it can. */
+  priceLockDaysLeft(state: GameState): number;
   /** Load the company can serve in a day with its current model and staff. */
   capacity(state: GameState): number;
   /** Tickets the support staff can clear in a day: support staff × tickets each. */
@@ -212,12 +226,15 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
 
     // Today's load against capacity, then growth, which slows on an outage day.
     const served = infra.serveLoad(state, day, today);
-    const { users, paidUsers, rng } = customers.grow(state, day, served.hoursDown > 0, served.rng);
+    const grown = customers.grow(state, day, served.hoursDown > 0, served.rng);
+    // Then any price wave takes its share for the day, planned when the price changed.
+    const wave = pricing.waveDay(state, day, grown.users, grown.paidUsers);
+    const { users, paidUsers } = wave;
+    const rng = grown.rng;
 
-    // Support answers what it can of today's tickets: the users' usual ones plus every burst. Bursts come from
-    // downtime here; price backlash (#46) adds its own to this list. Satisfaction moves after, and sets tomorrow's
-    // growth and churn.
-    const bursts = [...support.outageBursts(state, served.hoursDown)];
+    // Support answers what it can of today's tickets: the users' usual ones plus every burst, from downtime and from
+    // a price rise's backlash. Satisfaction moves after, and sets tomorrow's growth and churn.
+    const bursts = [...support.outageBursts(state, served.hoursDown), ...wave.bursts];
     const care = support.supportDay(state, bursts);
 
     // Developers work on the current build. A feature finished today helps growth from tomorrow.
@@ -231,6 +248,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const entries: LogEntry[] = [
       ...recorded.entries,
       ...(served.outage ? [served.outage] : []),
+      ...wave.entries,
       ...care.entries,
       ...build.entries,
       ...pricing.incomeEntries(state),
@@ -247,6 +265,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       rng,
       users,
       paidUsers,
+      priceWave: wave.priceWave,
       load: served.load,
       outageDays: state.outageDays + (served.hoursDown > 0 ? 1 : 0),
       downtimeHours: state.downtimeHours + served.hoursDown,
@@ -292,6 +311,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     monthlyAddonCost: (s) => features.monthlyAddonCost(load(s)),
     dailyIncome: (s) => pricing.dailyIncome(load(s)),
     fairPrice: (s) => pricing.fairPrice(load(s).productType),
+    pricePreview: (s, price) => pricing.pricePreview(load(s), price),
+    priceWave: (s) => pricing.priceWave(load(s)),
+    priceLockDaysLeft: (s) => pricing.lockDaysLeft(load(s)),
     capacity: (s) => infra.capacity(load(s)),
     dailyClearance: (s) => support.dailyClearance(load(s)),
     usualTickets: (s) => support.usualTickets(load(s)),

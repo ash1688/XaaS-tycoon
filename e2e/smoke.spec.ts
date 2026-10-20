@@ -831,7 +831,8 @@ test("a student sets a price, plays a day and sees the income on Finance", async
   await dialog.getByRole("button", { name: "Set price" }).click();
   await expect(dialog.getByRole("alert")).toContainText("above £0");
   await input.fill("30");
-  await expect(dialog).toContainText("£200 a day");
+  // Five times the fair price: the live preview shows most payers going, so income ends up far lower.
+  await expect(dialog.getByTestId("preview-income")).toHaveText("£20");
   await dialog.getByRole("button", { name: "Set price" }).click();
   await expect(dialog).toBeHidden();
   await expect(student.getByTestId("price")).toHaveText("£30");
@@ -850,6 +851,70 @@ test("a student sets a price, plays a day and sees the income on Finance", async
   await expect(student.getByTestId("balance-day-profit")).toHaveText("−£560");
   await expect(student.getByTestId("cash-chart")).toBeVisible();
   await expect((await openDayLog(student)).getByTestId("log-income")).toHaveText("+£200");
+});
+
+test("a student previews prices live, raises the price, and sees the backlash and the lock count down", async ({
+  browser,
+  request,
+}) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  await teacher.getByRole("button", { name: "Create code" }).click();
+  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const created = await request.post(`/api/codes/${code}/companies`, {
+    data: { name: "Wave Ltd", productType: "social", model: "iaas" },
+  });
+  const { id } = await created.json();
+
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${id}/product`);
+  await expect(student.getByTestId("price-lock")).toHaveText("Unlocked");
+  await student.getByRole("button", { name: "Change price" }).click();
+  const dialog = student.getByRole("dialog", { name: "Set your price" });
+  const preview = dialog.getByTestId("price-preview");
+  await expect(preview).toContainText("That's your price now");
+
+  // 200 paying users at £6. A 25% rise affects 25 of them over the wave: 15 leave and 10 drop to free, leaving 175
+  // paying £7.50 a month, £44 a day.
+  const input = dialog.getByLabel("Monthly price per paying user (£)");
+  await input.fill("7.5");
+  await expect(preview.getByTestId("preview-left")).toHaveText("15");
+  await expect(preview.getByTestId("preview-to-free")).toHaveText("10");
+  await expect(preview.getByTestId("preview-income")).toHaveText("£44");
+  await expect(preview.getByRole("img", { name: /The wave day by day/ })).toBeVisible();
+  // A cut previews a positive wave instead, updating as the price changes.
+  await input.fill("4.5");
+  await expect(preview.getByTestId("preview-joined")).toBeVisible();
+  await expect(preview.getByTestId("preview-upgraded")).toBeVisible();
+  await expect(preview.getByTestId("preview-left")).toBeHidden();
+
+  await input.fill("7.5");
+  await expect(preview.getByTestId("preview-left")).toHaveText("15");
+  await dialog.getByRole("button", { name: "Set price" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(student.getByTestId("price")).toHaveText("£7.50");
+  await expect(student.getByTestId("price-lock")).toHaveText("14 days");
+  await expect(student.getByTestId("wave-progress")).toContainText("Starts tomorrow");
+
+  // The next day the backlash starts and the lock counts down.
+  await student.getByRole("button", { name: "Continue" }).click();
+  await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("wave-progress")).toContainText("Day 1 of 7");
+  await expect(student.getByTestId("price-lock")).toHaveText("13 days");
+
+  // Locked: the modal still previews, but won't set a new price.
+  await student.getByRole("button", { name: "Preview a price" }).click();
+  await expect(dialog.getByTestId("price-locked-note")).toContainText("locked for 13 days more");
+  await expect(dialog.getByRole("button", { name: "Set price" })).toBeDisabled();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+
+  // Home has a card for the wave, and Customers shows its effect on users.
+  await goTo(student, "Home");
+  await expect(student.getByTestId("home-wave")).toContainText("Day 1");
+  await goTo(student, "Customers");
+  await expect(student.getByTestId("customers-wave")).toContainText("Your price rise has cost");
 });
 
 test("a SaaS company without support builds a backlog, hires support from Home and sees it cleared", async ({

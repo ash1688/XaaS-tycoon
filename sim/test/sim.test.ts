@@ -45,6 +45,24 @@ function costs(monthlyCost: number) {
   return { upfrontCost: 0, monthlyCost, monthlyCostPerUser: 0, exitPenalty: 0 };
 }
 
+function noWaves() {
+  return {
+    waveDays: 7,
+    lockDays: 14,
+    firstDayShare: 0.05,
+    waveCurve: 1.5,
+    riseStrength: 0,
+    dearness: 1,
+    maxRiseShare: 0.9,
+    dropToFreeShare: 0.4,
+    backlashTicketsPerUser: 1,
+    cutGainStrength: 0,
+    maxCutGain: 0.5,
+    cutUpgradeStrength: 0,
+    maxCutUpgrade: 0.5,
+  };
+}
+
 const config: GameConfig = {
   startingCash: 1000,
   finalDay: 180,
@@ -89,7 +107,14 @@ const config: GameConfig = {
   capacity: { unstaffedShare: 0.4 },
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25 },
   billing: { daysPerMonth: 30 },
-  pricing: { maxPrice: 1_000, growthSensitivity: 1, maxGrowthBoost: 2, paidShareSensitivity: 1 },
+  // No price waves unless a test says otherwise, so a price change only has its ongoing effect on growth and payers.
+  pricing: {
+    maxPrice: 1_000,
+    growthSensitivity: 1,
+    maxGrowthBoost: 2,
+    paidShareSensitivity: 1,
+    ...noWaves(),
+  },
   support: {
     ticketsPerPerson: 10,
     ticketsPerUserPerHourDown: 0.01,
@@ -2618,5 +2643,219 @@ describe("support, tickets and satisfaction", () => {
     const copy = structuredClone(before);
     s.advance(before, 5);
     expect(before).toEqual(copy);
+  });
+});
+
+describe("price waves and the price lock", () => {
+  // A shop at a £30 fair price, 600 of 1,000 users paying, with no growth or random variation and no satisfaction
+  // churn, so every change in users comes from the wave. Waves at their default strengths.
+  const waved = (overrides: Partial<GameConfig["pricing"]> = {}) =>
+    createSim({
+      ...config,
+      pricing: { ...defaultConfig.pricing, ...overrides },
+      support: { ...config.support, churnAtZero: 0 },
+      productTypes: {
+        ...config.productTypes,
+        ecommerce: {
+          ...config.productTypes.ecommerce,
+          growth: { ...growth, dailyGrowth: 0, growthNoise: 0 },
+          pricing: { fairPrice: 30, freeShare: 0.4 },
+        },
+      },
+    });
+  const s = waved();
+  const begin = (sm = s) => sm.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 });
+  const setPrice = (price: number): Action => ({ type: "setPrice", price });
+  // Paying and all users at the end of each day played.
+  const daily = (sm: Sim, state: GameState, days: number) => {
+    const out: { users: number; paidUsers: number; burstTickets: number }[] = [];
+    let current = state;
+    for (let i = 0; i < days; i++) {
+      current = sm.advance(current).state;
+      out.push({ users: current.users, paidUsers: current.paidUsers, burstTickets: current.burstTickets });
+    }
+    return { days: out, state: current };
+  };
+  const priceLog = (log: DayLog[]) => log.flatMap((d) => d.entries.filter((e) => e.kind === "price").map((e) => e.text));
+
+  it("defaults to a 7-day wave and a 14-day lock", () => {
+    expect(defaultConfig.pricing).toMatchObject({ waveDays: 7, lockDays: 14 });
+  });
+
+  it("gives a rise a small reaction the next day, then a backlash over the wave length", () => {
+    const start = begin();
+    const { days } = daily(s, s.applyAction(start, setPrice(45)), 10);
+    const lost = days.map((d, i) => (i === 0 ? start.paidUsers : days[i - 1]!.paidUsers) - d.paidUsers);
+    const total = start.paidUsers - days[6]!.paidUsers;
+    expect(total).toBeGreaterThan(100);
+    // Day 1 is the small reaction: a twentieth of the whole.
+    expect(lost[0]).toBeGreaterThan(0);
+    expect(lost[0]).toBeLessThan(total * 0.1);
+    // Then it builds and fades: every backlash day loses more than day 1, with the peak in the middle.
+    for (let i = 1; i < 7; i++) expect(lost[i]).toBeGreaterThan(lost[0]!);
+    expect(Math.max(...lost)).toBe(Math.max(lost[3]!, lost[4]!));
+    // And it's over after the wave length: nothing more is lost.
+    expect(lost.slice(7)).toEqual([0, 0, 0]);
+    // Some left altogether, and some dropped to free.
+    expect(days[6]!.users).toBeLessThan(start.users);
+    expect(start.users - days[6]!.users).toBeLessThan(total);
+  });
+
+  it("gives a cut a positive wave of new users and upgrades", () => {
+    const start = begin();
+    const { days } = daily(s, s.applyAction(start, setPrice(20)), 8);
+    expect(days[0]!.users).toBeGreaterThan(start.users);
+    expect(days[0]!.paidUsers).toBeGreaterThan(start.paidUsers);
+    for (let i = 1; i < 7; i++) {
+      expect(days[i]!.users).toBeGreaterThan(days[i - 1]!.users);
+      expect(days[i]!.paidUsers).toBeGreaterThan(days[i - 1]!.paidUsers);
+    }
+    expect(days[7]).toEqual({ ...days[6], burstTickets: 0 });
+    const preview = s.pricePreview(start, 20);
+    expect(preview.direction).toBe("cut");
+    expect(preview.total.upgraded).toBeGreaterThan(0);
+    expect(preview.total.joined).toBeGreaterThan(0);
+    expect(preview.total).toMatchObject({ left: 0, toFree: 0, tickets: 0 });
+  });
+
+  it("scales the wave with the size of the change against the fair price: a small tweak barely registers", () => {
+    const start = begin();
+    const affected = (price: number) => {
+      const t = s.pricePreview(start, price).total;
+      return t.left + t.toFree;
+    };
+    // +£1.50 (5%) loses under 2% of 600 payers; +£15 (50%) loses more than ten times as many.
+    expect(affected(31.5)).toBeLessThan(12);
+    expect(affected(45)).toBeGreaterThan(10 * affected(31.5));
+    // Bigger changes always hit harder, up to the cap.
+    const sizes = [33, 36, 40, 45, 50].map(affected);
+    for (let i = 1; i < sizes.length; i++) expect(sizes[i]).toBeGreaterThan(sizes[i - 1]!);
+    expect(affected(1000)).toBe(Math.round(600 * defaultConfig.pricing.maxRiseShare));
+    // The same for cuts.
+    const gained = (price: number) => s.pricePreview(start, price).total.joined;
+    expect(gained(28.5)).toBeLessThan(gained(15) / 10);
+    // The curve is tunable: at 1, the wave grows in step with the change.
+    const linear = waved({ waveCurve: 1, dearness: 0 });
+    const lin = (price: number) => linear.pricePreview(begin(linear), price).total;
+    expect(lin(45).left + lin(45).toFree).toBeCloseTo(2 * (lin(37.5).left + lin(37.5).toFree), -1);
+  });
+
+  it("locks the price after a change, rejecting changes with the days left, then frees it", () => {
+    let state = s.applyAction(begin(), setPrice(33));
+    expect(s.priceLockDaysLeft(state)).toBe(14);
+    const tryAgain = (st: GameState) => () => s.applyAction(st, setPrice(36));
+    expect(tryAgain(state)).toThrow(
+      expect.objectContaining({ code: "price_locked", details: { daysLeft: 14 }, message: expect.stringContaining("14 more days") }),
+    );
+    state = s.advance(state, 13).state;
+    expect(s.priceLockDaysLeft(state)).toBe(1);
+    expect(tryAgain(state)).toThrow(expect.objectContaining({ code: "price_locked", details: { daysLeft: 1 } }));
+    // Setting the same price again is no change, so it isn't refused and doesn't restart the lock.
+    expect(s.applyAction(state, setPrice(33))).toEqual(state);
+    state = s.advance(state).state;
+    expect(s.priceLockDaysLeft(state)).toBe(0);
+    expect(s.applyAction(state, setPrice(36)).price).toBe(36);
+    // The lock length is config.
+    const short = waved({ lockDays: 2 });
+    const st = short.advance(short.applyAction(begin(short), setPrice(33)), 2).state;
+    expect(short.applyAction(st, setPrice(36)).price).toBe(36);
+  });
+
+  it("adds backlash tickets to support on each day of a rise, logged as a burst", () => {
+    const start = begin();
+    const preview = s.pricePreview(start, 45);
+    expect(preview.total.tickets).toBeGreaterThan(0);
+    const { state, log } = s.advance(s.applyAction(start, setPrice(45)), 7);
+    expect(state.backlog).toBe(preview.total.tickets);
+    const bursts = log.flatMap((d) => d.entries).filter((e) => e.text.startsWith("Ticket burst"));
+    expect(bursts).toHaveLength(7);
+    expect(bursts[0]!.text).toContain("after your price rise (backlash day 1 of 7)");
+    // A cut raises none.
+    expect(s.advance(s.applyAction(start, setPrice(20)), 7).state.backlog).toBe(0);
+  });
+
+  it.each([
+    ["rise", 45],
+    ["small rise", 31],
+    ["cut", 20],
+  ])("previews a %s exactly as it plays out when nothing else changes", (_, price) => {
+    const start = begin();
+    const preview = s.pricePreview(start, price);
+    const { days, state } = daily(s, s.applyAction(start, setPrice(price)), 7);
+    expect(state.users).toBe(preview.users);
+    expect(state.paidUsers).toBe(preview.paidUsers);
+    expect(s.dailyIncome(state)).toBe(preview.dailyIncome);
+    expect(state.priceWave!.done).toEqual(preview.total);
+    // Day by day too.
+    let paid = start.paidUsers;
+    preview.days.forEach((d, i) => {
+      paid += d.joinedPaid + d.upgraded - d.left - d.toFree;
+      expect(days[i]!.paidUsers).toBe(paid);
+      expect(days[i]!.burstTickets).toBe(d.tickets);
+      expect(d.day).toBe(start.day + 1 + i);
+    });
+  });
+
+  it("previews without changing anything, today's price as no wave, and says when the price is locked", () => {
+    const start = begin();
+    const copy = structuredClone(start);
+    const preview = s.pricePreview(start, 45);
+    expect(start).toEqual(copy);
+    expect(preview).toMatchObject({ price: 45, currentPrice: 30, direction: "rise", locked: false, lockDaysLeft: 0, lockDays: 14 });
+    expect(preview.currentDailyIncome).toBe(600);
+    expect(preview.dailyIncome).toBe(Math.round((preview.paidUsers * 45) / 30));
+    expect(preview.days).toHaveLength(7);
+    expect(s.pricePreview(start, 30)).toMatchObject({ direction: "none", days: [], dailyIncome: 600, paidUsers: 600 });
+    const locked = s.advance(s.applyAction(start, setPrice(33)), 3).state;
+    expect(s.pricePreview(locked, 40)).toMatchObject({ locked: true, lockDaysLeft: 11 });
+    expect(() => s.pricePreview(start, 0)).toThrow(expect.objectContaining({ code: "bad_price" }));
+    expect(() => s.pricePreview(start, 1000.01)).toThrow(expect.objectContaining({ code: "price_too_high" }));
+  });
+
+  it("finds a point where raising the price stops paying", () => {
+    const start = begin();
+    const income = (price: number) => s.pricePreview(start, price).dailyIncome;
+    expect(income(37.5)).toBeGreaterThan(income(30));
+    expect(income(60)).toBeLessThan(income(37.5));
+    expect(income(90)).toBeLessThan(income(30));
+  });
+
+  it("shows the wave under way, logs it each day and keeps each price change", () => {
+    const start = begin();
+    let state = s.applyAction(start, setPrice(45));
+    expect(state.priceChanges).toEqual([{ day: 2, from: 30, to: 45 }]);
+    expect(s.priceWave(state)).toMatchObject({ direction: "rise", from: 30, to: 45, day: 0, length: 7, remaining: 7 });
+    const { state: after3, log } = s.advance(state, 3);
+    const view = s.priceWave(after3)!;
+    expect(view).toMatchObject({ day: 3, remaining: 4 });
+    expect(view.done.left + view.done.toFree).toBe(start.paidUsers - after3.paidUsers);
+    expect(view.days.map((d) => d.day)).toEqual([2, 3, 4, 5, 6, 7, 8]);
+    const lines = priceLog(log);
+    expect(lines[0]).toMatch(/^Customers noticed your price rise from £30 to £45: \d+ paying users left and \d+ dropped to free\. Expect a backlash over the next 6 days\.$/);
+    expect(lines[1]).toMatch(/^Price backlash, day 2 of 7: complaints are spreading online\./);
+    const end = s.advance(after3, 4);
+    expect(priceLog(end.log).at(-1)).toMatch(/^The backlash from your price rise is over\. In all, \d+ paying users left and \d+ dropped to free\.$/);
+    expect(s.priceWave(end.state)).toBeNull();
+    state = s.advance(end.state, 7).state;
+    expect(s.applyAction(state, setPrice(25)).priceChanges).toHaveLength(2);
+    expect(priceLog(s.advance(s.applyAction(state, setPrice(25))).log)[0]).toMatch(
+      /^Customers noticed your price cut from £45 to £25: \d+ new users joined and \d+ free users started paying\./,
+    );
+  });
+
+  it("is deterministic, and resumes a wave identically after a JSON round trip", () => {
+    const play = () => s.advance(s.applyAction(begin(), setPrice(50)), 10);
+    expect(play()).toEqual(play());
+    const part = s.advance(s.applyAction(begin(), setPrice(50)), 4).state;
+    expect(s.advance(JSON.parse(JSON.stringify(part)) as GameState, 6).state).toEqual(play().state);
+  });
+
+  it("does less where users have already gone, never going below zero", () => {
+    const start = begin();
+    // Users vanish before the wave: the planned losses can't take paid users below zero.
+    const state = { ...s.applyAction(start, setPrice(200)), paidUsers: 5 };
+    const after = s.advance(state, 7).state;
+    expect(after.paidUsers).toBe(0);
+    expect(after.users).toBeGreaterThanOrEqual(0);
   });
 });
