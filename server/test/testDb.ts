@@ -16,6 +16,6 @@ export async function setupTestDb(url = process.env.TEST_DATABASE_URL ?? "postgr
   }
   const { db, close } = createDb(url);
   await runMigrations(db);
-  const reset = () => db.execute("truncate companies, login_codes cascade");
+  const reset = () => db.execute("truncate companies, login_codes, config_presets cascade");
   return { db, close, reset };
 }

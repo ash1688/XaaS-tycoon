@@ -96,6 +96,17 @@ From a college machine, on the college network:
 
 To try the end of a game without playing 180 days, set `GAME_FINAL_DAY` (for example `GAME_FINAL_DAY=10` in `.env.local`). The server reads it at startup; leave it unset for the real 180-day game. The e2e tests run with `GAME_FINAL_DAY=30`.
 
+### Game config
+
+The staff dashboard's **Game config** page (`/staff/config`) edits the game's numbers: starting cash, costs, growth, capacity, staff, migration and event days and effects. They're grouped, and each shows its default, what it does and the range it can take, with a reset per number and a **Reset all**. Saving changes what **games started from then on** use. Each company stores a snapshot of its full config when it starts, and every request about that game runs on that snapshot, so changing the config never alters a game already being played.
+
+How it fits with the env settings:
+
+- **`GAME_FINAL_DAY` sets the base.** The server's base config is the built-in defaults with `GAME_FINAL_DAY` applied. The config page shows that base as each number's default and stores only the numbers that differ from it, so the e2e tests (`GAME_FINAL_DAY=30`) still get 30-day games unless a test changes it. A game length saved on the page wins over `GAME_FINAL_DAY` for new games.
+- **Timed flow stays env-only.** `TIMED_FLOW` and `TIMED_FLOW_SECONDS` are how the server runs, not game balance, so they're not on the page.
+
+Adding a number to `GameConfig` (in `sim/src/config.ts`) means listing it in `configFields` in `sim/src/configSchema.ts`, with its group, explanation and range, or adding it to `CONFIG_EXCLUSIONS` with a reason. A test fails until it's one or the other.
+
 ### Timed flow (off by default)
 
 The alpha plays one day per **Continue** click. A timed flow is built in but switched off: set `TIMED_FLOW=on` and the game page gets a **Play/Pause** button that plays a day every `TIMED_FLOW_SECONDS` (default 15), with a countdown to the next day. It's a server setting, read at startup and passed to the page through `/api/meta`, so you can try it by restarting the server, without rebuilding the web client. Each timed day calls the same continue endpoint as the button, one request at a time. It pauses while the tab is hidden and carries on when the student comes back, and stops when the game ends or a day fails. Actions such as hiring or starting a migration still work while it plays.

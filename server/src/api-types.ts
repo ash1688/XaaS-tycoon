@@ -1,6 +1,9 @@
 // Shapes the API sends and receives. Type-only, so the web client can import it.
 import type {
   Action,
+  ConfigErrors,
+  ConfigField,
+  ConfigOverrides,
   DayLog,
   EventView,
   FeatureGapView,
@@ -199,4 +202,22 @@ export interface TeacherSummaryView {
   code: string;
   status: CompanyStatus;
   summary: SummaryView;
+}
+
+/** The teacher's config page: every editable number, and the overrides new games use. */
+export interface ConfigView {
+  /** The preset being edited. For now there's only "Custom". */
+  preset: string;
+  fields: ConfigField[];
+  /** Path → value, for the numbers that differ from each field's default. */
+  overrides: ConfigOverrides;
+}
+
+export interface ConfigSaveBody {
+  overrides: ConfigOverrides;
+}
+
+/** A 400 from saving the config: what's wrong with each field, by path. */
+export interface ConfigErrorView extends ApiError {
+  fields: ConfigErrors;
 }

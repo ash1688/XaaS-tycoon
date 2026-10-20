@@ -6,6 +6,8 @@ import { companies } from "../src/db/schema.ts";
 import type {
   ActionBody,
   CompanyView,
+  ConfigErrorView,
+  ConfigView,
   ContinueResult,
   MetaView,
   MigrationQuoteView,
@@ -514,7 +516,13 @@ describe("users, capacity and uptime", () => {
       sim: tight,
     });
     try {
-      const { url } = await setup();
+      // Started on the tight server, so the game keeps its config.
+      const code = await newCode();
+      const payload = { name: "Acme", productType: "ecommerce", model: "iaas" };
+      const company = (
+        await tightApp.inject({ method: "POST", url: `/api/codes/${code}/companies`, payload })
+      ).json<CompanyView>();
+      const url = `/api/codes/${code}/companies/${company.id}`;
       const body = (await tightApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
       expect(body.company.outageDays).toBe(1);
       expect(body.company.uptime).toBeLessThan(100);
@@ -1700,6 +1708,132 @@ describe("meta", () => {
     expect(owner("saas", "application")).toBe("shared");
     expect(owner("iaas", "os")).toBe("you");
     expect(meta.models.find((m: { id: string }) => m.id === "saas").comparison.opsNeeded).toBe("None");
+  });
+});
+
+describe("teacher config", () => {
+  async function teacher(method: "GET" | "PUT" | "POST", url: string, payload?: object) {
+    return app.inject({ method, url, payload, cookies: await teacherCookie() });
+  }
+  const save = (overrides: object) => teacher("PUT", "/api/teacher/config", { overrides });
+
+  it("requires a teacher session", async () => {
+    expect((await app.inject({ method: "GET", url: "/api/teacher/config" })).statusCode).toBe(401);
+    const put = await app.inject({ method: "PUT", url: "/api/teacher/config", payload: { overrides: {} } });
+    expect(put.statusCode).toBe(401);
+    expect((await app.inject({ method: "POST", url: "/api/teacher/config/reset" })).statusCode).toBe(401);
+  });
+
+  it("lists every field with defaults from the server's base config, and no overrides at first", async () => {
+    const res = await teacher("GET", "/api/teacher/config");
+    expect(res.statusCode).toBe(200);
+    const view = res.json<ConfigView>();
+    expect(view.overrides).toEqual({});
+    expect(view.preset).toBe("Custom");
+    const field = (path: string) => view.fields.find((f) => f.path === path);
+    expect(field("startingCash")).toMatchObject({ group: "Money", default: 1000, min: 0 });
+    expect(field("staff.developers.dayRate")).toMatchObject({ group: "People", default: 10 });
+    // The test config has no events, so no event fields.
+    expect(view.fields.some((f) => f.path.startsWith("events."))).toBe(false);
+  });
+
+  it("saves valid overrides, dropping any equal to the default", async () => {
+    const res = await save({ startingCash: 5000, "staff.developers.dayRate": 10, "models.iaas.monthlyCost": 900 });
+    expect(res.statusCode).toBe(200);
+    expect(res.json<ConfigView>().overrides).toEqual({ startingCash: 5000, "models.iaas.monthlyCost": 900 });
+    expect((await teacher("GET", "/api/teacher/config")).json<ConfigView>().overrides).toEqual({
+      startingCash: 5000,
+      "models.iaas.monthlyCost": 900,
+    });
+    expect((await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>().startingCash).toBe(5000);
+  });
+
+  it("replaces the overrides on each save", async () => {
+    await save({ startingCash: 5000 });
+    const res = await save({ "staff.ops.dayRate": 8 });
+    expect(res.json<ConfigView>().overrides).toEqual({ "staff.ops.dayRate": 8 });
+  });
+
+  it("rejects invalid overrides with an error per field, saving none of them", async () => {
+    await save({ startingCash: 5000 });
+    const res = await save({
+      startingCash: 7000,
+      "staff.ops.dayRate": -5,
+      "models.nope.capacity": 1,
+      "staff.developers.startingCount": 1.5,
+      "outage.baseHours": "3",
+    });
+    expect(res.statusCode).toBe(400);
+    const body = res.json<ConfigErrorView>();
+    expect(body.error).toBe("invalid_config");
+    expect(Object.keys(body.fields).sort()).toEqual([
+      "models.nope.capacity",
+      "outage.baseHours",
+      "staff.developers.startingCount",
+      "staff.ops.dayRate",
+    ]);
+    expect(body.message).toMatch(/4 settings/);
+    expect((await teacher("GET", "/api/teacher/config")).json<ConfigView>().overrides).toEqual({ startingCash: 5000 });
+  });
+
+  it("rejects a body without overrides", async () => {
+    expect((await teacher("PUT", "/api/teacher/config", {})).statusCode).toBe(400);
+  });
+
+  it("resets every field to its default", async () => {
+    await save({ startingCash: 5000, "staff.ops.dayRate": 8 });
+    const res = await teacher("POST", "/api/teacher/config/reset");
+    expect(res.statusCode).toBe(200);
+    expect(res.json<ConfigView>().overrides).toEqual({});
+    expect((await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>().startingCash).toBe(1000);
+  });
+
+  it("snapshots the config into a new game, so later edits don't change it", async () => {
+    const code = await newCode();
+    const before = (await newCompany(code)).json<CompanyView>();
+    expect(before.cash).toBe(1000);
+
+    await save({ startingCash: 5000, "staff.developers.dayRate": 50, finalDay: 40 });
+    const after = (await newCompany(code, { name: "Beta", productType: "social", model: "iaas" })).json<CompanyView>();
+    expect(after.cash).toBe(5000);
+    expect(after.finalDay).toBe(40);
+    const [row] = await testDb.db.select().from(companies).where(eq(companies.id, after.id));
+    expect(row!.config).toMatchObject({ startingCash: 5000, finalDay: 40 });
+
+    // Edited again: neither game changes.
+    await save({ startingCash: 9000, "staff.developers.dayRate": 70 });
+    const hire = (id: string) =>
+      app.inject({
+        method: "POST",
+        url: `/api/codes/${code}/companies/${id}/actions`,
+        payload: { type: "hire", pool: "developers" } satisfies ActionBody,
+      });
+    expect((await hire(before.id)).json<CompanyView>().dailyStaffCost).toBe(10);
+    expect((await hire(after.id)).json<CompanyView>().dailyStaffCost).toBe(50);
+
+    const played = await app.inject({ method: "POST", url: `/api/codes/${code}/companies/${after.id}/continue` });
+    expect(played.json<ContinueResult>().company).toMatchObject({ finalDay: 40, cash: 5000 - 50 - 25 });
+
+    // Each game's meta comes from its own config; the shared meta is what a new game would get.
+    const metaOf = async (id: string) =>
+      (await app.inject({ method: "GET", url: `/api/codes/${code}/companies/${id}/meta` })).json<MetaView>();
+    expect((await metaOf(before.id)).staff.find((s) => s.id === "developers")!.dayRate).toBe(10);
+    expect(await metaOf(after.id)).toMatchObject({ startingCash: 5000, finalDay: 40 });
+    expect((await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>().startingCash).toBe(9000);
+
+    // And the teacher's dashboard shows each game's own length.
+    const games = (await teacher("GET", "/api/teacher/games")).json<TeacherGamesView>();
+    const finalDays = Object.fromEntries(games.codes[0]!.companies.map((c) => [c.name, c.finalDay]));
+    expect(finalDays).toEqual({ Acme: sim.config.finalDay, Beta: 40 });
+  });
+
+  it("refuses the per-game meta for an unknown company", async () => {
+    const code = await newCode();
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/codes/${code}/companies/00000000-0000-0000-0000-000000000000/meta`,
+    });
+    expect(res.statusCode).toBe(404);
   });
 });
 

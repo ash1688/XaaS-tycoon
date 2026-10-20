@@ -21,7 +21,8 @@ if (sessionSecret.length < 32) {
   process.exit(1);
 }
 
-// Optional: a shorter game, for testing the end of one without playing 180 days.
+// Optional: a shorter game, for testing the end of one without playing 180 days. It sets the base config: the
+// teacher's config page shows it as the default game length and overrides numbers on top of it for new games.
 let finalDay = defaultConfig.finalDay;
 if (process.env.GAME_FINAL_DAY) {
   finalDay = Number(process.env.GAME_FINAL_DAY);
