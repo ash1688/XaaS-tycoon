@@ -1,9 +1,10 @@
-import type { SpendCategory } from "@xaas/sim";
+import type { ConfigOverrides, SpendCategory } from "@xaas/sim";
 import type {
   ActionBody,
   ApiError,
   CodeView,
   CompanyView,
+  ConfigView,
   ContinueResult,
   MetaView,
   MigrationQuoteView,
@@ -17,11 +18,14 @@ import type {
 export class RequestError extends Error {
   readonly status: number;
   readonly code: string;
+  /** The whole error body, for errors that carry more, such as the config page's per-field errors. */
+  readonly body: Partial<ApiError>;
 
   constructor(status: number, body: Partial<ApiError>) {
     super(body.message ?? "Something went wrong.");
     this.status = status;
     this.code = body.error ?? "unknown";
+    this.body = body;
   }
 }
 
@@ -44,6 +48,9 @@ export const api = {
   createCompany: (code: string, body: NewCompanyBody) =>
     request<CompanyView>("POST", `/api/codes/${enc(code)}/companies`, body),
   company: (code: string, id: string) => request<CompanyView>("GET", `/api/codes/${enc(code)}/companies/${enc(id)}`),
+  // The numbers a game shows, from the config it started with.
+  companyMeta: (code: string, id: string) =>
+    request<MetaView>("GET", `/api/codes/${enc(code)}/companies/${enc(id)}/meta`),
   retire: (code: string, id: string) =>
     request<CompanyView>("POST", `/api/codes/${enc(code)}/companies/${enc(id)}/retire`),
   summary: (code: string, id: string) =>
@@ -74,6 +81,9 @@ export const api = {
   unarchiveCode: (code: string) => request<{ ok: true }>("POST", `/api/teacher/codes/${enc(code)}/unarchive`),
   deleteCode: (code: string) => request<{ ok: true }>("DELETE", `/api/teacher/codes/${enc(code)}`),
   teacherSummary: (id: string) => request<TeacherSummaryView>("GET", `/api/teacher/companies/${enc(id)}/summary`),
+  teacherConfig: () => request<ConfigView>("GET", "/api/teacher/config"),
+  saveConfig: (overrides: ConfigOverrides) => request<ConfigView>("PUT", "/api/teacher/config", { overrides }),
+  resetConfig: () => request<ConfigView>("POST", "/api/teacher/config/reset"),
 };
 
 const money = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 });

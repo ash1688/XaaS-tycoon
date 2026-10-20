@@ -5,7 +5,10 @@ import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
 import { and, asc, count, desc, eq, gte, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
+  applyOverrides,
+  configFields,
   createSim,
+  diffFromDefaults,
   GAME_STATE_VERSION,
   isCurrentState,
   MIGRATION_PHASES,
@@ -14,11 +17,14 @@ import {
   responsibilityStack,
   SimError,
   STAFF_POOLS,
+  validateOverrides,
+  type ConfigOverrides,
+  type GameConfig,
   type GameState,
   type Sim,
 } from "@xaas/sim";
 import type { Db } from "./db/client.ts";
-import { companies, loginCodes } from "./db/schema.ts";
+import { companies, configPresets, loginCodes } from "./db/schema.ts";
 import { FailureLimiter } from "./rateLimit.ts";
 import { endTeacherSession, isTeacher, passwordMatches, startTeacherSession } from "./teacherAuth.ts";
 import type {
@@ -26,6 +32,9 @@ import type {
   ApiError,
   CodeView,
   CompanyStatus,
+  ConfigErrorView,
+  ConfigSaveBody,
+  ConfigView,
   CompanyView,
   ContinueResult,
   MetaView,
@@ -43,6 +52,10 @@ export interface AppOptions {
   db: Db;
   teacherPassword: string;
   sessionSecret: string;
+  /**
+   * The sim for the base config: the built-in defaults, with any env overrides such as GAME_FINAL_DAY. The teacher's
+   * config page overrides numbers on top of it for new games.
+   */
   sim?: Sim;
   /** Built web client to serve. Skipped if missing (dev uses the Vite server). */
   webDist?: string;
@@ -84,6 +97,12 @@ export const DEFAULT_TIMED_FLOW_SECONDS = 15;
 
 const CODE_PATTERN = /^\d{8}$/;
 
+/** The one editable preset until named presets arrive: what the config page saves. */
+export const CUSTOM_PRESET = "Custom";
+
+/** Sims kept for game configs, most recently used last. Most games in a lesson share a config, so a few is plenty. */
+const MAX_CACHED_SIMS = 20;
+
 /** SimError codes for a game that has ended, or that the student retired. */
 const GAME_OVER = new Set(["bankrupt", "finished", "retired"]);
 
@@ -98,7 +117,8 @@ function sendError(reply: FastifyReply, status: number, error: string, message: 
 
 export async function buildApp(opts: AppOptions) {
   const { db } = opts;
-  const sim = opts.sim ?? createSim();
+  const baseSim = opts.sim ?? createSim();
+  const base = baseSim.config;
   const maxActiveCompanies = opts.maxActiveCompanies ?? DEFAULT_MAX_ACTIVE_COMPANIES;
   const dashboardHours = opts.dashboardHours ?? DEFAULT_DASHBOARD_HOURS;
   const timedFlow = opts.timedFlow ?? { enabled: false, seconds: DEFAULT_TIMED_FLOW_SECONDS };
@@ -156,7 +176,38 @@ export async function buildApp(opts: AppOptions) {
     return sendError(reply, 500, "server_error", "Something went wrong.");
   });
 
+  // Each game runs on the config it started with. Making a sim is cheap, but it's kept by config so a busy lesson
+  // doesn't make one per request.
+  const sims = new Map<string, Sim>();
+  function simFor(config: GameConfig | null): Sim {
+    if (!config) return baseSim;
+    const key = JSON.stringify(config);
+    const sim = sims.get(key) ?? createSim(config);
+    sims.delete(key);
+    sims.set(key, sim);
+    if (sims.size > MAX_CACHED_SIMS) sims.delete(sims.keys().next().value!);
+    return sim;
+  }
+  const simOf = (row: CompanyRow) => simFor(row.config);
+
+  /**
+   * The teacher's saved overrides that new games use, or none. Any that no longer fit the base config (say a test or
+   * env change took a feature away) are skipped rather than breaking new games.
+   */
+  async function activeOverrides(q: Pick<Db, "select"> = db): Promise<ConfigOverrides> {
+    const [row] = await q.select().from(configPresets).where(eq(configPresets.active, true));
+    const overrides = row?.overrides ?? {};
+    const errors = validateOverrides(overrides, base);
+    return Object.fromEntries(Object.entries(overrides).filter(([path]) => !errors[path]));
+  }
+
+  /** The full config a game started now would use. */
+  async function newGameConfig(q: Pick<Db, "select"> = db) {
+    return applyOverrides(await activeOverrides(q), base);
+  }
+
   function view(row: CompanyRow): CompanyView {
+    const sim = simOf(row);
     const state = sim.load(row.state);
     return {
       id: row.id,
@@ -187,7 +238,7 @@ export async function buildApp(opts: AppOptions) {
     };
   }
 
-  const columnsFor = (state: GameState) => ({
+  const columnsFor = (sim: Sim, state: GameState) => ({
     model: state.model,
     day: state.day,
     cash: state.cash,
@@ -216,8 +267,8 @@ export async function buildApp(opts: AppOptions) {
     return { ok: true };
   });
 
-  app.get("/api/meta", async (): Promise<MetaView> => {
-    const { config } = sim;
+  // The numbers a game shows come from its own config: the current one for a new game, or the one a game started with.
+  function metaFor(config: GameConfig): MetaView {
     return {
       startingCash: config.startingCash,
       finalDay: config.finalDay,
@@ -245,7 +296,10 @@ export async function buildApp(opts: AppOptions) {
       minConfigDevelopers: config.addons.minConfigDevelopers,
       migrationPhases: MIGRATION_PHASES.map((id) => ({ id, ...config.migration.phases[id] })),
     };
-  });
+  }
+
+  // What a game started now would use.
+  app.get("/api/meta", async (): Promise<MetaView> => metaFor(await newGameConfig()));
 
   // --- student (identified by login code) ---
 
@@ -287,10 +341,19 @@ export async function buildApp(opts: AppOptions) {
           .from(companies)
           .where(and(eq(companies.loginCode, code.code), eq(companies.status, "active"), currentVersion));
         if (counted!.active >= maxActiveCompanies) return undefined;
+        // The game keeps the config it starts with, whatever the teacher changes later.
+        const config = await newGameConfig(tx);
+        const sim = simFor(config);
         const state = sim.newGame({ companyName: name, productType, model, seed: randomInt(2 ** 31) });
         const [inserted] = await tx
           .insert(companies)
-          .values({ loginCode: code.code, name: state.companyName, productType: state.productType, ...columnsFor(state) })
+          .values({
+            loginCode: code.code,
+            name: state.companyName,
+            productType: state.productType,
+            config,
+            ...columnsFor(sim, state),
+          })
           .returning();
         return inserted!;
       });
@@ -312,6 +375,13 @@ export async function buildApp(opts: AppOptions) {
     return view(row);
   });
 
+  // The numbers this game shows: from the config it started with.
+  app.get<{ Params: { code: string; id: string } }>("/api/codes/:code/companies/:id/meta", async (req, reply) => {
+    const row = await findCompany(req.params.code, req.params.id);
+    if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+    return metaFor(simOf(row).config) satisfies MetaView;
+  });
+
   // What migrating to the target would cost, for the confirm step. Changes nothing.
   app.get<{ Params: { code: string; id: string }; Querystring: { target: string } }>(
     "/api/codes/:code/companies/:id/migration-quote",
@@ -327,7 +397,7 @@ export async function buildApp(opts: AppOptions) {
     async (req, reply) => {
       const row = await findCompany(req.params.code, req.params.id);
       if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
-      return sim.migrationQuote(row.state, req.query.target) satisfies MigrationQuoteView;
+      return simOf(row).migrationQuote(row.state, req.query.target) satisfies MigrationQuoteView;
     },
   );
 
@@ -335,11 +405,11 @@ export async function buildApp(opts: AppOptions) {
   app.get<{ Params: { code: string; id: string } }>("/api/codes/:code/companies/:id/summary", async (req, reply) => {
     const row = await findCompany(req.params.code, req.params.id);
     if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
-    return sim.summarise(row.state) satisfies SummaryView;
+    return simOf(row).summarise(row.state) satisfies SummaryView;
   });
 
   app.post<{ Params: { code: string; id: string } }>("/api/codes/:code/companies/:id/continue", async (req, reply) => {
-    const result = await updateCompany(req.params.code, req.params.id, (state) => sim.advance(state, 1));
+    const result = await updateCompany(req.params.code, req.params.id, (sim, state) => sim.advance(state, 1));
     if (!result) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
     return { company: result.company, log: result.log } satisfies ContinueResult;
   });
@@ -372,7 +442,7 @@ export async function buildApp(opts: AppOptions) {
       },
     },
     async (req, reply) => {
-      const result = await updateCompany(req.params.code, req.params.id, (state) => ({
+      const result = await updateCompany(req.params.code, req.params.id, (sim, state) => ({
         state: sim.applyAction(state, req.body),
       }));
       if (!result) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
@@ -412,7 +482,7 @@ export async function buildApp(opts: AppOptions) {
   async function updateCompany<T extends { state: GameState }>(
     code: string,
     id: string,
-    step: (state: GameState) => T,
+    step: (sim: Sim, state: GameState) => T,
   ): Promise<(T & { company: CompanyView }) | undefined> {
     if (!UUID_PATTERN.test(id) || !(await findCode(code))) return undefined;
     return db.transaction(async (tx) => {
@@ -421,10 +491,11 @@ export async function buildApp(opts: AppOptions) {
       if (row.status === "retired") {
         throw new SimError("retired", `${row.name} was retired, so this game is over. Start a new company to play again.`);
       }
-      const result = step(sim.load(row.state));
+      const sim = simOf(row);
+      const result = step(sim, sim.load(row.state));
       const [updated] = await tx
         .update(companies)
-        .set({ ...columnsFor(result.state), updatedAt: new Date() })
+        .set({ ...columnsFor(sim, result.state), updatedAt: new Date() })
         .where(eq(companies.id, row.id))
         .returning();
       return { ...result, company: view(updated!) };
@@ -539,6 +610,8 @@ export async function buildApp(opts: AppOptions) {
               status: companies.status,
               updatedAt: companies.updatedAt,
               archivedAt: companies.archivedAt,
+              // From the game's own config, so a game keeps the length it started with.
+              finalDay: sql<number | null>`(${companies.config}->>'finalDay')::int`,
             },
           })
           .from(loginCodes)
@@ -555,7 +628,7 @@ export async function buildApp(opts: AppOptions) {
             model: g.model as TeacherGameView["model"],
             migratingTo: g.migratingTo as TeacherGameView["migratingTo"],
             status: g.status as CompanyStatus,
-            finalDay: sim.config.finalDay,
+            finalDay: g.finalDay ?? base.finalDay,
             updatedAt: g.updatedAt.toISOString(),
             archivedAt: g.archivedAt?.toISOString() ?? null,
           });
@@ -622,9 +695,61 @@ export async function buildApp(opts: AppOptions) {
       const [row] = UUID_PATTERN.test(id) ? await db.select().from(companies).where(eq(companies.id, id)) : [];
       if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
       const status = row.status as CompanyStatus;
-      return { code: row.loginCode, status, summary: sim.summarise(row.state) } satisfies TeacherSummaryView;
+      return { code: row.loginCode, status, summary: simOf(row).summarise(row.state) } satisfies TeacherSummaryView;
+    });
+
+    // The config page: every editable number with its default and range, and the overrides new games use. Changes
+    // apply to games started from then on; each game keeps the config it started with.
+    async function configView(): Promise<ConfigView> {
+      return { preset: CUSTOM_PRESET, fields: configFields(base), overrides: await activeOverrides() };
+    }
+
+    teacher.get("/api/teacher/config", configView);
+
+    // Replaces the overrides. Values equal to the default are dropped, so only real changes are kept.
+    teacher.put<{ Body: ConfigSaveBody }>(
+      "/api/teacher/config",
+      {
+        schema: {
+          // Values are checked by validateOverrides, for an error per field rather than the first one AJV finds.
+          body: { type: "object", required: ["overrides"], properties: { overrides: { type: "object" } } },
+        },
+      },
+      async (req, reply) => {
+        const fields = validateOverrides(req.body.overrides, base);
+        const count = Object.keys(fields).length;
+        if (count) {
+          return reply.code(400).send({
+            error: "invalid_config",
+            message: `${count} setting${count === 1 ? " needs" : "s need"} fixing before saving.`,
+            fields,
+          } satisfies ConfigErrorView);
+        }
+        await saveOverrides(diffFromDefaults(applyOverrides(req.body.overrides, base), base));
+        return configView();
+      },
+    );
+
+    // Every field back to its default.
+    teacher.post("/api/teacher/config/reset", async () => {
+      await saveOverrides({});
+      return configView();
     });
   });
+
+  /** Stores the config page's overrides as the Custom preset and makes it the one new games use. */
+  async function saveOverrides(overrides: ConfigOverrides) {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(configPresets)
+        .set({ active: false })
+        .where(and(eq(configPresets.active, true), sql`${configPresets.name} <> ${CUSTOM_PRESET}`));
+      await tx
+        .insert(configPresets)
+        .values({ name: CUSTOM_PRESET, overrides, active: true })
+        .onConflictDoUpdate({ target: configPresets.name, set: { overrides, active: true, updatedAt: new Date() } });
+    });
+  }
 
   /** Archives or unarchives one game in the teacher's view. False if there's no such game. */
   async function setGameArchived(id: string, archived: boolean) {

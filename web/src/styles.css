@@ -2136,3 +2136,173 @@ body.modal-open {
     padding-inline: 1rem;
   }
 }
+
+/* Teacher's config page */
+
+.staff-head-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.button-link {
+  display: inline-block;
+  font-weight: 600;
+  padding: 0.6rem 1.2rem;
+  border-radius: 8px;
+  text-decoration: none;
+}
+
+.button-link.ghost {
+  color: var(--accent);
+  border: 1px solid var(--border);
+}
+
+.config-intro h1 {
+  margin-bottom: 0.75rem;
+}
+
+.config-note {
+  margin: 0 0 0.75rem;
+  padding: 0.6rem 0.85rem;
+  border-left: 4px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0 8px 8px 0;
+}
+
+.config-tools {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.config-tools input {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.config-group {
+  padding: 0;
+}
+
+.config-group > summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  align-items: baseline;
+  padding: 1rem 1.5rem;
+  cursor: pointer;
+}
+
+.config-group-name {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.config-group[open] > summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.config-section {
+  padding: 0.5rem 1.5rem 1rem;
+}
+
+.config-section h3 {
+  margin: 0.75rem 0 0.25rem;
+  font-size: 1rem;
+}
+
+.config-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.25rem 1rem;
+  align-items: center;
+  padding: 0.6rem 0 0.6rem 0.75rem;
+  border-left: 3px solid transparent;
+  border-bottom: 1px solid var(--border);
+}
+
+.config-field:last-child {
+  border-bottom: 0;
+}
+
+/* Differs from the default. */
+.config-field.changed {
+  border-left-color: var(--accent);
+}
+
+.config-field.invalid {
+  border-left-color: var(--error);
+}
+
+.config-field-text p {
+  margin: 0.1rem 0 0;
+  font-size: 0.9rem;
+}
+
+.config-meta {
+  font-size: 0.8rem !important;
+}
+
+.config-field-input {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.config-field-input input {
+  width: 9rem;
+  text-align: right;
+}
+
+.config-field.invalid input {
+  border-color: var(--error);
+}
+
+.config-field-error {
+  grid-column: 1 / -1;
+  font-size: 0.9rem;
+}
+
+/* Save stays in reach however far down the page the teacher is. */
+.config-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 -4px 12px rgb(0 0 0 / 0.08);
+}
+
+.config-bar p {
+  margin: 0;
+}
+
+.config-bar-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+@media (max-width: 40rem) {
+  .config-group > summary,
+  .config-section {
+    padding-inline: 1rem;
+  }
+
+  .config-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .config-field-input input {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+  }
+}

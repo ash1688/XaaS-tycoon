@@ -12,6 +12,7 @@ import CustomersPage from "./views/game/CustomersPage.vue";
 import FinancePage from "./views/game/FinancePage.vue";
 import StaffView from "./views/StaffView.vue";
 import StaffCompanyView from "./views/StaffCompanyView.vue";
+import StaffConfigView from "./views/StaffConfigView.vue";
 import "./styles.css";
 
 const router = createRouter({
@@ -36,6 +37,7 @@ const router = createRouter({
     },
     { path: "/staff", component: StaffView },
     { path: "/staff/companies/:id", component: StaffCompanyView, props: true },
+    { path: "/staff/config", component: StaffConfigView },
   ],
   // A new page starts at the top. A link to a #anchor is left to the page, which scrolls to it.
   scrollBehavior: (to, from, saved) => saved ?? (to.hash || to.path === from.path ? false : { top: 0 }),

@@ -100,7 +100,10 @@ const formatDate = (iso: string) =>
   <template v-else-if="signedIn">
     <div class="row-between staff-head">
       <h1>Staff dashboard</h1>
-      <button class="ghost" @click="signOut">Sign out</button>
+      <div class="staff-head-actions">
+        <RouterLink to="/staff/config" class="button-link ghost">Game config</RouterLink>
+        <button class="ghost" @click="signOut">Sign out</button>
+      </div>
     </div>
 
     <LiveDashboard ref="dashboard" @signed-out="signedIn = false" @codes-changed="loadCodes().catch(() => {})" />

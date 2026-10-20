@@ -73,7 +73,7 @@ export function createGame(code: string, id: string) {
 
   async function load() {
     try {
-      [meta.value, company.value] = await Promise.all([api.meta(), api.company(code, id)]);
+      [meta.value, company.value] = await Promise.all([api.companyMeta(code, id), api.company(code, id)]);
       if (over.value) await loadSummary();
     } catch (e) {
       loadError.value = (e as Error).message;
