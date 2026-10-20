@@ -1,8 +1,7 @@
 import { expect, test } from "@playwright/test";
 import postgres from "postgres";
 import { E2E_DATABASE_URL, E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-
-// Named to run after smoke.spec.ts, whose first test takes the oldest login code.
+import { createCode } from "./staff.ts";
 
 const money = (n: number) => n.toLocaleString("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 });
 
@@ -14,8 +13,7 @@ test("play to the end, then see profit or loss and income against costs, and the
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
-  await teacher.getByRole("button", { name: "Create code" }).click();
-  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+  const code = await createCode(teacher);
 
   // A shop on IaaS with the loan, which raises its price once and hires the ops it needs.
   const created = await request.post(`/api/codes/${code}/companies`, {
