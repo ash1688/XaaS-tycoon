@@ -4,6 +4,7 @@ import type {
   ConfigErrors,
   ConfigField,
   ConfigOverrides,
+  ConversionView,
   DayLog,
   EventView,
   FeatureGapView,
@@ -76,6 +77,8 @@ export interface MetaView {
   /** Days a price change's wave lasts, and days the price is locked after a change. */
   priceWaveDays: number;
   priceLockDays: number;
+  /** Days of recent uptime that count towards free-to-paid conversion. */
+  conversionUptimeDays: number;
   /** A migration's phases in order, and how long each takes before any overrun. */
   migrationPhases: { id: MigrationPhase; name: string; days: number }[];
 }
@@ -129,6 +132,12 @@ export interface CompanyView {
   priceWave: PriceWaveView | null;
   /** Days until the price can be changed again after the last change. 0 when it can. */
   priceLockDaysLeft: number;
+  /**
+   * Free-to-paid conversion: free users who started paying on the day just played and in all (a price wave's upgrades
+   * aren't counted here), the base and current daily rates (from the next day played), recent uptime, and each
+   * driver (features, uptime, satisfaction, price) as a multiplier that's helping, hurting or neutral.
+   */
+  conversion: ConversionView;
   /** Tickets raised on the day just played, bursts included. */
   ticketsToday: number;
   /** Of today's tickets, those from bursts such as outages. */

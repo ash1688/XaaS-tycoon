@@ -981,3 +981,40 @@ test("a SaaS company without support builds a backlog, hires support from Home a
   await expect(student.locator('[data-pool="support"]')).toContainText("£100 each a day");
   await expect(student.getByTestId("support-hint")).toContainText("Each clears 30 tickets a day");
 });
+
+test("free users start paying each day, and Customers shows what's helping or hurting", async ({ browser, request }) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  await teacher.getByRole("button", { name: "Create code" }).click();
+  const code = await teacher.locator("td[data-code]").first().getAttribute("data-code");
+
+  // A social network: 800 of its 1,000 users are free.
+  const created = await request.post(`/api/codes/${code}/companies`, {
+    data: { name: "Upgrade Ltd", productType: "social", model: "iaas" },
+  });
+  const { id } = await created.json();
+
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${id}`);
+  await expect(student.getByTestId("home-conversions")).toContainText("0 free users started paying");
+  await student.getByRole("button", { name: "Continue" }).click();
+  await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("home-conversions")).toContainText(/[1-9]\d* free users? started paying on day 2/);
+
+  // Customers shows the day's conversions, the rate, and each driver: with 100% uptime and satisfaction, those help.
+  await goTo(student, "Customers");
+  const panel = student.getByTestId("conversion");
+  await expect(panel.getByTestId("conversions-today")).toHaveText(/^[1-9]\d*$/);
+  await expect(panel.getByTestId("conversion-rate")).toHaveText(/^\d+\.\d\d%$/);
+  const drivers = panel.getByTestId("conversion-drivers");
+  await expect(drivers.locator("li")).toHaveCount(4);
+  await expect(drivers.locator('[data-driver="uptime"]')).toHaveClass(/helping/);
+  await expect(drivers.locator('[data-driver="satisfaction"]')).toHaveClass(/helping/);
+  await expect(drivers.locator('[data-driver="features"]')).toContainText("No features live yet");
+  await expect(drivers.locator('[data-driver="price"]')).toContainText("No effect");
+
+  // The day log says so too.
+  await expect((await openDayLog(student)).locator('[data-kind="conversion"]')).toContainText("Free to paid:");
+});

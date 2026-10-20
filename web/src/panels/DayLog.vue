@@ -17,6 +17,7 @@ const EVENT_LABELS = {
   event: "Event",
   support: "Support",
   price: "Price",
+  conversion: "Free to paid",
 } as const;
 const events = computed(() => props.log.entries.filter((e) => !e.category && e.kind !== "income"));
 const income = computed(() => props.log.entries.filter((e) => e.kind === "income"));

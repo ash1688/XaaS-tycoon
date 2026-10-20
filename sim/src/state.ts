@@ -13,7 +13,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 12;
+export const GAME_STATE_VERSION = 13;
 
 /** Money spent in each category. */
 export type Spend = Record<SpendCategory, number>;
@@ -198,6 +198,12 @@ export interface GameState {
   backlog: number;
   /** Customer satisfaction, 0–100. Moves a share of the way each day towards a target set by the backlog. */
   satisfaction: number;
+  /** Hours down on each of the last days played, oldest first, up to conversion.uptimeDays: recent uptime. */
+  recentHoursDown: number[];
+  /** Free users who started paying on the day just played (not counting a price wave's upgrades). */
+  conversionsToday: number;
+  /** Free users who have started paying in all, the same way. */
+  conversions: number;
 }
 
 /** Something the player does between days. */
@@ -234,7 +240,7 @@ export interface LogEntry {
    * Set on entries that need to stand out, such as an outage or bankruptcy. "income" marks money coming in, which the
    * ledger counts as income rather than spend.
    */
-  kind?: "outage" | "bankrupt" | "finished" | "feature" | "migration" | "event" | "income" | "support" | "price";
+  kind?: "outage" | "bankrupt" | "finished" | "feature" | "migration" | "event" | "income" | "support" | "price" | "conversion";
 }
 
 export interface DayLog {
