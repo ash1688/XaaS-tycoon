@@ -36,11 +36,12 @@ test("on IaaS, renting an app server and a load balancer grows the CU capacity b
   await expect(servers.locator('[data-server="app-medium"]')).toContainText("App server · medium × 1");
   await expect(servers.locator('[data-server="database-medium"]')).toContainText("10 DBU");
 
-  // Each type has a stepper for the size picked, here the medium the company has. Pick large: the note says what + does
-  // before pressing it, and the stepper counts the large ones.
+  // Each type has a size dropdown, on the medium the company has, and a − / + for that size. Pick large: the note says
+  // what + does before pressing it, and the stepper counts the large ones.
+  await expect(servers.getByTestId("size-app")).toHaveValue("medium");
   await expect(servers.getByTestId("step-app-value")).toHaveText("1 medium");
-  await servers.locator('[data-size="app-large"]').click();
-  await expect(servers.locator('[data-size="app-large"]')).toContainText("20 CU");
+  await servers.getByTestId("size-app").selectOption("large");
+  await expect(servers.getByTestId("size-app").locator('option[value="large"]')).toContainText("20 CU");
   await expect(servers.getByTestId("step-app-value")).toHaveText("0 large");
   await expect(servers.getByTestId("step-note-app")).toContainText("20 CU) for £800 a month");
   await expect(servers.getByTestId("step-note-app")).toContainText("you'll need load balancers");

@@ -31,8 +31,8 @@ test("on-prem, buying a server charges it up front and shows it on order, counti
   await expect(servers.getByTestId("on-order")).toContainText("Nothing on order");
 
   // Picking small, the note says the upfront price, running cost, units and delivery time before + buys one.
-  await servers.locator('[data-size="app-small"]').click();
-  await expect(servers.locator('[data-size="app-small"]')).toContainText("£400 + £30/mo");
+  await servers.getByTestId("size-app").selectOption("small");
+  await expect(servers.getByTestId("size-app").locator('option[value="small"]')).toContainText("£400 + £30/mo");
   const note = servers.getByTestId("step-note-app");
   await expect(note).toContainText("6 CU");
   await expect(note).toContainText("£400 up front");
@@ -58,7 +58,7 @@ test("on-prem, buying a server charges it up front and shows it on order, counti
   await expect(order).toContainText("Arrives in 9 days");
 
   // Selling says what you get back, at a loss. Keep it, though.
-  await servers.locator('[data-size="app-large"]').click();
+  await servers.getByTestId("size-app").selectOption("large");
   await servers.getByRole("button", { name: "Sell a large app server" }).click();
   const sell = student.getByRole("dialog", { name: "Sell a server" });
   await expect(sell.getByTestId("sell-note")).toHaveText("You get £400 back (40% of the £1,000 you paid).");

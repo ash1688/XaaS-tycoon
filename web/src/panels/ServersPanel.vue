@@ -212,31 +212,21 @@ async function cancel() {
           </div>
         </li>
       </ul>
-      <div class="server-step">
-        <fieldset class="size-pick" :disabled="game.busy || game.over">
-          <legend>Size to {{ verbs.add.toLowerCase() }} or {{ verbs.remove.toLowerCase() }}</legend>
-          <div class="size-pick-options">
-            <label
-              v-for="o in options.filter((x) => x.type === g.type)"
-              :key="o.size"
-              :class="['size-chip', { on: sizeFor(g.type) === o.size }]"
-              :data-size="`${g.type}-${o.size}`"
-            >
-              <input
-                type="radio"
-                :name="`size-${g.type}`"
-                :value="o.size"
-                :checked="sizeFor(g.type) === o.size"
-                @change="picked[g.type] = o.size"
-              />
-              <strong>{{ o.size }}</strong>
-              <span>{{ formatCount(o.units) }} {{ UNIT[g.type] }}</span>
-              <span class="muted">{{
-                o.price !== null ? `${formatCash(o.price)} + ${formatCash(o.monthlyCost)}/mo` : `${formatCash(o.monthlyCost)}/mo`
-              }}</span>
-            </label>
-          </div>
-        </fieldset>
+      <div class="server-step managed-controls">
+        <label class="size-select">
+          <span>Size to {{ verbs.add.toLowerCase() }} or {{ verbs.remove.toLowerCase() }}</span>
+          <select
+            :value="sizeFor(g.type)"
+            :disabled="game.busy || game.over"
+            :data-testid="`size-${g.type}`"
+            @change="picked[g.type] = ($event.target as HTMLSelectElement).value as ServerSize"
+          >
+            <option v-for="o in options.filter((x) => x.type === g.type)" :key="o.size" :value="o.size">
+              {{ o.size }} · {{ formatCount(o.units) }} {{ UNIT[g.type] }} ·
+              {{ o.price !== null ? `${formatCash(o.price)} + ${formatCash(o.monthlyCost)}/mo` : `${formatCash(o.monthlyCost)}/mo` }}
+            </option>
+          </select>
+        </label>
         <StepperControl
           :label="`${sizeFor(g.type)} ${PLURAL[g.type].toLowerCase()}`"
           :value="stepValue(g.type)"

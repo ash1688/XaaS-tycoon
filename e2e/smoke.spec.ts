@@ -69,7 +69,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   // load balancer.
   const panel = student.getByTestId("servers-panel");
   for (const type of ["app", "database"]) {
-    await panel.locator(`[data-size="${type}-medium"]`).click();
+    await panel.getByTestId(`size-${type}`).selectOption("medium");
     await panel.getByTestId(`step-${type}-up`).click();
     await expect(panel.getByTestId(`step-${type}-value`)).toHaveText("1 medium");
   }

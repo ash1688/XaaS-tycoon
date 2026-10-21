@@ -44,12 +44,14 @@ test("on PaaS, raising the instance count grows CU capacity at once, with manage
   await expect(student.getByTestId("tier-cu-figures")).toHaveText("6 / 30 CU");
   await expect(platform.getByTestId("platform-note")).toContainText("you need just 1 ops");
 
-  // A bigger managed database, at once too: + steps it from small to medium.
-  await expect(platform.getByTestId("managed-database-value")).toContainText("small · 10 DBU");
-  await expect(platform.getByRole("button", { name: "Smaller database" })).toBeDisabled();
-  await expect(platform.getByTestId("managed-database-why")).toContainText("can't go below small");
-  await platform.getByRole("button", { name: "Larger database" }).click();
-  await expect(platform.getByTestId("managed-database-value")).toContainText("medium · 25 DBU");
+  // A bigger managed database, at once too: the size dropdown resizes the one there is. It can't be removed, and there's
+  // only ever one.
+  await expect(platform.getByTestId("managed-database-value")).toHaveText("1 small");
+  await expect(platform.getByRole("button", { name: "Remove the database" })).toBeDisabled();
+  await expect(platform.getByRole("button", { name: "Add another database" })).toBeDisabled();
+  await expect(platform.getByTestId("managed-database-why")).toContainText("Your product needs a database");
+  await platform.getByTestId("managed-database-size").selectOption("medium");
+  await expect(platform.getByTestId("managed-database-value")).toHaveText("1 medium");
   await expect(student.getByRole("meter", { name: /^Database \(DBU\)/ })).toHaveAttribute("aria-valuemax", "25");
   await expect(platform.getByTestId("platform-cost")).toHaveText("£4,700");
 

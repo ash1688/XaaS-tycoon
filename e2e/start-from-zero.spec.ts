@@ -37,7 +37,7 @@ test("on IaaS, VMs rented on day 1 launch the company on day 3 with its first us
   await expect(panel.getByTestId("no-servers")).toBeVisible();
   for (const [type, name] of [["app", "app server"], ["database", "database"]]) {
     await expect(panel.getByTestId(`step-${type}-value`)).toHaveText("0 small");
-    await panel.locator(`[data-size="${type}-medium"]`).click();
+    await panel.getByTestId(`size-${type}`).selectOption("medium");
     await panel.getByRole("button", { name: `Rent a medium ${name}` }).click();
     await expect(panel.getByTestId(`step-${type}-value`)).toHaveText("1 medium");
   }
@@ -85,23 +85,31 @@ test("on PaaS, a managed database added from the empty state launches the compan
   await expect(student.getByTestId("launch-step-servers")).toContainText("Set up app instances and a managed database");
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Infrastructure", exact: true }).click();
 
-  // Nothing runs yet, and the steppers say so: no instances, no database and no cache.
+  // Nothing runs yet, and the controls say so: no instances, no database and no cache. + is there to add a database.
   const platform = student.getByTestId("platform-panel");
   await expect(platform.getByTestId("instances-value")).toHaveText("0");
   await expect(platform.getByTestId("managed-database-value")).toHaveText("None");
   await expect(platform.getByTestId("no-database")).toContainText("None yet");
   await expect(platform.getByRole("button", { name: "Remove the database" })).toBeDisabled();
+  await expect(platform.getByTestId("managed-database-why")).toHaveText("You have no database to remove.");
+  await expect(platform.getByRole("button", { name: "Add a small database" })).toBeEnabled();
   await expect(platform.getByTestId("managed-cache-value")).toHaveText("None");
+  // With none running, the dropdown only picks the size + adds: still nothing is running.
+  await platform.getByTestId("managed-database-size").selectOption("medium");
+  await expect(platform.getByTestId("managed-database-value")).toHaveText("None");
+  await expect(platform.getByRole("button", { name: "Add a medium database" })).toBeEnabled();
+  await platform.getByTestId("managed-database-size").selectOption("small");
 
-  // One instance, and + adds the smallest database.
+  // One instance, and + adds the small database.
   await platform.getByRole("button", { name: "One more app instance" }).click();
   await expect(platform.getByTestId("instances-value")).toHaveText("1");
-  await platform.getByRole("button", { name: "Add a database" }).click();
-  await expect(platform.getByTestId("managed-database-value")).toHaveText("small · 10 DBU · £900/mo");
+  await platform.getByRole("button", { name: "Add a small database" }).click();
+  await expect(platform.getByTestId("managed-database-value")).toHaveText("1 small");
+  await expect(platform.getByTestId("managed-database-size")).toHaveValue("small");
   await expect(platform.getByTestId("no-database")).toHaveCount(0);
-  // The cache steps up from None and back down to it.
-  await platform.getByRole("button", { name: "Add a cache" }).click();
-  await expect(platform.getByTestId("managed-cache-value")).toContainText("small");
+  // The cache is added with + and taken away with −.
+  await platform.getByRole("button", { name: "Add a small cache" }).click();
+  await expect(platform.getByTestId("managed-cache-value")).toHaveText("1 small");
   await platform.getByRole("button", { name: "Remove the cache" }).click();
   await expect(platform.getByTestId("managed-cache-value")).toHaveText("None");
 
