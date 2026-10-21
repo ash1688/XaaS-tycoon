@@ -73,6 +73,9 @@ test("start without a loan, take one later on worse terms, and see the debt on F
   await expect(student.getByTestId("day")).toContainText(`4 of ${E2E_FINAL_DAY}`);
   await expect(student.getByTestId("balance-debt")).toHaveText("−£1,432");
   await expect(student.getByTestId("balance-sheet").locator(".cat-debt")).toContainText("Debt");
+  // Of it, only the interest counts against profit: £3,664 of £38,664 is interest, so £136 of the £1,432.
+  await expect(student.getByTestId("balance-principal")).toHaveText("£1,296");
+  await expect(student.getByTestId("balance-debt-split")).toContainText("£136 is interest and £1,296 is paying back");
   await expect(panel.getByTestId("loan-remaining")).toHaveText(`£${(1_432 * 26).toLocaleString("en-GB")}`);
   await expect(panel).toContainText("26 repayments left");
 

@@ -321,7 +321,7 @@ export interface TeacherGameView {
   freeUsers: number;
   /** Income on the last day played. */
   lastDayIncome: number;
-  /** Income − everything spent so far, debt included: below 0 is a loss. */
+  /** Income − costs so far, as the summary's profit: of the loan repayments, only interest counts. Below 0 is a loss. */
   profit: number;
   /** Customer satisfaction now, 0–100, rounded. */
   satisfaction: number;

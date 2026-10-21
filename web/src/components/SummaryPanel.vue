@@ -47,7 +47,7 @@ const biggest = computed(() =>
       <span class="headline-value" data-testid="summary-profit">{{ signed(summary.profit) }}</span>
       <span class="headline-sum">
         Income <strong data-testid="summary-income">{{ formatCash(summary.income) }}</strong>
-        − costs <strong data-testid="summary-costs">{{ formatCash(summary.totalSpend) }}</strong>
+        − costs <strong data-testid="summary-costs">{{ formatCash(summary.costs) }}</strong>
       </span>
     </div>
 
@@ -98,7 +98,8 @@ const biggest = computed(() =>
           <span class="value" data-testid="summary-loan">{{ formatCash(loan.amount) }}</span>
           <small data-testid="summary-loan-status">
             {{ loan.day === 1 ? "taken at the start" : `taken on day ${loan.day}` }} ·
-            {{ loan.fullyRepaid ? "repaid in full" : `${formatCash(loan.repaid)} of ${formatCash(loan.total)} repaid` }}
+            {{ loan.fullyRepaid ? "repaid in full" : `${formatCash(loan.repaid)} of ${formatCash(loan.total)} repaid` }} ·
+            <span data-testid="summary-loan-interest">{{ formatCash(loan.interestPaid) }} interest</span>
           </small>
         </template>
         <template v-else>
@@ -112,6 +113,10 @@ const biggest = computed(() =>
     <p class="muted summary-note">
       Everything paying users paid, and everything you spent, added up day by day. While the income line is above the
       costs line you're in profit overall; the gap at the end is your {{ loss ? "loss" : "profit" }}.
+      <template v-if="loan">
+        Of the loan repayments only the interest is a cost: paying back what you borrowed isn't, as borrowing it wasn't
+        income.
+      </template>
     </p>
     <IncomeChart :days="summary.incomeVsCosts" :final-day="summary.finalDay" />
 

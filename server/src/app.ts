@@ -15,6 +15,7 @@ import {
   MIGRATION_PHASES,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
+  profitCosts,
   responsibilityStack,
   SERVER_SIZES,
   SERVER_TYPES,
@@ -776,7 +777,7 @@ export async function buildApp(opts: AppOptions) {
           if (!codes.has(code)) codes.set(code, { code, archived: codeArchived, companies: [] });
           if (!g) continue;
           const income = m.income ?? 0;
-          const spent = SPEND_CATEGORIES.reduce((sum, c) => sum + (m.spend?.[c] ?? 0), 0);
+          const spend = Object.fromEntries(SPEND_CATEGORIES.map((c) => [c, m.spend?.[c] ?? 0])) as Spend;
           const paidUsers = m.paidUsers ?? 0;
           codes.get(code)!.companies.push({
             ...g,
@@ -791,7 +792,8 @@ export async function buildApp(opts: AppOptions) {
             paidUsers,
             freeUsers: Math.max(0, g.users - paidUsers),
             lastDayIncome: m.lastDayIncome ?? 0,
-            profit: income - spent,
+            // As the summary's: only the loan's interest counts against profit.
+            profit: income - profitCosts(spend, m.loan),
             satisfaction: Math.round(m.satisfaction ?? 100),
             loanRemaining: m.loan ? m.loan.total - m.loan.repaid : null,
           });

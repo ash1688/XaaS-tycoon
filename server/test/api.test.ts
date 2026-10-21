@@ -1387,7 +1387,12 @@ describe("teacher dashboard", () => {
       loanRemaining: company.loan!.remaining,
     });
     expect(rows[0]!.lastDayIncome).toBeGreaterThan(0);
-    expect(rows[0]!.profit).toBe(company.income - Object.values(company.spend).reduce((a, b) => a + b, 0));
+    // Only the interest in the repayments counts against profit, on the dashboard as in the summary.
+    const spent = Object.values(company.spend).reduce((a, b) => a + b, 0);
+    expect(rows[0]!.profit).toBe(company.income - spent + summary.loan!.principalRepaid);
+    expect(summary.loan!.principalRepaid).toBeGreaterThan(0);
+    expect(summary.loan!.interestPaid + summary.loan!.principalRepaid).toBe(company.spend.debt);
+    expect(summary.totalSpend).toBe(spent);
     expect(rows[0]!.loanRemaining).toBe(company.loan!.total - 3 * company.loan!.dailyRepayment);
     // No loan, and day 1's income is nothing: no one has paid yet.
     expect(rows[1]).toMatchObject({ id: plain.id, day: 1, lastDayIncome: 0, loanRemaining: null, satisfaction: 100 });

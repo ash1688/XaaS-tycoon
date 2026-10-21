@@ -1,5 +1,5 @@
 import { SPEND_CATEGORIES, type GameConfig } from "./config.ts";
-import type { GameState, LogEntry, Spend } from "./state.ts";
+import type { GameState, Loan, LogEntry, Spend } from "./state.ts";
 
 export const noSpend = (): Spend => ({ staff: 0, infrastructure: 0, addons: 0, debt: 0 });
 
@@ -13,6 +13,21 @@ export function pounds(n: number): string {
 /** A price after any provider price rises, to the penny. */
 export const risen = (price: number, rise: number) => Math.round(price * rise * 100) / 100;
 
+/**
+ * The interest in bank loan repayments adding up to `repaid`. Each repayment is interest and principal in the loan's
+ * own proportion, so the interest is all paid when the loan is. Nothing without a loan.
+ */
+export const interestIn = (loan: Pick<Loan, "amount" | "total"> | null, repaid: number) =>
+  loan?.total ? Math.round((repaid * (loan.total - loan.amount)) / loan.total) : 0;
+
+/**
+ * The costs that count against profit: every charge, but only the interest in the loan repayments (debt). Paying back
+ * the principal returns borrowed money, so it isn't a cost, as the money borrowed isn't income. Cash still falls by
+ * the whole repayment.
+ */
+export const profitCosts = (spend: Spend, loan: Pick<Loan, "amount" | "total"> | null) =>
+  SPEND_CATEGORIES.reduce((sum, c) => sum + spend[c], 0) - spend.debt + interestIn(loan, spend.debt);
+
 /** Money borrowed in some entries: the bank loan coming in. Cash, but neither income nor a charge. */
 const borrowedIn = (entries: LogEntry[]) =>
   entries.reduce((sum, e) => sum + (e.kind === "loan" && !e.category ? e.cashDelta : 0), 0);
@@ -24,9 +39,9 @@ const customersAt = ({ users, paidUsers, satisfaction }: GameState) => ({ users,
 export function createFinance(config: GameConfig) {
   /**
    * The ledger. Applies a day's entries to cash, adds each charge to its category's running total and the day's
-   * spend, and income to its own total, apart from the costs, so profit is income − spend. Money borrowed is cash but
-   * neither, kept on the day so the cash chart adds up. Then ends the game if cash has gone below zero or this was the
-   * final day. Returns the entries with any notice of the end added. Going bankrupt on the final day counts as
+   * spend, and income to its own total, apart from the costs, so profit is income − profitCosts. Money borrowed is
+   * cash but neither, kept on the day so the cash chart adds up. Then ends the game if cash has gone below zero or this
+   * was the final day. Returns the entries with any notice of the end added. Going bankrupt on the final day counts as
    * bankrupt.
    */
   function settle(state: GameState, day: number, entries: LogEntry[]): { state: GameState; entries: LogEntry[] } {

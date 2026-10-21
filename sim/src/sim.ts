@@ -50,6 +50,7 @@ export type {
   UnitsView,
 } from "./servers.ts";
 export type { GameSummary, IncomeCostDay, LoanSummary, PeakUsers, SummaryDay } from "./summary.ts";
+export { interestIn, profitCosts } from "./finance.ts";
 export {
   GAME_STATE_VERSION,
   isCurrentState,
