@@ -24,11 +24,10 @@ test("start without a loan, take one later on worse terms, and see the debt on F
   await expect(terms.getByTestId("loan-total")).toHaveText("£38,512");
   await expect(student.getByTestId("start-cash")).toHaveText("You start with £15,000.");
 
-  // On-prem's kit costs more than the starting cash: it needs the loan.
+  // On-prem's kit takes about half the starting cash, so it can start without the loan: borrowing is a choice.
   await student.getByText("E-commerce platform").click();
   await student.locator("label.choice", { hasText: "Own servers (on-prem)" }).click();
-  await expect(student.getByTestId("cant-afford")).toContainText("Take the bank loan");
-  await expect(student.getByRole("button", { name: "Start company" })).toBeDisabled();
+  await expect(student.getByTestId("cant-afford")).toBeHidden();
   await student.getByTestId("take-loan").check();
   await expect(student.getByTestId("start-cash")).toHaveText("You start with £50,000, £35,000 of it borrowed.");
   await expect(student.getByTestId("cant-afford")).toBeHidden();

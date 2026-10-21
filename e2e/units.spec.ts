@@ -21,18 +21,18 @@ test("on IaaS, renting an app server and a load balancer grows the CU capacity b
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
-  // Home's capacity card shows the tightest tier: the database, 4 of 15 DBU.
-  await expect(student.getByTestId("home-tightest")).toContainText("DBU 27%");
+  // Home's capacity card shows the tightest tier: compute, 6 of 10 CU (the database is as full).
+  await expect(student.getByTestId("home-tightest")).toContainText("CU 60%");
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Infrastructure", exact: true }).click();
 
-  // The starter setup: a medium app server (15 CU) and a medium database (15 DBU), and one app server needs no
+  // The starter setup: a medium app server (10 CU) and a medium database (10 DBU), and one app server needs no
   // load balancer.
   const cu = student.getByRole("meter", { name: /^Compute \(CU\)/ });
-  await expect(cu).toHaveAttribute("aria-valuemax", "15");
-  await expect(student.getByTestId("tier-cu-figures")).toHaveText("3 / 15 CU");
+  await expect(cu).toHaveAttribute("aria-valuemax", "10");
+  await expect(student.getByTestId("tier-cu-figures")).toHaveText("6 / 10 CU");
   const servers = student.getByTestId("servers-panel");
   await expect(servers.locator('[data-server="app-medium"]')).toContainText("App server · medium × 1");
-  await expect(servers.locator('[data-server="database-medium"]')).toContainText("15 DBU");
+  await expect(servers.locator('[data-server="database-medium"]')).toContainText("10 DBU");
 
   // Rent a large app server: the modal shows its units and price before renting.
   await student.getByTestId("rent-open").click();
@@ -40,7 +40,7 @@ test("on IaaS, renting an app server and a load balancer grows the CU capacity b
   await rent.locator('[data-rent-type="app"]').click();
   await rent.locator('[data-rent-size="large"]').click();
   await expect(rent.locator('[data-rent-size="large"]')).toContainText("20 CU");
-  await expect(rent.getByTestId("rent-summary")).toContainText("20 CU for £700 a month");
+  await expect(rent.getByTestId("rent-summary")).toContainText("20 CU for £800 a month");
   await expect(rent.getByTestId("rent-summary")).toContainText("you'll need load balancers");
   await rent.getByTestId("rent-confirm").click();
   await expect(rent).toHaveCount(0);
@@ -55,7 +55,7 @@ test("on IaaS, renting an app server and a load balancer grows the CU capacity b
   await rent.getByTestId("rent-confirm").click();
   await expect(servers.locator('[data-server="loadBalancer-small"]')).toContainText("Load balancer · small × 1");
   // Not ready yet, so the CU bar hasn't moved.
-  await expect(cu).toHaveAttribute("aria-valuemax", "15");
+  await expect(cu).toHaveAttribute("aria-valuemax", "10");
 
   // Cancelling says it's pro rata. Keep it, though.
   await servers.getByRole("button", { name: "Cancel one small load balancer" }).click();
@@ -63,16 +63,16 @@ test("on IaaS, renting an app server and a load balancer grows the CU capacity b
   await expect(cancel.getByTestId("pro-rata-note")).toContainText("you only pay for the days you had it");
   await cancel.getByRole("button", { name: "Keep it" }).click();
 
-  // The next day they're ready: the load balancer covers both app servers, so CU grows to 15 + 20.
+  // The next day they're ready: the load balancer covers both app servers, so CU grows to 10 + 20.
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
-  await expect(cu).toHaveAttribute("aria-valuemax", "35");
-  await expect(student.getByTestId("tier-cu-figures")).toHaveText(/ \/ 35 CU$/);
+  await expect(cu).toHaveAttribute("aria-valuemax", "30");
+  await expect(student.getByTestId("tier-cu-figures")).toHaveText(/ \/ 30 CU$/);
   await expect(student.getByTestId("lb-status")).toContainText("1 load balancer serves your 2 app servers");
   await expect(servers.getByTestId("pending-app-large")).toHaveCount(0);
   // Billed from the day after renting, in infrastructure.
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Home", exact: true }).click();
   await student.getByRole("button", { name: "Day log" }).click();
   const log = student.getByRole("dialog", { name: "Day log" }).getByTestId("day-log");
-  await expect(log.locator('[data-category="infrastructure"]')).toContainText("App server (large) rent: 1 × £700 a month");
+  await expect(log.locator('[data-category="infrastructure"]')).toContainText("App server (large) rent: 1 × £800 a month");
 });

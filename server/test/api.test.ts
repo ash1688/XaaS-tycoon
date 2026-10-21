@@ -24,14 +24,31 @@ const PASSWORD = "test-teacher-password";
 const iaasServers = defaultConfig.models.iaas.servers!;
 const paasServers = defaultConfig.models.paas.servers!;
 const LIGHT_DEMAND = { cuPerUser: 0.0005, dbuPerUser: 0.0005 };
+// The server sizes, ops per server and starting users these tests' sums were worked out with (before the balance
+// pass), pinned so that tuning the defaults doesn't change them.
+const UNITS = { small: 10, medium: 15, large: 20, massive: 25 };
+const STARTING_USERS = { ecommerce: 2000, social: 1000, video: 1000 };
 const sim = createSim({
   ...defaultConfig,
   startingCash: 1000,
+  servers: {
+    ...defaultConfig.servers,
+    types: {
+      ...defaultConfig.servers.types,
+      app: { ...defaultConfig.servers.types.app, units: UNITS },
+      database: { ...defaultConfig.servers.types.database, units: UNITS },
+      cache: { ...defaultConfig.servers.types.cache, units: UNITS },
+    },
+  },
   // IaaS costs a flat 25 a day (750 a month), with nothing upfront, unless a test says otherwise: its starter VMs (a
   // medium app server and database, needing 1 ops) are free here. Leaving it costs 200, and PaaS 100 upfront and 10 a
   // day, its starter instance and managed database free too, so a migration between them fits in the starting cash.
   models: {
     ...defaultConfig.models,
+    onprem: {
+      ...defaultConfig.models.onprem,
+      servers: { ...defaultConfig.models.onprem.servers!, opsPerServer: { app: 0.6, database: 0.6, cache: 0.3, loadBalancer: 0.3 } },
+    },
     iaas: {
       ...defaultConfig.models.iaas,
       upfrontCost: 0,
@@ -40,6 +57,7 @@ const sim = createSim({
       exitPenalty: 200,
       servers: {
         ...iaasServers,
+        opsPerServer: { app: 0.5, database: 0.5, cache: 0.25, loadBalancer: 0.25 },
         monthlyCost: {
           ...iaasServers.monthlyCost,
           app: { ...iaasServers.monthlyCost.app, medium: 0 },
@@ -77,7 +95,12 @@ const sim = createSim({
   productTypes: Object.fromEntries(
     Object.entries(defaultConfig.productTypes).map(([id, p]) => [
       id,
-      { ...p, pricing: { ...p.pricing, freeShare: 1, conversionRate: 0 }, demand: LIGHT_DEMAND },
+      {
+        ...p,
+        growth: { ...p.growth, startingUsers: STARTING_USERS[id as keyof typeof STARTING_USERS] },
+        pricing: { ...p.pricing, freeShare: 1, conversionRate: 0 },
+        demand: LIGHT_DEMAND,
+      },
     ]),
   ) as typeof defaultConfig.productTypes,
 });
@@ -615,11 +638,12 @@ describe("users, capacity and uptime", () => {
 
   it("starts with the product's users, full uptime and capacity cut for missing ops", async () => {
     const { company } = await setup();
-    const { startingUsers, loadPerUser } = defaultConfig.productTypes.ecommerce.growth;
+    const { loadPerUser } = defaultConfig.productTypes.ecommerce.growth;
+    const startingUsers = STARTING_USERS.ecommerce;
     const { cuPerUser, dbuPerUser } = LIGHT_DEMAND;
     const { unstaffedShare } = defaultConfig.capacity;
     // The starter's medium app server and database give 15 CU and 15 DBU, cut to 40% with none of the 1 ops needed.
-    const units = defaultConfig.servers.types.app.units.medium * unstaffedShare;
+    const units = UNITS.medium * unstaffedShare;
     expect(company).toMatchObject({
       users: startingUsers,
       load: startingUsers * loadPerUser,
@@ -735,13 +759,13 @@ describe("servers on IaaS", () => {
       cu: { capacity: (15 + 20) * defaultConfig.capacity.unstaffedShare },
       loadBalancer: { appServers: 2, loadBalancers: 1, needed: true, coverage: 2, counted: 2, uncovered: 0 },
     });
-    // Billed from the day after renting: a large app server is £700 a month and a small load balancer £200.
+    // Billed from the day after renting: a large app server is £800 a month and a small load balancer £200.
     expect(next.log[0]!.entries).toContainEqual({
-      text: "App server (large) rent: 1 × £700 a month",
-      cashDelta: -Math.round(700 / 30),
+      text: "App server (large) rent: 1 × £800 a month",
+      cashDelta: -Math.round(800 / 30),
       category: "infrastructure",
     });
-    expect(next.company.monthlyInfrastructureCost).toBe(750 + 700 + 200);
+    expect(next.company.monthlyInfrastructureCost).toBe(750 + 800 + 200);
   });
 
   it("cancels a VM, which stops its rent and persists", async () => {
@@ -784,8 +808,8 @@ describe("servers on IaaS", () => {
 });
 
 describe("servers on-prem", () => {
-  // The default on-prem kit, with cash to buy it: a £30,000 server room plus a large app server (£2,100) and database
-  // (£2,700), 10 days to arrive and 40% back on selling.
+  // The default on-prem kit, with cash to buy it: a £5,000 server room plus a large app server (£1,000) and database
+  // (£1,200), 10 days to arrive and 40% back on selling.
   const ownSim = createSim({ ...sim.config, startingCash: 100_000 });
   const onprem = defaultConfig.models.onprem.servers!;
   let ownApp: Awaited<ReturnType<typeof buildApp>>;
@@ -815,11 +839,11 @@ describe("servers on-prem", () => {
 
   it("starts with the starter kit bought on top of the server room, and offers kit to buy", async () => {
     const { company } = await setup();
-    expect(company.cash).toBe(100_000 - 30_000 - 2_100 - 2_700);
-    expect(company.spend.infrastructure).toBe(34_800);
+    expect(company.cash).toBe(100_000 - 5_000 - 1_000 - 1_200);
+    expect(company.spend.infrastructure).toBe(7_200);
     expect(company.servers).toEqual([
-      expect.objectContaining({ id: 1, type: "app", size: "large", status: "ready", daysLeft: 0, paid: 2_100, sellBack: 840 }),
-      expect.objectContaining({ id: 2, type: "database", size: "large", status: "ready", daysLeft: 0, paid: 2_700, sellBack: 1_080 }),
+      expect.objectContaining({ id: 1, type: "app", size: "large", status: "ready", daysLeft: 0, paid: 1_000, sellBack: 400 }),
+      expect.objectContaining({ id: 2, type: "database", size: "large", status: "ready", daysLeft: 0, paid: 1_200, sellBack: 480 }),
     ]);
     expect(company.serverOptions).toHaveLength(16);
     expect(company.serverOptions).toContainEqual(
@@ -834,7 +858,7 @@ describe("servers on-prem", () => {
       }),
     );
     const meta = (await ownApp.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
-    expect(meta.models.find((m) => m.id === "onprem")!.upfrontCost).toBe(34_800);
+    expect(meta.models.find((m) => m.id === "onprem")!.upfrontCost).toBe(7_200);
   });
 
   it("buys kit, charging it at once, on order with the days left until it arrives", async () => {
@@ -860,7 +884,7 @@ describe("servers on-prem", () => {
     expect(onOrder.json()).toMatchObject({ error: "on_order" });
     const sold = await act({ type: "sellServer", id: 2 });
     expect(sold.statusCode).toBe(200);
-    expect(sold.json<CompanyView>().cash).toBe(before.cash - onprem.purchase!.price.cache.small + 1_080);
+    expect(sold.json<CompanyView>().cash).toBe(before.cash - onprem.purchase!.price.cache.small + 480);
     expect((await get()).servers.map((s) => s.id)).toEqual([1, 3]);
   });
 
@@ -1169,7 +1193,7 @@ describe("bank loan", () => {
     expect(without.json()).toMatchObject({ error: "cant_afford", message: expect.stringContaining("bank loan") });
     const withLoan = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "onprem", takeLoan: true });
     expect(withLoan.statusCode).toBe(201);
-    expect(withLoan.json<CompanyView>().cash).toBe(1_000 + 35_000 - 34_800);
+    expect(withLoan.json<CompanyView>().cash).toBe(1_000 + 35_000 - 7_200);
   });
 });
 
@@ -1895,7 +1919,7 @@ describe("migration quote", () => {
       // 2,000 shoppers need 1 CU and 1 DBU; with a quarter's headroom, one instance and a small database, free here.
       setup: [
         { type: "app", size: "medium", name: "App instance", count: 1, units: 15, upfront: 0, monthly: 0, daysLeft: 0 },
-        { type: "database", size: "small", name: "Managed database", count: 1, units: 15, upfront: 0, monthly: 0, daysLeft: 0 },
+        { type: "database", size: "small", name: "Managed database", count: 1, units: 10, upfront: 0, monthly: 0, daysLeft: 0 },
       ],
       sizedFor: { cu: 1.25, dbu: 1.25 },
       headroom: 0.25,

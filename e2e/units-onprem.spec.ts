@@ -13,7 +13,7 @@ test("on-prem, buying a server charges it up front and shows it on order, counti
   const code = await createCode(teacher);
 
   const created = await request.post(`/api/codes/${code}/companies`, {
-    // On-prem's kit costs more than the starting cash, so it takes the bank loan.
+    // With the bank loan, so there's cash to buy more kit.
     data: { name: "Kit Ltd", productType: "social", model: "onprem", takeLoan: true },
   });
   const { id, cash } = await created.json();
@@ -32,18 +32,18 @@ test("on-prem, buying a server charges it up front and shows it on order, counti
   const buy = student.getByRole("dialog", { name: "Buy a server" });
   await buy.locator('[data-rent-type="app"]').click();
   await buy.locator('[data-rent-size="small"]').click();
-  await expect(buy.locator('[data-rent-size="small"]')).toContainText("£1,200 up front");
+  await expect(buy.locator('[data-rent-size="small"]')).toContainText("£400 up front");
   const summary = buy.getByTestId("buy-summary");
-  await expect(summary).toContainText("10 CU");
-  await expect(summary).toContainText("£1,200 up front");
-  await expect(summary).toContainText("£40 a month");
+  await expect(summary).toContainText("6 CU");
+  await expect(summary).toContainText("£400 up front");
+  await expect(summary).toContainText("£30 a month");
   await expect(summary).toContainText("Delivery takes 10 days");
   await buy.getByTestId("buy-confirm").click();
   await expect(buy).toHaveCount(0);
 
   // Paid for at once, and on order with its days left.
   const bought = await (await request.get(`/api/codes/${code}/companies/${id}`)).json();
-  expect(bought.cash).toBe(cash - 1_200);
+  expect(bought.cash).toBe(cash - 400);
   const order = servers.getByTestId("on-order").locator('[data-order="app-small"]');
   await expect(order).toContainText("App server · small");
   await expect(order).toContainText("Arrives in 10 days");
@@ -57,7 +57,7 @@ test("on-prem, buying a server charges it up front and shows it on order, counti
   // Selling says what you get back, at a loss. Keep it, though.
   await servers.getByRole("button", { name: "Sell one large app server" }).click();
   const sell = student.getByRole("dialog", { name: "Sell a server" });
-  await expect(sell.getByTestId("sell-note")).toHaveText("You get £840 back (40% of the £2,100 you paid).");
+  await expect(sell.getByTestId("sell-note")).toHaveText("You get £400 back (40% of the £1,000 you paid).");
   await sell.getByRole("button", { name: "Keep it" }).click();
 
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Home", exact: true }).click();

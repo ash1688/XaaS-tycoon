@@ -7,6 +7,10 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -p ."
+    "typecheck": "tsc -p .",
+    "balance": "tsx scripts/balance.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
   }
 }

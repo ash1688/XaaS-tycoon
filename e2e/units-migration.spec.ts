@@ -22,15 +22,15 @@ test("migrating from IaaS to PaaS quotes the new setup item by item, then shows 
   await panel.locator("label.choice", { hasText: "Deploy to a platform (PaaS)" }).click();
   await student.getByRole("button", { name: "Plan migration" }).click();
 
-  // 1,000 social users need 3 CU and 4 DBU; with a quarter more room, one instance and a small managed database.
+  // 4,000 social users need 6 CU and 6 DBU; with a quarter more room, one instance and a small managed database.
   const setup = student.getByTestId("quote-setup");
-  await expect(setup).toContainText("sized to today's demand (3.75 CU, 5 DBU) with 25% room to grow");
+  await expect(setup).toContainText("sized to today's demand (7.5 CU, 7.5 DBU) with 25% room to grow");
   await expect(setup.locator("tbody tr")).toHaveCount(2);
   await expect(setup.locator('[data-setup-item="app-medium"]')).toContainText("1 × app instance");
-  await expect(setup.locator('[data-setup-item="app-medium"]')).toContainText("15 CU each");
-  await expect(setup.locator('[data-setup-item="app-medium"]')).toContainText("£800");
+  await expect(setup.locator('[data-setup-item="app-medium"]')).toContainText("10 CU each");
+  await expect(setup.locator('[data-setup-item="app-medium"]')).toContainText("£900");
   await expect(setup.locator('[data-setup-item="database-small"]')).toContainText("1 × small managed database");
-  await expect(setup.locator('[data-setup-item="database-small"]')).toContainText("£1,000");
+  await expect(setup.locator('[data-setup-item="database-small"]')).toContainText("£900");
   // Rented, so nothing up front: only a monthly column.
   await expect(setup.getByRole("columnheader", { name: "Up front" })).toHaveCount(0);
   await expect(student.getByTestId("quote-setup-monthly")).toHaveText("£1,800");
@@ -57,7 +57,7 @@ test("migrating from IaaS to PaaS quotes the new setup item by item, then shows 
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Home", exact: true }).click();
   await student.getByRole("button", { name: "Day log" }).click();
   const log = student.getByRole("dialog", { name: "Day log" }).getByTestId("day-log");
-  await expect(log).toContainText("App server (medium) rent: 1 × £550 a month");
-  await expect(log).toContainText("Double billing: App instance (medium): 1 × £800 a month");
-  await expect(log).toContainText("Double billing: Managed database (small): 1 × £1,000 a month");
+  await expect(log).toContainText("App server (medium) rent: 1 × £450 a month");
+  await expect(log).toContainText("Double billing: App instance (medium): 1 × £900 a month");
+  await expect(log).toContainText("Double billing: Managed database (small): 1 × £900 a month");
 });

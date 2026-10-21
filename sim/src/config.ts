@@ -1,4 +1,4 @@
-// All balance numbers live here. Figures are placeholders, to be tuned after the alpha.
+// All balance numbers live here. Tuned with the balance harness (sim/scripts, `npm run balance -w sim`) in #55.
 import type { LayerId } from "./responsibility.ts";
 
 export const MODEL_IDS = ["onprem", "iaas", "paas", "saas"] as const;
@@ -605,8 +605,8 @@ export interface GameConfig {
 }
 
 export const defaultConfig: GameConfig = {
-  // Placeholder, balanced in #55. Your own money: enough to start on IaaS, PaaS or SaaS and run for a few weeks while
-  // income builds. Not enough for on-prem's £34,800 of kit up front without the bank loan.
+  // Your own money: enough to start on IaaS, PaaS or SaaS and see out the first month or so, until income covers the
+  // costs. On-prem's £7,200 up front leaves too little to buy more kit for weeks without the bank loan.
   startingCash: 15_000,
   finalDay: 180,
   maxCompanyNameLength: 40,
@@ -615,34 +615,36 @@ export const defaultConfig: GameConfig = {
       name: "Own servers (on-prem)",
       blurb: "Buy and run your own kit.",
       comparison: { upfrontCost: "High", monthlyCost: "Low–medium", opsNeeded: "High", control: "Full" },
-      // The server room: racks, networking, power and cooling. The starter servers are bought on top (£4,800), so a new
-      // on-prem company pays £34,800 up front, close to the £40,000 it paid before it had servers.
-      upfrontCost: 30_000,
+      // The server room: racks, networking, power and cooling. The starter servers are bought on top (£2,200), so a new
+      // on-prem company pays £7,200 up front: by far the most of any model.
+      upfrontCost: 5_000,
       // The premises, bandwidth and the room's own power. Each server's power and upkeep is on top.
-      monthlyCost: 1_500,
+      monthlyCost: 1_000,
       monthlyCostPerUser: 0,
       exitPenalty: 0,
-      // Placeholders, balanced in #55. A server costs three months' rent of the same VM and a tenth of that rent a month
-      // to run, so buying pays off after about three and a half months: worth it early in a game, not late. Selling one
-      // back gets 40% of what you paid. Kit you rack, power and patch yourself needs more ops than a VM.
+      // A server costs about five weeks' rent of the same VM and a tenth of that rent a month to run, so it pays for
+      // itself in under two months. That makes on-prem the cheapest at scale for a product with steady, heavy load
+      // (video). But you buy for your peak, ten days ahead: a spiky shop or a fast-growing social network pays for kit
+      // that sits idle, and a traffic spike melts it. Selling one back gets 40% of what you paid. Kit you rack, power
+      // and patch yourself needs a little more ops than a VM, and patching it takes two people.
       servers: {
         purchase: {
           price: {
-            app: { small: 1_200, medium: 1_650, large: 2_100, massive: 2_550 },
-            database: { small: 1_500, medium: 2_100, large: 2_700, massive: 3_300 },
-            cache: { small: 450, medium: 600, large: 750, massive: 900 },
-            loadBalancer: { small: 600, medium: 900, large: 1_350, massive: 1_800 },
+            app: { small: 400, medium: 550, large: 1_000, massive: 1_400 },
+            database: { small: 450, medium: 700, large: 1_200, massive: 1_650 },
+            cache: { small: 150, medium: 250, large: 400, massive: 550 },
+            loadBalancer: { small: 250, medium: 400, large: 550, massive: 750 },
           },
           sellBackShare: 0.4,
         },
         monthlyCost: {
-          app: { small: 40, medium: 55, large: 70, massive: 85 },
-          database: { small: 50, medium: 70, large: 90, massive: 110 },
-          cache: { small: 15, medium: 20, large: 25, massive: 30 },
+          app: { small: 30, medium: 45, large: 80, massive: 110 },
+          database: { small: 35, medium: 55, large: 95, massive: 130 },
+          cache: { small: 10, medium: 20, large: 30, massive: 45 },
           loadBalancer: { small: 20, medium: 30, large: 45, massive: 60 },
         },
         readyDays: 10,
-        opsPerServer: { app: 0.6, database: 0.6, cache: 0.3, loadBalancer: 0.3 },
+        opsPerServer: { app: 0.25, database: 0.25, cache: 0.1, loadBalancer: 0.1 },
         // Bigger than IaaS's, since more takes 10 days to arrive: room for every product to grow for a few weeks.
         starter: [
           { type: "app", size: "large", count: 1 },
@@ -659,17 +661,18 @@ export const defaultConfig: GameConfig = {
       monthlyCost: 1_000,
       monthlyCostPerUser: 0,
       exitPenalty: 3_000,
-      // Bigger VMs cost less per unit, and caches are the cheap way to take load off the database.
+      // Bigger VMs cost less per unit (a small app server £50 a CU, a massive one £37), and caches are the cheap way to
+      // take load off the database. Each VM needs a share of an ops person: two or three at scale, against PaaS's one.
       servers: {
         monthlyCost: {
-          app: { small: 400, medium: 550, large: 700, massive: 850 },
-          database: { small: 500, medium: 700, large: 900, massive: 1_100 },
-          cache: { small: 150, medium: 200, large: 250, massive: 300 },
+          app: { small: 300, medium: 450, large: 800, massive: 1_100 },
+          database: { small: 360, medium: 540, large: 960, massive: 1_320 },
+          cache: { small: 120, medium: 180, large: 320, massive: 440 },
           loadBalancer: { small: 200, medium: 300, large: 450, massive: 600 },
         },
         readyDays: 1,
-        opsPerServer: { app: 0.5, database: 0.5, cache: 0.25, loadBalancer: 0.25 },
-        // Enough for every product's starting users with room to grow for a few weeks, run by one ops person.
+        opsPerServer: { app: 0.2, database: 0.2, cache: 0.1, loadBalancer: 0.1 },
+        // Every product's starting users, run by one ops person. A social network fills the database in a week or so.
         starter: [
           { type: "app", size: "medium", count: 1 },
           { type: "database", size: "medium", count: 1 },
@@ -687,21 +690,22 @@ export const defaultConfig: GameConfig = {
       // A small, fixed team to deploy and keep the service running, however many instances: the platform runs them.
       opsNeeded: 1,
       exitPenalty: 4_000,
-      // Placeholders, balanced in #55. A unit costs about half as much again as on IaaS (an instance is £53 a CU, a
-      // medium VM £37): the provider's ops are in the price. A managed database or cache doubles its units with each
-      // size, so one is enough for any product's whole market.
+      // A unit costs about twice as much as on IaaS (an instance is £90 a CU, a medium VM £45): the provider's ops are in
+      // the price. That's the trade: one ops person however big you get, and scaling that's instant, so a company that
+      // only scales once it's full (as most students do) loses least here; but the dearest bill for one that plans
+      // ahead. A managed database or cache doubles its units with each size, so one is enough for any product's market.
       servers: {
         monthlyCost: {
-          app: { medium: 800 },
-          database: { small: 1_000, medium: 1_800, large: 3_400, massive: 6_400 },
-          cache: { small: 300, medium: 550, large: 1_000, massive: 1_900 },
+          app: { medium: 900 },
+          database: { small: 900, medium: 2_000, large: 3_800, massive: 7_200 },
+          cache: { small: 300, medium: 650, large: 1_200, massive: 2_200 },
         },
         managed: {
           instanceSize: "medium",
           maxInstances: 20,
           units: {
-            database: { small: 15, medium: 30, large: 60, massive: 120 },
-            cache: { small: 15, medium: 30, large: 60, massive: 120 },
+            database: { small: 10, medium: 25, large: 50, massive: 100 },
+            cache: { small: 10, medium: 25, large: 50, massive: 100 },
           },
         },
         // One instance and a small managed database: enough for every product's starting users with room to grow.
@@ -716,9 +720,10 @@ export const defaultConfig: GameConfig = {
       blurb: "Build inside someone else's SaaS platform, like a shop on Shopify.",
       comparison: { upfrontCost: "Low", monthlyCost: "Per user, plus add-ons", opsNeeded: "Very low", control: "Low" },
       upfrontCost: 500,
-      monthlyCost: 1_500,
-      // Every user, free ones included. There are no servers and no capacity limit: the provider scales.
-      monthlyCostPerUser: 0.5,
+      monthlyCost: 1_000,
+      // Every user, free ones included. There are no servers and no capacity limit: the provider scales. Cheap for a shop
+      // whose users mostly pay, dear for a social network whose users are mostly free.
+      monthlyCostPerUser: 0.35,
       // One person for the settings and integrations that keep the shop running.
       opsNeeded: 1,
       exitPenalty: 2_000,
@@ -729,20 +734,21 @@ export const defaultConfig: GameConfig = {
       name: "E-commerce platform",
       profile: "Big seasonal traffic spikes",
       growth: {
-        startingUsers: 2_000,
-        marketSize: 25_000,
+        startingUsers: 3_000,
+        marketSize: 20_000,
         dailyGrowth: 0.03,
         growthNoise: 0.5,
         loadPerUser: 2,
         loadNoise: 0.1,
         seasonalSpike: { firstDay: 45, every: 45, length: 5, loadMultiplier: 1.6, growthMultiplier: 2 },
       },
-      // Baskets and orders: as much database as compute, 250 shoppers to a CU and a DBU.
-      demand: { cuPerUser: 0.004, dbuPerUser: 0.004 },
+      // Baskets and orders: as much database as compute, 500 shoppers to a CU and a DBU. Server sizes are set by it: a
+      // small app server serves 3,000 shoppers, a medium 5,000, a large 10,000 and a massive 15,000.
+      demand: { cuPerUser: 0.002, dbuPerUser: 0.002 },
       // Shoppers mostly pay: a shop's free tier is browsing without an account.
-      pricing: { fairPrice: 5, freeShare: 0.3, conversionRate: 0.004 },
-      // Orders go wrong: paying shoppers raise the most tickets of any product.
-      support: { ticketsPerPaidUser: 0.012, ticketsPerFreeUser: 0.003 },
+      pricing: { fairPrice: 5, freeShare: 0.3, conversionRate: 0.0012 },
+      // Orders go wrong: paying shoppers raise as many tickets as any product's.
+      support: { ticketsPerPaidUser: 0.01, ticketsPerFreeUser: 0.003 },
       features: [
         {
           id: "checkout",
@@ -750,7 +756,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Customers pay without filling in a long form.",
           devDays: 20,
           growthMultiplier: 1.15,
-          addonPricePerUser: 0.08,
+          addonPricePerUser: 0.04,
         },
         {
           id: "reviews",
@@ -758,7 +764,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Shoppers trust what other customers say.",
           devDays: 12,
           growthMultiplier: 1.1,
-          addonPricePerUser: 0.05,
+          addonPricePerUser: 0.025,
         },
         {
           id: "recommendations",
@@ -766,7 +772,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Suggests products each shopper is likely to want.",
           devDays: 30,
           growthMultiplier: 1.2,
-          addonPricePerUser: 0.1,
+          addonPricePerUser: 0.05,
         },
         {
           id: "wishlists",
@@ -774,7 +780,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Shoppers save items and come back for them.",
           devDays: 10,
           growthMultiplier: 1.05,
-          addonPricePerUser: 0.03,
+          addonPricePerUser: 0.015,
         },
       ],
     },
@@ -782,18 +788,19 @@ export const defaultConfig: GameConfig = {
       name: "Social network",
       profile: "Steady viral growth",
       growth: {
-        startingUsers: 1_000,
+        startingUsers: 4_000,
         marketSize: 40_000,
         dailyGrowth: 0.05,
         growthNoise: 0.2,
         loadPerUser: 1.5,
         loadNoise: 0.05,
       },
-      // Feeds and friends lists: a bit more database than compute.
-      demand: { cuPerUser: 0.003, dbuPerUser: 0.004 },
+      // Feeds and friends lists: light on both, but there are a lot of users.
+      demand: { cuPerUser: 0.0015, dbuPerUser: 0.0015 },
       // Mostly free, like most social networks: a few pay for extras.
-      pricing: { fairPrice: 6, freeShare: 0.8, conversionRate: 0.0015 },
-      support: { ticketsPerPaidUser: 0.01, ticketsPerFreeUser: 0.002 },
+      pricing: { fairPrice: 5, freeShare: 0.7, conversionRate: 0.0008 },
+      // Few tickets per user, but a lot of users.
+      support: { ticketsPerPaidUser: 0.006, ticketsPerFreeUser: 0.0015 },
       features: [
         {
           id: "messaging",
@@ -833,16 +840,16 @@ export const defaultConfig: GameConfig = {
       name: "Video sharing platform",
       profile: "Heavy storage and bandwidth costs",
       growth: {
-        startingUsers: 1_000,
+        startingUsers: 1_600,
         marketSize: 20_000,
         dailyGrowth: 0.035,
         growthNoise: 0.4,
         loadPerUser: 4,
         loadNoise: 0.15,
       },
-      // Encoding and streaming: compute-heavy, with a light database.
-      demand: { cuPerUser: 0.008, dbuPerUser: 0.002 },
-      pricing: { fairPrice: 9, freeShare: 0.6, conversionRate: 0.0025 },
+      // Encoding and streaming: compute-heavy, with a light database. Its big, steady server bill is where owning kit pays.
+      demand: { cuPerUser: 0.004, dbuPerUser: 0.002 },
+      pricing: { fairPrice: 9, freeShare: 0.6, conversionRate: 0.001 },
       support: { ticketsPerPaidUser: 0.01, ticketsPerFreeUser: 0.003 },
       features: [
         {
@@ -851,7 +858,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Videos play in sharp high definition.",
           devDays: 20,
           growthMultiplier: 1.12,
-          addonPricePerUser: 0.06,
+          addonPricePerUser: 0.14,
         },
         {
           id: "comments",
@@ -859,7 +866,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Viewers talk about what they watched.",
           devDays: 10,
           growthMultiplier: 1.05,
-          addonPricePerUser: 0.03,
+          addonPricePerUser: 0.07,
         },
         {
           id: "recommendations",
@@ -867,7 +874,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Suggests the next video to keep viewers watching.",
           devDays: 30,
           growthMultiplier: 1.2,
-          addonPricePerUser: 0.1,
+          addonPricePerUser: 0.2,
         },
         {
           id: "live",
@@ -875,37 +882,37 @@ export const defaultConfig: GameConfig = {
           blurb: "Creators broadcast live to their followers.",
           devDays: 36,
           growthMultiplier: 1.2,
-          addonPricePerUser: 0.1,
+          addonPricePerUser: 0.2,
         },
       ],
     },
   },
   staff: {
-    developers: { name: "Developers", personName: "developer", dayRate: 160, startingCount: 2 },
-    ops: { name: "Ops staff", personName: "ops person", dayRate: 140, startingCount: 1 },
+    developers: { name: "Developers", personName: "developer", dayRate: 120, startingCount: 2 },
+    ops: { name: "Ops staff", personName: "ops person", dayRate: 120, startingCount: 1 },
     // One to start, enough for the first few weeks: more are needed as users grow.
     support: { name: "Support staff", personName: "support person", dayRate: 100, startingCount: 1 },
   },
   capacity: { unstaffedShare: 0.4 },
-  // Placeholders, balanced in #55. Each size gives a set number of units, app servers 10/15/20/25 CU as in the design
-  // notes. A CU serves the same users whatever the size (250 shoppers at 0.004 CU each), so a small app server serves
-  // 2,500 shoppers and a massive one 6,250, not the notes' 3k/5k/10k/15k, which no one per-user figure fits.
+  // Each size gives a set number of units. A CU serves the same users whatever the size, so the sizes are 6/10/20/30 to
+  // match the design notes' users per server: at a shop's 0.002 CU each, a small app server serves 3,000 shoppers, a
+  // medium 5,000, a large 10,000 and a massive 15,000. Video needs more compute per user, and social less.
   servers: {
     types: {
       app: {
         name: "App server",
         blurb: "Runs your code: compute units (CU).",
-        units: { small: 10, medium: 15, large: 20, massive: 25 },
+        units: { small: 6, medium: 10, large: 20, massive: 30 },
       },
       database: {
         name: "Database",
         blurb: "Stores your data: database units (DBU).",
-        units: { small: 10, medium: 15, large: 20, massive: 25 },
+        units: { small: 6, medium: 10, large: 20, massive: 30 },
       },
       cache: {
         name: "Cache",
         blurb: "Answers repeat reads from memory: each cache hit (CH) takes a DBU off the database.",
-        units: { small: 10, medium: 15, large: 20, massive: 25 },
+        units: { small: 6, medium: 10, large: 20, massive: 30 },
       },
       loadBalancer: {
         name: "Load balancer",
@@ -918,8 +925,8 @@ export const defaultConfig: GameConfig = {
   },
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25 },
   billing: { daysPerMonth: 30 },
-  // Placeholders, balanced in #55. Enough to buy on-prem's kit with some left over, or to see an IaaS, PaaS or SaaS
-  // company through the weeks before income covers its costs. See LoanConfig for the interest formula.
+  // Enough for on-prem to buy kit ahead of demand from the start, or to see an IaaS, PaaS or SaaS company through a
+  // tight start, for about £3,700 of interest. See LoanConfig for the interest formula.
   loan: { amount: 35_000, baseRate: 0.1, ratePerDay: 0.002, minDays: 14 },
   pricing: {
     maxPrice: 1_000,
@@ -955,9 +962,9 @@ export const defaultConfig: GameConfig = {
     growthAtZero: 0.3,
     churnAtZero: 0.02,
   },
-  // Placeholders. At the fair price with nothing helping or hurting, a shop converts 0.4% of its free users a day, so
-  // a free user has about an even chance of paying within 180 days: worth having, but most new users still start
-  // free. Two features with 100% uptime and satisfaction double the rate; double the fair price quarters it.
+  // At the fair price with nothing helping or hurting, a shop converts 0.12% of its free users a day. Features, uptime
+  // and satisfaction can more than double that, so free users are worth having, but most stay free, still adding load
+  // and tickets. Two features with 100% uptime and satisfaction double the rate; double the fair price quarters it.
   conversion: {
     perFeature: 0.15,
     uptimeDays: 7,
@@ -996,8 +1003,8 @@ export const defaultConfig: GameConfig = {
         },
         iaas: {
           opsNeeded: 2,
-          // A burst VM costs about 20 times a rented one per unit: renting your own ahead of time is cheaper.
-          scaleCostPerUnit: 25,
+          // A burst VM costs about 10 times a rented one per unit: renting your own ahead of time is cheaper.
+          scaleCostPerUnit: 12,
           detail:
             "Your ops team rented extra VMs to meet it. They're ready the next day, so the first day ran on the servers you had; after that you stayed up, paying for every extra VM.",
           shortOfOps: {
@@ -1005,8 +1012,8 @@ export const defaultConfig: GameConfig = {
           },
         },
         paas: {
-          // At once, but dearer than renting your own VMs ahead (and than IaaS's £25 from its second day).
-          scaleCostPerUnit: 30,
+          // At once, but dearer than renting your own VMs ahead (and than IaaS's £12 from its second day).
+          scaleCostPerUnit: 15,
           detail:
             "The platform scaled up by itself from the first minute, so you stayed up, but it bills you for every CU and DBU over your setup.",
         },
