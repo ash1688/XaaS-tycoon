@@ -34,7 +34,9 @@ onMounted(async () => {
   <template v-else-if="data">
     <p class="muted staff-company-code">
       Code <span class="mono">{{ formatCode(data.code) }}</span> · Preset
-      <strong data-testid="company-preset">{{ data.preset }}</strong>
+      <strong data-testid="company-preset">{{ data.preset }}</strong> · In the playtest logs as
+      <strong>{{ data.player }}</strong> ·
+      <RouterLink :to="`/staff/companies/${id}/timeline`">Activity timeline</RouterLink>
     </p>
     <SummaryPanel :summary="data.summary" :model-name="modelName(data.summary.model)" :retired="data.status === 'retired'" />
   </template>

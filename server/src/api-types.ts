@@ -307,6 +307,8 @@ export interface TeacherCodeView {
 export interface TeacherGameView {
   id: string;
   name: string;
+  /** The company's pseudonym in the playtest logs, such as "Player 7". */
+  player: string;
   productType: ProductTypeId;
   model: ModelId;
   /** The model a migration under way is moving to, or null. */
@@ -359,6 +361,8 @@ export interface TeacherSummaryView {
   status: CompanyStatus;
   /** The config preset the game started with. */
   preset: string;
+  /** The company's pseudonym in the playtest logs. */
+  player: string;
   summary: SummaryView;
 }
 
@@ -414,4 +418,109 @@ export interface PresetUpdateBody {
 /** A 400 from saving the config: what's wrong with each field, by path. */
 export interface ConfigErrorView extends ApiError {
   fields: ConfigErrors;
+}
+
+// --- playtest log ---
+
+/** "game": from the server, as each action or Continue is handled. "ui": from the student's browser. */
+export type PlayEventKind = "game" | "ui";
+
+/** A game event's key numbers just after it. */
+export interface PlaySnapshot {
+  day: number;
+  cash: number;
+  paidUsers: number;
+  freeUsers: number;
+  dailyIncome: number;
+  satisfaction: number;
+  uptime: number;
+  /** The capacity tier that runs out first, on a model with servers. */
+  tier: "cu" | "dbu" | null;
+  /** How much of capacity is in use, in %: the binding tier's, or load against capacity. Null with no limit (SaaS). */
+  tierUse: number | null;
+  model: ModelId;
+  developers: number;
+  ops: number;
+  support: number;
+  loan: "none" | "repaying" | "repaid";
+  loanRemaining: number | null;
+}
+
+/**
+ * What the browser logs: page visits, modals (with how long they were open), the prices a student previewed, quotes
+ * they looked at, and the controls they used.
+ */
+export type UiEventType = "page" | "modal" | "pricePreview" | "quote" | "control";
+
+/** A UI event's details. Only ids from the game's own UI, never anything the student typed but a price. */
+export interface UiEventParams {
+  /** page: the page visited, such as "finance". */
+  page?: string;
+  /** modal: which one, from its title, such as "set-your-price". */
+  modal?: string;
+  /** modal: how long it was open. */
+  ms?: number;
+  /** pricePreview: the prices tried, in order. */
+  prices?: number[];
+  /** pricePreview and quote: whether the student went on to confirm it. */
+  confirmed?: boolean;
+  /** quote: a migration or loan quote. */
+  kind?: "migration" | "loan";
+  /** quote: the model a migration quote was for. */
+  target?: ModelId;
+  /** control: which one, such as "servers-app" or "staff-hire-ops". */
+  control?: string;
+  /** control: what it did, such as "up", or the size picked. */
+  value?: string;
+}
+
+/** POST /api/codes/:code/companies/:id/ui-events: a batch of UI events. */
+export interface UiEventsBody {
+  events: {
+    type: UiEventType;
+    /** How many milliseconds before sending it happened. */
+    ago: number;
+    day: number;
+    params?: UiEventParams;
+  }[];
+}
+
+/** One event in a company's timeline. */
+export interface PlayEventView {
+  id: number;
+  at: string;
+  day: number;
+  kind: PlayEventKind;
+  type: string;
+  /** A game event's outcome: false when the game refused it, with the error code. Null for UI events. */
+  ok: boolean | null;
+  error: string | null;
+  params: Record<string, unknown>;
+  snapshot: PlaySnapshot | null;
+}
+
+/** GET /api/teacher/companies/:id/timeline?kind=: a company's events, oldest first. */
+export interface TimelineView {
+  id: string;
+  /** The pseudonym the export uses. */
+  player: string;
+  name: string;
+  code: string;
+  preset: string;
+  productType: ProductTypeId;
+  status: CompanyStatus;
+  events: PlayEventView[];
+  /** Only the latest events fitted: older ones are in the export. */
+  truncated: boolean;
+}
+
+/** GET /api/teacher/logs: how many events there are, and for how many companies. */
+export interface LogStatsView {
+  events: number;
+  companies: number;
+}
+
+/** DELETE on a log route: how many events went. */
+export interface LogDeleteResult {
+  deleted: number;
 }

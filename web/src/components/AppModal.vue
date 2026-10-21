@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, useId, watch } from "vue";
+import { useGameIfAny } from "../game";
 
 // A modal dialog: labelled by its title, keeps keyboard focus inside while open, closes on Escape, the close button or
 // a click on the backdrop, and hands focus back to whatever opened it. The rest of the page is inert while it's open.
@@ -9,6 +10,9 @@ const emit = defineEmits<{ close: [] }>();
 const id = useId();
 const dialog = ref<HTMLElement>();
 let trigger: HTMLElement | null = null;
+// In a game, each modal goes in the playtest log when it closes, with how long it was open.
+const game = useGameIfAny();
+let openedAt = 0;
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -22,6 +26,7 @@ function setPageInert(inert: boolean) {
 }
 
 async function opened() {
+  openedAt = Date.now();
   trigger = document.activeElement as HTMLElement | null;
   setPageInert(true);
   await nextTick();
@@ -31,6 +36,9 @@ async function opened() {
 }
 
 function closed() {
+  // Only one that was open: the watch also runs once on mount, closed.
+  if (openedAt) game?.track("modal", { modal: props.title, ms: Date.now() - openedAt });
+  openedAt = 0;
   setPageInert(false);
   if (trigger?.isConnected) trigger.focus();
   trigger = null;

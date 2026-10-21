@@ -4,6 +4,7 @@ import { computed, inject, onUnmounted, provide, reactive, ref, watch, type Inje
 import type { DayLog, EventView, FeatureGapView, LayerId, ModelId, StaffPool, UnitTier } from "@xaas/sim";
 import type { ActionBody, CompanyView, MetaView, SummaryView } from "@xaas/server/api-types";
 import { api } from "./api";
+import { createUiLog } from "./playLog";
 
 export const days = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
 export const namesList = (names: string[]) =>
@@ -46,6 +47,8 @@ export function createGame(code: string, id: string) {
   const previousSatisfaction = ref<number>();
   // Where each page lives: /play/:code/:id is Home.
   const base = `/play/${code}/${id}`;
+  // The playtest log of what the student does on the game's pages, sent in batches.
+  const uiLog = createUiLog(code, id, () => company.value?.day);
 
   const productName = (id: string) => meta.value?.productTypes.find((p) => p.id === id)?.name ?? id;
   const modelName = (id: string) => meta.value?.models.find((m) => m.id === id)?.name ?? id;
@@ -178,6 +181,13 @@ export function createGame(code: string, id: string) {
     }
   }
 
+  // An action from a control on the page, such as a staff + or −: logged as used, then taken. The server logs the
+  // action itself and how it went.
+  function actFrom(control: string, action: ActionBody) {
+    uiLog.track("control", { control, value: action.type });
+    return act(action);
+  }
+
   async function continueDay() {
     if (over.value) return;
     busy.value = true;
@@ -270,6 +280,7 @@ export function createGame(code: string, id: string) {
   onUnmounted(() => {
     pause();
     document.removeEventListener("visibilitychange", onVisibilityChange);
+    uiLog.stop();
   });
 
   return reactive({
@@ -327,12 +338,14 @@ export function createGame(code: string, id: string) {
     load,
     ensureSummary,
     act,
+    actFrom,
     continueDay,
     timedFlow,
     playing,
     secondsLeft,
     play,
     pause,
+    track: uiLog.track,
   });
 }
 
@@ -346,6 +359,9 @@ export function provideGame(code: string, id: string): Game {
   provide(GAME, game);
   return game;
 }
+
+/** The game the shell loaded, or undefined outside the game shell: for shared components such as the modal. */
+export const useGameIfAny = (): Game | undefined => inject(GAME, undefined);
 
 /** The game the shell loaded. Only for components under the game shell. */
 export function useGame(): Game {

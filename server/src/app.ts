@@ -3,7 +3,23 @@ import { existsSync } from "node:fs";
 import Fastify, { type FastifyReply } from "fastify";
 import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
-import { and, asc, count, desc, eq, getTableColumns, gte, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  getTableColumns,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  ne,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import {
   applyOverrides,
   configFields,
@@ -31,7 +47,8 @@ import {
   type Spend,
 } from "@xaas/sim";
 import type { Db } from "./db/client.ts";
-import { companies, configPresets, loginCodes } from "./db/schema.ts";
+import { companies, configPresets, loginCodes, playEvents } from "./db/schema.ts";
+import { exportRow, PlayLog, pseudonym, snapshotOf, toCsv, type PlayEventRow } from "./playLog.ts";
 import { FailureLimiter } from "./rateLimit.ts";
 import { endTeacherSession, isTeacher, passwordMatches, startTeacherSession } from "./teacherAuth.ts";
 import type {
@@ -42,6 +59,8 @@ import type {
   ConfigErrorView,
   CompanyView,
   ContinueResult,
+  LogDeleteResult,
+  LogStatsView,
   MetaView,
   MigrationQuoteView,
   NewCompanyBody,
@@ -50,6 +69,9 @@ import type {
   PresetSummaryView,
   PresetUpdateBody,
   PresetView,
+  PlayEventKind,
+  PlayEventView,
+  PlaySnapshot,
   PricePreviewView,
   SummaryView,
   TeacherCodeView,
@@ -57,7 +79,16 @@ import type {
   TeacherGameView,
   TeacherSummaryView,
   TimedFlowView,
+  TimelineView,
+  UiEventsBody,
 } from "./api-types.ts";
+
+declare module "fastify" {
+  interface FastifyInstance {
+    /** The playtest log's writer. Tests flush it before reading the log. */
+    playLog: PlayLog;
+  }
+}
 
 export interface AppOptions {
   db: Db;
@@ -88,6 +119,8 @@ export interface AppOptions {
   trustProxy?: boolean | string;
   /** Limits on failed student code lookups and teacher sign-ins per client IP. Defaults to RATE_LIMIT_DEFAULTS. */
   rateLimit?: RateLimitOptions | false;
+  /** Batches of UI events one game may send a minute. Defaults to UI_BATCHES_PER_MINUTE. */
+  uiBatchesPerMinute?: number;
 }
 
 export interface RateLimitOptions {
@@ -114,6 +147,18 @@ const DEFAULT_PRESET_ID = "default";
 /** The one preset the config page saved before presets had names. Games started on it are labelled with it. */
 export const CUSTOM_PRESET = "Custom";
 export const MAX_PRESET_NAME_LENGTH = 40;
+
+/**
+ * The UI event endpoint's limits: events in one batch, the batch's size, and batches one company may send a minute.
+ * The browser sends a batch every few seconds at most, so these only stop a runaway or hand-made client.
+ */
+export const UI_EVENTS_PER_BATCH = 50;
+export const UI_BATCH_BYTES = 16 * 1024;
+export const UI_BATCHES_PER_MINUTE = 20;
+/** The furthest back a UI event can be dated, so a batch held by a sleeping laptop doesn't rewrite history. */
+const UI_EVENT_MAX_AGE_MS = 10 * 60 * 1000;
+/** The most events a timeline shows: the latest ones. The export has them all. */
+export const TIMELINE_MAX_EVENTS = 5000;
 
 /** Sims kept for game configs, most recently used last. Most games in a lesson share a config, so a few is plenty. */
 const MAX_CACHED_SIMS = 20;
@@ -144,6 +189,10 @@ export async function buildApp(opts: AppOptions) {
   const app = Fastify({ logger: opts.logger ?? false, trustProxy: opts.trustProxy ?? false });
 
   await app.register(cookie, { secret: opts.sessionSecret });
+
+  const playLog = new PlayLog(db, (err) => app.log.warn({ err }, "Couldn't write to the playtest log."));
+  app.decorate("playLog", playLog);
+  app.addHook("onClose", () => playLog.flush());
 
   if (opts.rateLimit !== false) limitFailures(opts.rateLimit ?? RATE_LIMIT_DEFAULTS);
 
@@ -452,7 +501,9 @@ export async function buildApp(opts: AppOptions) {
           `You already have ${maxActiveCompanies} active companies, the most you can have at once. Retire one to start another.`,
         );
       }
-      return reply.code(201).send(view(row));
+      const company = view(row);
+      logGame(row, company.day, "start", { productType, model, takeLoan, preset: row.preset }, company);
+      return reply.code(201).send(company);
     },
   );
 
@@ -516,7 +567,9 @@ export async function buildApp(opts: AppOptions) {
   });
 
   app.post<{ Params: { code: string; id: string } }>("/api/codes/:code/companies/:id/continue", async (req, reply) => {
-    const result = await updateCompany(req.params.code, req.params.id, (sim, state) => sim.advance(state, 1));
+    const result = await updateCompany(req.params.code, req.params.id, "continue", {}, (sim, state) =>
+      sim.advance(state, 1),
+    );
     if (!result) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
     return { company: result.company, log: result.log } satisfies ContinueResult;
   });
@@ -588,7 +641,8 @@ export async function buildApp(opts: AppOptions) {
       },
     },
     async (req, reply) => {
-      const result = await updateCompany(req.params.code, req.params.id, (sim, state) => ({
+      const { type, ...params } = req.body;
+      const result = await updateCompany(req.params.code, req.params.id, type, params, (sim, state) => ({
         state: sim.applyAction(state, req.body),
       }));
       if (!result) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
@@ -617,34 +671,177 @@ export async function buildApp(opts: AppOptions) {
     if (row.status !== "retired") {
       return sendError(reply, 409, "not_active", `${row.name} has already ended, so it's in your history.`);
     }
-    return view(row);
+    const company = view(row);
+    logGame(row, company.day, "end", { status: "retired" }, company);
+    return company;
   });
+
+  // A batch of UI events from the game page: pages visited, modals, previews and quotes, controls used. The browser
+  // never waits on the write or shows an error for it.
+  // Counts every batch, not only failures: UI_BATCHES_PER_MINUTE per company.
+  const uiBatches = new FailureLimiter(opts.uiBatchesPerMinute ?? UI_BATCHES_PER_MINUTE, 60 * 1000);
+  app.post<{ Params: { code: string; id: string }; Body: UiEventsBody }>(
+    "/api/codes/:code/companies/:id/ui-events",
+    {
+      bodyLimit: UI_BATCH_BYTES,
+      schema: {
+        body: {
+          type: "object",
+          required: ["events"],
+          properties: {
+            events: {
+              type: "array",
+              minItems: 1,
+              maxItems: UI_EVENTS_PER_BATCH,
+              items: {
+                type: "object",
+                required: ["type", "ago", "day"],
+                properties: {
+                  type: { enum: ["page", "modal", "pricePreview", "quote", "control"] },
+                  ago: { type: "integer", minimum: 0 },
+                  day: { type: "integer", minimum: 0 },
+                  // Ids from the game's own UI only, so nothing a student typed (but a price) can be stored.
+                  params: {
+                    type: "object",
+                    properties: {
+                      page: { type: "string", pattern: "^[a-z][a-z-]{0,23}$" },
+                      modal: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,47}$" },
+                      ms: { type: "integer", minimum: 0 },
+                      prices: { type: "array", maxItems: 20, items: { type: "number", minimum: 0 } },
+                      confirmed: { type: "boolean" },
+                      kind: { enum: ["migration", "loan"] },
+                      target: { enum: [...MODEL_IDS] },
+                      control: { type: "string", pattern: "^[a-z][a-z0-9-]{0,47}$" },
+                      value: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,23}$" },
+                    },
+                    additionalProperties: false,
+                  },
+                },
+                additionalProperties: false,
+              },
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (req, reply) => {
+      const { code, id } = req.params;
+      if (!CODE_PATTERN.test(code) || !UUID_PATTERN.test(id)) {
+        return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      }
+      const wait = uiBatches.retryAfter(id);
+      if (wait) {
+        reply.header("retry-after", String(wait));
+        return sendError(reply, 429, "rate_limited", "Too many UI events from this game. Wait a minute.");
+      }
+      const [row] = await db
+        .select({ id: companies.id, day: companies.day })
+        .from(companies)
+        .innerJoin(loginCodes, eq(loginCodes.code, companies.loginCode))
+        .where(and(companyWhere(code, id), eq(loginCodes.archived, false)));
+      if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      uiBatches.fail(id);
+      const now = Date.now();
+      playLog.record(
+        ...req.body.events.map(
+          (e): PlayEventRow => ({
+            companyId: row.id,
+            at: new Date(now - Math.min(e.ago, UI_EVENT_MAX_AGE_MS)),
+            day: Math.min(e.day, row.day),
+            kind: "ui",
+            type: e.type,
+            params: { ...e.params },
+          }),
+        ),
+      );
+      return reply.code(204).send();
+    },
+  );
+
+  /** Queues a game event for a company, with its key numbers from the view the request built. Never throws. */
+  function logGame(
+    row: Pick<CompanyRow, "id">,
+    day: number,
+    type: string,
+    params: object,
+    company: CompanyView | undefined,
+    error?: string,
+  ) {
+    try {
+      playLog.record({
+        companyId: row.id,
+        at: new Date(),
+        day,
+        kind: "game",
+        type,
+        ok: !error,
+        error: error ?? null,
+        params: params as Record<string, unknown>,
+        snapshot: company ? { ...snapshotOf(company) } : null,
+      });
+    } catch (err) {
+      app.log.warn({ err }, "Couldn't log a game event.");
+    }
+  }
 
   /**
    * Runs a sim step against a company's saved state and stores the result.
    * Locks the row so two tabs can't both change it from the same starting point.
    * Returns undefined if the company isn't under that code. A SimError rolls back and becomes a 400.
+   * Either way the playtest log gets the step as `type` with its params, written after the response.
    */
   async function updateCompany<T extends { state: GameState }>(
     code: string,
     id: string,
+    type: string,
+    params: object,
     step: (sim: Sim, state: GameState) => T,
   ): Promise<(T & { company: CompanyView }) | undefined> {
     if (!CODE_PATTERN.test(code) || !UUID_PATTERN.test(id)) return undefined;
-    return db.transaction(async (tx) => {
-      const [row] = await companyUnderCode(tx, code, id).for("update", { of: companies });
-      if (!row) return undefined;
-      if (row.status === "retired") {
-        throw new SimError("retired", `${row.name} was retired, so this game is over. Start a new company to play again.`);
+    // The row as read, to log a step the game refused.
+    const read: { row?: CompanyRow; sim?: Sim } = {};
+    try {
+      const result = await db.transaction(async (tx) => {
+        const [row] = await companyUnderCode(tx, code, id).for("update", { of: companies });
+        if (!row) return undefined;
+        read.row = row;
+        if (row.status === "retired") {
+          throw new SimError("retired", `${row.name} was retired, so this game is over. Start a new company to play again.`);
+        }
+        const sim = (read.sim = simOf(row));
+        const before = sim.load(row.state);
+        const result = step(sim, before);
+        const columns = { ...columnsFor(sim, result.state), updatedAt: new Date() };
+        await tx.update(companies).set(columns).where(eq(companies.id, row.id));
+        // The row as saved is the one read with these columns changed, so it isn't read back: that would fetch the
+        // state and config just written.
+        return { result, before, company: view({ ...row, ...columns }, sim) };
+      });
+      if (!result) return undefined;
+      const { before, company } = result;
+      // A Continue's params are the scripted events that hit that day, if any.
+      const events = company.events.map((e) => e.id);
+      logGame(company, before.day, type, type === "continue" && events.length ? { events } : params, company);
+      if (before.status === "playing" && result.result.state.status !== "playing") {
+        logGame(company, company.day, "end", { status: result.result.state.status }, company);
       }
-      const sim = simOf(row);
-      const result = step(sim, sim.load(row.state));
-      const columns = { ...columnsFor(sim, result.state), updatedAt: new Date() };
-      await tx.update(companies).set(columns).where(eq(companies.id, row.id));
-      // The row as saved is the one read with these columns changed, so it isn't read back: that would fetch the state
-      // and config just written.
-      return { ...result, company: view({ ...row, ...columns }, sim) };
-    });
+      return { ...result.result, company };
+    } catch (err) {
+      // A game too old to load can't be played or shown, so there's nothing useful to log.
+      if (err instanceof SimError && err.code !== OLD_VERSION && read.row) {
+        logGame(read.row, read.row.day, type, params, viewOrNothing(read.row, read.sim), err.code);
+      }
+      throw err;
+    }
+  }
+
+  function viewOrNothing(row: CompanyRow, sim?: Sim) {
+    try {
+      return view(row, sim);
+    } catch {
+      return undefined;
+    }
   }
 
   const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -770,6 +967,7 @@ export async function buildApp(opts: AppOptions) {
               // From the game's own config, so a game keeps the length it started with.
               finalDay: sql<number | null>`(${companies.config}->>'finalDay')::int`,
               preset: companies.preset,
+              player: companies.player,
             },
             // The money and customer figures, read from small parts of the state rather than all of it.
             money: {
@@ -802,6 +1000,7 @@ export async function buildApp(opts: AppOptions) {
             updatedAt: g.updatedAt.toISOString(),
             archivedAt: g.archivedAt?.toISOString() ?? null,
             preset: g.preset ?? DEFAULT_PRESET,
+            player: pseudonym(g.player),
             paidUsers,
             freeUsers: Math.max(0, g.users - paidUsers),
             lastDayIncome: m.lastDayIncome ?? 0,
@@ -877,9 +1076,164 @@ export async function buildApp(opts: AppOptions) {
         code: row.loginCode,
         status,
         preset: row.preset ?? DEFAULT_PRESET,
+        player: pseudonym(row.player),
         summary: simOf(row).summarise(row.state),
       } satisfies TeacherSummaryView;
     });
+
+    // --- playtest log ---
+
+    // A company's events, oldest first, from its dashboard row or summary. kind narrows it to game or UI events.
+    teacher.get<{ Params: { id: string }; Querystring: { kind?: PlayEventKind } }>(
+      "/api/teacher/companies/:id/timeline",
+      { schema: { querystring: { type: "object", properties: { kind: { enum: ["game", "ui"] } } } } },
+      async (req, reply) => {
+        const { id } = req.params;
+        const [row] = UUID_PATTERN.test(id)
+          ? await db
+              .select({
+                id: companies.id,
+                name: companies.name,
+                code: companies.loginCode,
+                player: companies.player,
+                preset: companies.preset,
+                productType: companies.productType,
+                status: companies.status,
+              })
+              .from(companies)
+              .where(eq(companies.id, id))
+          : [];
+        if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+        await playLog.flush();
+        const { kind } = req.query;
+        const latest = await db
+          .select()
+          .from(playEvents)
+          .where(and(eq(playEvents.companyId, row.id), kind ? eq(playEvents.kind, kind) : undefined))
+          .orderBy(desc(playEvents.at), desc(playEvents.id))
+          .limit(TIMELINE_MAX_EVENTS + 1);
+        return {
+          id: row.id,
+          player: pseudonym(row.player),
+          name: row.name,
+          code: row.code,
+          preset: row.preset ?? DEFAULT_PRESET,
+          productType: row.productType as TimelineView["productType"],
+          status: row.status as CompanyStatus,
+          truncated: latest.length > TIMELINE_MAX_EVENTS,
+          events: latest
+            .slice(0, TIMELINE_MAX_EVENTS)
+            .reverse()
+            .map(
+              (e): PlayEventView => ({
+                id: e.id,
+                at: e.at.toISOString(),
+                day: e.day,
+                kind: e.kind as PlayEventKind,
+                type: e.type,
+                ok: e.ok,
+                error: e.error,
+                params: e.params,
+                snapshot: e.snapshot as PlaySnapshot | null,
+              }),
+            ),
+        } satisfies TimelineView;
+      },
+    );
+
+    // Every event, or those of one code, preset, kind or time range, one row per event: CSV for a spreadsheet, JSON for
+    // analysis. Companies appear by pseudonym alone: no names or codes.
+    teacher.get<{
+      Querystring: { format?: "csv" | "json"; code?: string; preset?: string; kind?: PlayEventKind; from?: string; to?: string };
+    }>(
+      "/api/teacher/logs/export",
+      {
+        schema: {
+          querystring: {
+            type: "object",
+            properties: {
+              format: { enum: ["csv", "json"] },
+              code: { type: "string", pattern: "^\\d{8}$" },
+              preset: { type: "string", maxLength: MAX_PRESET_NAME_LENGTH },
+              kind: { enum: ["game", "ui"] },
+              // Instants, as ISO 8601: the page sends the start of the first day and the end of the last in the
+              // teacher's own time zone.
+              from: { type: "string", maxLength: 40 },
+              to: { type: "string", maxLength: 40 },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      async (req, reply) => {
+        const { format = "csv", code, preset, kind } = req.query;
+        const [from, to] = [req.query.from, req.query.to].map((t) => (t === undefined ? undefined : new Date(t)));
+        if ([from, to].some((d) => d && Number.isNaN(d.getTime()))) {
+          return sendError(reply, 400, "bad_request", "Give the dates as ISO 8601, such as 2026-10-21T00:00:00Z.");
+        }
+        await playLog.flush();
+        const rows = await db
+          .select({
+            event: playEvents,
+            company: { player: companies.player, preset: companies.preset, productType: companies.productType },
+          })
+          .from(playEvents)
+          .innerJoin(companies, eq(companies.id, playEvents.companyId))
+          .where(
+            and(
+              code ? eq(companies.loginCode, code) : undefined,
+              preset ? sql`coalesce(${companies.preset}, ${DEFAULT_PRESET}) = ${preset}` : undefined,
+              kind ? eq(playEvents.kind, kind) : undefined,
+              from ? gte(playEvents.at, from) : undefined,
+              to ? lte(playEvents.at, to) : undefined,
+            ),
+          )
+          .orderBy(asc(playEvents.at), asc(playEvents.id));
+        const out = rows.map(({ event: e, company: c }) =>
+          exportRow(e, e.params, e.snapshot as Partial<PlaySnapshot> | null, {
+            player: c.player,
+            preset: c.preset ?? DEFAULT_PRESET,
+            productType: c.productType,
+          }),
+        );
+        const name = `playtest-log-${new Date().toISOString().slice(0, 10)}.${format}`;
+        reply.header("content-disposition", `attachment; filename="${name}"`);
+        if (format === "json") return reply.type("application/json; charset=utf-8").send(JSON.stringify(out));
+        return reply.type("text/csv; charset=utf-8").send(toCsv(out));
+      },
+    );
+
+    // How much there is, for the logs panel.
+    teacher.get("/api/teacher/logs", async (): Promise<LogStatsView> => {
+      await playLog.flush();
+      const [row] = await db
+        .select({ events: count(), companies: sql<number>`count(distinct ${playEvents.companyId})::int` })
+        .from(playEvents);
+      return row!;
+    });
+
+    // Deleting logs leaves the games, and their pseudonyms, alone: only the events go.
+    teacher.delete<{ Params: { id: string } }>("/api/teacher/companies/:id/logs", async (req, reply) => {
+      const { id } = req.params;
+      const [row] = UUID_PATTERN.test(id)
+        ? await db.select({ id: companies.id }).from(companies).where(eq(companies.id, id))
+        : [];
+      if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      return deleteLogs(eq(playEvents.companyId, row.id));
+    });
+
+    teacher.delete<{ Params: { code: string } }>("/api/teacher/codes/:code/logs", async (req, reply) => {
+      const { code } = req.params;
+      const [row] = CODE_PATTERN.test(code)
+        ? await db.select({ code: loginCodes.code }).from(loginCodes).where(eq(loginCodes.code, code))
+        : [];
+      if (!row) return sendError(reply, 404, "unknown_code", "That code wasn't found.");
+      return deleteLogs(
+        inArray(playEvents.companyId, db.select({ id: companies.id }).from(companies).where(eq(companies.loginCode, code))),
+      );
+    });
+
+    teacher.delete("/api/teacher/logs", async () => deleteLogs(undefined));
 
     // Config presets: named sets of numbers for the game, each stored as the numbers that differ from the defaults.
     // Default is built in and read-only. The active preset is what games started from then on use; each game keeps
@@ -991,6 +1345,13 @@ export async function buildApp(opts: AppOptions) {
       return presetsView();
     });
   });
+
+  /** Deletes the playtest events that match (all of them with no condition), after any still being written. */
+  async function deleteLogs(where: SQL | undefined): Promise<LogDeleteResult> {
+    await playLog.flush();
+    const deleted = await db.delete(playEvents).where(where).returning({ id: playEvents.id });
+    return { deleted: deleted.length };
+  }
 
   /** A preset by id: its row, null for Default, or undefined if there's no such preset. */
   async function findPreset(id: string): Promise<PresetRow | null | undefined> {

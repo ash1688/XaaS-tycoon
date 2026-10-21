@@ -20,6 +20,12 @@ export async function setupTestDb(url = process.env.TEST_DATABASE_URL ?? "postgr
   }
   const { db, close } = createDb(url);
   await runMigrations(db);
-  const reset = () => db.execute("truncate companies, login_codes, config_presets cascade");
+  // Deletes rather than truncates: a truncate waits on, and can deadlock with, playtest log rows an app is still
+  // writing after the last request. Rows for a company deleted here just fail their foreign key, which the log ignores.
+  const reset = async () => {
+    await db.execute("delete from play_events");
+    await db.execute("delete from login_codes");
+    await db.execute("delete from config_presets");
+  };
   return { db, close, reset };
 }

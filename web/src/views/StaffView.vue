@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue";
 import type { TeacherCodeView } from "@xaas/server/api-types";
 import { api, RequestError } from "../api";
 import LiveDashboard from "../components/LiveDashboard.vue";
+import PlaytestLogs from "../components/PlaytestLogs.vue";
 
 const signedIn = ref<boolean>();
 const password = ref("");
@@ -107,6 +108,8 @@ const formatDate = (iso: string) =>
     </div>
 
     <LiveDashboard ref="dashboard" @signed-out="signedIn = false" @codes-changed="loadCodes().catch(() => {})" />
+
+    <PlaytestLogs @signed-out="signedIn = false" />
 
     <section class="card">
       <h2>Login codes</h2>

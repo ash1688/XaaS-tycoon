@@ -30,6 +30,15 @@ const lockDaysLeft = computed(() => game.company?.priceLockDaysLeft ?? 0);
 // The live preview: what the draft price would do, fetched from the sim a moment after the student stops typing.
 // Only the latest request's answer is shown, so a slow one can't overwrite a newer one.
 const PREVIEW_DELAY_MS = 250;
+// For the playtest log: the prices previewed since the modal opened (not the current one it opens on), and whether the
+// student went on to set one. Logged when it closes.
+const tried: number[] = [];
+let confirmed = false;
+watch(open, (isOpen) => {
+  if (isOpen || (!tried.length && !confirmed)) return;
+  game.track("pricePreview", { prices: tried.splice(0).slice(-20), confirmed });
+  confirmed = false;
+});
 const preview = ref<PricePreviewView>();
 const previewError = ref("");
 const previewing = ref(false);
@@ -50,6 +59,7 @@ function schedulePreview(price: number | "") {
     try {
       const result = await api.pricePreview(game.code, game.id, price);
       if (seq !== previewSeq) return;
+      if (price !== tried.at(-1) && (tried.length || price !== game.company?.price)) tried.push(price);
       preview.value = result;
       previewError.value = "";
     } catch (e) {
@@ -92,7 +102,9 @@ async function save() {
   }
   formError.value = "";
   await game.act({ type: "setPrice", price });
-  if (!game.error) open.value = false;
+  if (game.error) return;
+  confirmed = true;
+  open.value = false;
 }
 </script>
 
