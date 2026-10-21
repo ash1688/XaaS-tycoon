@@ -36,31 +36,31 @@ test("on IaaS, renting an app server and a load balancer grows the CU capacity b
   await expect(servers.locator('[data-server="app-medium"]')).toContainText("App server · medium × 1");
   await expect(servers.locator('[data-server="database-medium"]')).toContainText("10 DBU");
 
-  // Rent a large app server: the modal shows its units and price before renting.
-  await student.getByTestId("rent-open").click();
-  const rent = student.getByRole("dialog", { name: "Rent a VM" });
-  await rent.locator('[data-rent-type="app"]').click();
-  await rent.locator('[data-rent-size="large"]').click();
-  await expect(rent.locator('[data-rent-size="large"]')).toContainText("20 CU");
-  await expect(rent.getByTestId("rent-summary")).toContainText("20 CU for £800 a month");
-  await expect(rent.getByTestId("rent-summary")).toContainText("you'll need load balancers");
-  await rent.getByTestId("rent-confirm").click();
-  await expect(rent).toHaveCount(0);
+  // Each type has a stepper for the size picked, here the medium the company has. Pick large: the note says what + does
+  // before pressing it, and the stepper counts the large ones.
+  await expect(servers.getByTestId("step-app-value")).toHaveText("1 medium");
+  await servers.locator('[data-size="app-large"]').click();
+  await expect(servers.locator('[data-size="app-large"]')).toContainText("20 CU");
+  await expect(servers.getByTestId("step-app-value")).toHaveText("0 large");
+  await expect(servers.getByTestId("step-note-app")).toContainText("20 CU) for £800 a month");
+  await expect(servers.getByTestId("step-note-app")).toContainText("you'll need load balancers");
+  await expect(servers.getByRole("button", { name: "Cancel a large app server" })).toBeDisabled();
+  await expect(servers.getByTestId("step-app-why")).toHaveText("You have no large app servers to cancel.");
+  await servers.getByRole("button", { name: "Rent a large app server" }).click();
+  await expect(servers.getByTestId("step-app-value")).toHaveText("1 large");
   await expect(servers.getByTestId("pending-app-large")).toContainText("1 setting up, ready after the next day");
   // Two app servers need a load balancer.
   await expect(student.getByTestId("lb-status")).toContainText("2 app servers need a load balancer");
 
-  await student.getByTestId("rent-open").click();
-  await rent.locator('[data-rent-type="loadBalancer"]').click();
-  await rent.locator('[data-rent-size="small"]').click();
-  await expect(rent.getByTestId("rent-summary")).toContainText("2 app servers for £200 a month");
-  await rent.getByTestId("rent-confirm").click();
+  await expect(servers.getByTestId("step-note-loadBalancer")).toContainText("(2 app servers) for £200 a month");
+  await servers.getByRole("button", { name: "Rent a small load balancer" }).click();
   await expect(servers.locator('[data-server="loadBalancer-small"]')).toContainText("Load balancer · small × 1");
+  await expect(servers.getByTestId("count-loadBalancer")).toHaveText("1 rented · 2 app servers");
   // Not ready yet, so the CU bar hasn't moved.
   await expect(cu).toHaveAttribute("aria-valuemax", "10");
 
   // Cancelling says it's pro rata. Keep it, though.
-  await servers.getByRole("button", { name: "Cancel one small load balancer" }).click();
+  await servers.getByRole("button", { name: "Cancel a small load balancer" }).click();
   const cancel = student.getByRole("dialog", { name: "Cancel a VM" });
   await expect(cancel.getByTestId("pro-rata-note")).toContainText("you only pay for the days you had it");
   await cancel.getByRole("button", { name: "Keep it" }).click();

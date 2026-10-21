@@ -67,13 +67,11 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await expect(student.getByRole("meter", { name: /^Compute \(CU\)/ })).toBeVisible();
   // The first setup: a medium app server and database, 10 CU and 10 DBU, ready the next day. One app server needs no
   // load balancer.
-  const rent = student.getByRole("dialog", { name: "Rent a VM" });
+  const panel = student.getByTestId("servers-panel");
   for (const type of ["app", "database"]) {
-    await student.getByTestId("rent-open").click();
-    await rent.locator(`[data-rent-type="${type}"]`).click();
-    await rent.locator('[data-rent-size="medium"]').click();
-    await rent.getByTestId("rent-confirm").click();
-    await expect(rent).toHaveCount(0);
+    await panel.locator(`[data-size="${type}-medium"]`).click();
+    await panel.getByTestId(`step-${type}-up`).click();
+    await expect(panel.getByTestId(`step-${type}-value`)).toHaveText("1 medium");
   }
   await expect(student.getByTestId("servers-panel").getByTestId("pending-app-medium")).toContainText("1 setting up");
   await expect(student.getByTestId("lb-status")).toContainText("no load balancer needed");

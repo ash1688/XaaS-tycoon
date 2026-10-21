@@ -33,19 +33,23 @@ test("on PaaS, raising the instance count grows CU capacity at once, with manage
   await expect(platform.getByText("Managed by provider: no ops needed")).toHaveCount(3);
   const cu = student.getByRole("meter", { name: /^Compute \(CU\)/ });
   await expect(cu).toHaveAttribute("aria-valuemax", "10");
-  await expect(platform.getByTestId("instances-count")).toHaveText("1");
+  await expect(platform.getByTestId("instances-value")).toHaveText("1");
 
   // Two more instances: the CU bar grows straight away, before any Continue, and the ops needed stay at 1.
   await platform.getByTestId("instances-up").click();
-  await expect(platform.getByTestId("instances-count")).toHaveText("2");
+  await expect(platform.getByTestId("instances-value")).toHaveText("2");
   await platform.getByTestId("instances-up").click();
-  await expect(platform.getByTestId("instances-count")).toHaveText("3");
+  await expect(platform.getByTestId("instances-value")).toHaveText("3");
   await expect(cu).toHaveAttribute("aria-valuemax", "30");
   await expect(student.getByTestId("tier-cu-figures")).toHaveText("6 / 30 CU");
   await expect(platform.getByTestId("platform-note")).toContainText("you need just 1 ops");
 
-  // A bigger managed database, at once too.
-  await platform.getByTestId("managed-database").selectOption("medium");
+  // A bigger managed database, at once too: + steps it from small to medium.
+  await expect(platform.getByTestId("managed-database-value")).toContainText("small · 10 DBU");
+  await expect(platform.getByRole("button", { name: "Smaller database" })).toBeDisabled();
+  await expect(platform.getByTestId("managed-database-why")).toContainText("can't go below small");
+  await platform.getByRole("button", { name: "Larger database" }).click();
+  await expect(platform.getByTestId("managed-database-value")).toContainText("medium · 25 DBU");
   await expect(student.getByRole("meter", { name: /^Database \(DBU\)/ })).toHaveAttribute("aria-valuemax", "25");
   await expect(platform.getByTestId("platform-cost")).toHaveText("£4,700");
 

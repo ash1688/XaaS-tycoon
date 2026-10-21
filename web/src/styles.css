@@ -3059,6 +3059,82 @@ body.modal-open {
   font-size: 0.95rem;
 }
 
+/* A type's − / + stepper, with the size picker that sets what it adds or removes. */
+.server-step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin-top: 0.5rem;
+}
+
+.size-pick {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+.size-pick legend {
+  margin-bottom: 0.3rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.size-pick-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 6.5rem), 1fr));
+  gap: 0.4rem;
+}
+
+.size-chip {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+.size-chip strong {
+  text-transform: capitalize;
+}
+
+.size-chip.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.size-chip input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.size-chip:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.step-note {
+  margin: 0.4rem 0 0;
+  font-size: 0.85rem;
+}
+
+.stepper .stepper-value {
+  min-width: 4ch;
+  font-size: 1rem;
+  white-space: nowrap;
+}
+
+.stepper-why {
+  max-width: 22rem;
+  margin: 0.3rem 0 0;
+  font-size: 0.8rem;
+}
+
 .size-choices {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr));
 }

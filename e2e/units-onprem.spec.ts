@@ -30,19 +30,19 @@ test("on-prem, buying a server charges it up front and shows it on order, counti
   await expect(servers.locator('[data-server="app-large"]')).toContainText("App server · large × 1");
   await expect(servers.getByTestId("on-order")).toContainText("Nothing on order");
 
-  // The buy modal shows the upfront price, running cost, units and delivery time before buying.
-  await student.getByTestId("buy-open").click();
-  const buy = student.getByRole("dialog", { name: "Buy a server" });
-  await buy.locator('[data-rent-type="app"]').click();
-  await buy.locator('[data-rent-size="small"]').click();
-  await expect(buy.locator('[data-rent-size="small"]')).toContainText("£400 up front");
-  const summary = buy.getByTestId("buy-summary");
-  await expect(summary).toContainText("6 CU");
-  await expect(summary).toContainText("£400 up front");
-  await expect(summary).toContainText("£30 a month");
-  await expect(summary).toContainText("Delivery takes 10 days");
-  await buy.getByTestId("buy-confirm").click();
-  await expect(buy).toHaveCount(0);
+  // Picking small, the note says the upfront price, running cost, units and delivery time before + buys one.
+  await servers.locator('[data-size="app-small"]').click();
+  await expect(servers.locator('[data-size="app-small"]')).toContainText("£400 + £30/mo");
+  const note = servers.getByTestId("step-note-app");
+  await expect(note).toContainText("6 CU");
+  await expect(note).toContainText("£400 up front");
+  await expect(note).toContainText("£30 a month");
+  await expect(note).toContainText("arrives in 10 days");
+  await servers.getByRole("button", { name: "Buy a small app server" }).click();
+  await expect(servers.getByTestId("step-app-value")).toHaveText("1 small (1 on order)");
+  // Still on order, so there's none to sell yet.
+  await expect(servers.getByRole("button", { name: "Sell a small app server" })).toBeDisabled();
+  await expect(servers.getByTestId("step-app-why")).toContainText("still on order");
 
   // Paid for at once, and on order with its days left.
   const bought = await (await request.get(`/api/codes/${code}/companies/${id}`)).json();
@@ -58,7 +58,8 @@ test("on-prem, buying a server charges it up front and shows it on order, counti
   await expect(order).toContainText("Arrives in 9 days");
 
   // Selling says what you get back, at a loss. Keep it, though.
-  await servers.getByRole("button", { name: "Sell one large app server" }).click();
+  await servers.locator('[data-size="app-large"]').click();
+  await servers.getByRole("button", { name: "Sell a large app server" }).click();
   const sell = student.getByRole("dialog", { name: "Sell a server" });
   await expect(sell.getByTestId("sell-note")).toHaveText("You get £400 back (40% of the £1,000 you paid).");
   await sell.getByRole("button", { name: "Keep it" }).click();

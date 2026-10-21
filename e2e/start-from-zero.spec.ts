@@ -32,13 +32,14 @@ test("on IaaS, VMs rented on day 1 launch the company on day 3 with its first us
 
   // The checklist links to Infrastructure, where the VMs are rented.
   await servers.getByRole("link", { name: "Infrastructure" }).click();
-  const rent = student.getByRole("dialog", { name: "Rent a VM" });
-  for (const type of ["app", "database"]) {
-    await student.getByTestId("rent-open").click();
-    await rent.locator(`[data-rent-type="${type}"]`).click();
-    await rent.locator('[data-rent-size="medium"]').click();
-    await rent.getByTestId("rent-confirm").click();
-    await expect(rent).toHaveCount(0);
+  // Each type's + rents one of the size picked: nothing is rented yet, so the stepper starts at 0.
+  const panel = student.getByTestId("servers-panel");
+  await expect(panel.getByTestId("no-servers")).toBeVisible();
+  for (const [type, name] of [["app", "app server"], ["database", "database"]]) {
+    await expect(panel.getByTestId(`step-${type}-value`)).toHaveText("0 small");
+    await panel.locator(`[data-size="${type}-medium"]`).click();
+    await panel.getByRole("button", { name: `Rent a medium ${name}` }).click();
+    await expect(panel.getByTestId(`step-${type}-value`)).toHaveText("1 medium");
   }
 
   // Ready the next day, so the company launches on day 3. They need an ops person: a new company has one.
@@ -76,7 +77,7 @@ test("a company that sets nothing up waits for capacity after day 3", async ({ b
   await expect(student.getByTestId("users")).toHaveText("0");
 });
 
-test("on PaaS, a managed database picked from the empty state launches the company on day 3", async ({
+test("on PaaS, a managed database added from the empty state launches the company on day 3", async ({
   browser,
   request,
 }) => {
@@ -84,22 +85,25 @@ test("on PaaS, a managed database picked from the empty state launches the compa
   await expect(student.getByTestId("launch-step-servers")).toContainText("Set up app instances and a managed database");
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Infrastructure", exact: true }).click();
 
-  // Nothing runs yet, and the controls say so: no instances, and no database size shown as chosen.
+  // Nothing runs yet, and the steppers say so: no instances, no database and no cache.
   const platform = student.getByTestId("platform-panel");
-  await expect(platform.getByTestId("instances-count")).toHaveText("0");
-  const database = platform.getByTestId("managed-database");
-  await expect(database).toHaveValue("");
-  await expect(database.locator("option:checked")).toHaveText("Choose a size…");
+  await expect(platform.getByTestId("instances-value")).toHaveText("0");
+  await expect(platform.getByTestId("managed-database-value")).toHaveText("None");
   await expect(platform.getByTestId("no-database")).toContainText("None yet");
-  await expect(platform.getByTestId("managed-cache")).toHaveValue("");
+  await expect(platform.getByRole("button", { name: "Remove the database" })).toBeDisabled();
+  await expect(platform.getByTestId("managed-cache-value")).toHaveText("None");
 
-  // One instance and the small database, the first size in the list.
-  await platform.getByTestId("instances-up").click();
-  await expect(platform.getByTestId("instances-count")).toHaveText("1");
-  await database.selectOption("small");
-  await expect(database).toHaveValue("small");
+  // One instance, and + adds the smallest database.
+  await platform.getByRole("button", { name: "One more app instance" }).click();
+  await expect(platform.getByTestId("instances-value")).toHaveText("1");
+  await platform.getByRole("button", { name: "Add a database" }).click();
+  await expect(platform.getByTestId("managed-database-value")).toHaveText("small · 10 DBU · £900/mo");
   await expect(platform.getByTestId("no-database")).toHaveCount(0);
-  await expect(database.locator("option", { hasText: "Choose a size" })).toHaveCount(0);
+  // The cache steps up from None and back down to it.
+  await platform.getByRole("button", { name: "Add a cache" }).click();
+  await expect(platform.getByTestId("managed-cache-value")).toContainText("small");
+  await platform.getByRole("button", { name: "Remove the cache" }).click();
+  await expect(platform.getByTestId("managed-cache-value")).toHaveText("None");
 
   for (const day of [2, 3]) {
     await student.getByRole("button", { name: "Continue" }).click();
