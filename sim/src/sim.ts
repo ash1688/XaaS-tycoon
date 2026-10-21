@@ -186,8 +186,8 @@ export interface Sim {
   /** The terms a new game gets if it takes the loan at the start: the best there are. */
   startLoanQuote(): LoanQuote;
   /**
-   * Where the company is with its launch: the day it launched or, with what's set up, will launch, the launch burst,
-   * and whether it's still waiting for capacity.
+   * Where the company is with its launch: waiting for capacity, its first users due, arriving over the ramp, or
+   * launched; the day they started (or will start) arriving, and the launch total.
    */
   launch(state: GameState): LaunchView;
   /** The migration under way, or null. */
@@ -278,9 +278,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         { cost, cash },
       );
     }
-    // Day 1 is played as the game starts. A config that lets a company launch on it with servers in place gives it
-    // its users at once, with the load they bring.
-    const launched = launch.launchesOn(state, 1) ? launch.launch(borrowed.state, 1) : { state: borrowed.state, entries: [] };
+    // Day 1 is played as the game starts. A company that can serve users already (SaaS, or a config's starter setup)
+    // gets the first of its launch ramp at once, with the load they bring.
+    const launched = launch.arrive(borrowed.state, 1);
     const { users } = launched.state;
     const started: GameState = {
       ...launched.state,
@@ -355,23 +355,23 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const day = start.day + 1;
 
     // Scripted events on today. A price rise or feature gap from today counts from today's bill and growth. Before the
-    // launch day there's nothing running for one to hit.
-    const launching = launch.launchesOn(start, day);
-    const live = start.launchDay !== null || launching;
+    // first users arrive there's nothing running for one to hit.
+    const ramping = launch.rampDayOn(start, day) > 0;
+    const live = start.launchDay !== null || ramping;
     const today = live ? events.eventsToday(start, day) : [];
     const state: GameState = { ...start, ...events.lastingEffects(start, day, today) };
 
     // Today's load against capacity, then growth, which slows on an outage day.
     const served = infra.serveLoad(state, day, today);
-    const grown = customers.grow(state, day, served.hoursDown > 0, served.rng);
+    // Over the launch ramp the arriving users are the growth: normal growth takes over after it.
+    const organic = customers.grow(state, day, served.hoursDown > 0, served.rng);
+    const grown = ramping ? { ...organic, users: state.users, paidUsers: state.paidUsers } : organic;
     // Then any price wave takes its share for the day, planned when the price changed.
     const wave = pricing.waveDay(state, day, grown.users, grown.paidUsers);
     // Then a share of the free users left start paying. A user the wave upgraded is already paying, so can't convert.
     const converted = conversion.convertDay(state, wave.users, wave.paidUsers);
-    // On launch day, the launch burst arrives at the end of the day: the company's first users.
-    const launched = launching
-      ? launch.launch({ ...state, users: wave.users, paidUsers: converted.paidUsers }, day)
-      : { state: { ...state, users: wave.users, paidUsers: converted.paidUsers }, entries: [] };
+    // On a launch ramp day, its share of the launch users arrives at the end of the day.
+    const launched = launch.arrive({ ...state, users: wave.users, paidUsers: converted.paidUsers }, day);
     const { users, paidUsers, launchDay } = launched.state;
     const rng = grown.rng;
 
@@ -415,9 +415,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       users,
       paidUsers,
       priceWave: wave.priceWave,
-      // On launch day nobody was served, so the load and demand shown are the launch burst's usual ones: what the
-      // servers face from tomorrow.
-      ...(launching
+      // Over the launch ramp the users arriving outgrow the day's load, so the load and demand shown are the usual ones
+      // of the users there now: what the servers face from tomorrow.
+      ...(ramping
         ? { load: Math.round(customers.baseLoad(state.productType, users, day)), demand: customers.baseDemand(state.productType, users, day) }
         : { load: served.load, demand: served.demand }),
       outageDays: state.outageDays + (served.hoursDown > 0 ? 1 : 0),

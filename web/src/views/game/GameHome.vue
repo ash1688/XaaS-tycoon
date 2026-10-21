@@ -31,36 +31,43 @@ const phaseName = (id: string) => game.meta?.migrationPhases.find((p) => p.id ==
 // Earlier days played this session, newest first, under the latest one in the full log.
 const earlierDays = computed(() => game.dayLogs.slice(0, -1).toReversed());
 
-// The launch: before it, when the first users arrive and what's left to set up; for a week after, the day it happened.
+// The launch: waiting for capacity, its first users due, users trickling in over the ramp, and for a week after it,
+// the day it happened. Before the users come, a checklist of what to set up.
 const launch = computed(() => game.company?.launch);
+const launchOver = computed(() => (launch.value?.day ?? 0) + (launch.value?.rampDays ?? 1) - 1);
 const showLaunch = computed(() => {
   const l = launch.value;
   const c = game.company;
-  return !!l && !!c && !game.over && (l.status !== "launched" || c.day <= (l.day ?? 0) + 7);
+  return !!l && !!c && !game.over && (l.status !== "launched" || c.day <= launchOver.value + 7);
 });
+const beforeUsers = computed(() => launch.value?.status === "waiting" || launch.value?.status === "upcoming");
 const launchHeadline = computed(() => {
   const l = launch.value;
-  const c = game.company;
-  if (!l || !c) return "";
+  if (!l) return "";
   if (l.status === "launched") return `Launched on day ${l.day}`;
+  if (l.status === "launching") return `Launching: users arriving (day ${l.rampDay} of ${l.rampDays})`;
   if (l.status === "waiting") return "Waiting for capacity";
-  return `Launch in ${days((l.day ?? l.earliestDay) - c.day)}`;
+  return `Launch in ${days(l.daysLeft ?? 0)}`;
 });
 const launchText = computed(() => {
   const l = launch.value;
   const c = game.company;
   if (!l || !c) return "";
-  const first = `${formatCount(l.users)} users`;
-  if (l.status === "launched") return `Your first ${first} arrived at the end of day ${l.day}. They grow from here.`;
-  if (l.day !== null) {
-    const late = l.day > l.earliestDay ? ", when your servers are ready" : "";
-    return `Your first ${first} arrive at the end of day ${l.day}${late}.`;
+  const total = `${formatCount(l.users)} users`;
+  const ramp = l.rampDays > 1 ? `, building up over ${days(l.rampDays)} to ${total}` : ` all ${total} at once`;
+  if (l.status === "launched") {
+    return `Your first users started arriving on day ${l.day}, and all ${total} were in by day ${launchOver.value}. They grow from here.`;
+  }
+  if (l.status === "launching") {
+    const left = l.rampDays - l.rampDay;
+    const when = left === 1 ? "tomorrow" : `over the next ${days(left)}`;
+    return `${formatCount(l.arrived)} of your first ${total} have arrived. The rest come ${when}; then normal growth takes over.`;
+  }
+  if (l.status === "upcoming") {
+    return `Your first users start arriving at the end of day ${l.day}, when your servers are ready${ramp}.`;
   }
   const delivery = game.buysServers ? ` Bought kit takes ${days(c.serverOptions[0]?.readyDays ?? 0)} to arrive.` : "";
-  if (l.status === "waiting") {
-    return `Day ${l.earliestDay} has passed and nothing is set up to serve users. Your first ${first} arrive once your servers are ready: every day until then is a day without income.${delivery}`;
-  }
-  return `Your first ${first} can arrive at the end of day ${l.earliestDay}, once you have servers ready to serve them.${delivery}`;
+  return `Nothing is set up to serve users yet. Your first users start arriving the day your servers are ready${ramp}. Until then there's no income, but your costs still run.${delivery}`;
 });
 // What to do before launch, each with the page that does it.
 const launchSteps = computed(() => {
@@ -236,12 +243,23 @@ const alerts = computed(() => {
         v-if="showLaunch && launch"
         title="Launch"
         full
-        :tone="launch.status === 'waiting' ? 'warn' : launch.status === 'launched' ? 'ok' : undefined"
+        :tone="launch.status === 'waiting' ? 'warn' : launch.status === 'launched' || launch.status === 'launching' ? 'ok' : undefined"
       >
         <div data-testid="launch-card" :data-status="launch.status">
           <p class="overview-value" data-testid="launch-headline">{{ launchHeadline }}</p>
           <p class="muted" data-testid="launch-text">{{ launchText }}</p>
-          <ul v-if="launch.status !== 'launched'" class="launch-checklist" data-testid="launch-checklist">
+          <div
+            v-if="launch.status === 'launching'"
+            class="meter"
+            role="meter"
+            aria-label="Launch users arrived"
+            :aria-valuenow="launch.arrived"
+            aria-valuemin="0"
+            :aria-valuemax="launch.users"
+          >
+            <div class="meter-fill ok" :style="{ width: `${(100 * launch.arrived) / Math.max(1, launch.users)}%` }"></div>
+          </div>
+          <ul v-if="beforeUsers" class="launch-checklist" data-testid="launch-checklist">
             <li v-for="step in launchSteps" :key="step.id" :class="{ done: step.done }" :data-testid="`launch-step-${step.id}`">
               <span class="launch-check" aria-hidden="true">{{ step.done ? "✓" : "○" }}</span>
               <span>
@@ -255,7 +273,7 @@ const alerts = computed(() => {
         </div>
         <template #detail>
           <p>{{ launchText }}</p>
-          <ul v-if="launch.status !== 'launched'" class="launch-checklist">
+          <ul v-if="beforeUsers" class="launch-checklist">
             <li v-for="step in launchSteps" :key="step.id" :class="{ done: step.done }">
               <span class="launch-check" aria-hidden="true">{{ step.done ? "✓" : "○" }}</span>
               <span>
@@ -267,10 +285,11 @@ const alerts = computed(() => {
             </li>
           </ul>
           <p>
-            Your company launches on day {{ launch.earliestDay }} at the earliest, or later if it has nothing ready to
-            serve users by then: rented VMs are ready the day after you rent them, a platform's instances at once, and
-            bought kit when it arrives. Until launch there are no users, no income and no tickets, but staff, running
-            costs and any loan repayments are still charged.
+            Your first users start arriving at the end of the first day you have servers ready to serve them: rented
+            VMs are ready the day after you rent them, a platform's instances at once, and bought kit when it arrives.
+            They trickle in over {{ days(launch.rampDays) }}, more each day, until all {{ formatCount(launch.users) }}
+            are in; then normal growth takes over. Until then there are no users, no income and no tickets, but staff,
+            running costs and any loan repayments are still charged.
           </p>
         </template>
       </OverviewCard>

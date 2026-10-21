@@ -210,9 +210,9 @@ export interface SeasonalSpike {
 /** How a product's users grow and how much load they put on the system. */
 export interface GrowthProfile {
   /**
-   * The launch burst: users who arrive on launch day, the product's first (see LaunchConfig), split paid and free by
-   * the product's freeShare, like any new users: a price above the fair one puts more on the free tier. Normal growth
-   * runs from the next day.
+   * The launch total: the product's first users, who trickle in over the launch ramp (see LaunchConfig), split paid
+   * and free by the product's freeShare, like any new users: a price above the fair one puts more on the free tier.
+   * Normal growth runs from the day after the ramp.
    */
   launchUsers: number;
   /** Users the product can reach. Growth slows as users approach it. */
@@ -563,18 +563,21 @@ export interface EventConfig {
 }
 
 /**
- * A new company has no users and no servers. It launches at the end of launch day: the earliest day, or the first day
- * after it with capacity to serve users, whichever is later. That's servers ready by the end of the day: rented VMs
- * the day after they're rented, bought kit when it arrives, a platform's instances and database at once. A model with
- * no capacity limit (SaaS) is always ready. The product's launch burst arrives then (see GrowthProfile.launchUsers).
+ * A new company has no users and no servers. Its first users arrive at the end of the first day it has capacity to
+ * serve them: servers ready by the end of that day, so rented VMs the day after they're rented, bought kit when it
+ * arrives, a platform's instances and database at once. A model with no capacity limit (SaaS) is ready on day 1.
+ * From then the product's launch users (see GrowthProfile.launchUsers) trickle in over the ramp, a share each day,
+ * each day's split paid and free like any new users. Normal growth takes over after it.
  *
- * Before launch there's nothing running: no users, no income, no tickets and no scripted events, so no outages. Staff,
- * running costs and loan repayments are still charged. A company that isn't ready by the earliest day waits, losing
- * those days' income.
+ * Before the first users arrive there's nothing running: no users, no income, no tickets and no scripted events, so no
+ * outages. Staff, running costs and loan repayments are still charged, so a company that's slow to set up loses money.
  */
 export interface LaunchConfig {
-  /** The earliest day a company can launch: its users arrive at the end of it. */
-  earliestDay: number;
+  /**
+   * The share of the launch users arriving on each day of the ramp, first day first: its length is the ramp's. They're
+   * scaled to add up to 1, so the whole launch total always arrives.
+   */
+  rampShares: number[];
 }
 
 /**
@@ -632,9 +635,9 @@ export const defaultConfig: GameConfig = {
   startingCash: 15_000,
   finalDay: 180,
   maxCompanyNameLength: 40,
-  // Two days to buy or rent a first setup: IaaS VMs rented on day 1 or 2, or a platform set up by day 2, are ready to
-  // launch on day 3. On-prem kit bought on day 1 arrives on day 11, so it launches a week after the cloud models.
-  launch: { earliestDay: 3 },
+  // Users trickle in over 3 days, building up. SaaS starts on day 1; a platform set up or VMs rented on day 1 start on
+  // day 2; on-prem kit bought on day 1 arrives on day 11, so it starts over a week after the cloud models.
+  launch: { rampShares: [0.2, 0.3, 0.5] },
   models: {
     onprem: {
       name: "Own servers (on-prem)",

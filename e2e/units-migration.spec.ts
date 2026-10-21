@@ -15,7 +15,7 @@ test("migrating from IaaS to PaaS quotes the new setup item by item, then shows 
     data: { name: "Setup Movers", productType: "social", model: "iaas" },
   });
   const { id } = await created.json();
-  // Its first VMs rented on day 1, launching on day 3 with the social network's 4,000 users.
+  // Its first VMs rented on day 1: the social network's 4,000 users arrive over days 2 to 4.
   await launch(request, code, id, "iaas");
 
   const student = await (await browser.newContext()).newPage();

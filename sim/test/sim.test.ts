@@ -104,8 +104,8 @@ const config: GameConfig = {
   startingCash: 1000,
   finalDay: 180,
   maxCompanyNameLength: 20,
-  // Launches on day 1, as the game starts, with the starter setups below in place: the launch tests set their own.
-  launch: { earliestDay: 1 },
+  // Launches in full on day 1, as the game starts, with the starter setups below in place: the launch tests set their own.
+  launch: { rampShares: [1] },
   // Capacity far above any load here, so outages only happen where a test lowers it.
   // No upfront or per-user costs, so each model costs a flat monthly ÷ 30 a day unless a test adds them.
   models: {
@@ -226,10 +226,10 @@ const FIRST_SETUP: Record<ModelId, Action[]> = {
   saas: [],
 };
 const setUp = (s: Sim, state: GameState) => FIRST_SETUP[state.model].reduce((st, a) => s.applyAction(st, a), state);
-/** A default-config game with its first setup, played to the end of its launch day. */
+/** A default-config game with its first setup, played until all its launch users have arrived. */
 const launched = (s: Sim, state: GameState) => {
   let st = setUp(s, state);
-  while (st.launchDay === null && st.status === "playing") st = s.advance(st).state;
+  while (s.launch(st).status !== "launched" && st.status === "playing") st = s.advance(st).state;
   return st;
 };
 
@@ -279,123 +279,143 @@ describe("launch", () => {
   const fresh = (s: Sim, model: ModelId, productType = "social", takeLoan = false) =>
     s.newGame({ companyName: "Acme", productType, model, seed: 7, takeLoan });
   const defaults = createSim(roomyDefaults);
-  /** Plays a day at a time until the company has launched, or `last` has been played. */
+  /** Plays a day at a time until `last` has been played. */
   const playTo = (s: Sim, state: GameState, last: number) => {
     let st = state;
     while (st.day < last) st = s.advance(st).state;
     return st;
   };
+  /** Users at the end of each day from `from` to `to`. */
+  const usersOn = (s: Sim, state: GameState, from: number, to: number) => {
+    const out: number[] = [];
+    for (let d = from; d <= to; d++) out.push(playTo(s, state, d).users);
+    return out;
+  };
 
-  it("starts a new game on every model and product with no users and no servers by default", () => {
+  it("starts a new game on every model and product with no users and no servers, bar SaaS's first arrivals", () => {
     for (const model of MODEL_IDS) {
       for (const p of PRODUCT_TYPE_IDS) {
         const state = fresh(defaults, model, p);
-        expect(state, `${model} ${p}`).toMatchObject({ users: 0, paidUsers: 0, launchDay: null, servers: [], load: 0 });
-        expect(defaults.launch(state)).toMatchObject({ status: "upcoming", earliestDay: 3 });
+        expect(state.servers, `${model} ${p}`).toEqual([]);
+        if (model === "saas") continue;
+        expect(state, `${model} ${p}`).toMatchObject({ users: 0, paidUsers: 0, launchDay: null, load: 0 });
+        expect(defaults.launch(state)).toMatchObject({ status: "waiting", day: null, rampDays: 3, rampDay: 0, arrived: 0 });
       }
     }
     for (const model of MODEL_IDS) expect(defaultConfig.models[model].servers?.starter).toBeUndefined();
+    expect(defaultConfig.launch.rampShares).toEqual([0.2, 0.3, 0.5]);
   });
 
-  it("launches SaaS on day 3: it needs nothing set up", () => {
+  it("starts SaaS's users trickling in on day 1, building up over 3 days to the launch total, then grows as normal", () => {
     const state = fresh(defaults, "saas");
-    expect(defaults.launch(state)).toMatchObject({ day: 3, daysLeft: 2, needsServers: false, setUp: true });
-    expect(playTo(defaults, state, 2)).toMatchObject({ users: 0, launchDay: null });
-    expect(playTo(defaults, state, 3)).toMatchObject({ users: 4_000, launchDay: 3 });
+    // A social network's 4,000: 20%, 30% and 50% of them.
+    expect(state).toMatchObject({ launchDay: 1, users: 800 });
+    expect(defaults.launch(state)).toMatchObject({ status: "launching", day: 1, rampDay: 1, arrived: 800, users: 4_000 });
+    expect(usersOn(defaults, state, 2, 3)).toEqual([2_000, 4_000]);
+    const done = playTo(defaults, state, 3);
+    expect(defaults.launch(done)).toMatchObject({ status: "launched", rampDay: 3, arrived: 4_000 });
+    const { log } = defaults.advance(state, 2);
+    expect(log.map((d) => d.entries.find((e) => e.kind === "launch")?.text)).toEqual([
+      "Launch, day 2 of 3: 1,200 new users arrived, 360 of them paying.",
+      "Launch, day 3 of 3: 2,000 new users arrived, 600 of them paying. That's everyone: normal growth takes over from tomorrow.",
+    ]);
+    // Then the product's normal daily growth.
+    const next = defaults.advance(done).state;
+    expect(next.users).toBeGreaterThan(4_000);
+    expect(next.users).toBeLessThan(4_000 * (1 + 2 * defaultConfig.productTypes.social.growth.dailyGrowth));
+    expect(defaults.advance(next).log[0]!.entries.some((e) => e.kind === "launch")).toBe(false);
   });
 
-  it("launches IaaS on day 3 with VMs rented by day 2, ready the next day", () => {
-    for (const rentOn of [1, 2]) {
-      let state = playTo(defaults, fresh(defaults, "iaas"), rentOn);
-      expect(defaults.launch(state)).toMatchObject({ day: null, needsServers: true, setUp: false });
-      state = setUp(defaults, state);
-      expect(defaults.launch(state)).toMatchObject({ status: "upcoming", day: 3, daysLeft: 3 - rentOn, setUp: true });
-      expect(playTo(defaults, state, 3).launchDay, `rented on day ${rentOn}`).toBe(3);
-    }
+  it("starts IaaS's users the day after VMs are rented: ready by the end of it, they serve from the next", () => {
+    let state = fresh(defaults, "iaas");
+    state = setUp(defaults, state);
+    expect(defaults.launch(state)).toMatchObject({ status: "upcoming", day: 2, daysLeft: 1, setUp: true });
+    expect(usersOn(defaults, state, 2, 5).slice(0, 3)).toEqual([800, 2_000, 4_000]);
+    expect(defaults.launch(playTo(defaults, state, 3))).toMatchObject({ status: "launching", day: 2, rampDay: 2, arrived: 2_000 });
   });
 
-  it("launches PaaS on day 3 once instances and a managed database are set up, and not with instances alone", () => {
-    // A new PaaS company runs no instances and no database, and its view says so rather than showing a size.
-    expect(defaults.managed(fresh(defaults, "paas"))).toMatchObject({ instances: 0, database: null, cache: null, monthlyCost: 0 });
-    expect(defaults.managed(fresh(defaults, "paas"))!.databaseOptions.map((o) => o.size)).toEqual(["small", "medium", "large", "massive"]);
+  it("starts PaaS's users the day after instances and a managed database are set up, and not with instances alone", () => {
     const instances = defaults.applyAction(fresh(defaults, "paas"), { type: "setInstances", count: 1 });
     expect(defaults.launch(instances).day).toBeNull();
     expect(playTo(defaults, instances, 5).launchDay).toBeNull();
-    expect(playTo(defaults, setUp(defaults, fresh(defaults, "paas")), 3).launchDay).toBe(3);
+    expect(playTo(defaults, setUp(defaults, fresh(defaults, "paas")), 2)).toMatchObject({ launchDay: 2, users: 800 });
   });
 
-  it("launches on-prem on the day its first kit arrives, with the normal delivery time", () => {
+  it("starts on-prem's users trickling in on the day its first kit arrives, with the normal delivery time", () => {
     const state = setUp(defaults, fresh(defaults, "onprem", "video", true));
     // The kit on order needs an ops person once it arrives, though none yet.
     expect(defaults.launch(state)).toMatchObject({ status: "upcoming", day: 11, daysLeft: 10, opsNeeded: 1 });
     expect(defaults.opsNeededNow(state)).toBe(0);
     const waiting = playTo(defaults, state, 10);
     expect(waiting).toMatchObject({ users: 0, launchDay: null });
-    expect(defaults.launch(waiting)).toMatchObject({ status: "waiting", day: 11, daysLeft: 1 });
-    const live = playTo(defaults, state, 11);
-    expect(live).toMatchObject({ launchDay: 11, users: 1_600 });
-    expect(defaults.launch(live)).toMatchObject({ status: "launched", day: 11, daysLeft: null });
+    expect(defaults.launch(waiting)).toMatchObject({ status: "upcoming", day: 11, daysLeft: 1 });
+    // Video's 1,600: 320, then 800, then all of them.
+    expect(usersOn(defaults, state, 11, 13)).toEqual([320, 800, 1_600]);
+    expect(defaults.launch(playTo(defaults, state, 13))).toMatchObject({ status: "launched", day: 11, daysLeft: null });
   });
 
-  it("waits for capacity past day 3, launching on the first day the company has it", () => {
-    let state = playTo(defaults, fresh(defaults, "iaas"), 3);
+  it("waits for capacity, starting the ramp on the first day the company has it", () => {
+    let state = playTo(defaults, fresh(defaults, "iaas"), 5);
     expect(state).toMatchObject({ users: 0, launchDay: null });
     expect(defaults.launch(state)).toMatchObject({ status: "waiting", day: null, daysLeft: null, setUp: false });
-    state = playTo(defaults, state, 6);
-    // Rented on day 6, ready by the end of day 7: the users arrive then.
+    // Rented on day 5, ready by the end of day 6: the first users arrive then.
     state = setUp(defaults, state);
-    expect(defaults.launch(state)).toMatchObject({ status: "waiting", day: 7, daysLeft: 1 });
-    const live = playTo(defaults, state, 7);
-    expect(live).toMatchObject({ launchDay: 7, users: 4_000 });
-    // The demand shown on launch day is the launch burst's, for the servers to meet from tomorrow: 6 CU of 10.
-    expect(live.demand).toEqual({ cu: 6, dbu: 6 });
-    expect(defaults.units(live)!.cu).toEqual({ demand: 6, capacity: 10 });
+    expect(defaults.launch(state)).toMatchObject({ status: "upcoming", day: 6, daysLeft: 1 });
+    const live = playTo(defaults, state, 6);
+    expect(live).toMatchObject({ launchDay: 6, users: 800 });
+    // The demand shown over the ramp is that of the users there now, for the servers to meet from tomorrow.
+    expect(live.demand).toEqual({ cu: 1.2, dbu: 1.2 });
+    expect(defaults.units(live)!.cu).toEqual({ demand: 1.2, capacity: 10 });
   });
 
-  it("needs both compute and a database to launch", () => {
+  it("needs both compute and a database to start", () => {
     const appOnly = defaults.applyAction(fresh(defaults, "iaas"), { type: "rentServer", server: "app", size: "large" });
     expect(playTo(defaults, appOnly, 5).launchDay).toBeNull();
   });
 
-  it("brings a launch burst set per product in config, split by its free share, then grows as normal", () => {
-    const bursty = createSim({
+  it("takes the ramp's length and shares from config, scaled to bring the whole launch total", () => {
+    const twoDays = createSim({
       ...roomyDefaults,
+      launch: { rampShares: [1, 1] },
       productTypes: {
         ...roomyDefaults.productTypes,
         video: { ...roomyDefaults.productTypes.video, growth: { ...roomyDefaults.productTypes.video.growth, launchUsers: 2_500 } },
       },
     });
-    const { log, state } = bursty.advance(fresh(bursty, "saas", "video"), 2);
-    // Video's free share is 60%: 1,000 of the 2,500 pay.
-    expect(state).toMatchObject({ launchDay: 3, users: 2_500, paidUsers: 1_000 });
-    expect(bursty.launch(state)).toMatchObject({ users: 2_500, paidUsers: 1_000 });
-    expect(log.at(-1)!.entries[0]).toEqual({
-      text: "Launch day: your first 2,500 users arrived, 1,000 of them paying.",
-      cashDelta: 0,
-      kind: "launch",
-    });
-    // From the next day, the product's normal daily growth.
-    const next = bursty.advance(state).state;
-    expect(next.users).toBeGreaterThan(2_500);
-    expect(next.users).toBeLessThan(2_500 * (1 + 2 * defaultConfig.productTypes.video.growth.dailyGrowth));
+    const state = fresh(twoDays, "saas", "video");
+    // Half on each day. Video's free share is 60%, so 40% of each day's arrivals pay.
+    expect(state).toMatchObject({ launchDay: 1, users: 1_250, paidUsers: 500 });
+    // A free user or two may start paying on the way, as on any day.
+    const both = twoDays.advance(state).state;
+    expect(both.users).toBe(2_500);
+    expect(both.paidUsers - 1_000).toBeGreaterThanOrEqual(0);
+    expect(both.paidUsers - 1_000).toBeLessThanOrEqual(5);
+    expect(twoDays.launch(state)).toMatchObject({ rampDays: 2, users: 2_500, paidUsers: 1_000 });
     for (const p of PRODUCT_TYPE_IDS) {
       const { users, paidUsers } = playTo(defaults, fresh(defaults, "saas", p), 3);
       const { growth, pricing } = defaultConfig.productTypes[p];
       expect(users, p).toBe(growth.launchUsers);
-      expect(paidUsers, p).toBe(Math.round(growth.launchUsers * (1 - pricing.freeShare)));
+      // Each day rounded on its own, and a few free users converting on the way.
+      expect(Math.abs(paidUsers - growth.launchUsers * (1 - pricing.freeShare)), p).toBeLessThanOrEqual(5);
     }
   });
 
-  it("puts more of the launch burst on the free tier at a price set above the fair one before launch", () => {
-    const fair = playTo(defaults, fresh(defaults, "saas", "ecommerce"), 3);
-    const dear = playTo(defaults, defaults.applyAction(fresh(defaults, "saas", "ecommerce"), { type: "setPrice", price: 10 }), 3);
-    // A shop's paid share is 70% at its £5 fair price; at twice that, half as many pay.
-    expect(fair).toMatchObject({ users: 3_000, paidUsers: 2_100 });
-    expect(dear).toMatchObject({ users: 3_000, paidUsers: 1_050 });
+  it("puts more of the arrivals on the free tier at a price set above the fair one before they come", () => {
+    const setUpWithPrice = (price?: number) => {
+      const st = setUp(defaults, fresh(defaults, "iaas", "ecommerce"));
+      return price ? defaults.applyAction(st, { type: "setPrice", price }) : st;
+    };
+    // A shop's paid share is 70% at its £5 fair price; at twice that, half as many pay. A free user or two may start
+    // paying on the way, as on any day.
+    const fair = playTo(defaults, setUpWithPrice(), 4);
+    const dear = playTo(defaults, setUpWithPrice(10), 4);
+    expect([fair.users, dear.users]).toEqual([3_000, 3_000]);
+    expect(Math.abs(fair.paidUsers - 2_100)).toBeLessThanOrEqual(5);
+    expect(Math.abs(dear.paidUsers - 1_050)).toBeLessThanOrEqual(5);
   });
 
-  it("has no users, income, tickets or outages before launch, while staff, running costs and the loan are charged", () => {
-    // A provider outage and a broken patch on day 2, before anything is running: neither touches the company.
+  it("has no users, income, tickets or outages before the first users arrive, while staff, running costs and the loan are charged", () => {
+    // A provider outage and a broken patch on days 2 and 3, before anything is running: neither touches the company.
     const s = createSim({
       ...roomyDefaults,
       events: roomyDefaults.events.map((e) =>
@@ -416,14 +436,14 @@ describe("launch", () => {
     expect(state.cash).toBeLessThan(start.cash);
   });
 
-  it("lets a test config launch as the game starts, with its starter setup in place", () => {
+  it("lets a test config launch in full as the game starts, with its starter setup in place", () => {
     const state = start();
     expect(state).toMatchObject({ launchDay: 1, users: 1000 });
-    expect(sim.launch(state)).toMatchObject({ status: "launched", day: 1 });
-    const later = createSim({ ...config, launch: { earliestDay: 3 } });
-    const waiting = later.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1 });
-    expect(waiting).toMatchObject({ launchDay: null, users: 0, load: 0 });
-    expect(later.launch(waiting)).toMatchObject({ day: 3, daysLeft: 2, users: 1000, paidUsers: 0 });
+    expect(sim.launch(state)).toMatchObject({ status: "launched", day: 1, rampDays: 1 });
+    const ramped = createSim({ ...config, launch: { rampShares: [0.5, 0.5] } });
+    const half = ramped.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1 });
+    expect(half).toMatchObject({ launchDay: 1, users: 500 });
+    expect(ramped.launch(half)).toMatchObject({ status: "launching", rampDay: 1, users: 1000, paidUsers: 0 });
   });
 });
 
@@ -1286,7 +1306,7 @@ describe("servers on IaaS", () => {
     for (const p of PRODUCT_TYPE_IDS) {
       expect(s.newGame({ companyName: "Acme", productType: p, model: "iaas", seed: 1 }).servers).toEqual([]);
       const state = launched(s, s.newGame({ companyName: "Acme", productType: p, model: "iaas", seed: 1 }));
-      expect(state.launchDay, p).toBe(3);
+      expect(state.launchDay, p).toBe(2);
       expect(s.opsNeededNow(state), p).toBe(1);
       expect(s.units(state)!.usersSupported, p).toBeGreaterThan(state.users * 1.5);
     }
@@ -1934,11 +1954,11 @@ describe("default PaaS and SaaS", () => {
     expect(saas.servers).toBeUndefined();
   });
 
-  it("launches PaaS on day 3 with one instance and a small database, carrying every launch burst with room to grow", () => {
+  it("launches PaaS on day 2 with one instance and a small database, carrying every launch total with room to grow", () => {
     for (const p of PRODUCT_TYPE_IDS) {
       expect(s.managed(s.newGame({ companyName: "Acme", productType: p, model: "paas", seed: 1 }))!.instances).toBe(0);
       const state = launched(s, s.newGame({ companyName: "Acme", productType: p, model: "paas", seed: 1 }));
-      expect(state.launchDay, p).toBe(3);
+      expect(state.launchDay, p).toBe(2);
       expect(s.managed(state)!.instances, p).toBeLessThanOrEqual(2);
       expect(s.units(state)!.usersSupported, p).toBeGreaterThan(state.users * 1.5);
       expect(s.advance(state, 7).state.outageDays, p).toBe(0);
@@ -3412,7 +3432,7 @@ describe("migration with servers", () => {
     events: [],
     migration: { ...defaultConfig.migration, overrun: { ...defaultConfig.migration.overrun, chance: 0 } },
     // Each model's round-two starter setup above, in place and launched as the game starts.
-    launch: { earliestDay: 1 },
+    launch: { rampShares: [1] },
   };
   const s = createSim(calm);
   const migrate = (model: ModelId): Action => ({ type: "startMigration", model });
@@ -4182,10 +4202,10 @@ describe("default events", () => {
     expect(effects.saas).toEqual({ detail: expect.any(String) });
   });
 
-  it("fire an OS patch on day 3, so a company that launches on time meets an event on launch day", () => {
+  it("fire an OS patch on day 3, so a company set up on day 1 meets an event as its first users arrive", () => {
     const s = createSim(defaultConfig);
-    const state = launched(s, s.newGame({ companyName: "Acme", productType: "social", model: "paas", seed: 7 }));
-    expect(state.day).toBe(3);
+    const state = s.advance(setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: "paas", seed: 7 })), 2).state;
+    expect(state).toMatchObject({ day: 3, launchDay: 2 });
     expect(s.events(state).map((e) => e.id)).toEqual(["osPatch"]);
   });
 

@@ -32,7 +32,7 @@ export interface Strategy {
   /**
    * "ahead" adds servers ahead of demand (and on IaaS and PaaS, drops ones it doesn't need); "reactive" scales the
    * same way, but only once a tier has filled up; "none" keeps its launch setup. Every strategy sets up servers for the
-   * launch burst on day 1 (see playDay).
+   * launch total on day 1 (see playDay).
    */
   scaling: "ahead" | "reactive" | "none";
   /**
@@ -99,7 +99,7 @@ export interface GameResult {
   outcome: "finished" | "bankrupt" | "cant-start";
   /** The last day played. */
   day: number;
-  /** The day it launched: its first users arrived. Null if it never did. */
+  /** The day it launched: its first users arrived, starting the ramp. Null if it never did. */
   launchDay: number | null;
   cash: number;
   /** The lowest cash at the end of any day. */
@@ -144,15 +144,17 @@ function staffTo(sim: Sim, state: GameState, pool: "ops" | "support", target: nu
 }
 
 /**
- * How far ahead of demand the bot keeps capacity: the growth it has seen over the last week (before it has seen any,
- * at launch, the product's daily growth), compounded over the days until a server added today would serve (10 days
- * for on-prem kit, the next day on IaaS, at once on PaaS), with a margin for the product's day-to-day ups and downs in
- * load.
+ * How far ahead of demand the bot keeps capacity: the growth it has seen over the last week since the launch ramp
+ * (before it has seen any, the product's daily growth), compounded over the days until a server added today would
+ * serve (10 days for on-prem kit, the next day on IaaS, at once on PaaS), with a margin for the product's day-to-day
+ * ups and downs in load.
  */
 function ahead(sim: Sim, state: GameState): number {
   const lead = sim.config.models[state.model].servers?.readyDays ?? 0;
   const { growth } = sim.config.productTypes[state.productType];
-  const week = state.spendByDay.filter((d) => d.users > 0).slice(-8);
+  const launch = sim.launch(state);
+  const rampOver = state.launchDay === null ? Infinity : state.launchDay + launch.rampDays - 1;
+  const week = state.spendByDay.filter((d) => d.day >= rampOver && d.users > 0).slice(-8);
   const daily = week.length > 1 ? (state.users / week[0]!.users) ** (1 / (week.length - 1)) : 1 + growth.dailyGrowth;
   const margin = 1.05 + growth.loadNoise;
   return Math.max(1, daily) ** (lead + 1) * margin;
@@ -170,17 +172,18 @@ function peakSoon(sim: Sim, state: GameState): boolean {
 }
 
 /**
- * The units view, with demand replaced by what the bot plans for: the users' usual demand (before launch, the launch
- * burst's), times how far ahead it plans, and times the product's seasonal peak when one is due before new servers
- * would be ready (a shop knows when its sales are). So it doesn't buy servers for a two-day traffic spike that triples
- * demand.
+ * The units view, with demand replaced by what the bot plans for: the users' usual demand (until the launch ramp
+ * ends, the launch total's), times how far ahead it plans, and times the product's seasonal peak when one is due before
+ * new servers would be ready (a shop knows when its sales are). So it doesn't buy servers for a two-day traffic spike
+ * that triples demand.
  */
 function plannedUnits(sim: Sim, state: GameState, strategy: Strategy): UnitsView | null {
   const units = sim.units(state);
   if (!units) return null;
   const product = sim.config.productTypes[state.productType];
   const launch = sim.launch(state);
-  const users = launch.status === "launched" ? state.users : launch.users;
+  // Until all its launch users are in, it plans for all of them.
+  const users = launch.status === "launched" ? state.users : Math.max(state.users, launch.users);
   const peak = strategy.scaling === "ahead" && peakSoon(sim, state) ? (product.growth.seasonalSpike?.loadMultiplier ?? 1) : 1;
   const plan = users * peak * ahead(sim, state);
   const dbu = plan * product.demand.dbuPerUser;
@@ -307,7 +310,7 @@ export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameSta
   }
   const units = sim.units(s);
   const full = !!units && (units.cu.demand >= units.cu.capacity || units.dbu.demand >= units.dbu.capacity);
-  // Before launch, every strategy sets up servers for the launch burst: the first decision.
+  // Before and over the launch ramp, every strategy sets up servers for the launch total: the first decision.
   const launching = sim.launch(s).status !== "launched";
   if (launching || strategy.scaling === "ahead" || (strategy.scaling === "reactive" && full)) {
     s = s.model === "paas" ? scaleManaged(sim, s, strategy) : scaleServers(sim, s, strategy);

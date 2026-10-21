@@ -39,8 +39,9 @@ const FIRST_SETUP: Record<string, object[]> = {
 };
 
 /**
- * Sets up a company's first servers through the API, as a student would on day 1, then plays on to its launch: the end
- * of day 3, or on-prem when its kit arrives. Returns the company then.
+ * Sets up a company's first servers through the API, as a student would on day 1, then plays on until all its launch
+ * users have arrived: the end of day 3 on SaaS, day 4 on IaaS and PaaS, and on-prem day 13, two days after its kit
+ * arrives. Returns the company then.
  */
 export async function launch(request: APIRequestContext, code: string, id: string, model: string) {
   const url = `/api/codes/${code}/companies/${id}`;

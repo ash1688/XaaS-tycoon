@@ -18,14 +18,14 @@ async function newCompany(browser: Browser, request: APIRequestContext, name: st
   return student;
 }
 
-test("on IaaS, VMs rented on day 1 launch the company on day 3 with its first users", async ({ browser, request }) => {
+test("on IaaS, VMs rented on day 1 bring the first users on day 2, building up over 3 days", async ({ browser, request }) => {
   const student = await newCompany(browser, request, "Launch Ltd");
   const card = student.getByTestId("launch-card");
-  // No users and nothing set up yet: the users can come on day 3 at the earliest.
+  // No users and nothing set up yet: waiting for capacity.
   await expect(student.getByTestId("users")).toHaveText("0");
-  await expect(card).toHaveAttribute("data-status", "upcoming");
-  await expect(student.getByTestId("launch-headline")).toHaveText("Launch in 2 days");
-  await expect(student.getByTestId("launch-text")).toContainText("can arrive at the end of day 3");
+  await expect(card).toHaveAttribute("data-status", "waiting");
+  await expect(student.getByTestId("launch-headline")).toHaveText("Waiting for capacity");
+  await expect(student.getByTestId("launch-text")).toContainText("Nothing is set up to serve users yet");
   const servers = student.getByTestId("launch-step-servers");
   await expect(servers).toContainText("Rent your first servers: an app server and a database");
   await expect(servers).toContainText("(to do)");
@@ -42,30 +42,40 @@ test("on IaaS, VMs rented on day 1 launch the company on day 3 with its first us
     await expect(panel.getByTestId(`step-${type}-value`)).toHaveText("1 medium");
   }
 
-  // Ready the next day, so the company launches on day 3. They need an ops person: a new company has one.
+  // Ready the next day, so the first users arrive then. They need an ops person: a new company has one.
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Home", exact: true }).click();
-  await expect(student.getByTestId("launch-text")).toHaveText("Your first 4,000 users arrive at the end of day 3.");
+  await expect(card).toHaveAttribute("data-status", "upcoming");
+  await expect(student.getByTestId("launch-headline")).toHaveText("Launch in 1 day");
+  await expect(student.getByTestId("launch-text")).toHaveText(
+    "Your first users start arriving at the end of day 2, when your servers are ready, building up over 3 days to 4,000 users.",
+  );
   await expect(servers).toContainText("(done)");
   await expect(student.getByTestId("launch-step-ops")).toContainText("Hire ops: 1 needed");
   await expect(student.getByTestId("launch-step-ops")).toContainText("(done)");
 
-  await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
-  await expect(student.getByTestId("launch-headline")).toHaveText("Launch in 1 day");
-  await expect(student.getByTestId("users")).toHaveText("0");
-
-  await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`3 of ${E2E_FINAL_DAY}`);
-  await expect(student.getByTestId("users")).toHaveText("4,000");
+  // 20%, 30% and 50% of the social network's 4,000 arrive over days 2 to 4.
+  const ramp = [
+    { day: 2, users: "800", headline: "Launching: users arriving (day 1 of 3)" },
+    { day: 3, users: "2,000", headline: "Launching: users arriving (day 2 of 3)" },
+    { day: 4, users: "4,000", headline: "Launched on day 2" },
+  ];
+  for (const { day, users, headline } of ramp) {
+    await student.getByRole("button", { name: "Continue" }).click();
+    await expect(student.getByTestId("day")).toContainText(`${day} of ${E2E_FINAL_DAY}`);
+    await expect(student.getByTestId("users")).toHaveText(users);
+    await expect(student.getByTestId("launch-headline")).toHaveText(headline);
+  }
   await expect(card).toHaveAttribute("data-status", "launched");
-  await expect(student.getByTestId("launch-headline")).toHaveText("Launched on day 3");
   await student.getByRole("button", { name: "Day log" }).click();
-  await expect(student.getByRole("dialog", { name: "Day log" }).getByTestId("launch")).toHaveText(
-    "Launch day: your first 4,000 users arrived, 1,200 of them paying.",
+  // The day log has each day's arrivals; the last says the ramp is over.
+  const arrivals = student.getByRole("dialog", { name: "Day log" }).getByTestId("launch");
+  await expect(arrivals).toHaveCount(3);
+  await expect(arrivals.filter({ hasText: "day 3 of 3" })).toHaveText(
+    "Launch, day 3 of 3: 2,000 new users arrived, 600 of them paying. That's everyone: normal growth takes over from tomorrow.",
   );
 });
 
-test("a company that sets nothing up waits for capacity after day 3", async ({ browser, request }) => {
+test("a company that sets nothing up waits for capacity, with no users", async ({ browser, request }) => {
   const student = await newCompany(browser, request, "Waiting Ltd");
   for (const day of [2, 3]) {
     await student.getByRole("button", { name: "Continue" }).click();
@@ -73,11 +83,12 @@ test("a company that sets nothing up waits for capacity after day 3", async ({ b
   }
   await expect(student.getByTestId("launch-card")).toHaveAttribute("data-status", "waiting");
   await expect(student.getByTestId("launch-headline")).toHaveText("Waiting for capacity");
-  await expect(student.getByTestId("launch-text")).toContainText("Day 3 has passed and nothing is set up to serve users");
+  await expect(student.getByTestId("launch-text")).toContainText("Nothing is set up to serve users yet");
+  await expect(student.getByTestId("launch-step-servers")).toContainText("(to do)");
   await expect(student.getByTestId("users")).toHaveText("0");
 });
 
-test("on PaaS, a managed database added from the empty state launches the company on day 3", async ({
+test("on PaaS, a managed database added from the empty state brings users from day 2", async ({
   browser,
   request,
 }) => {
@@ -113,11 +124,11 @@ test("on PaaS, a managed database added from the empty state launches the compan
   await platform.getByRole("button", { name: "Remove the cache" }).click();
   await expect(platform.getByTestId("managed-cache-value")).toHaveText("None");
 
-  for (const day of [2, 3]) {
+  for (const day of [2, 3, 4]) {
     await student.getByRole("button", { name: "Continue" }).click();
     await expect(student.getByTestId("day")).toContainText(`${day} of ${E2E_FINAL_DAY}`);
   }
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Home", exact: true }).click();
-  await expect(student.getByTestId("launch-headline")).toHaveText("Launched on day 3");
+  await expect(student.getByTestId("launch-headline")).toHaveText("Launched on day 2");
   await expect(student.getByTestId("users")).toHaveText("4,000");
 });

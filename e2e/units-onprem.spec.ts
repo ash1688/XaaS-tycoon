@@ -17,9 +17,10 @@ test("on-prem, buying a server charges it up front and shows it on order, counti
     data: { name: "Kit Ltd", productType: "social", model: "onprem", takeLoan: true },
   });
   const { id } = await created.json();
-  // A large app server and database bought on day 1 arrive on day 11, and the users with them.
-  const { cash, day } = await launch(request, code, id, "onprem");
-  expect(day).toBe(11);
+  // A large app server and database bought on day 1 arrive on day 11, and the users start arriving with them.
+  const { cash, day, launch: started } = await launch(request, code, id, "onprem");
+  expect(started.day).toBe(11);
+  expect(day).toBe(13);
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
@@ -54,7 +55,7 @@ test("on-prem, buying a server charges it up front and shows it on order, counti
 
   // A day on, one fewer day to wait; Home's capacity card notes it.
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`12 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("day")).toContainText(`14 of ${E2E_FINAL_DAY}`);
   await expect(order).toContainText("Arrives in 9 days");
 
   // Selling says what you get back, at a loss. Keep it, though.

@@ -134,13 +134,15 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   }
 
   // Customers
-  add("launch.earliestDay", "Customers", "", "Earliest launch day", "A company launches at the end of this day, or of the first day after it with servers ready to serve users. Its launch burst of users arrives then.", range(1, 365, 1));
+  (base.launch?.rampShares ?? []).forEach((_, i) => {
+    add(`launch.rampShares.${i}`, "Customers", "Launch", `Launch ramp: share on day ${i + 1}`, "Share of the launch users arriving on this day of the launch ramp, from the first day with servers ready. The days' shares are scaled to add up to the whole launch total.", SHARE);
+  });
   for (const p of PRODUCT_TYPE_IDS) {
     const product = base.productTypes[p];
     if (!product) continue;
     const s = product.name;
     const g = `productTypes.${p}.growth`;
-    add(`${g}.launchUsers`, "Customers", s, "Launch burst (users)", "Users who arrive on launch day, split paid and free by the free share. Normal growth follows.", range(0, 1_000_000, 100));
+    add(`${g}.launchUsers`, "Customers", s, "Launch users", "Users who trickle in over the launch ramp, split paid and free by the free share. Normal growth follows.", range(0, 1_000_000, 100));
     add(`${g}.marketSize`, "Customers", s, "Market size", "Users the product can reach. Growth slows as users approach it.", range(1, 10_000_000, 1_000));
     add(`${g}.dailyGrowth`, "Customers", s, "Daily growth", "Share of users added each day while the market is wide open (0.05 = 5%).", range(0, 1, 0.005));
     add(`${g}.growthNoise`, "Customers", s, "Growth variation", "Daily growth varies randomly by up to this share either way.", SHARE);
@@ -363,7 +365,6 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
     ["migration.overrun.minDays", "migration.overrun.maxDays", "The most extra days can't be fewer than the fewest."],
     ["support.poorSatisfaction", "support.goodSatisfaction", "Good satisfaction can't be below poor satisfaction."],
     ["loan.minDays", "finalDay", "The fewest repayment days can't be more than the game's length."],
-    ["launch.earliestDay", "finalDay", "The earliest launch day can't be after the game's last day."],
     // A new company starts at the fair price, so it has to be one the student could set.
     ...PRODUCT_TYPE_IDS.filter((p) => base.productTypes[p]).map((p): [string, string, string] => [
       `productTypes.${p}.pricing.fairPrice`,

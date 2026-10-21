@@ -7,6 +7,19 @@ import { createCode, launch } from "./staff.ts";
 const goTo = (page: Page, name: string) =>
   page.getByRole("navigation", { name: "Game" }).getByRole("link", { name, exact: true }).click();
 
+/**
+ * Pins a launched company's paying users to the product's split of its launch users, as if no free user had started
+ * paying on the way in, so a test's sums come out round.
+ */
+async function pinPaidUsers(id: string, paidUsers: number) {
+  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
+  try {
+    await sql`update companies set state = jsonb_set(state, '{paidUsers}', ${String(paidUsers)}::jsonb) where id = ${id}`;
+  } finally {
+    await sql.end();
+  }
+}
+
 // The full day log opens as a modal from its card on Home. Returns the latest day in it.
 async function openDayLog(page: Page) {
   await goTo(page, "Home");
@@ -52,7 +65,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   // Home's overview cards. £15,000 starting cash less IaaS's £2,000 upfront cost, and no users or servers until launch.
   await expect(student.getByTestId("cash")).toHaveText("£13,000");
   await expect(student.getByTestId("users")).toHaveText("0");
-  await expect(student.getByTestId("launch-headline")).toHaveText("Launch in 2 days");
+  await expect(student.getByTestId("launch-headline")).toHaveText("Waiting for capacity");
 
   // Infrastructure: CU, DBU and CH against capacity, the servers and the responsibility stack, on its own page.
   await goTo(student, "Infrastructure");
@@ -122,10 +135,10 @@ test("teacher creates a code, student starts a game and presses Continue", async
 
   await goTo(student, "Home");
   // £66 of IaaS (£33 running costs and £15 and £18 of VM rent, each a month ÷ 30) + 3 developers × £120 + 1 ops × £120
-  // + 1 support × £100 out, and nothing in: the users arrive at the end of day 3.
+  // + 1 support × £100 out, and nothing in: the first users arrive at the end of day 2, 800 of the 4,000.
   await expect(student.getByTestId("cash")).toHaveText("£12,354");
-  await expect(student.getByTestId("users")).toHaveText("0");
-  await expect(student.getByTestId("launch-headline")).toHaveText("Launch in 1 day");
+  await expect(student.getByTestId("users")).toHaveText("800");
+  await expect(student.getByTestId("launch-headline")).toHaveText("Launching: users arriving (day 1 of 3)");
   await expect(student.getByTestId("uptime")).toHaveText("100%");
   // The day log card has each category's total; its modal has every line.
   await expect(student.getByTestId("home-day-log").locator('[data-category="staff"]')).toContainText("£580");
@@ -143,7 +156,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await elsewhere.getByRole("button", { name: "Go" }).click();
   await elsewhere.getByRole("link", { name: /Playwright Ltd/ }).click();
   await expect(elsewhere.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
-  await expect(elsewhere.getByTestId("launch-text")).toContainText("arrive at the end of day 3");
+  await expect(elsewhere.getByTestId("users")).toHaveText("800");
   await goTo(elsewhere, "People");
   await expect(elsewhere.getByTestId("developers-count")).toHaveText("3");
   // A page opens straight from its address, as a bookmark would.
@@ -230,7 +243,7 @@ test("a SaaS company buys an add-on and pays for it per user", async ({ browser,
     data: { name: "Shopfront Ltd", productType: "social", model: "saas" },
   });
   const { id } = await created.json();
-  // SaaS needs nothing set up: it launches on day 3 with the social network's 4,000 users.
+  // SaaS needs nothing set up: the social network's 4,000 users arrive over days 1 to 3.
   await launch(request, code, id, "saas");
 
   const student = await (await browser.newContext()).newPage();
@@ -282,7 +295,7 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
     data: { name: "Movers Ltd", productType: "social", model: "iaas" },
   });
   const { id } = await created.json();
-  // Its first VMs rented on day 1, launching on day 3.
+  // Its first VMs rented on day 1: all its launch users are in by day 4.
   await launch(request, code, id, "iaas");
 
   const student = await (await browser.newContext()).newPage();
@@ -298,7 +311,7 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
   await student.getByRole("button", { name: "Plan migration" }).click();
   await expect(panel.getByRole("heading", { name: "Migrate to Deploy to a platform (PaaS)?" })).toBeVisible();
   const quote = student.getByTestId("migration-quote");
-  await expect(quote).toContainText("You switch on day 17");
+  await expect(quote).toContainText("You switch on day 18");
   await expect(student.getByTestId("quote-days")).toHaveText("14 days");
   // Default config: PaaS is £1,000 upfront and £110 a day with one instance and a small managed database, sized for the
   // users; IaaS £66 a day with its VMs, and £3,000 to leave.
@@ -310,8 +323,8 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
   await expect(student.getByTestId("quote-overrun")).toContainText("chance of 2–5 extra days");
   // Nothing has started or been charged yet.
   const company = async () => (await request.get(`/api/codes/${code}/companies/${id}`)).json();
-  // IaaS's £2,000 up front and two days of its £66.
-  expect(await company()).toMatchObject({ migration: null, spend: { infrastructure: 2132 } });
+  // IaaS's £2,000 up front and three days of its £66.
+  expect(await company()).toMatchObject({ migration: null, spend: { infrastructure: 2198 } });
   await student.getByRole("button", { name: "Start migration" }).click();
   await expect(quote).toHaveCount(0);
 
@@ -332,7 +345,7 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
     await student.getByRole("button", { name: "Continue" }).click();
     await expect(student.getByTestId("day")).toContainText(`${day} of ${E2E_FINAL_DAY}`);
   };
-  for (let day = 4; day <= 8; day++) await continueTo(day);
+  for (let day = 5; day <= 9; day++) await continueTo(day);
   // Still on IaaS, and billed for it, until the move completes; PaaS is billed in full on top.
   await expect(student.getByTestId("ops-needed")).toContainText("needs 1 ops staff");
   await goTo(student, "Infrastructure");
@@ -347,13 +360,13 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
   await expect(infrastructure).toContainText("Double billing: Deploy to a platform (PaaS) running costs");
   await student.keyboard.press("Escape");
 
-  // Moving starts on day 10. Seeds are random here, so it may overrun: if so, the panel shows the extra days.
+  // Moving starts on day 11. Seeds are random here, so it may overrun: if so, the panel shows the extra days.
   await goTo(student, "Infrastructure");
-  for (let day = 9; day <= 10; day++) await continueTo(day);
+  for (let day = 10; day <= 11; day++) await continueTo(day);
   const daysLeft = Number((await student.getByTestId("migration-days-left").textContent())!.split(" ")[0]);
   if (daysLeft > 7) await expect(student.getByTestId("migration-overrun")).toContainText(`${daysLeft - 7} days`);
   else await expect(student.getByTestId("migration-overrun")).toHaveCount(0);
-  for (let day = 11; day <= 10 + daysLeft; day++) await continueTo(day);
+  for (let day = 12; day <= 11 + daysLeft; day++) await continueTo(day);
   await expect(panel).toContainText("1 completed");
   await expect(stack.locator('[data-layer="os"]')).toContainText("Provider");
   await expect(stack.locator('[data-layer="os"]')).toContainText("was You");
@@ -829,8 +842,9 @@ test("a student sets a price, plays a day and sees the income on Finance", async
     data: { name: "Pricey Ltd", productType: "social", model: "iaas" },
   });
   const { id } = await created.json();
-  // Its first VMs rented on day 1, launching on day 3.
+  // Its first VMs rented on day 1: all its launch users are in by day 4.
   await launch(request, code, id, "iaas");
+  await pinPaidUsers(id, 1_200);
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
@@ -863,16 +877,19 @@ test("a student sets a price, plays a day and sees the income on Finance", async
 
   // It applies from the next day: 1,200 paying users at £30 a month bring in £1,200.
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`4 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("day")).toContainText(`5 of ${E2E_FINAL_DAY}`);
   await goTo(student, "Finance");
   const sheet = student.getByTestId("balance-sheet");
-  await expect(sheet).toContainText("Day 4");
+  await expect(sheet).toContainText("Day 5");
   await expect(student.getByTestId("balance-day-income")).toHaveText("£1,200");
-  await expect(student.getByTestId("balance-income")).toHaveText("£1,200");
-  // £1,200 in, against IaaS's £2,000 upfront and £66 a day, and 2 developers, 1 ops person and 1 support person
-  // (£460 a day), for the 3 days played.
-  await expect(student.getByTestId("balance-profit")).toHaveText("−£2,378");
+  // Against it, IaaS's £66 a day and 2 developers, 1 ops person and 1 support person (£460 a day). Over the game so
+  // far, the income from the days users were arriving too, against IaaS's £2,000 up front and 4 days' costs.
   await expect(student.getByTestId("balance-day-profit")).toHaveText("£674");
+  const { income, spend } = await (await request.get(`/api/codes/${code}/companies/${id}`)).json();
+  const profit = income - (spend.staff + spend.infrastructure + spend.addons);
+  expect(spend.staff + spend.infrastructure).toBe(2_000 + 4 * 526);
+  await expect(student.getByTestId("balance-income")).toHaveText(`£${income.toLocaleString("en-GB")}`);
+  await expect(student.getByTestId("balance-profit")).toHaveText(`−£${(-profit).toLocaleString("en-GB")}`);
   await expect(student.getByTestId("cash-chart")).toBeVisible();
   await expect((await openDayLog(student)).getByTestId("log-income")).toHaveText("+£1,200");
 });
@@ -890,8 +907,9 @@ test("a student previews prices live, raises the price, and sees the backlash an
     data: { name: "Wave Ltd", productType: "social", model: "iaas" },
   });
   const { id } = await created.json();
-  // Its first VMs rented on day 1, launching on day 3.
+  // Its first VMs rented on day 1: all its launch users are in by day 4.
   await launch(request, code, id, "iaas");
+  await pinPaidUsers(id, 1_200);
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}/product`);
@@ -925,7 +943,7 @@ test("a student previews prices live, raises the price, and sees the backlash an
 
   // The next day the backlash starts and the lock counts down.
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`4 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("day")).toContainText(`5 of ${E2E_FINAL_DAY}`);
   await expect(student.getByTestId("wave-progress")).toContainText("Day 1 of 7");
   await expect(student.getByTestId("price-lock")).toHaveText("13 days");
 
@@ -958,9 +976,9 @@ test("a SaaS company without support builds a backlog, hires support from Home a
     data: { name: "Helpdesk Ltd", productType: "ecommerce", model: "saas" },
   });
   const { id } = await created.json();
-  await request.post(`/api/codes/${code}/companies/${id}/actions`, { data: { type: "letGo", pool: "support" } });
-  // SaaS launches on day 3, with the shop's 3,000 users.
+  // SaaS needs nothing set up: the shop's 3,000 users arrive over days 1 to 3, answered as they come.
   await launch(request, code, id, "saas");
+  await request.post(`/api/codes/${code}/companies/${id}/actions`, { data: { type: "letGo", pool: "support" } });
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
@@ -1016,7 +1034,7 @@ test("free users start paying each day, and Customers shows what's helping or hu
   await teacher.getByRole("button", { name: "Sign in" }).click();
   const code = await createCode(teacher);
 
-  // A social network: 2,800 of the 4,000 users it launches with on day 3 are free.
+  // A social network: about 2,800 of the 4,000 users who have arrived by day 4 are free.
   const created = await request.post(`/api/codes/${code}/companies`, {
     data: { name: "Upgrade Ltd", productType: "social", model: "iaas" },
   });
@@ -1025,10 +1043,10 @@ test("free users start paying each day, and Customers shows what's helping or hu
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
-  await expect(student.getByTestId("home-conversions")).toContainText("0 free users started paying");
+  await expect(student.getByTestId("home-conversions")).toContainText(/^\d+ free users? started paying/);
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`4 of ${E2E_FINAL_DAY}`);
-  await expect(student.getByTestId("home-conversions")).toContainText(/[1-9]\d* free users? started paying on day 4/);
+  await expect(student.getByTestId("day")).toContainText(`5 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("home-conversions")).toContainText(/[1-9]\d* free users? started paying on day 5/);
 
   // Customers shows the day's conversions, the rate, and each driver: with 100% uptime and satisfaction, those help.
   await goTo(student, "Customers");

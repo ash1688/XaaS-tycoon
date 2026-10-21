@@ -18,7 +18,7 @@ test("on IaaS, renting an app server and a load balancer grows the CU capacity b
   const { id } = await created.json();
   // A second ops person for the extra servers, so no tier is cut for missing ops.
   await request.post(`/api/codes/${code}/companies/${id}/actions`, { data: { type: "hire", pool: "ops" } });
-  // A first setup rented on day 1, launching on day 3 with the social network's 4,000 users.
+  // A first setup rented on day 1: the social network's 4,000 users arrive over days 2 to 4.
   await launch(request, code, id, "iaas");
 
   const student = await (await browser.newContext()).newPage();
@@ -68,7 +68,7 @@ test("on IaaS, renting an app server and a load balancer grows the CU capacity b
 
   // The next day they're ready: the load balancer covers both app servers, so CU grows to 10 + 20.
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`4 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("day")).toContainText(`5 of ${E2E_FINAL_DAY}`);
   await expect(cu).toHaveAttribute("aria-valuemax", "30");
   await expect(student.getByTestId("tier-cu-figures")).toHaveText(/ \/ 30 CU$/);
   await expect(student.getByTestId("lb-status")).toContainText("1 load balancer serves your 2 app servers");

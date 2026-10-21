@@ -96,7 +96,7 @@ const sim = createSim({
       },
     },
   },
-  launch: { earliestDay: 1 },
+  launch: { rampShares: [1] },
   // Seeds are random here, so migrations never overrun.
   migration: { ...defaultConfig.migration, overrun: { ...defaultConfig.migration.overrun, chance: 0 } },
   // No starting staff, so continue charges only the model's running cost unless a test hires someone.
@@ -2390,44 +2390,74 @@ describe("meta", () => {
 });
 
 describe("launch", () => {
-  async function setup(model: string, earliestDay = 3) {
-    // New games wait for day 3, as by default.
-    await useOverrides({ "launch.earliestDay": earliestDay });
-    const code = await newCode();
-    const company = (await newCompany(code, { name: "Acme", productType: "ecommerce", model })).json<CompanyView>();
-    const url = `/api/codes/${code}/companies/${company.id}`;
-    const next = async () => (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
-    return { company, next };
+  // The default 3-day ramp, and IaaS with no starter setup, so a new IaaS company has nothing to serve users with.
+  const ramped = createSim({
+    ...sim.config,
+    launch: { rampShares: [0.2, 0.3, 0.5] },
+    models: {
+      ...sim.config.models,
+      iaas: { ...sim.config.models.iaas, servers: { ...sim.config.models.iaas.servers!, starter: [] } },
+    },
+  });
+  async function withRampedApp(test: (start: (model: string) => Promise<{ company: CompanyView; url: string }>, rampApp: Awaited<ReturnType<typeof buildApp>>) => Promise<void>) {
+    const rampApp = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), sim: ramped });
+    try {
+      const code = await newCode();
+      const start = async (model: string) => {
+        const payload = { name: "Acme", productType: "ecommerce", model };
+        const company = (await rampApp.inject({ method: "POST", url: `/api/codes/${code}/companies`, payload })).json<CompanyView>();
+        return { company, url: `/api/codes/${code}/companies/${company.id}` };
+      };
+      await test(start, rampApp);
+    } finally {
+      await rampApp.close();
+    }
   }
 
-  it("shows the launch day to come with no users, then the day it launched with the launch burst", async () => {
-    const { company, next } = await setup("iaas");
-    expect(company).toMatchObject({ day: 1, users: 0, paidUsers: 0 });
-    expect(company.launch).toEqual({
-      status: "upcoming",
-      day: 3,
-      daysLeft: 2,
-      earliestDay: 3,
-      users: STARTING_USERS.ecommerce,
-      paidUsers: 0,
-      needsServers: true,
-      setUp: true,
-      // The starter's medium app server and database, half an ops person each.
-      opsNeeded: 1,
-    });
-    expect((await next()).company).toMatchObject({ users: 0, launch: { status: "upcoming", daysLeft: 1 } });
-    const launched = await next();
-    expect(launched.company).toMatchObject({ day: 3, users: STARTING_USERS.ecommerce, launch: { status: "launched", day: 3, daysLeft: null } });
-    expect(launched.log.at(-1)!.entries).toContainEqual({
-      text: `Launch day: your first ${STARTING_USERS.ecommerce.toLocaleString("en-GB")} users arrived, 0 of them paying.`,
-      cashDelta: 0,
-      kind: "launch",
+  it("shows a company with no capacity waiting, with no users", async () => {
+    await withRampedApp(async (start, rampApp) => {
+      const { company, url } = await start("iaas");
+      expect(company).toMatchObject({ day: 1, users: 0, paidUsers: 0 });
+      expect(company.launch).toEqual({
+        status: "waiting",
+        day: null,
+        daysLeft: null,
+        rampDays: 3,
+        rampDay: 0,
+        users: STARTING_USERS.ecommerce,
+        paidUsers: 0,
+        arrived: 0,
+        needsServers: true,
+        setUp: false,
+        opsNeeded: 0,
+      });
+      const next = (await rampApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+      expect(next.company).toMatchObject({ day: 2, users: 0, launch: { status: "waiting" } });
     });
   });
 
-  it("is launched as the game starts on a config that allows it", async () => {
-    const { company } = await setup("saas", 1);
-    expect(company.launch).toMatchObject({ status: "launched", day: 1, needsServers: false });
+  it("trickles the launch users in over the ramp, then shows the day it launched", async () => {
+    await withRampedApp(async (start, rampApp) => {
+      // SaaS can serve users from day 1: the first 20% of the shop's 2,000 arrive as the game starts.
+      const { company, url } = await start("saas");
+      expect(company).toMatchObject({ users: 400, launch: { status: "launching", day: 1, rampDay: 1, arrived: 400 } });
+      const next = async () => (await rampApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+      const second = await next();
+      expect(second.company).toMatchObject({ users: 1_000, launch: { status: "launching", rampDay: 2, arrived: 1_000 } });
+      expect(second.log.at(-1)!.entries).toContainEqual({
+        text: "Launch, day 2 of 3: 600 new users arrived, 0 of them paying.",
+        cashDelta: 0,
+        kind: "launch",
+      });
+      const third = await next();
+      expect(third.company).toMatchObject({ users: 2_000, launch: { status: "launched", day: 1, rampDay: 3, arrived: 2_000 } });
+    });
+  });
+
+  it("is launched in full as the game starts on a config with a one-day ramp and servers in place", async () => {
+    const code = await newCode();
+    const company = (await newCompany(code, { name: "Acme", productType: "ecommerce", model: "iaas" })).json<CompanyView>();
+    expect(company).toMatchObject({ users: STARTING_USERS.ecommerce, launch: { status: "launched", day: 1, rampDays: 1 } });
   });
 });
 

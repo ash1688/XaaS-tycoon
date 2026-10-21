@@ -206,8 +206,8 @@ export interface GameState {
   /** Support staff: they answer customers' tickets, on every model. */
   support: number;
   /**
-   * The day the company launched: its launch burst of users arrived at the end of it. Null until then, when it has no
-   * users (see LaunchConfig).
+   * The day the company launched: its first users arrived at the end of it, the first day of the launch ramp. Null until
+   * then, when it has no users (see LaunchConfig).
    */
   launchDay: number | null;
   /** Every user, paying or free. Free users add load and per-user fees just like paying ones. */
@@ -224,11 +224,11 @@ export interface GameState {
   priceChanges: PriceChange[];
   /** Everything paying users have paid so far. Not part of spend: profit is income − spend. */
   income: number;
-  /** Load on the day just played. On launch day, the launch burst's usual load: what tomorrow brings. */
+  /** Load on the day just played. Over the launch ramp, the usual load of the users there now: what tomorrow brings. */
   load: number;
   /**
-   * CU and DBU demand on the day just played, on any model. Only a model with servers serves it in units. On launch
-   * day, the launch burst's usual demand.
+   * CU and DBU demand on the day just played, on any model. Only a model with servers serves it in units. Over the
+   * launch ramp, the usual demand of the users there now.
    */
   demand: UnitDemand;
   /** The servers the company has, ready or not, oldest first. Empty on a model without servers. */

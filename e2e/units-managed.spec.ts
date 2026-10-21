@@ -10,7 +10,7 @@ async function newCompany(browser: Browser, request: APIRequestContext, name: st
   const code = await createCode(teacher);
   const created = await request.post(`/api/codes/${code}/companies`, { data: { name, productType: "social", model } });
   const { id } = await created.json();
-  // Its first setup on day 1, launching on day 3 with the social network's 4,000 users.
+  // Its first setup on day 1: the social network's 4,000 users arrive over the next 3 days.
   await launch(request, code, id, model);
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
@@ -57,7 +57,7 @@ test("on PaaS, raising the instance count grows CU capacity at once, with manage
 
   // Billed from the next day, in infrastructure: no load balancer line.
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`4 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("day")).toContainText(`5 of ${E2E_FINAL_DAY}`);
   await expect(cu).toHaveAttribute("aria-valuemax", "30");
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Home", exact: true }).click();
   await student.getByRole("button", { name: "Day log" }).click();
