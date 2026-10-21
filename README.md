@@ -123,7 +123,18 @@ npm run test:e2e    # Playwright smoke test (database xaas_e2e, servers on ports
 npm run typecheck
 ```
 
-The first time you run the e2e tests, install the browser with `npx playwright install chromium`.
+The first time you run the e2e tests, install the browser with `npx playwright install chromium`. `E2E_PORT` moves both e2e servers (the timed one goes on `E2E_PORT` + 4), and `TEST_DATABASE_URL` / `E2E_DATABASE_URL` pick other databases.
+
+`sim/test/gameplay.test.ts` plays every bot strategy on every model and product and checks a hash of each game. A change meant to alter gameplay updates the hashes with `npx vitest run -u test/gameplay.test.ts` in `sim`; anything else (a speed-up, a tidy) must leave them alone.
+
+### Benchmarks
+
+```bash
+npm run bench -w sim       # advance per day as the game goes on, summarise, quotes, state size
+npm run bench -w server    # request times against Postgres, a 90-game dashboard, and 90 Continues at once
+```
+
+The server benchmark empties its database (`BENCH_DATABASE_URL`, default `xaas_bench`), so never point it at `xaas`.
 
 ## Old saved games
 

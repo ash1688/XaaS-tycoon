@@ -10,10 +10,12 @@ import InfrastructurePage from "./views/game/InfrastructurePage.vue";
 import PeoplePage from "./views/game/PeoplePage.vue";
 import CustomersPage from "./views/game/CustomersPage.vue";
 import FinancePage from "./views/game/FinancePage.vue";
-import StaffView from "./views/StaffView.vue";
-import StaffCompanyView from "./views/StaffCompanyView.vue";
-import StaffConfigView from "./views/StaffConfigView.vue";
 import "./styles.css";
+
+// The staff pages load on demand: students never open them, so they stay out of the bundle every student downloads.
+const StaffView = () => import("./views/StaffView.vue");
+const StaffCompanyView = () => import("./views/StaffCompanyView.vue");
+const StaffConfigView = () => import("./views/StaffConfigView.vue");
 
 const router = createRouter({
   history: createWebHistory(),

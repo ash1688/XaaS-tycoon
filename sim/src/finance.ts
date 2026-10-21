@@ -5,9 +5,13 @@ export const noSpend = (): Spend => ({ staff: 0, infrastructure: 0, addons: 0, d
 
 export const count = new Intl.NumberFormat("en-GB");
 
+// Made once: toLocaleString with options builds a new formatter on every call, which made pounds most of the cost
+// of a day's log and of a migration quote.
+const wholePounds = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", minimumFractionDigits: 0 });
+const pence = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", minimumFractionDigits: 2 });
+
 export function pounds(n: number): string {
-  const digits = Number.isInteger(n) ? 0 : 2;
-  return n.toLocaleString("en-GB", { style: "currency", currency: "GBP", minimumFractionDigits: digits });
+  return (Number.isInteger(n) ? wholePounds : pence).format(n);
 }
 
 /** A price after any provider price rises, to the penny. */

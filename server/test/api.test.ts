@@ -1576,6 +1576,10 @@ describe("archiving and deleting", () => {
       const res = await app.inject({ method: "GET", url });
       expect(res.statusCode).toBe(404);
     }
+    for (const action of ["continue", "retire"]) {
+      const res = await app.inject({ method: "POST", url: `/api/codes/${code}/companies/${company.id}/${action}` });
+      expect(res.statusCode).toBe(404);
+    }
     expect((await newCompany(code)).statusCode).toBe(404);
 
     // Unarchiving the code brings back its games, except one the teacher archived on its own.

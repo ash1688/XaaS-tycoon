@@ -1,8 +1,12 @@
 import postgres from "postgres";
 import { createDb, runMigrations } from "../src/db/client.ts";
 
-/** Creates (if needed), migrates and empties a real Postgres database for tests. */
-export async function setupTestDb(url = process.env.TEST_DATABASE_URL ?? "postgres://xaas:xaas@localhost:5433/xaas_test") {
+/**
+ * Creates (if needed), migrates and empties a real Postgres database for tests. The default is 127.0.0.1 rather than
+ * localhost: on Windows localhost is IPv6 first, and Docker Desktop's IPv6 port forwarding adds about 45 ms to any
+ * query over 16 KB, which is every save of a game's state.
+ */
+export async function setupTestDb(url = process.env.TEST_DATABASE_URL ?? "postgres://xaas:xaas@127.0.0.1:5433/xaas_test") {
   const target = new URL(url);
   const name = target.pathname.slice(1);
   const admin = new URL(url);

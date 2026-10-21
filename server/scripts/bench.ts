@@ -2,7 +2,7 @@
 // and the teacher's live dashboard refreshing. Not part of the game: a tool for checking the server stays fast.
 //
 //   npm run bench -w server
-//   BENCH_DATABASE_URL=postgres://xaas:xaas@localhost:5433/xaas_bench npm run bench -w server -- --json bench.json
+//   BENCH_DATABASE_URL=postgres://xaas:xaas@127.0.0.1:5433/xaas_bench npm run bench -w server -- --json bench.json
 //
 // It empties the database it's given, so never point it at the real one. Requests go through Fastify's inject, so the
 // times are the server's own work and its database round trips, without the network.
@@ -22,7 +22,7 @@ const { values } = parseArgs({
   },
 });
 const iterations = Number(values.iterations);
-const url = process.env.BENCH_DATABASE_URL ?? "postgres://xaas:xaas@localhost:5433/xaas_bench";
+const url = process.env.BENCH_DATABASE_URL ?? "postgres://xaas:xaas@127.0.0.1:5433/xaas_bench";
 if (new URL(url).pathname === "/xaas") throw new Error("The benchmark empties its database: give it its own.");
 
 const PASSWORD = "bench-teacher-password";

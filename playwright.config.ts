@@ -1,13 +1,14 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const PORT = 3180;
+// E2E_PORT moves both servers, for running beside another checkout's e2e run.
+const PORT = Number(process.env.E2E_PORT ?? 3180);
 // A second server on the same database with timed flow on, for the "timed" project only.
-const TIMED_PORT = 3184;
+const TIMED_PORT = PORT + 4;
 export const E2E_TIMED_FLOW_SECONDS = 1;
 export const E2E_TEACHER_PASSWORD = "e2e-teacher-password";
 // A short game, so a test can play one to the end. Set on the server through GAME_FINAL_DAY, as anyone can.
 export const E2E_FINAL_DAY = 30;
-export const E2E_DATABASE_URL = process.env.E2E_DATABASE_URL ?? "postgres://xaas:xaas@localhost:5433/xaas_e2e";
+export const E2E_DATABASE_URL = process.env.E2E_DATABASE_URL ?? "postgres://xaas:xaas@127.0.0.1:5433/xaas_e2e";
 
 const serverEnv = {
   DATABASE_URL: E2E_DATABASE_URL,
