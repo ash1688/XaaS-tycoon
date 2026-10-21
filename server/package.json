@@ -10,7 +10,8 @@
     "start": "tsx src/index.ts",
     "test": "vitest run",
     "typecheck": "tsc -p .",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "bench": "tsx scripts/bench.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.3",

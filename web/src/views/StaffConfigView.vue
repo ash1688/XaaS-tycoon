@@ -40,7 +40,10 @@ const fields = computed(() => config.value?.fields ?? []);
 const savedValue = (f: ConfigField) => config.value?.overrides[f.path] ?? f.default;
 const activePreset = computed(() => presets.value?.presets.find((p) => p.active));
 
-const format = (n: number) => n.toLocaleString("en-GB", { maximumFractionDigits: 4 });
+// One formatter for every field's range: toLocaleString with options builds a new one per call, and the page re-renders
+// every field on each keystroke.
+const numberFormat = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 4 });
+const format = (n: number) => numberFormat.format(n);
 const parse = (value: string | number | undefined) =>
   typeof value === "number" ? value : !value?.trim() ? Number.NaN : Number(value);
 const changedFromDefault = (f: ConfigField) => parse(draft[f.path]) !== f.default;
