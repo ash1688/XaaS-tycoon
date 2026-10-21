@@ -115,7 +115,7 @@ test("on PaaS, a managed database added from the empty state brings users from d
   await expect(platform.getByTestId("instances-value")).toHaveText("0");
   await expect(platform.getByTestId("managed-database-value")).toHaveText("None");
   await expect(platform.getByTestId("no-database")).toContainText("None yet");
-  await expect(platform.getByRole("button", { name: "Remove the database" })).toBeDisabled();
+  await expect(platform.getByRole("button", { name: "Remove a small database" })).toBeDisabled();
   await expect(platform.getByTestId("managed-database-why")).toHaveText("You have no database to remove.");
   await expect(platform.getByRole("button", { name: "Add a small database" })).toBeEnabled();
   await expect(platform.getByTestId("managed-cache-value")).toHaveText("None");
@@ -129,13 +129,14 @@ test("on PaaS, a managed database added from the empty state brings users from d
   await platform.getByRole("button", { name: "One more app instance" }).click();
   await expect(platform.getByTestId("instances-value")).toHaveText("1");
   await platform.getByRole("button", { name: "Add a small database" }).click();
-  await expect(platform.getByTestId("managed-database-value")).toHaveText("1 small");
+  await expect(platform.getByTestId("managed-database-value")).toHaveText("1");
+  await expect(platform.getByTestId("managed-database-summary")).toHaveText("1 × small");
   await expect(platform.getByTestId("managed-database-size")).toHaveValue("small");
   await expect(platform.getByTestId("no-database")).toHaveCount(0);
   // The cache is added with + and taken away with −.
   await platform.getByRole("button", { name: "Add a small cache" }).click();
-  await expect(platform.getByTestId("managed-cache-value")).toHaveText("1 small");
-  await platform.getByRole("button", { name: "Remove the cache" }).click();
+  await expect(platform.getByTestId("managed-cache-value")).toHaveText("1");
+  await platform.getByRole("button", { name: "Remove a small cache" }).click();
   await expect(platform.getByTestId("managed-cache-value")).toHaveText("None");
 
   for (const day of [2, 3, 4]) {

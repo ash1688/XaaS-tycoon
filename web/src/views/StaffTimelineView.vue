@@ -124,6 +124,10 @@ function describe(e: PlayEventView): string {
       return `Set ${p.count} app instance${p.count === 1 ? "" : "s"}`;
     case "setManagedService":
       return `Set the managed ${p.service} to ${p.size ?? "off"}`;
+    case "addManagedService":
+      return `Added a ${p.size} managed ${p.service}`;
+    case "removeManagedService":
+      return `Removed a ${p.size} managed ${p.service}`;
     case "takeLoan":
       return "Took the bank loan";
   }

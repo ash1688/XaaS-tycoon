@@ -320,10 +320,17 @@ export type Action =
    */
   | { type: "setInstances"; count: number }
   /**
-   * Sets the size of a managed service on PaaS, at once, like an instance count. The cache can be turned off with
-   * a null size; the database can't.
+   * Sets a managed service on PaaS to just one of a size, at once, like an instance count, replacing any it runs. The
+   * cache can be turned off with a null size; the database can't.
    */
   | { type: "setManagedService"; service: ManagedService; size: ServerSize | null }
+  /**
+   * Adds another managed database or cache of a size on PaaS, at once, like a read replica or shard: their units add
+   * up. Up to the platform's most of each.
+   */
+  | { type: "addManagedService"; service: ManagedService; size: ServerSize }
+  /** Removes one managed database or cache of a size on PaaS, the newest, at once. Never the last database. */
+  | { type: "removeManagedService"; service: ManagedService; size: ServerSize }
   /**
    * Takes the bank loan, if it wasn't taken at the start: the money arrives at once, and repayments start the next day
    * played, at today's rate. One per company, and not with too few days left to repay it.

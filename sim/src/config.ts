@@ -133,14 +133,14 @@ export interface ModelServersConfig {
   starter?: ServerCount[];
 }
 
-/** The services a platform runs for you, one of each at a size you pick. The database is required, the cache isn't. */
+/** The services a platform runs for you, as many of each as you like up to a cap. The database is required, the cache isn't. */
 export const MANAGED_SERVICES = ["database", "cache"] as const;
 export type ManagedService = (typeof MANAGED_SERVICES)[number];
 
 /**
- * A platform that runs the servers for you (PaaS). You set how many app instances to run, all one size, and pick the
- * size of one managed database and, if you like, one managed cache. The provider runs them, so they need no ops, and a
- * change takes effect at once. The load balancer is built in and free, so every instance counts however many you run.
+ * A platform that runs the servers for you (PaaS). You set how many app instances to run, all one size, and add managed
+ * databases and, if you like, managed caches, each at a size you pick, like read replicas or shards on a real platform.
+ * The provider runs them, so they need no ops, and a change takes effect at once. The load balancer is built in and free, so every instance counts however many you run.
  * Each is billed monthly, a day's share at a time, at the model's server prices (monthlyCost): more per unit than the
  * same units on IaaS, since the provider's work is in the price.
  *
@@ -152,9 +152,11 @@ export interface ManagedServersConfig {
   instanceSize: ServerSize;
   /** The most app instances a company can run. */
   maxInstances: number;
+  /** The most managed databases, and caches, a company can run. Their units add up. */
+  maxServices: Record<ManagedService, number>;
   /**
    * Units each size of managed database and cache gives, in place of a server's. A managed service scales up further
-   * than one server of the same size, since you only ever run one.
+   * than one server of the same size, so a few are enough for any product's market.
    */
   units: Record<ManagedService, Record<ServerSize, number>>;
 }
@@ -713,7 +715,7 @@ export const defaultConfig: GameConfig = {
       // A unit costs about twice as much as on IaaS (an instance is £90 a CU, a medium VM £45): the provider's ops are in
       // the price. That's the trade: one ops person however big you get, and scaling that's instant, so a company that
       // only scales once it's full (as most students do) loses least here; but the dearest bill for one that plans
-      // ahead. A managed database or cache doubles its units with each size, so one is enough for any product's market.
+      // ahead. A managed database or cache doubles its units with each size, and past the biggest you add another.
       servers: {
         monthlyCost: {
           app: { medium: 900 },
@@ -723,6 +725,7 @@ export const defaultConfig: GameConfig = {
         managed: {
           instanceSize: "medium",
           maxInstances: 20,
+          maxServices: { database: 5, cache: 5 },
           units: {
             database: { small: 10, medium: 25, large: 50, massive: 100 },
             cache: { small: 10, medium: 25, large: 50, massive: 100 },

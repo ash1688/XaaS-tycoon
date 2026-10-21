@@ -71,6 +71,7 @@ const paasServers = {
   managed: {
     instanceSize: "massive" as const,
     maxInstances: 5,
+    maxServices: { database: 3, cache: 3 },
     units: { database: sizes(10, 100, 1_000, 10_000), cache: sizes(10, 100, 1_000, 10_000) },
   },
   starter: [
@@ -1724,8 +1725,9 @@ describe("PaaS managed services", () => {
       instanceSize: "small",
       instanceUnits: 10,
       instanceMonthlyCost: 30,
-      database: { size: "small", units: 10, monthlyCost: 30 },
+      database: { count: 1, max: 3, running: [{ size: "small", count: 1, units: 10, monthlyCost: 30 }], units: 10, monthlyCost: 30 },
       cache: null,
+      maxServices: { database: 3, cache: 3 },
       monthlyCost: 60,
     });
     expect(paas.managed(state)!.databaseOptions).toEqual(paas.managed(state)!.database!.options);
@@ -1771,7 +1773,7 @@ describe("PaaS managed services", () => {
       const state = service(service(begin(), "database", size), "cache", size);
       const units = paasConfig.models.paas.servers!.managed!.units.database[size];
       expect(paas.units(state)).toMatchObject({ dbu: { capacity: units }, ch: { capacity: units } });
-      expect(paas.managed(state)).toMatchObject({ database: { size, units }, cache: { size, units } });
+      expect(paas.managed(state)).toMatchObject({ database: { count: 1, running: [{ size, units }] }, cache: { count: 1, units } });
       // Still one of each.
       expect(state.servers.filter((s) => s.type === "database")).toHaveLength(1);
       expect(state.servers.filter((s) => s.type === "cache")).toHaveLength(1);
@@ -1871,6 +1873,132 @@ describe("PaaS managed services", () => {
     const half = paas.advance(service(instances(begin(), 3), "cache", "small"), 4).state;
     const roundTrip = JSON.parse(JSON.stringify(half)) as GameState;
     expect(paas.advance(roundTrip, 6)).toEqual(paas.advance(half, 6));
+  });
+
+  describe("several managed databases and caches", () => {
+    const add = (state: GameState, svc: "database" | "cache", size: ServerSize) =>
+      act(state, { type: "addManagedService", service: svc, size });
+    const remove = (state: GameState, svc: "database" | "cache", size: ServerSize) =>
+      act(state, { type: "removeManagedService", service: svc, size });
+
+    it("adds databases and caches of any size at once, their units adding up, and shows each size", () => {
+      const state = add(add(add(add(begin(), "database", "medium"), "database", "medium"), "cache", "small"), "cache", "large");
+      // The small database from the start, and two medium: 10 + 100 + 100 DBU. Caches: 10 + 1,000 CH.
+      expect(paas.units(state)).toMatchObject({ dbu: { capacity: 210 }, ch: { capacity: 1_010 } });
+      expect(paas.managed(state)!.database).toEqual({
+        count: 3,
+        max: 3,
+        running: [
+          { size: "medium", count: 2, units: 100, monthlyCost: 60 },
+          { size: "small", count: 1, units: 10, monthlyCost: 30 },
+        ],
+        units: 210,
+        monthlyCost: 150,
+        options: paas.managed(state)!.databaseOptions,
+      });
+      expect(paas.managed(state)!.cache).toMatchObject({ count: 2, units: 1_010, monthlyCost: 120 });
+      expect(paas.managed(state)!.monthlyCost).toBe(30 + 150 + 120);
+      expect(paas.servers(state).filter((s) => s.type === "database").map((s) => s.status)).toEqual(["ready", "ready", "ready"]);
+      // Billed a line per size.
+      expect(infraLines(paas.advance(state).log)).toContainEqual(["Managed database (medium): 2 × £60 a month", -4]);
+    });
+
+    it("keeps capacity to the weakest tier: more databases don't help when compute is short", () => {
+      // 2,000 users need 20 CU and 20 DBU: one small instance gives 10 CU, however many databases run.
+      const busy = withUsers(add(add(begin(), "database", "large"), "database", "large"), 2_000);
+      expect(paas.units(busy)!.dbu.capacity).toBe(2_010);
+      expect(outages(paas.advance(busy).log)).toEqual([expect.stringMatching(/^Outage: compute \(CU\) hit 200% of capacity\./)]);
+    });
+
+    it("serves demand past the biggest single database with a second one", () => {
+      const big = createSim({
+        ...paasConfig,
+        models: {
+          ...paasConfig.models,
+          paas: {
+            ...paasConfig.models.paas,
+            servers: {
+              ...paasConfig.models.paas.servers!,
+              managed: { ...paasConfig.models.paas.servers!.managed!, instanceSize: "massive", units: { database: sizes(1, 2, 5, 10), cache: sizes(1, 2, 5, 10) } },
+            },
+          },
+        },
+      });
+      // 1,500 users need 15 DBU: one massive database gives 10, and a second makes 20. A second, massive instance
+      // gives the CU.
+      const start = big.applyAction(begin(big), { type: "setInstances", count: 2 });
+      const one = withUsers(big.applyAction(start, { type: "setManagedService", service: "database", size: "massive" }), 1_500);
+      expect(outages(big.advance(one).log)).toEqual([expect.stringMatching(/^Outage: the database \(DBU\)/)]);
+      const two = big.applyAction(one, { type: "addManagedService", service: "database", size: "massive" });
+      expect(big.units(two)!.dbu.capacity).toBe(20);
+      expect(outages(big.advance(two).log)).toEqual([]);
+    });
+
+    it("refuses to go past the platform's most of each, from config", () => {
+      const full = add(add(begin(), "database", "small"), "database", "small");
+      expect(codeOf(() => add(full, "database", "small"))).toBe("too_many_services");
+      const cached = add(add(add(begin(), "cache", "small"), "cache", "small"), "cache", "small");
+      expect(codeOf(() => add(cached, "cache", "massive"))).toBe("too_many_services");
+      // A teacher can raise it.
+      const five = createSim({
+        ...paasConfig,
+        models: {
+          ...paasConfig.models,
+          paas: {
+            ...paasConfig.models.paas,
+            servers: { ...paasConfig.models.paas.servers!, managed: { ...paasConfig.models.paas.servers!.managed!, maxServices: { database: 5, cache: 5 } } },
+          },
+        },
+      });
+      expect(five.managed(five.applyAction(full, { type: "addManagedService", service: "database", size: "small" }))!.database!.count).toBe(4);
+    });
+
+    it("removes one of a size, the newest, but never the last database", () => {
+      const three = add(add(begin(), "database", "large"), "database", "small");
+      const two = remove(three, "database", "small");
+      expect(two.servers.filter((s) => s.type === "database").map((s) => [s.id, s.size])).toEqual([
+        [2, "small"],
+        [3, "large"],
+      ]);
+      const one = remove(two, "database", "small");
+      expect(paas.managed(one)!.database).toMatchObject({ count: 1, units: 1_000 });
+      expect(codeOf(() => remove(one, "database", "large"))).toBe("database_required");
+      // Of a size it doesn't run, there's nothing to remove.
+      expect(codeOf(() => remove(two, "database", "massive"))).toBe("no_such_service");
+      // The last cache can go.
+      const cached = add(begin(), "cache", "medium");
+      expect(paas.managed(remove(cached, "cache", "medium"))!.cache).toBeNull();
+    });
+
+    it("refuses bad services and sizes, and elsewhere than PaaS, changing nothing", () => {
+      const state = begin();
+      const copy = structuredClone(state);
+      expect(codeOf(() => act(state, { type: "addManagedService", service: "queue" as "cache", size: "small" }))).toBe("unknown_service");
+      expect(codeOf(() => add(state, "cache", "huge" as ServerSize))).toBe("unknown_size");
+      expect(codeOf(() => remove(state, "cache", "huge" as ServerSize))).toBe("unknown_size");
+      expect(state).toEqual(copy);
+      expect(codeOf(() => add(begin(paas, "iaas"), "database", "small"))).toBe("not_managed");
+      expect(codeOf(() => remove(begin(paas, "iaas"), "database", "small"))).toBe("not_managed");
+    });
+
+    it("setting a size still replaces them all with one", () => {
+      const several = add(add(begin(), "database", "large"), "cache", "small");
+      const one = service(service(several, "database", "medium"), "cache", null);
+      expect(paas.managed(one)!.database).toMatchObject({ count: 1, running: [{ size: "medium", count: 1 }] });
+      expect(paas.managed(one)!.cache).toBeNull();
+    });
+
+    it("is deterministic with several, and resumes identically after a JSON round trip", () => {
+      const run = (state: GameState) => {
+        let s = paas.advance(add(add(withUsers(state, 3_000), "database", "medium"), "cache", "small"), 4).state;
+        s = remove(add(s, "database", "large"), "database", "medium");
+        return paas.advance(s, 5);
+      };
+      expect(run(begin())).toEqual(run(begin()));
+      const half = paas.advance(add(begin(), "database", "medium"), 3).state;
+      const roundTrip = JSON.parse(JSON.stringify(half)) as GameState;
+      expect(paas.advance(roundTrip, 4)).toEqual(paas.advance(half, 4));
+    });
   });
 
   describe("migrating off PaaS", () => {
@@ -2722,9 +2850,9 @@ describe("default config", () => {
         return act({ type: "setInstances", count: managed.instances + 1 });
       }
       if (units.dbu.demand > units.dbu.capacity / 2) {
-        const database = managed.database ? next(managed.database.size) : "small";
+        const database = managed.database ? next(managed.database.running[0]!.size) : "small";
         if (database) return act({ type: "setManagedService", service: "database", size: database });
-        const cache = managed.cache ? next(managed.cache.size) : "small";
+        const cache = managed.cache ? next(managed.cache.running[0]!.size) : "small";
         if (cache) return act({ type: "setManagedService", service: "cache", size: cache });
       }
       return state;
@@ -3562,6 +3690,29 @@ describe("migration with servers", () => {
         { type: "database", size: "massive", count: 1 },
         { type: "cache", size: "massive", count: 1 },
       ]);
+    });
+
+    it("on PaaS, uses several managed databases and caches when demand is past one of the biggest", () => {
+      const managed = s.config.models.paas.servers!.managed!;
+      const top = managed.units.database.massive;
+      const cacheTop = managed.units.cache.massive;
+      // Four massive databases' worth, with headroom: caches take up to half, and databases the rest.
+      const dbu = 4 * top;
+      const setup = s.sizeSetupFor("paas", { cu: 1, dbu: dbu / 1.25 }).filter((c) => c.type !== "app");
+      const units = (type: "database" | "cache") =>
+        setup.filter((c) => c.type === type).reduce((sum, c) => sum + c.count * managed.units[type][c.size], 0);
+      expect(setup.filter((c) => c.type === "database").reduce((n, c) => n + c.count, 0)).toBeGreaterThan(1);
+      expect(units("cache")).toBeLessThanOrEqual(dbu / 2 + cacheTop);
+      expect(units("database") + Math.min(units("cache"), dbu / 2)).toBeGreaterThanOrEqual(dbu);
+      expect(setup).toEqual([
+        { type: "database", size: "massive", count: 2 },
+        { type: "cache", size: "massive", count: 2 },
+      ]);
+      // Never past the platform's most: the rest is left short.
+      const huge = s.sizeSetupFor("paas", { cu: 1, dbu: 100 * top });
+      for (const type of ["database", "cache"] as const) {
+        expect(huge.filter((c) => c.type === type).reduce((n, c) => n + c.count, 0)).toBe(managed.maxServices[type]);
+      }
     });
 
     it("builds nothing on SaaS", () => {

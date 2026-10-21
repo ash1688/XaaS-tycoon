@@ -206,7 +206,8 @@ export interface CompanyView {
    */
   serverOptions: ServerOption[];
   /**
-   * On PaaS: the app instance count and the managed database and cache, each with the sizes it comes in and its price.
+   * On PaaS: the app instance count and the managed databases and caches: how many of each size, the sizes they come
+   * in and their price.
    * Changes are instant, managed services need no ops, and the load balancer is built in. Null on other models.
    */
   managed: ManagedView | null;
