@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { createCode } from "./staff.ts";
+import { createCode, launch } from "./staff.ts";
 
 test("on IaaS, renting an app server and a load balancer grows the CU capacity bar after Continue", async ({
   browser,
@@ -18,6 +18,8 @@ test("on IaaS, renting an app server and a load balancer grows the CU capacity b
   const { id } = await created.json();
   // A second ops person for the extra servers, so no tier is cut for missing ops.
   await request.post(`/api/codes/${code}/companies/${id}/actions`, { data: { type: "hire", pool: "ops" } });
+  // A first setup rented on day 1, launching on day 3 with the social network's 4,000 users.
+  await launch(request, code, id, "iaas");
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
@@ -25,8 +27,8 @@ test("on IaaS, renting an app server and a load balancer grows the CU capacity b
   await expect(student.getByTestId("home-tightest")).toContainText("CU 60%");
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Infrastructure", exact: true }).click();
 
-  // The starter setup: a medium app server (10 CU) and a medium database (10 DBU), and one app server needs no
-  // load balancer.
+  // The first setup: a medium app server (10 CU) and a medium database (10 DBU), and one app server needs no load
+  // balancer.
   const cu = student.getByRole("meter", { name: /^Compute \(CU\)/ });
   await expect(cu).toHaveAttribute("aria-valuemax", "10");
   await expect(student.getByTestId("tier-cu-figures")).toHaveText("6 / 10 CU");
@@ -65,7 +67,7 @@ test("on IaaS, renting an app server and a load balancer grows the CU capacity b
 
   // The next day they're ready: the load balancer covers both app servers, so CU grows to 10 + 20.
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("day")).toContainText(`4 of ${E2E_FINAL_DAY}`);
   await expect(cu).toHaveAttribute("aria-valuemax", "30");
   await expect(student.getByTestId("tier-cu-figures")).toHaveText(/ \/ 30 CU$/);
   await expect(student.getByTestId("lb-status")).toContainText("1 load balancer serves your 2 app servers");

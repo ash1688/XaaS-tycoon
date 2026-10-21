@@ -24,8 +24,9 @@ const PASSWORD = "test-teacher-password";
 const iaasServers = defaultConfig.models.iaas.servers!;
 const paasServers = defaultConfig.models.paas.servers!;
 const LIGHT_DEMAND = { cuPerUser: 0.0005, dbuPerUser: 0.0005 };
-// The server sizes, ops per server and starting users these tests' sums were worked out with (before the balance
-// pass), pinned so that tuning the defaults doesn't change them.
+// The server sizes, ops per server, starting users and starter setups these tests' sums were worked out with (before
+// the balance pass and launch day), pinned so that tuning the defaults doesn't change them. Each game launches as it
+// starts, with its starter setup in place and its launch users there; the launch tests change that with an override.
 const UNITS = { small: 10, medium: 15, large: 20, massive: 25 };
 const STARTING_USERS = { ecommerce: 2000, social: 1000, video: 1000 };
 const sim = createSim({
@@ -47,7 +48,14 @@ const sim = createSim({
     ...defaultConfig.models,
     onprem: {
       ...defaultConfig.models.onprem,
-      servers: { ...defaultConfig.models.onprem.servers!, opsPerServer: { app: 0.6, database: 0.6, cache: 0.3, loadBalancer: 0.3 } },
+      servers: {
+        ...defaultConfig.models.onprem.servers!,
+        opsPerServer: { app: 0.6, database: 0.6, cache: 0.3, loadBalancer: 0.3 },
+        starter: [
+          { type: "app", size: "large", count: 1 },
+          { type: "database", size: "large", count: 1 },
+        ],
+      },
     },
     iaas: {
       ...defaultConfig.models.iaas,
@@ -63,6 +71,10 @@ const sim = createSim({
           app: { ...iaasServers.monthlyCost.app, medium: 0 },
           database: { ...iaasServers.monthlyCost.database, medium: 0 },
         },
+        starter: [
+          { type: "app", size: "medium", count: 1 },
+          { type: "database", size: "medium", count: 1 },
+        ],
       },
     },
     paas: {
@@ -77,9 +89,14 @@ const sim = createSim({
           app: { medium: 0 },
           database: { ...paasServers.monthlyCost.database, small: 0 },
         },
+        starter: [
+          { type: "app", size: "medium", count: 1 },
+          { type: "database", size: "small", count: 1 },
+        ],
       },
     },
   },
+  launch: { earliestDay: 1 },
   // Seeds are random here, so migrations never overrun.
   migration: { ...defaultConfig.migration, overrun: { ...defaultConfig.migration.overrun, chance: 0 } },
   // No starting staff, so continue charges only the model's running cost unless a test hires someone.
@@ -97,7 +114,7 @@ const sim = createSim({
       id,
       {
         ...p,
-        growth: { ...p.growth, startingUsers: STARTING_USERS[id as keyof typeof STARTING_USERS] },
+        growth: { ...p.growth, launchUsers: STARTING_USERS[id as keyof typeof STARTING_USERS] },
         pricing: { ...p.pricing, freeShare: 1, conversionRate: 0 },
         demand: LIGHT_DEMAND,
       },
@@ -2368,6 +2385,48 @@ describe("meta", () => {
     expect(owner("saas", "application")).toBe("shared");
     expect(owner("iaas", "os")).toBe("you");
     expect(meta.models.find((m: { id: string }) => m.id === "saas").comparison.opsNeeded).toBe("Very low");
+  });
+});
+
+describe("launch", () => {
+  async function setup(model: string, earliestDay = 3) {
+    // New games wait for day 3, as by default.
+    await useOverrides({ "launch.earliestDay": earliestDay });
+    const code = await newCode();
+    const company = (await newCompany(code, { name: "Acme", productType: "ecommerce", model })).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const next = async () => (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    return { company, next };
+  }
+
+  it("shows the launch day to come with no users, then the day it launched with the launch burst", async () => {
+    const { company, next } = await setup("iaas");
+    expect(company).toMatchObject({ day: 1, users: 0, paidUsers: 0 });
+    expect(company.launch).toEqual({
+      status: "upcoming",
+      day: 3,
+      daysLeft: 2,
+      earliestDay: 3,
+      users: STARTING_USERS.ecommerce,
+      paidUsers: 0,
+      needsServers: true,
+      setUp: true,
+      // The starter's medium app server and database, half an ops person each.
+      opsNeeded: 1,
+    });
+    expect((await next()).company).toMatchObject({ users: 0, launch: { status: "upcoming", daysLeft: 1 } });
+    const launched = await next();
+    expect(launched.company).toMatchObject({ day: 3, users: STARTING_USERS.ecommerce, launch: { status: "launched", day: 3, daysLeft: null } });
+    expect(launched.log.at(-1)!.entries).toContainEqual({
+      text: `Launch day: your first ${STARTING_USERS.ecommerce.toLocaleString("en-GB")} users arrived, 0 of them paying.`,
+      cashDelta: 0,
+      kind: "launch",
+    });
+  });
+
+  it("is launched as the game starts on a config that allows it", async () => {
+    const { company } = await setup("saas", 1);
+    expect(company.launch).toMatchObject({ status: "launched", day: 1, needsServers: false });
   });
 });
 

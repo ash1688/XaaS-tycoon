@@ -17,13 +17,14 @@ export function createCustomers(
   pricing: Pricing,
   support: Support,
 ) {
-  function startingUsers(productType: ProductTypeId, day: number) {
-    const users = config.productTypes[productType].growth.startingUsers;
+  /** A new company: no users until it launches (see Launch), so no load. */
+  function startingCustomers(productType: ProductTypeId) {
     return {
-      users,
-      ...pricing.startingPricing(productType, users),
-      load: Math.round(baseLoad(productType, users, day)),
-      demand: baseDemand(productType, users, day),
+      launchDay: null,
+      users: 0,
+      ...pricing.startingPricing(productType, 0),
+      load: 0,
+      demand: { cu: 0, dbu: 0 },
       outageDays: 0,
       downtimeHours: 0,
     };
@@ -93,7 +94,7 @@ export function createCustomers(
     return { users, paidUsers: pricing.paidUsersAfter(kept, users), churned, rng: next };
   }
 
-  return { startingUsers, baseLoad, baseDemand, grow };
+  return { startingCustomers, baseLoad, baseDemand, grow };
 }
 
 export type Customers = ReturnType<typeof createCustomers>;

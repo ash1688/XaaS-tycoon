@@ -91,7 +91,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   for (const m of MODEL_IDS) {
     const s = MODEL_LABELS[m];
     const upfrontHelp = base.models[m]?.servers?.purchase
-      ? "Charged once on moving to this model: the server room. The starter servers are bought on top, at their purchase prices."
+      ? "Charged once on moving to this model: the server room. The servers are bought on top, at their purchase prices."
       : "Charged once on moving to this model.";
     add(`models.${m}.upfrontCost`, "Money", s, "Upfront cost", upfrontHelp, POUNDS);
     add(`models.${m}.monthlyCost`, "Money", s, "Monthly cost", "The provider's fixed bill (power and upkeep on-prem), billed daily.", range(0, 200_000, 100));
@@ -134,12 +134,13 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   }
 
   // Customers
+  add("launch.earliestDay", "Customers", "", "Earliest launch day", "A company launches at the end of this day, or of the first day after it with servers ready to serve users. Its launch burst of users arrives then.", range(1, 365, 1));
   for (const p of PRODUCT_TYPE_IDS) {
     const product = base.productTypes[p];
     if (!product) continue;
     const s = product.name;
     const g = `productTypes.${p}.growth`;
-    add(`${g}.startingUsers`, "Customers", s, "Starting users", "Users a new company starts with.", range(0, 1_000_000, 100));
+    add(`${g}.launchUsers`, "Customers", s, "Launch burst (users)", "Users who arrive on launch day, split paid and free by the free share. Normal growth follows.", range(0, 1_000_000, 100));
     add(`${g}.marketSize`, "Customers", s, "Market size", "Users the product can reach. Growth slows as users approach it.", range(1, 10_000_000, 1_000));
     add(`${g}.dailyGrowth`, "Customers", s, "Daily growth", "Share of users added each day while the market is wide open (0.05 = 5%).", range(0, 1, 0.005));
     add(`${g}.growthNoise`, "Customers", s, "Growth variation", "Daily growth varies randomly by up to this share either way.", SHARE);
@@ -245,21 +246,6 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
         }
       }
     }
-    servers.starter.forEach((s, i) => {
-      const name = base.servers.types[s.type]?.name.toLowerCase() ?? s.type;
-      if (servers.managed) {
-        if (s.type === "app") {
-          add(`models.${m}.servers.starter.${i}.count`, "Infrastructure", MODEL_LABELS[m], "Starter setup: app instances", "How many app instances a new company on this model starts with, ready for the first day.", range(1, 100, 1));
-        } else {
-          add(`models.${m}.servers.starter.${i}.count`, "Infrastructure", MODEL_LABELS[m], `Starter setup: ${s.size} managed ${name} (0 or 1)`, "Whether a new company on this model starts with this managed service, ready for the first day.", range(0, 1, 1));
-        }
-        return;
-      }
-      const help = servers.purchase
-        ? "How many a new company on this model starts with, bought at their purchase prices on top of the upfront cost."
-        : "How many a new company on this model starts with, ready for the first day.";
-      add(`models.${m}.servers.starter.${i}.count`, "Infrastructure", MODEL_LABELS[m], `Starter setup: ${s.size} ${name}s`, help, HEADCOUNT);
-    });
   }
   add("capacity.unstaffedShare", "Infrastructure", "", "Capacity with no ops", "Share of capacity a model keeps with no ops at all, rising with ops up to full.", SHARE);
   add("outage.baseHours", "Infrastructure", "", "Outage hours", "Hours down on any day load exceeds capacity.", HOURS);
@@ -377,6 +363,7 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
     ["migration.overrun.minDays", "migration.overrun.maxDays", "The most extra days can't be fewer than the fewest."],
     ["support.poorSatisfaction", "support.goodSatisfaction", "Good satisfaction can't be below poor satisfaction."],
     ["loan.minDays", "finalDay", "The fewest repayment days can't be more than the game's length."],
+    ["launch.earliestDay", "finalDay", "The earliest launch day can't be after the game's last day."],
     // A new company starts at the fair price, so it has to be one the student could set.
     ...PRODUCT_TYPE_IDS.filter((p) => base.productTypes[p]).map((p): [string, string, string] => [
       `productTypes.${p}.pricing.fairPrice`,

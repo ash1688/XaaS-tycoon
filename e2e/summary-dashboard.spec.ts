@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import postgres from "postgres";
 import { E2E_DATABASE_URL, E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { createCode } from "./staff.ts";
+import { createCode, launch } from "./staff.ts";
 
 const money = (n: number) => n.toLocaleString("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 });
 
@@ -21,6 +21,8 @@ test("play to the end, then see profit or loss and income against costs, and the
   });
   expect(created.status()).toBe(201);
   const { id, fairPrice } = await created.json();
+  // Its first VMs, launching on day 3.
+  await launch(request, code, id, "iaas");
   // Plenty of cash, so it lasts the game whatever its costs: this test is about the summary, not the balance. Cash
   // isn't income, so profit is unchanged.
   const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
@@ -35,7 +37,7 @@ test("play to the end, then see profit or loss and income against costs, and the
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
-  for (let day = 2; day <= E2E_FINAL_DAY; day++) {
+  for (let day = 4; day <= E2E_FINAL_DAY; day++) {
     await student.getByRole("button", { name: "Continue" }).click();
     if (day < E2E_FINAL_DAY) await expect(student.getByTestId("day")).toContainText(`${day} of ${E2E_FINAL_DAY}`);
   }

@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import postgres from "postgres";
 import { E2E_DATABASE_URL, E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { createCode } from "./staff.ts";
+import { createCode, launch } from "./staff.ts";
 
 // The game's pages are reached through its nav bar.
 const goTo = (page: Page, name: string) =>
@@ -49,11 +49,10 @@ test("teacher creates a code, student starts a game and presses Continue", async
   const game = new URL(student.url()).pathname;
   await expect(student.getByTestId("day")).toContainText(`1 of ${E2E_FINAL_DAY}`);
   await expect(student.getByText("You're the customer of the layer below.")).toBeVisible();
-  // Home's overview cards. £15,000 starting cash less IaaS's £2,000 upfront cost, and a social network starts with
-  // 4,000 users.
+  // Home's overview cards. £15,000 starting cash less IaaS's £2,000 upfront cost, and no users or servers until launch.
   await expect(student.getByTestId("cash")).toHaveText("£13,000");
-  await expect(student.getByTestId("users")).toHaveText("4,000");
-  await expect(student.getByTestId("uptime")).toHaveText("100%");
+  await expect(student.getByTestId("users")).toHaveText("0");
+  await expect(student.getByTestId("launch-headline")).toHaveText("Launch in 2 days");
 
   // Infrastructure: CU, DBU and CH against capacity, the servers and the responsibility stack, on its own page.
   await goTo(student, "Infrastructure");
@@ -66,19 +65,25 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await expect(stack.locator('[data-layer="os"]')).toContainText("You");
   await expect(stack.locator('[data-layer="hardware"]')).toContainText("Provider");
   await expect(student.getByRole("meter", { name: /^Compute \(CU\)/ })).toBeVisible();
-  // IaaS starts with a medium app server and database, 10 CU and 10 DBU. A social network's 4,000 users need 6 CU
-  // and 6 DBU, so both are as full: compute is named as the tier that sets capacity.
-  await expect(student.getByTestId("tier-cu-figures")).toHaveText("6 / 10 CU");
-  await expect(student.getByTestId("tier-dbu-figures")).toHaveText("6 / 10 DBU");
-  await expect(student.getByTestId("tier-cu")).toContainText("Sets your capacity");
+  // The first setup: a medium app server and database, 10 CU and 10 DBU, ready the next day. One app server needs no
+  // load balancer.
+  const rent = student.getByRole("dialog", { name: "Rent a VM" });
+  for (const type of ["app", "database"]) {
+    await student.getByTestId("rent-open").click();
+    await rent.locator(`[data-rent-type="${type}"]`).click();
+    await rent.locator('[data-rent-size="medium"]').click();
+    await rent.getByTestId("rent-confirm").click();
+    await expect(rent).toHaveCount(0);
+  }
+  await expect(student.getByTestId("servers-panel").getByTestId("pending-app-medium")).toContainText("1 setting up");
   await expect(student.getByTestId("lb-status")).toContainText("no load balancer needed");
 
   await goTo(student, "Finance");
   await expect(student.getByTestId("spend-infrastructure")).toHaveText("£2,000");
-  // £1,000 a month, plus £450 and £540 for the starter VMs.
+  // £1,000 a month, plus £450 and £540 for the VMs.
   await expect(student.getByTestId("model-costs")).toContainText("£1,990 a month");
 
-  // Staff: IaaS's starter VMs need 1 ops, and a new company starts with 1.
+  // Staff: the VMs need 1 ops, and a new company starts with 1.
   await goTo(student, "People");
   await expect(student.getByTestId("developers-count")).toHaveText("2");
   await expect(student.getByTestId("ops-needed")).toContainText("needs 1 ops staff");
@@ -119,11 +124,10 @@ test("teacher creates a code, student starts a game and presses Continue", async
 
   await goTo(student, "Home");
   // £66 of IaaS (£33 running costs and £15 and £18 of VM rent, each a month ÷ 30) + 3 developers × £120 + 1 ops × £120
-  // + 1 support × £100 out, and £200 in: 1,200 of the social network's 4,000 users pay £5 a month.
-  await expect(student.getByTestId("cash")).toHaveText("£12,554");
-  // Users grow each day; load stays well under capacity, so uptime stays at 100%.
-  await expect(student.getByTestId("users")).not.toHaveText("4,000");
-  await expect(student.getByTestId("users")).toHaveText(/^4,\d{3}$/);
+  // + 1 support × £100 out, and nothing in: the users arrive at the end of day 3.
+  await expect(student.getByTestId("cash")).toHaveText("£12,354");
+  await expect(student.getByTestId("users")).toHaveText("0");
+  await expect(student.getByTestId("launch-headline")).toHaveText("Launch in 1 day");
   await expect(student.getByTestId("uptime")).toHaveText("100%");
   // The day log card has each category's total; its modal has every line.
   await expect(student.getByTestId("home-day-log").locator('[data-category="staff"]')).toContainText("£580");
@@ -141,7 +145,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await elsewhere.getByRole("button", { name: "Go" }).click();
   await elsewhere.getByRole("link", { name: /Playwright Ltd/ }).click();
   await expect(elsewhere.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
-  await expect(elsewhere.getByTestId("users")).not.toHaveText("4,000");
+  await expect(elsewhere.getByTestId("launch-text")).toContainText("arrive at the end of day 3");
   await goTo(elsewhere, "People");
   await expect(elsewhere.getByTestId("developers-count")).toHaveText("3");
   // A page opens straight from its address, as a bookmark would.
@@ -155,7 +159,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   const row = live.locator(`[data-code="${code}"] tr`, { hasText: "Playwright Ltd" });
   await expect(row.getByTestId("live-day")).toHaveText(`2/${E2E_FINAL_DAY}`);
   await expect(row).toContainText("IaaS");
-  await expect(row).toContainText("£12,554");
+  await expect(row).toContainText("£12,354");
   await expect(row).toContainText("Active");
 
   // Teacher sees the company counted against the code.
@@ -166,7 +170,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await teacher.getByRole("link", { name: "Playwright Ltd" }).click();
   await expect(teacher.getByRole("heading", { name: "How Playwright Ltd did" })).toBeVisible();
   await expect(teacher.getByTestId("summary")).toContainText(`So far: day 2 of ${E2E_FINAL_DAY}`);
-  await expect(teacher.getByTestId("summary-cash")).toHaveText("£12,554");
+  await expect(teacher.getByTestId("summary-cash")).toHaveText("£12,354");
   await teacher.getByRole("link", { name: "← Staff dashboard" }).click();
   await expect(teacher.getByTestId("live-dashboard")).toBeVisible();
 });
@@ -228,6 +232,8 @@ test("a SaaS company buys an add-on and pays for it per user", async ({ browser,
     data: { name: "Shopfront Ltd", productType: "social", model: "saas" },
   });
   const { id } = await created.json();
+  // SaaS needs nothing set up: it launches on day 3 with the social network's 4,000 users.
+  await launch(request, code, id, "saas");
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
@@ -260,7 +266,7 @@ test("a SaaS company buys an add-on and pays for it per user", async ({ browser,
 
   // A day's share of the add-on bill: £320 ÷ 30, rounded to £11, tagged add-ons.
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("day")).toContainText(`4 of ${E2E_FINAL_DAY}`);
   await expect(student.getByTestId("spend-addons")).toHaveText("£11");
   await expect((await openDayLog(student)).locator('[data-category="addons"]')).toContainText(
     "Add-on: Direct messages (4,000 users at £0.08 a month)",
@@ -278,6 +284,8 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
     data: { name: "Movers Ltd", productType: "social", model: "iaas" },
   });
   const { id } = await created.json();
+  // Its first VMs rented on day 1, launching on day 3.
+  await launch(request, code, id, "iaas");
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}/infrastructure`);
@@ -292,10 +300,10 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
   await student.getByRole("button", { name: "Plan migration" }).click();
   await expect(panel.getByRole("heading", { name: "Migrate to Deploy to a platform (PaaS)?" })).toBeVisible();
   const quote = student.getByTestId("migration-quote");
-  await expect(quote).toContainText("You switch on day 15");
+  await expect(quote).toContainText("You switch on day 17");
   await expect(student.getByTestId("quote-days")).toHaveText("14 days");
-  // Default config: PaaS is £1,000 upfront and £110 a day with its starter instance and managed database; IaaS £66 a
-  // day with its starter VMs, and £3,000 to leave.
+  // Default config: PaaS is £1,000 upfront and £110 a day with one instance and a small managed database, sized for the
+  // users; IaaS £66 a day with its VMs, and £3,000 to leave.
   await expect(student.getByTestId("quote-upfront")).toHaveText("£1,000");
   await expect(student.getByTestId("quote-double")).toHaveText("£1,540");
   await expect(student.getByTestId("quote-pro-rata")).toHaveText("£924");
@@ -304,7 +312,8 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
   await expect(student.getByTestId("quote-overrun")).toContainText("chance of 2–5 extra days");
   // Nothing has started or been charged yet.
   const company = async () => (await request.get(`/api/codes/${code}/companies/${id}`)).json();
-  expect(await company()).toMatchObject({ migration: null, spend: { infrastructure: 2000 } });
+  // IaaS's £2,000 up front and two days of its £66.
+  expect(await company()).toMatchObject({ migration: null, spend: { infrastructure: 2132 } });
   await student.getByRole("button", { name: "Start migration" }).click();
   await expect(quote).toHaveCount(0);
 
@@ -325,7 +334,7 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
     await student.getByRole("button", { name: "Continue" }).click();
     await expect(student.getByTestId("day")).toContainText(`${day} of ${E2E_FINAL_DAY}`);
   };
-  for (let day = 2; day <= 6; day++) await continueTo(day);
+  for (let day = 4; day <= 8; day++) await continueTo(day);
   // Still on IaaS, and billed for it, until the move completes; PaaS is billed in full on top.
   await expect(student.getByTestId("ops-needed")).toContainText("needs 1 ops staff");
   await goTo(student, "Infrastructure");
@@ -340,13 +349,13 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
   await expect(infrastructure).toContainText("Double billing: Deploy to a platform (PaaS) running costs");
   await student.keyboard.press("Escape");
 
-  // Moving starts on day 8. Seeds are random here, so it may overrun: if so, the panel shows the extra days.
+  // Moving starts on day 10. Seeds are random here, so it may overrun: if so, the panel shows the extra days.
   await goTo(student, "Infrastructure");
-  for (let day = 7; day <= 8; day++) await continueTo(day);
+  for (let day = 9; day <= 10; day++) await continueTo(day);
   const daysLeft = Number((await student.getByTestId("migration-days-left").textContent())!.split(" ")[0]);
   if (daysLeft > 7) await expect(student.getByTestId("migration-overrun")).toContainText(`${daysLeft - 7} days`);
   else await expect(student.getByTestId("migration-overrun")).toHaveCount(0);
-  for (let day = 9; day <= 8 + daysLeft; day++) await continueTo(day);
+  for (let day = 11; day <= 10 + daysLeft; day++) await continueTo(day);
   await expect(panel).toContainText("1 completed");
   await expect(stack.locator('[data-layer="os"]')).toContainText("Provider");
   await expect(stack.locator('[data-layer="os"]')).toContainText("was You");
@@ -446,17 +455,27 @@ test("a scripted event shows a card that names the layer and highlights it in th
   await teacher.getByRole("button", { name: "Sign in" }).click();
   const code = await createCode(teacher);
 
-  const company = async (name: string, model: string) => {
-    // On-prem's kit costs more than the starting cash, so it takes the bank loan.
-    const data = { name, productType: "social", model, takeLoan: model === "onprem" };
-    const created = await request.post(`/api/codes/${code}/companies`, { data });
-    return (await created.json()).id as string;
+  // Each sets up its first servers on day 1, so it launches on day 3.
+  const company = async (name: string, model: string, actions: object[]) => {
+    const created = await request.post(`/api/codes/${code}/companies`, { data: { name, productType: "social", model } });
+    const id = (await created.json()).id as string;
+    for (const data of actions) expect((await request.post(`/api/codes/${code}/companies/${id}/actions`, { data })).ok()).toBe(true);
+    return id;
   };
-  const [onprem, paas] = [await company("Patchy Ltd", "onprem"), await company("Platform Ltd", "paas")];
+  // An IaaS company that lets its one ops person go: nobody is left to patch.
+  const iaas = await company("Patchy Ltd", "iaas", [
+    { type: "rentServer", server: "app", size: "medium" },
+    { type: "rentServer", server: "database", size: "medium" },
+    { type: "letGo", pool: "ops" },
+  ]);
+  const paas = await company("Platform Ltd", "paas", [
+    { type: "setInstances", count: 1 },
+    { type: "setManagedService", service: "database", size: "small" },
+  ]);
 
-  // The default config patches the OS on day 3. On-prem needs 2 ops to patch, and a new company has 1.
+  // The default config patches the OS on day 3, launch day. IaaS needs 1 ops to patch, and this company has none.
   const student = await (await browser.newContext()).newPage();
-  await student.goto(`/play/${code}/${onprem}`);
+  await student.goto(`/play/${code}/${iaas}`);
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
   await expect(student.getByTestId("event-card")).toHaveCount(0);
@@ -468,13 +487,13 @@ test("a scripted event shows a card that names the layer and highlights it in th
   await expect(card).toBeVisible();
   await expect(card).toHaveAttribute("data-event", "osPatch");
   await expect(card.getByRole("strong").first()).toHaveText("OS security patch");
-  await expect(card.getByTestId("event-responsibility")).toHaveText("OS and patching is your job on-prem.");
+  await expect(card.getByTestId("event-responsibility")).toHaveText("OS and patching is your job on IaaS.");
   await expect(card.getByTestId("event-outcome")).toContainText("attackers got in");
   await expect(card.getByTestId("event-tone")).toHaveText("It hurt");
   await expect(student.getByTestId("home-alerts")).toContainText("OS security patch");
   // It's in the day log too, with the outage and clean-up it caused.
   const dayLog = await openDayLog(student);
-  await expect(dayLog.getByTestId("event")).toContainText("OS and patching is your job on-prem.");
+  await expect(dayLog.getByTestId("event")).toContainText("OS and patching is your job on IaaS.");
   await expect(dayLog.getByTestId("outage")).toContainText("OS security patch");
   await expect(dayLog.locator('[data-category="infrastructure"]')).toContainText("Cleaning up after the break-in");
   await student.keyboard.press("Escape");
@@ -812,10 +831,12 @@ test("a student sets a price, plays a day and sees the income on Finance", async
     data: { name: "Pricey Ltd", productType: "social", model: "iaas" },
   });
   const { id } = await created.json();
+  // Its first VMs rented on day 1, launching on day 3.
+  await launch(request, code, id, "iaas");
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
-  // A social network starts with 4,000 users, 70% of them free, at its fair price of £5 a month: 1,200 × £5 ÷ 30.
+  // A social network launches with 4,000 users, 70% of them free, at its fair price of £5 a month: 1,200 × £5 ÷ 30.
   await expect(student.getByTestId("home-income")).toContainText("£200");
   await expect(student.getByTestId("home-paid-free")).toContainText("1,200 paying, 2,800 free");
 
@@ -844,15 +865,15 @@ test("a student sets a price, plays a day and sees the income on Finance", async
 
   // It applies from the next day: 1,200 paying users at £30 a month bring in £1,200.
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("day")).toContainText(`4 of ${E2E_FINAL_DAY}`);
   await goTo(student, "Finance");
   const sheet = student.getByTestId("balance-sheet");
-  await expect(sheet).toContainText("Day 2");
+  await expect(sheet).toContainText("Day 4");
   await expect(student.getByTestId("balance-day-income")).toHaveText("£1,200");
   await expect(student.getByTestId("balance-income")).toHaveText("£1,200");
   // £1,200 in, against IaaS's £2,000 upfront and £66 a day, and 2 developers, 1 ops person and 1 support person
-  // (£460 a day).
-  await expect(student.getByTestId("balance-profit")).toHaveText("−£1,326");
+  // (£460 a day), for the 3 days played.
+  await expect(student.getByTestId("balance-profit")).toHaveText("−£2,378");
   await expect(student.getByTestId("balance-day-profit")).toHaveText("£674");
   await expect(student.getByTestId("cash-chart")).toBeVisible();
   await expect((await openDayLog(student)).getByTestId("log-income")).toHaveText("+£1,200");
@@ -871,6 +892,8 @@ test("a student previews prices live, raises the price, and sees the backlash an
     data: { name: "Wave Ltd", productType: "social", model: "iaas" },
   });
   const { id } = await created.json();
+  // Its first VMs rented on day 1, launching on day 3.
+  await launch(request, code, id, "iaas");
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}/product`);
@@ -904,7 +927,7 @@ test("a student previews prices live, raises the price, and sees the backlash an
 
   // The next day the backlash starts and the lock counts down.
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("day")).toContainText(`4 of ${E2E_FINAL_DAY}`);
   await expect(student.getByTestId("wave-progress")).toContainText("Day 1 of 7");
   await expect(student.getByTestId("price-lock")).toHaveText("13 days");
 
@@ -938,12 +961,14 @@ test("a SaaS company without support builds a backlog, hires support from Home a
   });
   const { id } = await created.json();
   await request.post(`/api/codes/${code}/companies/${id}/actions`, { data: { type: "letGo", pool: "support" } });
+  // SaaS launches on day 3, with the shop's 3,000 users.
+  await launch(request, code, id, "saas");
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
   await expect(student.getByTestId("home-satisfaction")).toHaveText("100%");
   await expect(student.getByTestId("home-backlog")).toContainText("Backlog 0 tickets");
-  for (let day = 2; day <= 4; day++) {
+  for (let day = 4; day <= 6; day++) {
     await student.getByRole("button", { name: "Continue" }).click();
     await expect(student.getByTestId("day")).toContainText(`${day} of ${E2E_FINAL_DAY}`);
   }
@@ -965,7 +990,7 @@ test("a SaaS company without support builds a backlog, hires support from Home a
   await expect(modal).toHaveCount(0);
 
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`5 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("day")).toContainText(`7 of ${E2E_FINAL_DAY}`);
   await expect(student.getByTestId("home-backlog")).toContainText("Backlog 0 tickets");
   await expect(student.getByTestId("home-satisfaction")).toHaveText(/^\d{1,3}%$/);
 
@@ -973,7 +998,7 @@ test("a SaaS company without support builds a backlog, hires support from Home a
   await goTo(student, "Customers");
   const care = student.getByTestId("support");
   await expect(care.getByTestId("satisfaction")).toHaveText(/^\d{1,3}%$/);
-  await expect(care.getByTestId("satisfaction-change")).toContainText("on day 5");
+  await expect(care.getByTestId("satisfaction-change")).toContainText("on day 7");
   await expect(care.getByTestId("backlog")).toHaveText("0");
   await expect(care.getByTestId("tickets-today")).toHaveText(/^\d+$/);
   await expect(care.getByTestId("cleared-today")).not.toHaveText("0");
@@ -993,18 +1018,19 @@ test("free users start paying each day, and Customers shows what's helping or hu
   await teacher.getByRole("button", { name: "Sign in" }).click();
   const code = await createCode(teacher);
 
-  // A social network: 800 of its 1,000 users are free.
+  // A social network: 2,800 of the 4,000 users it launches with on day 3 are free.
   const created = await request.post(`/api/codes/${code}/companies`, {
     data: { name: "Upgrade Ltd", productType: "social", model: "iaas" },
   });
   const { id } = await created.json();
+  await launch(request, code, id, "iaas");
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
   await expect(student.getByTestId("home-conversions")).toContainText("0 free users started paying");
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
-  await expect(student.getByTestId("home-conversions")).toContainText(/[1-9]\d* free users? started paying on day 2/);
+  await expect(student.getByTestId("day")).toContainText(`4 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("home-conversions")).toContainText(/[1-9]\d* free users? started paying on day 4/);
 
   // Customers shows the day's conversions, the rate, and each driver: with 100% uptime and satisfaction, those help.
   await goTo(student, "Customers");

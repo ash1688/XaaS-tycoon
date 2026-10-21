@@ -25,7 +25,7 @@ import {
 
 const comparison = { upfrontCost: "", monthlyCost: "", opsNeeded: "", control: "" };
 const growth = {
-  startingUsers: 1000,
+  launchUsers: 1000,
   marketSize: 1_000_000,
   dailyGrowth: 0.03,
   growthNoise: 0.2,
@@ -104,6 +104,8 @@ const config: GameConfig = {
   startingCash: 1000,
   finalDay: 180,
   maxCompanyNameLength: 20,
+  // Launches on day 1, as the game starts, with the starter setups below in place: the launch tests set their own.
+  launch: { earliestDay: 1 },
   // Capacity far above any load here, so outages only happen where a test lowers it.
   // No upfront or per-user costs, so each model costs a flat monthly ÷ 30 a day unless a test adds them.
   models: {
@@ -204,6 +206,34 @@ const sim = createSim(config);
 const roomyDefaults: GameConfig = { ...defaultConfig, startingCash: 250_000 };
 
 /**
+ * A first setup on the default config, as a student might set it up on day 1: a medium app server and database on
+ * IaaS; large ones on-prem, with more room since kit takes 10 days to arrive; one app instance and a small managed
+ * database on PaaS. Nothing on SaaS, which has no servers.
+ */
+const FIRST_SETUP: Record<ModelId, Action[]> = {
+  onprem: [
+    { type: "buyServer", server: "app", size: "large" },
+    { type: "buyServer", server: "database", size: "large" },
+  ],
+  iaas: [
+    { type: "rentServer", server: "app", size: "medium" },
+    { type: "rentServer", server: "database", size: "medium" },
+  ],
+  paas: [
+    { type: "setInstances", count: 1 },
+    { type: "setManagedService", service: "database", size: "small" },
+  ],
+  saas: [],
+};
+const setUp = (s: Sim, state: GameState) => FIRST_SETUP[state.model].reduce((st, a) => s.applyAction(st, a), state);
+/** A default-config game with its first setup, played to the end of its launch day. */
+const launched = (s: Sim, state: GameState) => {
+  let st = setUp(s, state);
+  while (st.launchDay === null && st.status === "playing") st = s.advance(st).state;
+  return st;
+};
+
+/**
  * A config whose IaaS starter app server carries this much load at 1 a user: its CU is load ÷ 100, at 0.01 CU a user.
  * The database stays far bigger, so compute is the tier that runs out.
  */
@@ -242,6 +272,155 @@ describe("newGame", () => {
   it("produces JSON-serialisable state", () => {
     const state = start();
     expect(JSON.parse(JSON.stringify(state))).toEqual(state);
+  });
+});
+
+describe("launch", () => {
+  const fresh = (s: Sim, model: ModelId, productType = "social", takeLoan = false) =>
+    s.newGame({ companyName: "Acme", productType, model, seed: 7, takeLoan });
+  const defaults = createSim(roomyDefaults);
+  /** Plays a day at a time until the company has launched, or `last` has been played. */
+  const playTo = (s: Sim, state: GameState, last: number) => {
+    let st = state;
+    while (st.day < last) st = s.advance(st).state;
+    return st;
+  };
+
+  it("starts a new game on every model and product with no users and no servers by default", () => {
+    for (const model of MODEL_IDS) {
+      for (const p of PRODUCT_TYPE_IDS) {
+        const state = fresh(defaults, model, p);
+        expect(state, `${model} ${p}`).toMatchObject({ users: 0, paidUsers: 0, launchDay: null, servers: [], load: 0 });
+        expect(defaults.launch(state)).toMatchObject({ status: "upcoming", earliestDay: 3 });
+      }
+    }
+    for (const model of MODEL_IDS) expect(defaultConfig.models[model].servers?.starter).toBeUndefined();
+  });
+
+  it("launches SaaS on day 3: it needs nothing set up", () => {
+    const state = fresh(defaults, "saas");
+    expect(defaults.launch(state)).toMatchObject({ day: 3, daysLeft: 2, needsServers: false, setUp: true });
+    expect(playTo(defaults, state, 2)).toMatchObject({ users: 0, launchDay: null });
+    expect(playTo(defaults, state, 3)).toMatchObject({ users: 4_000, launchDay: 3 });
+  });
+
+  it("launches IaaS on day 3 with VMs rented by day 2, ready the next day", () => {
+    for (const rentOn of [1, 2]) {
+      let state = playTo(defaults, fresh(defaults, "iaas"), rentOn);
+      expect(defaults.launch(state)).toMatchObject({ day: null, needsServers: true, setUp: false });
+      state = setUp(defaults, state);
+      expect(defaults.launch(state)).toMatchObject({ status: "upcoming", day: 3, daysLeft: 3 - rentOn, setUp: true });
+      expect(playTo(defaults, state, 3).launchDay, `rented on day ${rentOn}`).toBe(3);
+    }
+  });
+
+  it("launches PaaS on day 3 once instances and a managed database are set up, and not with instances alone", () => {
+    const instances = defaults.applyAction(fresh(defaults, "paas"), { type: "setInstances", count: 1 });
+    expect(defaults.launch(instances).day).toBeNull();
+    expect(playTo(defaults, instances, 5).launchDay).toBeNull();
+    expect(playTo(defaults, setUp(defaults, fresh(defaults, "paas")), 3).launchDay).toBe(3);
+  });
+
+  it("launches on-prem on the day its first kit arrives, with the normal delivery time", () => {
+    const state = setUp(defaults, fresh(defaults, "onprem", "video", true));
+    // The kit on order needs an ops person once it arrives, though none yet.
+    expect(defaults.launch(state)).toMatchObject({ status: "upcoming", day: 11, daysLeft: 10, opsNeeded: 1 });
+    expect(defaults.opsNeededNow(state)).toBe(0);
+    const waiting = playTo(defaults, state, 10);
+    expect(waiting).toMatchObject({ users: 0, launchDay: null });
+    expect(defaults.launch(waiting)).toMatchObject({ status: "waiting", day: 11, daysLeft: 1 });
+    const live = playTo(defaults, state, 11);
+    expect(live).toMatchObject({ launchDay: 11, users: 1_600 });
+    expect(defaults.launch(live)).toMatchObject({ status: "launched", day: 11, daysLeft: null });
+  });
+
+  it("waits for capacity past day 3, launching on the first day the company has it", () => {
+    let state = playTo(defaults, fresh(defaults, "iaas"), 3);
+    expect(state).toMatchObject({ users: 0, launchDay: null });
+    expect(defaults.launch(state)).toMatchObject({ status: "waiting", day: null, daysLeft: null, setUp: false });
+    state = playTo(defaults, state, 6);
+    // Rented on day 6, ready by the end of day 7: the users arrive then.
+    state = setUp(defaults, state);
+    expect(defaults.launch(state)).toMatchObject({ status: "waiting", day: 7, daysLeft: 1 });
+    const live = playTo(defaults, state, 7);
+    expect(live).toMatchObject({ launchDay: 7, users: 4_000 });
+    // The demand shown on launch day is the launch burst's, for the servers to meet from tomorrow: 6 CU of 10.
+    expect(live.demand).toEqual({ cu: 6, dbu: 6 });
+    expect(defaults.units(live)!.cu).toEqual({ demand: 6, capacity: 10 });
+  });
+
+  it("needs both compute and a database to launch", () => {
+    const appOnly = defaults.applyAction(fresh(defaults, "iaas"), { type: "rentServer", server: "app", size: "large" });
+    expect(playTo(defaults, appOnly, 5).launchDay).toBeNull();
+  });
+
+  it("brings a launch burst set per product in config, split by its free share, then grows as normal", () => {
+    const bursty = createSim({
+      ...roomyDefaults,
+      productTypes: {
+        ...roomyDefaults.productTypes,
+        video: { ...roomyDefaults.productTypes.video, growth: { ...roomyDefaults.productTypes.video.growth, launchUsers: 2_500 } },
+      },
+    });
+    const { log, state } = bursty.advance(fresh(bursty, "saas", "video"), 2);
+    // Video's free share is 60%: 1,000 of the 2,500 pay.
+    expect(state).toMatchObject({ launchDay: 3, users: 2_500, paidUsers: 1_000 });
+    expect(bursty.launch(state)).toMatchObject({ users: 2_500, paidUsers: 1_000 });
+    expect(log.at(-1)!.entries[0]).toEqual({
+      text: "Launch day: your first 2,500 users arrived, 1,000 of them paying.",
+      cashDelta: 0,
+      kind: "launch",
+    });
+    // From the next day, the product's normal daily growth.
+    const next = bursty.advance(state).state;
+    expect(next.users).toBeGreaterThan(2_500);
+    expect(next.users).toBeLessThan(2_500 * (1 + 2 * defaultConfig.productTypes.video.growth.dailyGrowth));
+    for (const p of PRODUCT_TYPE_IDS) {
+      const { users, paidUsers } = playTo(defaults, fresh(defaults, "saas", p), 3);
+      const { growth, pricing } = defaultConfig.productTypes[p];
+      expect(users, p).toBe(growth.launchUsers);
+      expect(paidUsers, p).toBe(Math.round(growth.launchUsers * (1 - pricing.freeShare)));
+    }
+  });
+
+  it("puts more of the launch burst on the free tier at a price set above the fair one before launch", () => {
+    const fair = playTo(defaults, fresh(defaults, "saas", "ecommerce"), 3);
+    const dear = playTo(defaults, defaults.applyAction(fresh(defaults, "saas", "ecommerce"), { type: "setPrice", price: 10 }), 3);
+    // A shop's paid share is 70% at its £5 fair price; at twice that, half as many pay.
+    expect(fair).toMatchObject({ users: 3_000, paidUsers: 2_100 });
+    expect(dear).toMatchObject({ users: 3_000, paidUsers: 1_050 });
+  });
+
+  it("has no users, income, tickets or outages before launch, while staff, running costs and the loan are charged", () => {
+    // A provider outage and a broken patch on day 2, before anything is running: neither touches the company.
+    const s = createSim({
+      ...roomyDefaults,
+      events: roomyDefaults.events.map((e) =>
+        e.id === "providerOutage" || e.id === "osPatch" ? { ...e, schedule: { type: "fixed" as const, days: [2, 3] } } : e,
+      ),
+    });
+    const start = { ...fresh(s, "iaas", "ecommerce", true), ops: 0 };
+    const { state, log } = s.advance(start, 2);
+    expect(state).toMatchObject({ users: 0, paidUsers: 0, income: 0, launchDay: null, outageDays: 0, downtimeHours: 0 });
+    expect(state).toMatchObject({ ticketsToday: 0, backlog: 0, satisfaction: 100, events: [] });
+    expect(s.uptime(state)).toBe(100);
+    const entries = log.flatMap((d) => d.entries);
+    expect(entries.filter((e) => e.kind === "outage" || e.kind === "event" || e.kind === "income")).toEqual([]);
+    const charged = (category: string) => entries.some((e) => e.category === category && e.cashDelta < 0);
+    expect(charged("staff")).toBe(true);
+    expect(charged("infrastructure")).toBe(true);
+    expect(charged("debt")).toBe(true);
+    expect(state.cash).toBeLessThan(start.cash);
+  });
+
+  it("lets a test config launch as the game starts, with its starter setup in place", () => {
+    const state = start();
+    expect(state).toMatchObject({ launchDay: 1, users: 1000 });
+    expect(sim.launch(state)).toMatchObject({ status: "launched", day: 1 });
+    const later = createSim({ ...config, launch: { earliestDay: 3 } });
+    const waiting = later.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1 });
+    expect(waiting).toMatchObject({ launchDay: null, users: 0, load: 0 });
+    expect(later.launch(waiting)).toMatchObject({ day: 3, daysLeft: 2, users: 1000, paidUsers: 0 });
   });
 });
 
@@ -407,8 +586,10 @@ describe("staff", () => {
     expect(MODEL_IDS.map((m) => sim.opsNeeded(m))).toEqual([3, 2, 1, 0]);
   });
 
-  it("needs no more ops on IaaS's starter VMs than on-prem, and a few on PaaS and SaaS, by default", () => {
-    const needed = MODEL_IDS.map((m) => createSim(defaultConfig).opsNeeded(m));
+  it("needs no more ops on IaaS's first VMs than on-prem, and a few on PaaS and SaaS, by default", () => {
+    const s = createSim(defaultConfig);
+    const first = (m: ModelId) => launched(s, s.newGame({ companyName: "Acme", productType: "social", model: m, seed: 1 }));
+    const needed = MODEL_IDS.map((m) => s.opsNeededNow(first(m)));
     expect(needed[1]).toBeLessThanOrEqual(needed[0]!);
     // Kit you rack yourself needs a bigger share of an ops person than a VM, and patching it takes more people.
     const { onprem, iaas } = defaultConfig.models;
@@ -1096,13 +1277,15 @@ describe("servers on IaaS", () => {
     expect(flat.advance(JSON.parse(JSON.stringify(half)), 5)).toEqual(flat.advance(half, 5));
   });
 
-  it("starts every product on IaaS with room to grow by default, run by one ops person", () => {
+  it("starts with no VMs by default, and a medium app server and database launch every product with room to grow", () => {
     const s = createSim(defaultConfig);
-    expect(s.opsNeeded("iaas")).toBe(1);
+    expect(s.opsNeeded("iaas")).toBe(0);
     for (const p of PRODUCT_TYPE_IDS) {
-      const state = s.newGame({ companyName: "Acme", productType: p, model: "iaas", seed: 1 });
+      expect(s.newGame({ companyName: "Acme", productType: p, model: "iaas", seed: 1 }).servers).toEqual([]);
+      const state = launched(s, s.newGame({ companyName: "Acme", productType: p, model: "iaas", seed: 1 }));
+      expect(state.launchDay, p).toBe(3);
+      expect(s.opsNeededNow(state), p).toBe(1);
       expect(s.units(state)!.usersSupported, p).toBeGreaterThan(state.users * 1.5);
-      expect(s.capacity(state), p).toBeGreaterThan(state.load * 1.5);
     }
     // One CU serves the same users whatever the size, and bigger VMs cost less per unit.
     const { units } = defaultConfig.servers.types.app;
@@ -1358,21 +1541,26 @@ describe("servers on-prem", () => {
     expect(own.advance(JSON.parse(JSON.stringify(half)), 12)).toEqual(own.advance(half, 12));
   });
 
-  it("by default, buys a starter kit with room to grow and costs the most up front", () => {
+  it("by default, charges the server room up front and the first kit when it's bought, launching when it arrives", () => {
     const s = createSim(defaultConfig);
     const { onprem } = defaultConfig.models;
-    const kit = onprem.servers!.starter.reduce((sum, k) => sum + k.count * onprem.servers!.purchase!.price[k.type][k.size], 0);
-    // The model's upfront cost is the server room; the kit is on top, not charged twice.
-    expect(s.upfrontCost("onprem")).toBe(onprem.upfrontCost + kit);
-    expect(s.upfrontCost("onprem")).toBe(7_200);
+    // The model's upfront cost is the server room. There's no kit until the company buys some, so nothing is charged
+    // twice.
+    expect(s.upfrontCost("onprem")).toBe(onprem.upfrontCost);
+    expect(s.upfrontCost("onprem")).toBe(5_000);
     expect(onprem.servers!.readyDays).toBe(10);
     for (const p of PRODUCT_TYPE_IDS) {
-      // Starting cash covers the kit, leaving little to buy more with: the bank loan is the choice.
       const own = s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1 });
-      expect(own.cash).toBe(defaultConfig.startingCash - 7_200);
-      const state = s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1, takeLoan: true });
-      expect(state.cash).toBe(defaultConfig.startingCash + defaultConfig.loan.amount - 7_200);
-      expect(s.units({ ...state, ops: s.opsNeeded("onprem") })!.usersSupported, p).toBeGreaterThan(state.users * 2);
+      expect(own.cash).toBe(defaultConfig.startingCash - 5_000);
+      expect(own.servers).toEqual([]);
+      // A large app server and database, £2,200 on day 1: starting cash covers them, leaving little to buy more with.
+      expect(setUp(s, own).cash).toBe(defaultConfig.startingCash - 7_200);
+      const loaned = s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1, takeLoan: true });
+      expect(loaned.cash).toBe(defaultConfig.startingCash + defaultConfig.loan.amount - 5_000);
+      // The kit arrives on day 11, and the users with it.
+      const state = launched(s, loaned);
+      expect(state.launchDay, p).toBe(11);
+      expect(s.units({ ...state, ops: s.opsNeededNow(state) })!.usersSupported, p).toBeGreaterThan(state.users * 2);
     }
     // Every bought server sells back at a loss, and costs more up front than a month's rent of the same VM.
     const { purchase } = onprem.servers!;
@@ -1731,19 +1919,22 @@ describe("default PaaS and SaaS", () => {
     expect(paas.servers!.opsPerServer).toBeUndefined();
   });
 
-  it("needs a few fixed ops on PaaS and SaaS, no more than IaaS's starter", () => {
+  it("needs a few fixed ops on PaaS and SaaS, no more than IaaS's first VMs", () => {
+    const iaasOps = s.opsNeededNow(setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 1 })));
     for (const model of ["paas", "saas"] as const) {
       expect(s.opsNeeded(model)).toBeGreaterThan(0);
-      expect(s.opsNeeded(model)).toBeLessThanOrEqual(s.opsNeeded("iaas"));
+      expect(s.opsNeeded(model)).toBeLessThanOrEqual(iaasOps);
     }
     expect(paas.capacity).toBeUndefined();
     expect(saas.capacity).toBeUndefined();
     expect(saas.servers).toBeUndefined();
   });
 
-  it("starts PaaS with a small setup that carries every product's starting users with room to grow", () => {
+  it("launches PaaS on day 3 with one instance and a small database, carrying every launch burst with room to grow", () => {
     for (const p of PRODUCT_TYPE_IDS) {
-      const state = s.newGame({ companyName: "Acme", productType: p, model: "paas", seed: 1 });
+      expect(s.managed(s.newGame({ companyName: "Acme", productType: p, model: "paas", seed: 1 }))!.instances).toBe(0);
+      const state = launched(s, s.newGame({ companyName: "Acme", productType: p, model: "paas", seed: 1 }));
+      expect(state.launchDay, p).toBe(3);
       expect(s.managed(state)!.instances, p).toBeLessThanOrEqual(2);
       expect(s.units(state)!.usersSupported, p).toBeGreaterThan(state.users * 1.5);
       expect(s.advance(state, 7).state.outageDays, p).toBe(0);
@@ -2419,7 +2610,7 @@ describe("game end and summary", () => {
 describe("default config", () => {
   const sim180 = createSim(roomyDefaults);
   const run = (productType: string, model: string, ops?: number) => {
-    const start = sim180.newGame({ companyName: "Acme", productType, model, seed: 7 });
+    const start = setUp(sim180, sim180.newGame({ companyName: "Acme", productType, model, seed: 7 }));
     return sim180.advance(ops === undefined ? start : { ...start, ops }, defaultConfig.finalDay - 1).state;
   };
   // On servers, rents (or on-prem, buys) a massive one for any tier past half its capacity, enough headroom for load
@@ -2460,11 +2651,11 @@ describe("default config", () => {
     if (dbu.demand > dbu.capacity / ahead) return add(ch.absorbed < ch.demand && ch.capacity < dbu.capacity ? "cache" : "database") ?? state;
     return state;
   };
-  // Plays to the end with the ops the model needs, hiring support each day to keep up with the usual tickets, and on
-  // servers renting ahead of demand.
+  // Plays to the end with a first setup, the ops the model needs, hiring support each day to keep up with the usual
+  // tickets, and on servers renting ahead of demand.
   // Without hireSupport, it keeps its starting support staff. onDay sees each day played.
   const runStaffed = (productType: string, model: string, hireSupport = true, onDay?: (state: GameState) => void) => {
-    let state = sim180.newGame({ companyName: "Acme", productType, model, seed: 7 });
+    let state = setUp(sim180, sim180.newGame({ companyName: "Acme", productType, model, seed: 7 }));
     while (state.status === "playing") {
       state = rentAhead(state);
       const needed = hireSupport ? Math.ceil((sim180.usualTickets(state) * 1.2) / defaultConfig.support.ticketsPerPerson) : 0;
@@ -2482,7 +2673,7 @@ describe("default config", () => {
       // the extra VMs are only ready the next day, so its first day can be down too: the spike fires twice.
       expect(state.outageDays).toBeGreaterThanOrEqual(1);
       expect(state.outageDays).toBeLessThanOrEqual(3);
-      expect(state.users).toBeGreaterThan(defaultConfig.productTypes[p as "social"].growth.startingUsers * 5);
+      expect(state.users).toBeGreaterThan(defaultConfig.productTypes[p as "social"].growth.launchUsers * 5);
     }
   });
 
@@ -2512,7 +2703,7 @@ describe("default config", () => {
 
   it("is happy at the start: one support person keeps up with every product's first tickets", () => {
     for (const p of PRODUCT_TYPE_IDS) {
-      const state = sim180.newGame({ companyName: "Acme", productType: p, model: "iaas", seed: 7 });
+      const state = launched(sim180, sim180.newGame({ companyName: "Acme", productType: p, model: "iaas", seed: 7 }));
       expect(sim180.usualTickets(state)).toBeLessThanOrEqual(sim180.dailyClearance(state));
       expect(sim180.advance(state, 7).state).toMatchObject({ backlog: 0, satisfaction: 100 });
     }
@@ -2569,9 +2760,13 @@ describe("default config", () => {
     }
   });
 
-  it("makes on-prem's upfront cost the highest, and only SaaS charge per user", () => {
-    const upfront = (m: (typeof MODEL_IDS)[number]) => createSim(defaultConfig).upfrontCost(m);
+  it("makes on-prem's server room and first kit the dearest start by far, and only SaaS charge per user", () => {
+    const s = createSim(defaultConfig);
+    // Everything paid by the end of day 1 with a first setup: the model's upfront cost and, on-prem, the first kit.
+    const upfront = (m: (typeof MODEL_IDS)[number]) =>
+      defaultConfig.startingCash - setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: m, seed: 1 })).cash;
     for (const m of ["iaas", "paas", "saas"] as const) expect(upfront("onprem")).toBeGreaterThan(upfront(m) * 3);
+    expect(upfront("onprem")).toBeGreaterThan(s.upfrontCost("onprem"));
     expect(MODEL_IDS.filter((m) => defaultConfig.models[m].monthlyCostPerUser > 0)).toEqual(["saas"]);
   });
 });
@@ -3156,6 +3351,10 @@ describe("migration with servers", () => {
             loadBalancer: sizes(20, 30, 45, 60),
           },
           opsPerServer: { app: 0.6, database: 0.6, cache: 0.3, loadBalancer: 0.3 },
+          starter: [
+            { type: "app", size: "large", count: 1 },
+            { type: "database", size: "large", count: 1 },
+          ],
         },
       },
       iaas: {
@@ -3169,6 +3368,10 @@ describe("migration with servers", () => {
             loadBalancer: sizes(200, 300, 450, 600),
           },
           opsPerServer: { app: 0.5, database: 0.5, cache: 0.25, loadBalancer: 0.25 },
+          starter: [
+            { type: "app", size: "medium", count: 1 },
+            { type: "database", size: "medium", count: 1 },
+          ],
         },
       },
       paas: {
@@ -3181,6 +3384,10 @@ describe("migration with servers", () => {
             cache: sizes(300, 550, 1_000, 1_900),
           },
           managed: { ...paas.servers!.managed!, units: { database: sizes(15, 30, 60, 120), cache: sizes(15, 30, 60, 120) } },
+          starter: [
+            { type: "app", size: "medium", count: 1 },
+            { type: "database", size: "small", count: 1 },
+          ],
         },
       },
       saas: { ...saas, monthlyCost: 1_500, monthlyCostPerUser: 0.5 },
@@ -3200,6 +3407,8 @@ describe("migration with servers", () => {
     },
     events: [],
     migration: { ...defaultConfig.migration, overrun: { ...defaultConfig.migration.overrun, chance: 0 } },
+    // Each model's round-two starter setup above, in place and launched as the game starts.
+    launch: { earliestDay: 1 },
   };
   const s = createSim(calm);
   const migrate = (model: ModelId): Action => ({ type: "startMigration", model });
@@ -3969,9 +4178,10 @@ describe("default events", () => {
     expect(effects.saas).toEqual({ detail: expect.any(String) });
   });
 
-  it("fire an OS patch on day 3, so every game meets an event in its first lesson", () => {
+  it("fire an OS patch on day 3, so a company that launches on time meets an event on launch day", () => {
     const s = createSim(defaultConfig);
-    const state = s.advance(s.newGame({ companyName: "Acme", productType: "social", model: "paas", seed: 7 }), 2).state;
+    const state = launched(s, s.newGame({ companyName: "Acme", productType: "social", model: "paas", seed: 7 }));
+    expect(state.day).toBe(3);
     expect(s.events(state).map((e) => e.id)).toEqual(["osPatch"]);
   });
 
@@ -4005,16 +4215,17 @@ describe("default events", () => {
   });
 
   it("melt on-prem in a spike, but scale PaaS", () => {
-    // By day 30 a social network has grown into its starter kit enough that tripled demand is too much for it. PaaS
-    // runs plenty of instances and the biggest database, so only the spike could take it over.
+    // By day 30 a social network has grown into its first kit enough that tripled demand is too much for it. PaaS
+    // runs plenty of instances and the biggest database, so only the spike could take it over. One ops person runs
+    // either.
     const s = createSim({ ...roomyDefaults, events: [{ ...event("trafficSpike"), schedule: { type: "fixed", days: [30] } }] });
     const run = (model: (typeof MODEL_IDS)[number]) => {
-      let start = s.newGame({ companyName: "Acme", productType: "social", model, seed: 7 });
+      let start = setUp(s, s.newGame({ companyName: "Acme", productType: "social", model, seed: 7 }));
       if (model === "paas") {
         start = s.applyAction(start, { type: "setInstances", count: 10 });
         start = s.applyAction(start, { type: "setManagedService", service: "database", size: "massive" });
       }
-      return s.advance({ ...start, ops: s.opsNeeded(model) }, 29).state;
+      return s.advance({ ...start, ops: 1 }, 29).state;
     };
     expect(run("onprem").outageDays).toBeGreaterThan(0);
     expect(run("paas").outageDays).toBe(0);
@@ -4365,7 +4576,7 @@ describe("support, tickets and satisfaction", () => {
       ...config,
       productTypes: {
         ...config.productTypes,
-        social: { ...config.productTypes.social, growth: { ...growth, startingUsers: 1000, marketSize: 1000 } },
+        social: { ...config.productTypes.social, growth: { ...growth, launchUsers: 1000, marketSize: 1000 } },
       },
     });
     const at = (sm: Sim, satisfaction: number) => ({
@@ -4679,7 +4890,7 @@ describe("free-to-paid conversion", () => {
         ...config.productTypes,
         social: {
           ...config.productTypes.social,
-          growth: { ...growth, startingUsers: 10_000, dailyGrowth: 0, growthNoise: 0 },
+          growth: { ...growth, launchUsers: 10_000, dailyGrowth: 0, growthNoise: 0 },
           pricing: { fairPrice: 30, freeShare: 0.5, conversionRate: rate },
         },
       },

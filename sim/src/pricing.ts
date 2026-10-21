@@ -331,6 +331,7 @@ export function createPricing(config: GameConfig) {
     waveDay,
     priceGrowth,
     paidUsersAfter,
+    paidShareOfNew,
     dailyIncome,
     incomeEntries,
   };

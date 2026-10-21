@@ -263,6 +263,7 @@ export async function buildApp(opts: AppOptions) {
       support: state.support,
       opsNeeded: sim.opsNeededNow(state),
       dailyStaffCost: sim.dailyStaffCost(state),
+      launch: sim.launch(state),
       users: state.users,
       paidUsers: state.paidUsers,
       freeUsers: state.users - state.paidUsers,
@@ -353,7 +354,7 @@ export async function buildApp(opts: AppOptions) {
         const { name, blurb, comparison, monthlyCost, monthlyCostPerUser } = config.models[id];
         const stack = responsibilityStack(id);
         const opsNeeded = sim.opsNeeded(id);
-        // On-prem's includes the starter kit it buys.
+        // On-prem's is the server room: the kit is bought on top, one server at a time.
         const upfrontCost = sim.upfrontCost(id);
         return { id, name, blurb, comparison, stack, opsNeeded, upfrontCost, monthlyCost, monthlyCostPerUser };
       }),

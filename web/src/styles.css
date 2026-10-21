@@ -2920,6 +2920,52 @@ body.modal-open {
   color: var(--pos);
 }
 
+/* The launch entry in the day log. */
+.day-log li.event.launch {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.day-log li.event.launch .badge {
+  color: var(--pos);
+}
+
+/* The Home launch card's setup checklist. Its links sit above the card's whole-card button. */
+.launch-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.launch-checklist li {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.launch-checklist li.done {
+  color: var(--muted);
+}
+
+.launch-check {
+  flex: none;
+  width: 1.1rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.launch-checklist li.done .launch-check {
+  color: var(--pos);
+}
+
+.launch-checklist a {
+  position: relative;
+  z-index: 1;
+}
+
 /* Servers in units (IaaS): a bar each for CU, DBU and CH, the binding tier outlined. */
 .unit-intro {
   margin: 0 0 0.75rem;

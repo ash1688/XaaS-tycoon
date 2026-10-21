@@ -5,6 +5,7 @@ import { createEvents, type EventView, type FeatureGapView } from "./events.ts";
 import { createFeatures, type FeatureView } from "./features.ts";
 import { createFinance, noSpend, pounds } from "./finance.ts";
 import { createInfrastructure, type ProviderView } from "./infrastructure.ts";
+import { createLaunch, type LaunchView } from "./launch.ts";
 import { createLoan, type LoanQuote, type LoanView } from "./loan.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
 import { isNameAllowed } from "./nameFilter.ts";
@@ -35,6 +36,7 @@ export type { ConversionDriver, ConversionDriverId, ConversionView } from "./con
 export type { EventView, FeatureGapView } from "./events.ts";
 export type { FeatureStatus, FeatureView } from "./features.ts";
 export type { ProviderView } from "./infrastructure.ts";
+export type { LaunchView } from "./launch.ts";
 export type { LoanQuote, LoanView } from "./loan.ts";
 export type { LostAddon, MigrationQuote, MigrationView } from "./migration.ts";
 export type { PricePreview, PriceWaveView } from "./pricing.ts";
@@ -97,13 +99,13 @@ export interface Sim {
   /** The only way time moves. Continue calls it with 1. */
   advance(state: GameState, days?: number): AdvanceResult;
   /**
-   * Ops staff a model needs to keep running: its fixed number (the few on PaaS and SaaS), plus on a model with
-   * servers, the starter setup's.
+   * Ops staff a new company on a model needs: its fixed number (the few on PaaS and SaaS), plus the shares of any
+   * servers a config starts it with. The servers a company sets up for itself need theirs on top.
    */
   opsNeeded(model: ModelId): number;
   /**
-   * Everything adopting a model costs up front: its upfront cost, plus on a model that buys its servers, the starter
-   * kit at its purchase prices.
+   * What a new company on a model pays up front: its upfront cost (on-prem, the server room), plus any kit a config
+   * starts it with. The servers it buys for itself are charged when it buys them.
    */
   upfrontCost(model: ModelId): number;
   /**
@@ -183,6 +185,11 @@ export interface Sim {
   loanQuote(state: GameState): LoanQuote | null;
   /** The terms a new game gets if it takes the loan at the start: the best there are. */
   startLoanQuote(): LoanQuote;
+  /**
+   * Where the company is with its launch: the day it launched or, with what's set up, will launch, the launch burst,
+   * and whether it's still waiting for capacity.
+   */
+  launch(state: GameState): LaunchView;
   /** The migration under way, or null. */
   migration(state: GameState): MigrationView | null;
   /**
@@ -212,6 +219,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   const migration = createMigration(config, infra, features, events, servers);
   const summary = createSummary(config, infra);
   const loan = createLoan(config, finance);
+  const launch = createLaunch(config, servers, pricing);
 
   function newGame({ companyName, productType, model, seed, takeLoan = false }: NewGameParams): GameState {
     const name = companyName.trim();
@@ -225,7 +233,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     if (!isProductTypeId(productType)) throw new SimError("unknown_product_type", "Pick a product type from the list.");
     if (!isModelId(model)) throw new SimError("unknown_model", "Pick a deployment model from the list.");
     const [schedule, rng] = events.rollSchedule(seedRng(seed), 1);
-    // A model with servers starts with its starter setup, ready for the first day played.
+    // A new company has no servers, unless a config starts it with some, ready for the first day played.
     const setup = servers.starter(model, 1);
     const state: GameState = {
       version: GAME_STATE_VERSION,
@@ -239,7 +247,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       developers: config.staff.developers.startingCount,
       ops: config.staff.ops.startingCount,
       support: config.staff.support.startingCount,
-      ...customers.startingUsers(productType, 1),
+      ...customers.startingCustomers(productType),
       ...support.startingSupport(),
       ...conversion.startingConversion(),
       spend: noSpend(),
@@ -270,7 +278,16 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         { cost, cash },
       );
     }
-    return finance.settle(borrowed.state, 1, [...borrowed.entries, ...upfront]).state;
+    // Day 1 is played as the game starts. A config that lets a company launch on it with servers in place gives it
+    // its users at once, with the load they bring.
+    const launched = launch.launchesOn(state, 1) ? launch.launch(borrowed.state, 1) : { state: borrowed.state, entries: [] };
+    const { users } = launched.state;
+    const started: GameState = {
+      ...launched.state,
+      load: Math.round(customers.baseLoad(productType, users, 1)),
+      demand: customers.baseDemand(productType, users, 1),
+    };
+    return finance.settle(started, 1, [...borrowed.entries, ...upfront, ...launched.entries]).state;
   }
 
   /** Refuses a game from an older version, then ends one played under a config with more days than this one has. */
@@ -337,8 +354,11 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   function advanceOneDay(start: GameState): AdvanceResult {
     const day = start.day + 1;
 
-    // Scripted events on today. A price rise or feature gap from today counts from today's bill and growth.
-    const today = events.eventsToday(start, day);
+    // Scripted events on today. A price rise or feature gap from today counts from today's bill and growth. Before the
+    // launch day there's nothing running for one to hit.
+    const launching = launch.launchesOn(start, day);
+    const live = start.launchDay !== null || launching;
+    const today = live ? events.eventsToday(start, day) : [];
     const state: GameState = { ...start, ...events.lastingEffects(start, day, today) };
 
     // Today's load against capacity, then growth, which slows on an outage day.
@@ -348,8 +368,11 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const wave = pricing.waveDay(state, day, grown.users, grown.paidUsers);
     // Then a share of the free users left start paying. A user the wave upgraded is already paying, so can't convert.
     const converted = conversion.convertDay(state, wave.users, wave.paidUsers);
-    const users = wave.users;
-    const paidUsers = converted.paidUsers;
+    // On launch day, the launch burst arrives at the end of the day: the company's first users.
+    const launched = launching
+      ? launch.launch({ ...state, users: wave.users, paidUsers: converted.paidUsers }, day)
+      : { state: { ...state, users: wave.users, paidUsers: converted.paidUsers }, entries: [] };
+    const { users, paidUsers, launchDay } = launched.state;
     const rng = grown.rng;
 
     // Support answers what it can of today's tickets: the users' usual ones plus every burst, from downtime and from
@@ -368,6 +391,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const repayment = loan.repaymentDay(state, day);
     // Income comes from the users paying at the start of the day, at today's price, like the per-user fees.
     const entries: LogEntry[] = [
+      ...launched.entries,
       ...recorded.entries,
       ...(served.outage ? [served.outage] : []),
       ...wave.entries,
@@ -387,11 +411,15 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       ...state,
       day,
       rng,
+      launchDay,
       users,
       paidUsers,
       priceWave: wave.priceWave,
-      load: served.load,
-      demand: served.demand,
+      // On launch day nobody was served, so the load and demand shown are the launch burst's usual ones: what the
+      // servers face from tomorrow.
+      ...(launching
+        ? { load: Math.round(customers.baseLoad(state.productType, users, day)), demand: customers.baseDemand(state.productType, users, day) }
+        : { load: served.load, demand: served.demand }),
       outageDays: state.outageDays + (served.hoursDown > 0 ? 1 : 0),
       downtimeHours: state.downtimeHours + served.hoursDown,
       features: build.features,
@@ -460,6 +488,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     loan: (s) => loan.loanView(load(s)),
     loanQuote: (s) => loan.loanQuote(load(s)),
     startLoanQuote: () => loan.termsOn(1),
+    launch: (s) => launch.launchView(load(s)),
     migration: (s) => migration.migration(load(s)),
     migrationQuote: (s, target) => migration.migrationQuote(load(s), target),
     events: (s) => events.events(load(s)),

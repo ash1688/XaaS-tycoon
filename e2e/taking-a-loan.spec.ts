@@ -24,7 +24,7 @@ test("start without a loan, take one later on worse terms, and see the debt on F
   await expect(terms.getByTestId("loan-total")).toHaveText("£38,512");
   await expect(student.getByTestId("start-cash")).toHaveText("You start with £15,000.");
 
-  // On-prem's kit takes about half the starting cash, so it can start without the loan: borrowing is a choice.
+  // On-prem's server room takes a third of the starting cash, so it can start without the loan: borrowing is a choice.
   await student.getByText("E-commerce platform").click();
   await student.locator("label.choice", { hasText: "Own servers (on-prem)" }).click();
   await expect(student.getByTestId("cant-afford")).toBeHidden();

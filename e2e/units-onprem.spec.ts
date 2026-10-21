@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { createCode } from "./staff.ts";
+import { createCode, launch } from "./staff.ts";
 
 test("on-prem, buying a server charges it up front and shows it on order, counting down to delivery", async ({
   browser,
@@ -16,13 +16,16 @@ test("on-prem, buying a server charges it up front and shows it on order, counti
     // With the bank loan, so there's cash to buy more kit.
     data: { name: "Kit Ltd", productType: "social", model: "onprem", takeLoan: true },
   });
-  const { id, cash } = await created.json();
+  const { id } = await created.json();
+  // A large app server and database bought on day 1 arrive on day 11, and the users with them.
+  const { cash, day } = await launch(request, code, id, "onprem");
+  expect(day).toBe(11);
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Infrastructure", exact: true }).click();
 
-  // The starter kit is in place, and nothing is on order yet.
+  // The first kit is in place, and nothing is on order now.
   const servers = student.getByTestId("servers-panel");
   await expect(servers.locator('[data-server="app-large"]')).toContainText("App server · large × 1");
   await expect(servers.getByTestId("on-order")).toContainText("Nothing on order");
@@ -51,7 +54,7 @@ test("on-prem, buying a server charges it up front and shows it on order, counti
 
   // A day on, one fewer day to wait; Home's capacity card notes it.
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("day")).toContainText(`12 of ${E2E_FINAL_DAY}`);
   await expect(order).toContainText("Arrives in 9 days");
 
   // Selling says what you get back, at a loss. Keep it, though.

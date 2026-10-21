@@ -48,7 +48,7 @@ export interface ModelConfig {
   comparison: ModelComparison;
   /**
    * Charged once when a company adopts this model (capex). On a model that buys its servers, it's the server room
-   * (racks, networking, power and cooling): the starter servers are bought on top, at their purchase prices.
+   * (racks, networking, power and cooling): the servers are bought on top, one at a time, at their purchase prices.
    */
   upfrontCost: number;
   /** Fixed provider bill (or power and upkeep on-prem) per month, billed as a daily share (opex). */
@@ -125,11 +125,12 @@ export interface ModelServersConfig {
   /** Set on a model whose platform runs the servers for you (PaaS). */
   managed?: ManagedServersConfig;
   /**
-   * The servers a new company on this model starts with, ready for the first day. On a model that buys its servers,
-   * they're bought along with the model's upfront cost, at their purchase prices. A migration onto the model doesn't
-   * get these: it builds a setup sized to the company's demand (see Servers.sizeSetupFor).
+   * Servers a new company on this model starts with, ready for the first day; on a model that buys its servers,
+   * bought along with the model's upfront cost. Left out of the default config, where a company starts with none and
+   * buying its first setup is its first decision: test configs use it to start with servers in place. A migration
+   * onto the model doesn't get these: it builds a setup sized to the company's demand (see Servers.sizeSetupFor).
    */
-  starter: ServerCount[];
+  starter?: ServerCount[];
 }
 
 /** The services a platform runs for you, one of each at a size you pick. The database is required, the cache isn't. */
@@ -208,7 +209,12 @@ export interface SeasonalSpike {
 
 /** How a product's users grow and how much load they put on the system. */
 export interface GrowthProfile {
-  startingUsers: number;
+  /**
+   * The launch burst: users who arrive on launch day, the product's first (see LaunchConfig), split paid and free by
+   * the product's freeShare, like any new users: a price above the fair one puts more on the free tier. Normal growth
+   * runs from the next day.
+   */
+  launchUsers: number;
   /** Users the product can reach. Growth slows as users approach it. */
   marketSize: number;
   /** Share of current users added each day while the market is wide open (0.05 = 5%). */
@@ -557,6 +563,21 @@ export interface EventConfig {
 }
 
 /**
+ * A new company has no users and no servers. It launches at the end of launch day: the earliest day, or the first day
+ * after it with capacity to serve users, whichever is later. That's servers ready by the end of the day: rented VMs
+ * the day after they're rented, bought kit when it arrives, a platform's instances and database at once. A model with
+ * no capacity limit (SaaS) is always ready. The product's launch burst arrives then (see GrowthProfile.launchUsers).
+ *
+ * Before launch there's nothing running: no users, no income, no tickets and no scripted events, so no outages. Staff,
+ * running costs and loan repayments are still charged. A company that isn't ready by the earliest day waits, losing
+ * those days' income.
+ */
+export interface LaunchConfig {
+  /** The earliest day a company can launch: its users arrive at the end of it. */
+  earliestDay: number;
+}
+
+/**
  * The bank loan: one per company, taken when the game starts or at any point after. It's repaid in equal daily
  * repayments (debt) from the next day played to the final day, whatever happens, so the later it's taken the fewer
  * days there are to repay it, and the bank charges more interest too.
@@ -587,6 +608,7 @@ export interface GameConfig {
   /** The last day played. The game ends once it has been played, so day finalDay is played in full. */
   finalDay: number;
   maxCompanyNameLength: number;
+  launch: LaunchConfig;
   models: Record<ModelId, ModelConfig>;
   productTypes: Record<ProductTypeId, ProductTypeConfig>;
   staff: Record<StaffPool, StaffPoolConfig>;
@@ -606,17 +628,20 @@ export interface GameConfig {
 
 export const defaultConfig: GameConfig = {
   // Your own money: enough to start on IaaS, PaaS or SaaS and see out the first month or so, until income covers the
-  // costs. On-prem's £7,200 up front leaves too little to buy more kit for weeks without the bank loan.
+  // costs. On-prem's server room and first kit leave too little to buy more kit for weeks without the bank loan.
   startingCash: 15_000,
   finalDay: 180,
   maxCompanyNameLength: 40,
+  // Two days to buy or rent a first setup: IaaS VMs rented on day 1 or 2, or a platform set up by day 2, are ready to
+  // launch on day 3. On-prem kit bought on day 1 arrives on day 11, so it launches a week after the cloud models.
+  launch: { earliestDay: 3 },
   models: {
     onprem: {
       name: "Own servers (on-prem)",
       blurb: "Buy and run your own kit.",
       comparison: { upfrontCost: "High", monthlyCost: "Low–medium", opsNeeded: "High", control: "Full" },
-      // The server room: racks, networking, power and cooling. The starter servers are bought on top (£2,200), so a new
-      // on-prem company pays £7,200 up front: by far the most of any model.
+      // The server room: racks, networking, power and cooling. The servers are bought on top: a first app server and
+      // database of a size that leaves room to grow (£2,200 for large ones) make on-prem by far the dearest to start.
       upfrontCost: 5_000,
       // The premises, bandwidth and the room's own power. Each server's power and upkeep is on top.
       monthlyCost: 1_000,
@@ -645,11 +670,6 @@ export const defaultConfig: GameConfig = {
         },
         readyDays: 10,
         opsPerServer: { app: 0.25, database: 0.25, cache: 0.1, loadBalancer: 0.1 },
-        // Bigger than IaaS's, since more takes 10 days to arrive: room for every product to grow for a few weeks.
-        starter: [
-          { type: "app", size: "large", count: 1 },
-          { type: "database", size: "large", count: 1 },
-        ],
       },
     },
     iaas: {
@@ -672,11 +692,6 @@ export const defaultConfig: GameConfig = {
         },
         readyDays: 1,
         opsPerServer: { app: 0.2, database: 0.2, cache: 0.1, loadBalancer: 0.1 },
-        // Every product's starting users, run by one ops person. A social network fills the database in a week or so.
-        starter: [
-          { type: "app", size: "medium", count: 1 },
-          { type: "database", size: "medium", count: 1 },
-        ],
       },
     },
     paas: {
@@ -708,11 +723,6 @@ export const defaultConfig: GameConfig = {
             cache: { small: 10, medium: 25, large: 50, massive: 100 },
           },
         },
-        // One instance and a small managed database: enough for every product's starting users with room to grow.
-        starter: [
-          { type: "app", size: "medium", count: 1 },
-          { type: "database", size: "small", count: 1 },
-        ],
       },
     },
     saas: {
@@ -734,7 +744,7 @@ export const defaultConfig: GameConfig = {
       name: "E-commerce platform",
       profile: "Big seasonal traffic spikes",
       growth: {
-        startingUsers: 3_000,
+        launchUsers: 3_000,
         marketSize: 20_000,
         dailyGrowth: 0.03,
         growthNoise: 0.5,
@@ -788,7 +798,7 @@ export const defaultConfig: GameConfig = {
       name: "Social network",
       profile: "Steady viral growth",
       growth: {
-        startingUsers: 4_000,
+        launchUsers: 4_000,
         marketSize: 40_000,
         dailyGrowth: 0.05,
         growthNoise: 0.2,
@@ -840,7 +850,7 @@ export const defaultConfig: GameConfig = {
       name: "Video sharing platform",
       profile: "Heavy storage and bandwidth costs",
       growth: {
-        startingUsers: 1_600,
+        launchUsers: 1_600,
         marketSize: 20_000,
         dailyGrowth: 0.035,
         growthNoise: 0.4,
