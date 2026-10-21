@@ -2061,8 +2061,12 @@ describe("bank loan", () => {
     expect(days.find((d) => d.day === 60)).toMatchObject({ borrowed: 17_900 });
     expect(days.find((d) => d.day === 59)!.cash).toBe(rich.advance(begin(), 58).state.cash);
     expect(days[0]!.cash).toBe(begin().cash);
+    // Profit counts only the interest in the repayments: the principal paid back was borrowed, not earned.
+    const { loan } = state;
+    const principal = state.spend.debt - Math.round((state.spend.debt * (loan!.total - loan!.amount)) / loan!.total);
+    expect(principal).toBeGreaterThan(0);
     const profit = rich.summarise(state).profit;
-    expect(profit).toBeCloseTo(state.income - costs, 6);
+    expect(profit).toBeCloseTo(state.income - costs + principal, 6);
   });
 
   it("charges repayments whatever happens, so they can bankrupt a company", () => {
@@ -2279,7 +2283,7 @@ describe("game end and summary", () => {
       return { state, states, summary: busy.summarise(state) };
     };
 
-    it("adds up income and costs, debt included, to the daily figures, and profit is the difference", () => {
+    it("adds up income and costs to the daily figures, with only the loan's interest a cost, and profit is the difference", () => {
       const { state, summary } = play();
       expect(state).toMatchObject({ day: 30, status: "finished" });
       expect(summary.income).toBe(summary.days.reduce((sum, d) => sum + d.income, 0));
@@ -2287,16 +2291,21 @@ describe("game end and summary", () => {
       const costs = summary.days.reduce((sum, d) => sum + SPEND_CATEGORIES.reduce((t, c) => t + d[c], 0), 0);
       expect(summary.totalSpend).toBeCloseTo(costs, 6);
       expect(summary.spend.debt).toBeGreaterThan(0);
-      expect(summary.profit).toBeCloseTo(summary.income - summary.totalSpend, 6);
+      // Of the debt, only the interest is a cost: the principal paid back was borrowed, not earned.
+      const interest = state.loan!.total - state.loan!.amount;
+      expect(summary.costs).toBeCloseTo(summary.totalSpend - summary.spend.debt + interest, 6);
+      expect(summary.profit).toBeCloseTo(summary.income - summary.costs, 6);
       // The series has each day's figures and running totals, ending on the summary's.
       expect(summary.incomeVsCosts.map((d) => d.day)).toEqual(summary.days.map((d) => d.day));
       summary.incomeVsCosts.forEach((d, i) => {
         const day = summary.days[i]!;
         expect(d.income).toBe(day.income);
-        expect(d.costs).toBeCloseTo(SPEND_CATEGORIES.reduce((t, c) => t + day[c], 0), 6);
+        const spent = SPEND_CATEGORIES.reduce((t, c) => t + day[c], 0);
+        expect(d.costs).toBeLessThanOrEqual(spent + 1e-6);
+        expect(d.costs).toBeGreaterThanOrEqual(spent - day.debt - 1e-6);
       });
       expect(summary.incomeVsCosts.at(-1)!.totalIncome).toBe(summary.income);
-      expect(summary.incomeVsCosts.at(-1)!.totalCosts).toBeCloseTo(summary.totalSpend, 6);
+      expect(summary.incomeVsCosts.at(-1)!.totalCosts).toBeCloseTo(summary.costs, 6);
     });
 
     it("gives peak users with the paid/free split then, and the split at the end", () => {
@@ -2326,6 +2335,8 @@ describe("game end and summary", () => {
         amount: 17_900,
         total: state.loan!.total,
         repaid: state.loan!.total,
+        interestPaid: state.loan!.total - 17_900,
+        principalRepaid: 17_900,
         fullyRepaid: true,
       });
       expect(summary.spend.debt).toBe(state.loan!.total);
@@ -2343,6 +2354,55 @@ describe("game end and summary", () => {
 
     it("is deterministic", () => {
       expect(play().summary).toEqual(play().summary);
+    });
+  });
+
+  describe("profit with the bank loan", () => {
+    // The same game twice, trading the same way, one with the loan at the start: there's cash enough either way, so
+    // the loan changes nothing but the money.
+    const play = (takeLoan: boolean, days = 29) =>
+      s.advance(s.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, takeLoan }), days)
+        .state;
+
+    it("differs from a game without the loan only by the interest", () => {
+      const borrowed = play(true);
+      const plain = play(false);
+      expect(borrowed.status).toBe("finished");
+      const a = s.summarise(borrowed);
+      const b = s.summarise(plain);
+      expect(a.income).toBe(b.income);
+      const interest = borrowed.loan!.total - borrowed.loan!.amount;
+      expect(interest).toBeGreaterThan(0);
+      expect(a.profit).toBeCloseTo(b.profit - interest, 6);
+      expect(a.loan).toMatchObject({ interestPaid: interest, principalRepaid: borrowed.loan!.amount, fullyRepaid: true });
+      // The chart's gap at the end is the profit, too.
+      const last = a.incomeVsCosts.at(-1)!;
+      expect(last.totalIncome - last.totalCosts).toBeCloseTo(a.profit, 6);
+    });
+
+    it("counts the interest paid so far while the loan is being repaid", () => {
+      const a = s.summarise(play(true, 10));
+      const b = s.summarise(play(false, 10));
+      const { amount, total, repaid } = a.loan!;
+      expect(repaid).toBeGreaterThan(0);
+      expect(a.loan!.interestPaid).toBe(Math.round((repaid * (total - amount)) / total));
+      expect(a.loan!.interestPaid + a.loan!.principalRepaid).toBe(repaid);
+      expect(a.profit).toBeCloseTo(b.profit - a.loan!.interestPaid, 6);
+    });
+
+    it("leaves cash and the debt category as they were: the whole repayment is spent", () => {
+      const borrowed = play(true);
+      const plain = play(false);
+      const a = s.summarise(borrowed);
+      const b = s.summarise(plain);
+      expect(a.spend.debt).toBe(borrowed.loan!.total);
+      expect(a.totalSpend).toBeCloseTo(b.totalSpend + borrowed.loan!.total, 6);
+      expect(a.cash).toBeCloseTo(b.cash + borrowed.loan!.amount - borrowed.loan!.total, 6);
+      expect(a.totalSpend).toBeCloseTo(SPEND_CATEGORIES.reduce((sum, c) => sum + a.spend[c], 0), 6);
+      for (const c of SPEND_CATEGORIES) {
+        expect(a.days.reduce((sum, d) => sum + d[c], 0)).toBeCloseTo(a.spend[c], 6);
+      }
+      expect(a.days.at(-1)!.cash).toBe(a.cash);
     });
   });
 

@@ -1,4 +1,5 @@
 import { SPEND_CATEGORIES, type GameConfig, type ModelId, type ProductTypeId } from "./config.ts";
+import { interestIn, profitCosts } from "./finance.ts";
 import type { Infrastructure } from "./infrastructure.ts";
 import type { DaySpend, GameEnding, GameState, Spend } from "./state.ts";
 
@@ -11,7 +12,10 @@ export interface SummaryDay extends DaySpend {
 export interface IncomeCostDay {
   day: number;
   income: number;
-  /** Everything spent on the day, debt included. */
+  /**
+   * The day's costs against profit: everything spent, but only the interest in any loan repayment, as profitCosts.
+   * Cash fell by the whole repayment.
+   */
   costs: number;
   totalIncome: number;
   totalCosts: number;
@@ -33,6 +37,10 @@ export interface LoanSummary {
   /** Everything to repay: the amount plus interest. */
   total: number;
   repaid: number;
+  /** Of the repaid, the interest: the part that counts against profit. */
+  interestPaid: number;
+  /** Of the repaid, the amount borrowed being paid back: not a cost, as borrowing it wasn't income. */
+  principalRepaid: number;
   /** Repaid in full. False on a game that went bankrupt before the final day. */
   fullyRepaid: boolean;
 }
@@ -57,8 +65,10 @@ export interface GameSummary {
   paidUsers: number;
   /** Everything paying users paid. */
   income: number;
-  /** Income − total spend (debt included): below 0 is a loss. */
+  /** Income − costs: below 0 is a loss. */
   profit: number;
+  /** The costs against profit: total spend, but only the interest in the loan repayments (see profitCosts). */
+  costs: number;
   /** The most users the company had at the end of a day, with the paid/free split then. */
   peak: PeakUsers;
   /** Satisfaction averaged over every day played after day 1, or today's before any has been. */
@@ -68,7 +78,7 @@ export interface GameSummary {
   outageDays: number;
   /** Everything spent, by category. */
   spend: Spend;
-  /** The categories added up. */
+  /** The categories added up: everything spent, debt included, as cash fell by it. */
   totalSpend: number;
   /** Migrations completed. One still under way at the end doesn't count. */
   migrations: number;
@@ -80,7 +90,7 @@ export interface GameSummary {
    * and cash charts.
    */
   days: SummaryDay[];
-  /** Income and costs on each day, and added up so far, day 1 first. The last day's totals are income and totalSpend. */
+  /** Income and costs on each day, and added up so far, day 1 first. The last day's totals are income and costs. */
   incomeVsCosts: IncomeCostDay[];
 }
 
@@ -97,10 +107,15 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
       days.unshift({ ...d, cash });
       cash += total(d) - d.income - d.borrowed;
     }
+    const { loan } = state;
     let totalIncome = 0;
     let totalCosts = 0;
+    let repaid = 0;
     const incomeVsCosts = state.spendByDay.map((d): IncomeCostDay => {
-      const costs = total(d);
+      // The day's interest is what the repayments so far hold less what they held yesterday, so the days add up.
+      const interest = interestIn(loan, repaid + d.debt) - interestIn(loan, repaid);
+      repaid += d.debt;
+      const costs = total(d) - d.debt + interest;
       totalIncome += d.income;
       totalCosts += costs;
       return { day: d.day, income: d.income, costs, totalIncome, totalCosts };
@@ -114,7 +129,7 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
     const satisfaction = played.length
       ? played.reduce((sum, d) => sum + d.satisfaction, 0) / played.length
       : state.satisfaction;
-    const { loan } = state;
+    const costs = profitCosts(state.spend, loan);
     const ending = state.status === "playing" ? null : state.status === "bankrupt" ? "bankrupt" : "completed";
     return {
       companyName: state.companyName,
@@ -127,7 +142,8 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
       users: state.users,
       paidUsers: state.paidUsers,
       income: state.income,
-      profit: state.income - total(state.spend),
+      profit: state.income - costs,
+      costs,
       peak,
       satisfaction,
       uptime: infra.uptime(state),
@@ -141,6 +157,8 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
         amount: loan.amount,
         total: loan.total,
         repaid: loan.repaid,
+        interestPaid: interestIn(loan, loan.repaid),
+        principalRepaid: loan.repaid - interestIn(loan, loan.repaid),
         fullyRepaid: loan.repaid >= loan.total,
       },
       days,

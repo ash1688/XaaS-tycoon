@@ -51,7 +51,10 @@ test("play to the end, then see profit or loss and income against costs, and the
   await expect(headline.getByTestId("summary-result")).toHaveText(loss ? "Loss" : "Profit");
   await expect(headline.getByTestId("summary-profit")).toHaveText(`${loss ? "−" : "+"}${money(Math.abs(api.profit))}`);
   await expect(headline.getByTestId("summary-income")).toHaveText(money(api.income));
-  await expect(headline.getByTestId("summary-costs")).toHaveText(money(api.totalSpend));
+  // Of the loan repayments only the interest is a cost, so costs are less than everything spent by the principal.
+  await expect(headline.getByTestId("summary-costs")).toHaveText(money(api.costs));
+  expect(api.costs).toBeCloseTo(api.totalSpend - api.loan.principalRepaid, 6);
+  expect(api.loan.principalRepaid).toBe(35_000);
   await expect(headline).toHaveClass(loss ? /loss/ : /profit/);
 
   // Peak users with the split, satisfaction and uptime on average, the price change and the loan.
@@ -64,6 +67,7 @@ test("play to the end, then see profit or loss and income against costs, and the
   await expect(student.getByTestId("summary-price-changes")).toHaveText("1");
   await expect(student.getByTestId("summary-loan")).toHaveText("£35,000");
   await expect(student.getByTestId("summary-loan-status")).toContainText("taken at the start · repaid in full");
+  await expect(student.getByTestId("summary-loan-interest")).toHaveText(`${money(api.loan.interestPaid)} interest`);
 
   // The income-against-costs chart: two lines, with a key and axis titles.
   const chart = student.getByTestId("income-chart");
