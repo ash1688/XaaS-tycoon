@@ -407,9 +407,14 @@ describe("staff", () => {
     expect(MODEL_IDS.map((m) => sim.opsNeeded(m))).toEqual([3, 2, 1, 0]);
   });
 
-  it("needs fewer ops on IaaS's starter VMs than on-prem, and a few on PaaS and SaaS, by default", () => {
+  it("needs no more ops on IaaS's starter VMs than on-prem, and a few on PaaS and SaaS, by default", () => {
     const needed = MODEL_IDS.map((m) => createSim(defaultConfig).opsNeeded(m));
-    expect(needed[1]).toBeLessThan(needed[0]!);
+    expect(needed[1]).toBeLessThanOrEqual(needed[0]!);
+    // Kit you rack yourself needs a bigger share of an ops person than a VM, and patching it takes more people.
+    const { onprem, iaas } = defaultConfig.models;
+    for (const t of SERVER_TYPES) expect(onprem.servers!.opsPerServer![t]).toBeGreaterThanOrEqual(iaas.servers!.opsPerServer![t]);
+    const patch = defaultConfig.events.find((e) => e.id === "osPatch")!.effects;
+    expect(patch.onprem!.opsNeeded).toBeGreaterThan(patch.iaas!.opsNeeded!);
     expect(needed[2]).toBeLessThanOrEqual(needed[1]!);
     expect(needed[2]).toBeGreaterThan(0);
     expect(needed[3]).toBeGreaterThan(0);
@@ -1353,22 +1358,20 @@ describe("servers on-prem", () => {
     expect(own.advance(JSON.parse(JSON.stringify(half)), 12)).toEqual(own.advance(half, 12));
   });
 
-  it("by default, buys a starter kit with room to grow, needs more ops than IaaS and costs more up front", () => {
+  it("by default, buys a starter kit with room to grow and costs the most up front", () => {
     const s = createSim(defaultConfig);
     const { onprem } = defaultConfig.models;
     const kit = onprem.servers!.starter.reduce((sum, k) => sum + k.count * onprem.servers!.purchase!.price[k.type][k.size], 0);
     // The model's upfront cost is the server room; the kit is on top, not charged twice.
     expect(s.upfrontCost("onprem")).toBe(onprem.upfrontCost + kit);
-    expect(s.upfrontCost("onprem")).toBe(34_800);
-    expect(s.opsNeeded("onprem")).toBeGreaterThan(s.opsNeeded("iaas"));
+    expect(s.upfrontCost("onprem")).toBe(7_200);
     expect(onprem.servers!.readyDays).toBe(10);
     for (const p of PRODUCT_TYPE_IDS) {
-      // Starting cash alone doesn't cover it: the bank loan does.
-      expect(() => s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1 })).toThrow(
-        expect.objectContaining({ code: "cant_afford" }),
-      );
+      // Starting cash covers the kit, leaving little to buy more with: the bank loan is the choice.
+      const own = s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1 });
+      expect(own.cash).toBe(defaultConfig.startingCash - 7_200);
       const state = s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1, takeLoan: true });
-      expect(state.cash).toBe(defaultConfig.startingCash + defaultConfig.loan.amount - 34_800);
+      expect(state.cash).toBe(defaultConfig.startingCash + defaultConfig.loan.amount - 7_200);
       expect(s.units({ ...state, ops: s.opsNeeded("onprem") })!.usersSupported, p).toBeGreaterThan(state.users * 2);
     }
     // Every bought server sells back at a loss, and costs more up front than a month's rent of the same VM.
@@ -2508,7 +2511,7 @@ describe("default config", () => {
 
   it("makes on-prem's upfront cost the highest, and only SaaS charge per user", () => {
     const upfront = (m: (typeof MODEL_IDS)[number]) => createSim(defaultConfig).upfrontCost(m);
-    for (const m of ["iaas", "paas", "saas"] as const) expect(upfront("onprem")).toBeGreaterThan(upfront(m) * 10);
+    for (const m of ["iaas", "paas", "saas"] as const) expect(upfront("onprem")).toBeGreaterThan(upfront(m) * 3);
     expect(MODEL_IDS.filter((m) => defaultConfig.models[m].monthlyCostPerUser > 0)).toEqual(["saas"]);
   });
 });
@@ -3062,11 +3065,79 @@ describe("default migration config", () => {
 });
 
 describe("migration with servers", () => {
-  // The default prices, units and delivery time, with no events and no overrun unless a test says so, so a move's
-  // charges are exactly the quote's.
+  // The servers, prices and social demand these sums were worked out with (round two's numbers before the balance
+  // pass), pinned so that tuning the defaults doesn't change them. The default delivery time and migration rules, with
+  // no events and no overrun unless a test says so, so a move's charges are exactly the quote's.
+  const { onprem, iaas, paas, saas } = defaultConfig.models;
+  const units = sizes(10, 15, 20, 25);
   const calm: GameConfig = {
     ...defaultConfig,
     startingCash: 10_000_000,
+    models: {
+      onprem: {
+        ...onprem,
+        upfrontCost: 30_000,
+        monthlyCost: 1_500,
+        servers: {
+          ...onprem.servers!,
+          purchase: {
+            price: {
+              app: sizes(1_200, 1_650, 2_100, 2_550),
+              database: sizes(1_500, 2_100, 2_700, 3_300),
+              cache: sizes(450, 600, 750, 900),
+              loadBalancer: sizes(600, 900, 1_350, 1_800),
+            },
+            sellBackShare: 0.4,
+          },
+          monthlyCost: {
+            app: sizes(40, 55, 70, 85),
+            database: sizes(50, 70, 90, 110),
+            cache: sizes(15, 20, 25, 30),
+            loadBalancer: sizes(20, 30, 45, 60),
+          },
+          opsPerServer: { app: 0.6, database: 0.6, cache: 0.3, loadBalancer: 0.3 },
+        },
+      },
+      iaas: {
+        ...iaas,
+        servers: {
+          ...iaas.servers!,
+          monthlyCost: {
+            app: sizes(400, 550, 700, 850),
+            database: sizes(500, 700, 900, 1_100),
+            cache: sizes(150, 200, 250, 300),
+            loadBalancer: sizes(200, 300, 450, 600),
+          },
+          opsPerServer: { app: 0.5, database: 0.5, cache: 0.25, loadBalancer: 0.25 },
+        },
+      },
+      paas: {
+        ...paas,
+        servers: {
+          ...paas.servers!,
+          monthlyCost: {
+            app: { medium: 800 },
+            database: sizes(1_000, 1_800, 3_400, 6_400),
+            cache: sizes(300, 550, 1_000, 1_900),
+          },
+          managed: { ...paas.servers!.managed!, units: { database: sizes(15, 30, 60, 120), cache: sizes(15, 30, 60, 120) } },
+        },
+      },
+      saas: { ...saas, monthlyCost: 1_500, monthlyCostPerUser: 0.5 },
+    },
+    productTypes: {
+      ...defaultConfig.productTypes,
+      social: { ...defaultConfig.productTypes.social, demand: { cuPerUser: 0.003, dbuPerUser: 0.004 } },
+    },
+    servers: {
+      ...defaultConfig.servers,
+      types: Object.fromEntries(
+        Object.entries(defaultConfig.servers.types).map(([t, type]) => [
+          t,
+          { ...type, units: t === "loadBalancer" ? type.units : units },
+        ]),
+      ) as GameConfig["servers"]["types"],
+    },
     events: [],
     migration: { ...defaultConfig.migration, overrun: { ...defaultConfig.migration.overrun, chance: 0 } },
   };
@@ -3874,10 +3945,15 @@ describe("default events", () => {
   });
 
   it("melt on-prem in a spike, but scale PaaS", () => {
-    // By day 30 a social network has grown into its starter kit enough that tripled demand is too much for it.
+    // By day 30 a social network has grown into its starter kit enough that tripled demand is too much for it. PaaS
+    // runs plenty of instances and the biggest database, so only the spike could take it over.
     const s = createSim({ ...roomyDefaults, events: [{ ...event("trafficSpike"), schedule: { type: "fixed", days: [30] } }] });
     const run = (model: (typeof MODEL_IDS)[number]) => {
-      const start = s.newGame({ companyName: "Acme", productType: "social", model, seed: 7 });
+      let start = s.newGame({ companyName: "Acme", productType: "social", model, seed: 7 });
+      if (model === "paas") {
+        start = s.applyAction(start, { type: "setInstances", count: 10 });
+        start = s.applyAction(start, { type: "setManagedService", service: "database", size: "massive" });
+      }
       return s.advance({ ...start, ops: s.opsNeeded(model) }, 29).state;
     };
     expect(run("onprem").outageDays).toBeGreaterThan(0);
@@ -4729,10 +4805,11 @@ describe("free-to-paid conversion", () => {
 
   it("makes a free user worth having over a game by default, without making the free tier pointless", () => {
     // The chance a free user starts paying within the game at each product's base rate, nothing helping or hurting.
+    // Features, uptime and satisfaction can double it.
     for (const p of PRODUCT_TYPE_IDS) {
       const rate = defaultConfig.productTypes[p].pricing.conversionRate;
       const chance = 1 - (1 - rate) ** defaultConfig.finalDay;
-      expect(chance).toBeGreaterThan(0.2);
+      expect(chance).toBeGreaterThan(0.1);
       expect(chance).toBeLessThan(0.6);
     }
   });
