@@ -24,7 +24,7 @@ const cachePercent = () => Math.round(100 * (game.meta?.cacheableShare ?? 0));
 
     <div v-if="game.units" class="capacity" data-testid="capacity">
       <p v-if="game.managed" class="muted unit-intro">
-        Each user needs compute (CU) from your app instances and database units (DBU) from the managed database. A
+        Each user needs compute (CU) from your app instances and database units (DBU) from your managed databases. A
         managed cache takes some database load off as cache hits (CH). Whichever of CU or DBU runs out first caps what
         you can serve.
       </p>

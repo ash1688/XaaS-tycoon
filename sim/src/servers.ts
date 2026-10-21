@@ -2,6 +2,7 @@ import {
   SERVER_SIZES,
   SERVER_TYPES,
   type GameConfig,
+  type ManagedServersConfig,
   type ManagedService,
   type ModelId,
   type ProductTypeId,
@@ -136,14 +137,28 @@ export interface ManagedOption {
   monthlyCost: number;
 }
 
-/** A managed service the company runs: its size, units and price. */
-export interface ManagedServiceView extends ManagedOption {
+/** Managed services of one size the company runs: how many, and the units and price of each. */
+export interface ManagedRunning extends ManagedOption {
+  count: number;
+}
+
+/** The managed databases, or caches, the company runs: how many, of what sizes, and their units and price together. */
+export interface ManagedServiceView {
+  /** How many it runs, from 1 up to max. */
+  count: number;
+  max: number;
+  /** Each size it runs, biggest first. */
+  running: ManagedRunning[];
+  /** DBU for databases, CH for caches: they add up. */
+  units: number;
+  /** A month, after any provider price rises. */
+  monthlyCost: number;
   /** Every size it comes in, smallest first. */
   options: ManagedOption[];
 }
 
 /**
- * The company's setup on a managed platform (PaaS): app instances, all one size, and the managed database and cache
+ * The company's setup on a managed platform (PaaS): app instances, all one size, and the managed databases and caches
  * the provider runs. Changes are instant, managed services need no ops, and the load balancer is built in and free.
  */
 export interface ManagedView {
@@ -155,14 +170,16 @@ export interface ManagedView {
   /** One instance a month, after any provider price rises. */
   instanceMonthlyCost: number;
   /**
-   * Null with no database: a new company has none until it picks a size, and can't launch without one. Options are
-   * on databaseOptions then.
+   * Null with no database: a new company has none until it adds one, and can't launch without one. Options are on
+   * databaseOptions then.
    */
   database: ManagedServiceView | null;
   databaseOptions: ManagedOption[];
   /** Null with no cache, which is allowed: options are on cacheOptions then. */
   cache: ManagedServiceView | null;
   cacheOptions: ManagedOption[];
+  /** The most databases, and caches, the platform runs for a company. */
+  maxServices: Record<ManagedService, number>;
   /** Instances and managed services a month, after any provider price rises. The platform's own bill is apart. */
   monthlyCost: number;
 }
@@ -187,6 +204,32 @@ export interface UnitServe {
   binding: "cu" | "dbu";
   /** The binding tier's ratio. */
   ratio: number;
+}
+
+/**
+ * The managed databases and caches that serve some DBU demand on a platform: one database of the smallest size that
+ * covers it; past the biggest, caches for what they can take (up to the cacheable share, after one biggest database),
+ * then databases for the rest. Of each type, as many of the biggest as fit and then the smallest that covers what's
+ * left, up to the platform's most.
+ */
+export function managedServicesFor(managed: ManagedServersConfig, cacheableShare: number, dbu: number): ServerCount[] {
+  const biggest = SERVER_SIZES[SERVER_SIZES.length - 1]!;
+  const cover = (type: ManagedService, units: number): ServerCount[] => {
+    const top = managed.units[type][biggest];
+    const max = managed.maxServices[type];
+    if (units <= 0 || top <= 0 || max <= 0) return [];
+    const one = SERVER_SIZES.find((size) => managed.units[type][size] >= units);
+    if (one) return [{ type, size: one, count: 1 }];
+    const full = Math.min(max, Math.floor(units / top));
+    const rest = units - full * top;
+    const last = full < max && rest > 0 ? SERVER_SIZES.find((size) => managed.units[type][size] >= rest) : undefined;
+    return [{ type, size: biggest, count: full }, ...(last ? [{ type, size: last, count: 1 }] : [])];
+  };
+  const top = managed.units.database[biggest];
+  if (dbu <= top) return [{ type: "database", size: SERVER_SIZES.find((size) => managed.units.database[size] >= dbu)!, count: 1 }];
+  const caches = cover("cache", Math.min(dbu - top, dbu * cacheableShare));
+  const cached = caches.reduce((sum, c) => sum + c.count * managed.units.cache[c.size], 0);
+  return [...cover("database", dbu - Math.min(cached, dbu * cacheableShare)), ...caches];
 }
 
 /**
@@ -269,8 +312,7 @@ export function createServers(config: GameConfig, finance: Finance) {
    * - IaaS and on-prem: app servers and databases of whichever single size meets the demand most cheaply (rent, or
    *   on-prem the purchase price), at least one of each, and on enough app servers, the cheapest load balancers that
    *   cover them all. No cache: that's for the student to add.
-   * - PaaS: ceil(CU ÷ instance CU) instances, up to the most allowed, and the smallest managed database that covers
-   *   the DBU; past the biggest, the smallest managed cache that takes the rest.
+   * - PaaS: ceil(CU ÷ instance CU) instances, up to the most allowed, and managed services as managedServicesFor.
    * - SaaS (no servers): nothing.
    */
   function sizeSetupFor(model: ModelId, demand: UnitDemand): ServerCount[] {
@@ -283,16 +325,10 @@ export function createServers(config: GameConfig, finance: Finance) {
     if (managed) {
       const instanceUnits = unitsOn(model, { type: "app", size: managed.instanceSize });
       const instances = instanceUnits > 0 ? Math.ceil(cu / instanceUnits) : 1;
-      const smallest = (type: ManagedService, units: number) =>
-        SERVER_SIZES.find((size) => managed.units[type][size] >= units) ?? SERVER_SIZES[SERVER_SIZES.length - 1]!;
-      const database = smallest("database", dbu);
-      const setup: ServerCount[] = [
+      return [
         { type: "app", size: managed.instanceSize, count: Math.min(managed.maxInstances, Math.max(1, instances)) },
-        { type: "database", size: database, count: 1 },
+        ...managedServicesFor(managed, config.servers.cacheableShare, dbu),
       ];
-      const rest = dbu - managed.units.database[database];
-      if (rest > 0) setup.push({ type: "cache", size: smallest("cache", rest), count: 1 });
-      return setup;
     }
     const price = (type: ServerType, size: ServerSize) =>
       servers.purchase ? servers.purchase.price[type][size] : (servers.monthlyCost[type]?.[size] ?? 0);
@@ -580,8 +616,8 @@ export function createServers(config: GameConfig, finance: Finance) {
   }
 
   /**
-   * Sets the size of a managed service on a managed platform, ready at once like an instance. The cache can be turned
-   * off (a null size); the database can't, since every product stores data.
+   * Sets a managed service on a managed platform to just one of a size, ready at once like an instance, replacing any
+   * it runs. The cache can be turned off (a null size); the database can't, since every product stores data.
    */
   function setManagedService(state: GameState, service: string, size: string | null): GameState {
     managedConfig(state);
@@ -598,6 +634,43 @@ export function createServers(config: GameConfig, finance: Finance) {
     return { ...state, servers: [...kept, server], nextServerId: state.nextServerId + 1 };
   }
 
+  /** Checks a managed service and size, and returns the platform's config. */
+  function checkService(state: GameState, service: string, size: string) {
+    const managed = managedConfig(state);
+    if (!isManagedService(service)) throw new SimError("unknown_service", "Pick the database or the cache.");
+    if (!isServerSize(size)) throw new SimError("unknown_size", "Pick a size from the list.");
+    return { managed, service, size };
+  }
+
+  /**
+   * Adds another managed database or cache of a size on a managed platform, ready at once like an instance, like a
+   * read replica or shard: the units of each add up. Up to the platform's most of each.
+   */
+  function addManagedService(state: GameState, service: string, size: string): GameState {
+    const checked = checkService(state, service, size);
+    const max = checked.managed.maxServices[checked.service];
+    if (ofType(state, checked.service).length >= max) {
+      throw new SimError("too_many_services", `The platform runs at most ${max} ${checked.service}s for you.`);
+    }
+    const server: Server = { id: state.nextServerId, type: checked.service, size: checked.size, readyDay: state.day };
+    return { ...state, servers: [...state.servers, server], nextServerId: state.nextServerId + 1 };
+  }
+
+  /**
+   * Removes one managed database or cache of a size on a managed platform, the newest of that size, at once. The last
+   * database can't go, since every product stores data.
+   */
+  function removeManagedService(state: GameState, service: string, size: string): GameState {
+    const checked = checkService(state, service, size);
+    const current = ofType(state, checked.service);
+    const gone = current.filter((s) => s.size === checked.size).at(-1);
+    if (!gone) throw new SimError("no_such_service", `You run no ${checked.size} ${checked.service} to remove.`);
+    if (checked.service === "database" && current.length === 1) {
+      throw new SimError("database_required", "Your product needs a database: add another before removing this one.");
+    }
+    return { ...state, servers: state.servers.filter((s) => s.id !== gone.id) };
+  }
+
   /** The company's setup on a managed platform, or null on any other model. */
   function managed(state: GameState): ManagedView | null {
     const platform = managedOf(state.model);
@@ -609,8 +682,20 @@ export function createServers(config: GameConfig, finance: Finance) {
     });
     const options = (type: ManagedService) => SERVER_SIZES.map((size) => option(type, size));
     const view = (type: ManagedService): ManagedServiceView | null => {
-      const s = ofType(state, type)[0];
-      return s ? { ...option(type, s.size), options: options(type) } : null;
+      const running = [...SERVER_SIZES]
+        .reverse()
+        .map((size) => ({ ...option(type, size), count: ofType(state, type).filter((s) => s.size === size).length }))
+        .filter((r) => r.count > 0);
+      if (!running.length) return null;
+      const total = (key: "units" | "monthlyCost") => running.reduce((sum, r) => sum + r.count * r[key], 0);
+      return {
+        count: running.reduce((sum, r) => sum + r.count, 0),
+        max: platform.maxServices[type],
+        running,
+        units: total("units"),
+        monthlyCost: total("monthlyCost"),
+        options: options(type),
+      };
     };
     return {
       instances: ofType(state, "app").length,
@@ -622,6 +707,7 @@ export function createServers(config: GameConfig, finance: Finance) {
       databaseOptions: options("database"),
       cache: view("cache"),
       cacheOptions: options("cache"),
+      maxServices: platform.maxServices,
       monthlyCost: monthlyServerCost(state),
     };
   }
@@ -777,6 +863,8 @@ export function createServers(config: GameConfig, finance: Finance) {
     leaveEntries,
     setInstances,
     setManagedService,
+    addManagedService,
+    removeManagedService,
     managed,
     capacityOn,
     serve,

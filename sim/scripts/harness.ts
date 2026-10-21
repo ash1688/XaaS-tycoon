@@ -2,8 +2,11 @@
 // and reports how each model and product did. A tool for tuning the defaults, not part of the game. See balance.ts.
 import {
   createSim,
+  managedServicesFor,
+  MANAGED_SERVICES,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
+  SERVER_SIZES,
   SimError,
   type Action,
   type DayLog,
@@ -262,20 +265,30 @@ function scaleServers(sim: Sim, state: GameState, strategy: Strategy): GameState
   return s;
 }
 
-/** On PaaS: instances for planned demand, and the smallest managed database (then cache) that covers its share. */
+/**
+ * On PaaS: instances for planned demand, and the managed databases and caches that cover all the database demand
+ * before any cache (see managedServicesFor): one database of the smallest size that does; past the biggest, caches and
+ * then more databases. It adds what's missing before removing what's not needed, so it never runs out of databases.
+ */
 function scaleManaged(sim: Sim, state: GameState, strategy: Strategy): GameState {
   const managed = sim.managed(state);
+  const platform = sim.config.models.paas.servers?.managed;
   const units = plannedUnits(sim, state, strategy);
-  if (!managed || !units) return state;
+  if (!managed || !platform || !units) return state;
   const instances = Math.min(managed.maxInstances, Math.max(1, Math.ceil(units.cu.demand / managed.instanceUnits)));
   let s = instances === managed.instances ? state : tryAction(sim, state, { type: "setInstances", count: instances });
-  // The database sized for all the database demand before any cache; past the biggest, a cache for the rest.
-  const dbu = units.dbu.beforeCache;
-  const db = managed.databaseOptions.find((o) => o.units >= dbu) ?? managed.databaseOptions[managed.databaseOptions.length - 1]!;
-  if (db.size !== managed.database?.size) s = tryAction(sim, s, { type: "setManagedService", service: "database", size: db.size });
-  const rest = dbu - db.units;
-  const cache = rest > 0 ? (managed.cacheOptions.find((o) => o.units >= rest) ?? managed.cacheOptions[managed.cacheOptions.length - 1]!).size : null;
-  if (cache !== (managed.cache?.size ?? null)) s = tryAction(sim, s, { type: "setManagedService", service: "cache", size: cache });
+  const target = managedServicesFor(platform, sim.config.servers.cacheableShare, units.dbu.beforeCache);
+  for (const service of MANAGED_SERVICES) {
+    const running = managed[service]?.running ?? [];
+    const has = (size: ServerSize) => running.find((r) => r.size === size)?.count ?? 0;
+    const wants = (size: ServerSize) => target.find((t) => t.type === service && t.size === size)?.count ?? 0;
+    for (const size of SERVER_SIZES) {
+      for (let i = has(size); i < wants(size); i++) s = tryAction(sim, s, { type: "addManagedService", service, size });
+    }
+    for (const size of SERVER_SIZES) {
+      for (let i = wants(size); i < has(size); i++) s = tryAction(sim, s, { type: "removeManagedService", service, size });
+    }
+  }
   return s;
 }
 

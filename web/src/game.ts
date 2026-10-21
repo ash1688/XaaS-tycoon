@@ -96,7 +96,7 @@ export function createGame(code: string, id: string) {
   // What to do about a tier running short: on PaaS, scale the platform; elsewhere, rent or buy more servers.
   const tierFix = (tier: UnitTier) => {
     if (managed.value) {
-      return tier === "cu" ? "raise your instance count" : "pick a bigger managed database, or add a cache";
+      return tier === "cu" ? "raise your instance count" : "add a managed database or cache";
     }
     return `${addVerb.value} more ${TIER_INFO.find((t) => t.id === tier)?.servers ?? "servers"}`;
   };

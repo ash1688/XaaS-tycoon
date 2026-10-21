@@ -597,6 +597,8 @@ export async function buildApp(opts: AppOptions) {
                 "sellServer",
                 "setInstances",
                 "setManagedService",
+                "addManagedService",
+                "removeManagedService",
                 "takeLoan",
               ],
             },
@@ -611,14 +613,16 @@ export async function buildApp(opts: AppOptions) {
             // setPrice: the monthly price. The sim checks it against the game's highest price.
             price: { type: "number", exclusiveMinimum: 0 },
             // rentServer and buyServer: the type and size of server. The sim checks the model rents or buys them.
-            // setManagedService uses size too, where null turns the cache off; it's refused for the others below.
+            // The managed service actions use size too; for setManagedService null turns the cache off, and it's refused
+            // for the others below.
             server: { enum: [...SERVER_TYPES] },
             size: { enum: [...SERVER_SIZES, null] },
             // cancelServer and sellServer: one of the company's servers, by id. The sim checks it's theirs.
             id: { type: "integer", minimum: 1 },
             // setInstances: how many app instances to run on PaaS. The sim checks it against the platform's most.
             count: { type: "integer", minimum: 1 },
-            // setManagedService: a managed service on PaaS and its size, or null to turn the cache off.
+            // setManagedService: a managed service on PaaS and its size, or null to turn the cache off. addManagedService
+            // and removeManagedService: one more or one fewer of a size. The sim checks the cap and the last database.
             service: { enum: [...MANAGED_SERVICES] },
           },
           allOf: [
@@ -634,6 +638,10 @@ export async function buildApp(opts: AppOptions) {
               if: { properties: { type: { const: "setManagedService" } } },
               then: { required: ["service", "size"] },
               else: { properties: { size: { enum: [...SERVER_SIZES] } } },
+            },
+            {
+              if: { properties: { type: { enum: ["addManagedService", "removeManagedService"] } } },
+              then: { required: ["service", "size"] },
             },
           ],
           additionalProperties: false,

@@ -953,9 +953,11 @@ describe("PaaS managed services and SaaS with no servers", () => {
       maxInstances: managed.maxInstances,
       instanceSize: "medium",
       instanceUnits: 15,
-      database: { size: "small", units: managed.units.database.small },
+      database: { count: 1, max: managed.maxServices.database, units: managed.units.database.small },
       cache: null,
+      maxServices: managed.maxServices,
     });
+    expect(company.managed!.database!.running).toMatchObject([{ size: "small", count: 1, units: managed.units.database.small }]);
     expect(company.managed!.database!.options).toHaveLength(4);
     expect(company.managed!.databaseOptions).toHaveLength(4);
     expect(company.managed!.cacheOptions).toContainEqual({
@@ -978,9 +980,9 @@ describe("PaaS managed services and SaaS with no servers", () => {
     expect(scaled.units!.cu.capacity).toBeCloseTo(4 * before.units!.cu.capacity, 5);
     expect(scaled.servers.every((s) => s.status === "ready")).toBe(true);
     const db = (await act({ type: "setManagedService", service: "database", size: "large" })).json<CompanyView>();
-    expect(db.managed!.database).toMatchObject({ size: "large", units: paasServers.managed!.units.database.large });
+    expect(db.managed!.database).toMatchObject({ count: 1, running: [{ size: "large" }], units: paasServers.managed!.units.database.large });
     const cached = (await act({ type: "setManagedService", service: "cache", size: "small" })).json<CompanyView>();
-    expect(cached.managed!.cache).toMatchObject({ size: "small" });
+    expect(cached.managed!.cache).toMatchObject({ count: 1, running: [{ size: "small" }] });
     expect(cached.opsNeeded).toBe(1);
     // Instances are free here: the platform's £300, the large database and the small cache.
     expect(cached.monthlyInfrastructureCost).toBe(
@@ -989,6 +991,59 @@ describe("PaaS managed services and SaaS with no servers", () => {
     const off = (await act({ type: "setManagedService", service: "cache", size: null })).json<CompanyView>();
     expect(off.managed!.cache).toBeNull();
     expect((await get()).managed).toEqual(off.managed);
+  });
+
+  it("adds and removes managed databases and caches, their units adding up, saved, with counts and sizes shown", async () => {
+    const { company: before, act, get } = await setup();
+    const units = paasServers.managed!.units;
+    const added = await act({ type: "addManagedService", service: "database", size: "large" });
+    expect(added.statusCode).toBe(200);
+    const two = added.json<CompanyView>();
+    expect(two.managed!.database).toMatchObject({
+      count: 2,
+      running: [
+        { size: "large", count: 1, units: units.database.large },
+        { size: "small", count: 1, units: units.database.small },
+      ],
+      units: units.database.small + units.database.large,
+    });
+    // Ready at once, the DBU adding up (cut for the missing ops person, as before).
+    expect(two.units!.dbu.capacity).toBeCloseTo(
+      (before.units!.dbu.capacity * (units.database.small + units.database.large)) / units.database.small,
+      5,
+    );
+    const cached = (await act({ type: "addManagedService", service: "cache", size: "medium" })).json<CompanyView>();
+    expect(cached.managed!.cache).toMatchObject({ count: 1, units: units.cache.medium });
+    expect(cached.opsNeeded).toBe(1);
+    const removed = (await act({ type: "removeManagedService", service: "database", size: "small" })).json<CompanyView>();
+    expect(removed.managed!.database).toMatchObject({ count: 1, running: [{ size: "large", count: 1 }] });
+    expect((await get()).managed).toEqual(removed.managed);
+  });
+
+  it("validates adding and removing managed services, and the sim refuses the last database and past the cap", async () => {
+    const { act } = await setup();
+    for (const payload of [
+      { type: "addManagedService", service: "database" },
+      { type: "addManagedService", size: "small" },
+      { type: "addManagedService", service: "database", size: null },
+      { type: "addManagedService", service: "queue", size: "small" },
+      { type: "removeManagedService", service: "cache", size: "huge" },
+      { type: "removeManagedService", service: "cache" },
+    ]) {
+      expect((await act(payload)).statusCode, JSON.stringify(payload)).toBe(400);
+    }
+    const last = await act({ type: "removeManagedService", service: "database", size: "small" });
+    expect(last.statusCode).toBe(400);
+    expect(last.json()).toMatchObject({ error: "database_required" });
+    const none = await act({ type: "removeManagedService", service: "cache", size: "small" });
+    expect(none.json()).toMatchObject({ error: "no_such_service" });
+    const max = paasServers.managed!.maxServices.cache;
+    for (let i = 0; i < max; i++) {
+      expect((await act({ type: "addManagedService", service: "cache", size: "small" })).statusCode).toBe(200);
+    }
+    const full = await act({ type: "addManagedService", service: "cache", size: "small" });
+    expect(full.statusCode).toBe(400);
+    expect(full.json()).toMatchObject({ error: "too_many_services" });
   });
 
   it("validates the PaaS actions, and the sim refuses what doesn't fit", async () => {

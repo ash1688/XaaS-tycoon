@@ -242,10 +242,12 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     }
     if (servers.managed) {
       add(`models.${m}.servers.managed.maxInstances`, "Infrastructure", MODEL_LABELS[m], "Most app instances", "The most app instances a company can run on the platform.", range(1, 100, 1));
+      add(`models.${m}.servers.managed.maxServices.database`, "Infrastructure", MODEL_LABELS[m], "Most managed databases", "The most managed databases a company can run, like read replicas or shards. Their DBU add up.", range(1, 20, 1));
+      add(`models.${m}.servers.managed.maxServices.cache`, "Infrastructure", MODEL_LABELS[m], "Most managed caches", "The most managed caches a company can run. Their CH add up.", range(1, 20, 1));
       for (const t of ["database", "cache"] as const) {
         for (const size of SERVER_SIZES) {
           const unit = t === "database" ? "DBU" : "CH";
-          add(`models.${m}.servers.managed.units.${t}.${size}`, "Infrastructure", MODEL_LABELS[m], `Managed ${t} (${size}): ${unit}`, `The ${unit} a managed ${t} of this size gives. You run only one, so the sizes go higher than a server's.`, range(0, 10_000, 1));
+          add(`models.${m}.servers.managed.units.${t}.${size}`, "Infrastructure", MODEL_LABELS[m], `Managed ${t} (${size}): ${unit}`, `The ${unit} a managed ${t} of this size gives. Past the biggest, a company adds another.`, range(0, 10_000, 1));
         }
       }
     }

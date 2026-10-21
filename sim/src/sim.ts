@@ -43,6 +43,7 @@ export type { PricePreview, PriceWaveView } from "./pricing.ts";
 export type {
   LoadBalancerView,
   ManagedOption,
+  ManagedRunning,
   ManagedServiceView,
   ManagedView,
   ServerOption,
@@ -53,6 +54,7 @@ export type {
 } from "./servers.ts";
 export type { GameSummary, IncomeCostDay, LoanSummary, PeakUsers, SummaryDay } from "./summary.ts";
 export { interestIn, profitCosts } from "./finance.ts";
+export { managedServicesFor } from "./servers.ts";
 export {
   GAME_STATE_VERSION,
   isCurrentState,
@@ -157,7 +159,7 @@ export interface Sim {
    */
   serverOptions(state: GameState): ServerOption[];
   /**
-   * On PaaS: the instance count, the managed database and cache with the sizes they come in, and what they cost.
+   * On PaaS: the instance count, the managed databases and caches with the sizes they come in, and what they cost.
    * Null on any other model.
    */
   managed(state: GameState): ManagedView | null;
@@ -344,6 +346,10 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         return servers.setInstances(state, action.count);
       case "setManagedService":
         return servers.setManagedService(state, action.service, action.size);
+      case "addManagedService":
+        return servers.addManagedService(state, action.service, action.size);
+      case "removeManagedService":
+        return servers.removeManagedService(state, action.service, action.size);
       case "takeLoan":
         return loan.takeLoan(state);
       default:
