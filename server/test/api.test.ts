@@ -114,7 +114,11 @@ const sim = createSim({
       id,
       {
         ...p,
-        growth: { ...p.growth, launchUsers: STARTING_USERS[id as keyof typeof STARTING_USERS] },
+        growth: {
+          ...p.growth,
+          launchUsersMin: STARTING_USERS[id as keyof typeof STARTING_USERS],
+          launchUsersMax: STARTING_USERS[id as keyof typeof STARTING_USERS],
+        },
         pricing: { ...p.pricing, freeShare: 1, conversionRate: 0 },
         demand: LIGHT_DEMAND,
       },
@@ -2424,8 +2428,6 @@ describe("launch", () => {
         daysLeft: null,
         rampDays: 3,
         rampDay: 0,
-        users: STARTING_USERS.ecommerce,
-        paidUsers: 0,
         arrived: 0,
         needsServers: true,
         setUp: false,

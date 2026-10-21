@@ -27,7 +27,7 @@ async function openDayLog(page: Page) {
   return page.getByRole("dialog", { name: "Day log" }).getByTestId("day-log");
 }
 
-test("teacher creates a code, student starts a game and presses Continue", async ({ browser }) => {
+test("teacher creates a code, student starts a game and presses Continue", async ({ browser, request }) => {
   // Teacher
   const teacher = await (await browser.newContext()).newPage();
   // A controllable clock, so the live dashboard's refresh can be run on without waiting for it.
@@ -135,9 +135,13 @@ test("teacher creates a code, student starts a game and presses Continue", async
 
   await goTo(student, "Home");
   // £66 of IaaS (£33 running costs and £15 and £18 of VM rent, each a month ÷ 30) + 3 developers × £120 + 1 ops × £120
-  // + 1 support × £100 out, and nothing in: the first users arrive at the end of day 2, 800 of the 4,000.
+  // + 1 support × £100 out, and nothing in: the first users arrive at the end of day 2, a fifth of the game's launch
+  // users. Home shows the users the API has.
   await expect(student.getByTestId("cash")).toHaveText("£12,354");
-  await expect(student.getByTestId("users")).toHaveText("800");
+  const [, , code2, id2] = game.split("/");
+  const { users: joined } = await (await request.get(`/api/codes/${code2}/companies/${id2}`)).json();
+  expect(joined).toBeGreaterThanOrEqual(500);
+  await expect(student.getByTestId("users")).toHaveText(joined.toLocaleString("en-GB"));
   await expect(student.getByTestId("launch-headline")).toHaveText("Launching: users arriving (day 1 of 3)");
   await expect(student.getByTestId("uptime")).toHaveText("100%");
   // The day log card has each category's total; its modal has every line.
@@ -156,7 +160,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await elsewhere.getByRole("button", { name: "Go" }).click();
   await elsewhere.getByRole("link", { name: /Playwright Ltd/ }).click();
   await expect(elsewhere.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
-  await expect(elsewhere.getByTestId("users")).toHaveText("800");
+  await expect(elsewhere.getByTestId("users")).toHaveText(joined.toLocaleString("en-GB"));
   await goTo(elsewhere, "People");
   await expect(elsewhere.getByTestId("developers-count")).toHaveText("3");
   // A page opens straight from its address, as a bookmark would.

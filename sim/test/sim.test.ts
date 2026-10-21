@@ -25,7 +25,8 @@ import {
 
 const comparison = { upfrontCost: "", monthlyCost: "", opsNeeded: "", control: "" };
 const growth = {
-  launchUsers: 1000,
+  launchUsersMin: 1000,
+  launchUsersMax: 1000,
   marketSize: 1_000_000,
   dailyGrowth: 0.03,
   growthNoise: 0.2,
@@ -201,14 +202,27 @@ const config: GameConfig = {
 
 const sim = createSim(config);
 
+/** A config whose games all draw the smallest launch total in each product's range. */
+const smallestLaunch = (base: GameConfig): GameConfig => ({
+  ...base,
+  productTypes: Object.fromEntries(
+    Object.entries(base.productTypes).map(([id, p]) => [
+      id,
+      { ...p, growth: { ...p.growth, launchUsersMax: p.growth.launchUsersMin } },
+    ]),
+  ) as GameConfig["productTypes"],
+});
+
 // The default numbers with the starting cash they had before the bank loan, for tests of how the defaults play: they
-// check the mechanics, not whether the money lasts, which the balance pass (#55) settles.
-const roomyDefaults: GameConfig = { ...defaultConfig, startingCash: 250_000 };
+// check the mechanics, not whether the money lasts, which the balance pass (#55) settles. Every game draws the smallest
+// launch total, so a test's first setup carries it whatever the seed.
+const roomyDefaults: GameConfig = smallestLaunch({ ...defaultConfig, startingCash: 250_000 });
 
 /**
  * A first setup on the default config, as a student might set it up on day 1: a medium app server and database on
  * IaaS; large ones on-prem, with more room since kit takes 10 days to arrive; one app instance and a small managed
- * database on PaaS. Nothing on SaaS, which has no servers.
+ * database on PaaS. Nothing on SaaS, which has no servers. Video needs five times the compute per user, so its app
+ * servers are a size up, and on PaaS it runs two instances.
  */
 const FIRST_SETUP: Record<ModelId, Action[]> = {
   onprem: [
@@ -225,7 +239,25 @@ const FIRST_SETUP: Record<ModelId, Action[]> = {
   ],
   saas: [],
 };
-const setUp = (s: Sim, state: GameState) => FIRST_SETUP[state.model].reduce((st, a) => s.applyAction(st, a), state);
+const VIDEO_SETUP: Partial<Record<ModelId, Action[]>> = {
+  onprem: [
+    { type: "buyServer", server: "app", size: "massive" },
+    { type: "buyServer", server: "database", size: "large" },
+  ],
+  iaas: [
+    { type: "rentServer", server: "app", size: "large" },
+    { type: "rentServer", server: "database", size: "medium" },
+  ],
+  paas: [
+    { type: "setInstances", count: 2 },
+    { type: "setManagedService", service: "database", size: "small" },
+  ],
+};
+const setUp = (s: Sim, state: GameState) =>
+  ((state.productType === "video" && VIDEO_SETUP[state.model]) || FIRST_SETUP[state.model]).reduce(
+    (st, a) => s.applyAction(st, a),
+    state,
+  );
 /** A default-config game with its first setup, played until all its launch users have arrived. */
 const launched = (s: Sim, state: GameState) => {
   let st = setUp(s, state);
@@ -278,7 +310,18 @@ describe("newGame", () => {
 describe("launch", () => {
   const fresh = (s: Sim, model: ModelId, productType = "social", takeLoan = false) =>
     s.newGame({ companyName: "Acme", productType, model, seed: 7, takeLoan });
-  const defaults = createSim(roomyDefaults);
+  // Round two's launch users, fixed per product, so the ramp's sums are exact: the default draws each game's from a range.
+  const fixed = { ecommerce: 3_000, social: 4_000, video: 1_600 };
+  const fixedTotals: GameConfig = {
+    ...roomyDefaults,
+    productTypes: Object.fromEntries(
+      PRODUCT_TYPE_IDS.map((p) => {
+        const product = roomyDefaults.productTypes[p];
+        return [p, { ...product, growth: { ...product.growth, launchUsersMin: fixed[p], launchUsersMax: fixed[p] } }];
+      }),
+    ) as GameConfig["productTypes"],
+  };
+  const defaults = createSim(fixedTotals);
   /** Plays a day at a time until `last` has been played. */
   const playTo = (s: Sim, state: GameState, last: number) => {
     let st = state;
@@ -310,7 +353,7 @@ describe("launch", () => {
     const state = fresh(defaults, "saas");
     // A social network's 4,000: 20%, 30% and 50% of them.
     expect(state).toMatchObject({ launchDay: 1, users: 800 });
-    expect(defaults.launch(state)).toMatchObject({ status: "launching", day: 1, rampDay: 1, arrived: 800, users: 4_000 });
+    expect(defaults.launch(state)).toMatchObject({ status: "launching", day: 1, rampDay: 1, arrived: 800 });
     expect(usersOn(defaults, state, 2, 3)).toEqual([2_000, 4_000]);
     const done = playTo(defaults, state, 3);
     expect(defaults.launch(done)).toMatchObject({ status: "launched", rampDay: 3, arrived: 4_000 });
@@ -379,7 +422,7 @@ describe("launch", () => {
       launch: { rampShares: [1, 1] },
       productTypes: {
         ...roomyDefaults.productTypes,
-        video: { ...roomyDefaults.productTypes.video, growth: { ...roomyDefaults.productTypes.video.growth, launchUsers: 2_500 } },
+        video: { ...roomyDefaults.productTypes.video, growth: { ...roomyDefaults.productTypes.video.growth, launchUsersMin: 2_500, launchUsersMax: 2_500 } },
       },
     });
     const state = fresh(twoDays, "saas", "video");
@@ -390,13 +433,13 @@ describe("launch", () => {
     expect(both.users).toBe(2_500);
     expect(both.paidUsers - 1_000).toBeGreaterThanOrEqual(0);
     expect(both.paidUsers - 1_000).toBeLessThanOrEqual(5);
-    expect(twoDays.launch(state)).toMatchObject({ rampDays: 2, users: 2_500, paidUsers: 1_000 });
+    expect(twoDays.launch(state)).toMatchObject({ rampDays: 2, arrived: 1_250 });
     for (const p of PRODUCT_TYPE_IDS) {
       const { users, paidUsers } = playTo(defaults, fresh(defaults, "saas", p), 3);
-      const { growth, pricing } = defaultConfig.productTypes[p];
-      expect(users, p).toBe(growth.launchUsers);
+      const { pricing } = defaultConfig.productTypes[p];
+      expect(users, p).toBe(fixed[p]);
       // Each day rounded on its own, and a few free users converting on the way.
-      expect(Math.abs(paidUsers - growth.launchUsers * (1 - pricing.freeShare)), p).toBeLessThanOrEqual(5);
+      expect(Math.abs(paidUsers - fixed[p] * (1 - pricing.freeShare)), p).toBeLessThanOrEqual(5);
     }
   });
 
@@ -436,6 +479,32 @@ describe("launch", () => {
     expect(state.cash).toBeLessThan(start.cash);
   });
 
+  it("draws each game's launch total from the product's range, the same for the same seed, and never shows it", () => {
+    const s = createSim({ ...defaultConfig, startingCash: 250_000 });
+    const totals = PRODUCT_TYPE_IDS.flatMap((p) =>
+      Array.from({ length: 20 }, (_, seed) => {
+        const state = s.newGame({ companyName: "Acme", productType: p, model: "saas", seed });
+        const { launchUsersMin, launchUsersMax } = defaultConfig.productTypes[p].growth;
+        expect(state.launchUsers).toBeGreaterThanOrEqual(launchUsersMin);
+        expect(state.launchUsers).toBeLessThanOrEqual(launchUsersMax);
+        // The same seed draws the same total, and the ramp brings exactly it.
+        expect(s.newGame({ companyName: "Other", productType: p, model: "saas", seed }).launchUsers).toBe(state.launchUsers);
+        expect(playTo(s, state, 3).users).toBe(state.launchUsers);
+        return state.launchUsers;
+      }),
+    );
+    const { growth } = defaultConfig.productTypes.social;
+    expect([growth.launchUsersMin, growth.launchUsersMax]).toEqual([2_500, 7_500]);
+    // Different seeds draw different totals.
+    expect(new Set(totals).size).toBeGreaterThan(15);
+    // The launch view shows only the users who have joined, never the total.
+    const state = s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 3 });
+    const view = s.launch(state);
+    expect(Object.keys(view)).not.toContain("users");
+    expect(Object.keys(view)).not.toContain("paidUsers");
+    expect(JSON.stringify(view)).not.toContain(String(state.launchUsers));
+  });
+
   it("lets a test config launch in full as the game starts, with its starter setup in place", () => {
     const state = start();
     expect(state).toMatchObject({ launchDay: 1, users: 1000 });
@@ -443,7 +512,7 @@ describe("launch", () => {
     const ramped = createSim({ ...config, launch: { rampShares: [0.5, 0.5] } });
     const half = ramped.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1 });
     expect(half).toMatchObject({ launchDay: 1, users: 500 });
-    expect(ramped.launch(half)).toMatchObject({ status: "launching", rampDay: 1, users: 1000, paidUsers: 0 });
+    expect(ramped.launch(half)).toMatchObject({ status: "launching", rampDay: 1, arrived: 500 });
   });
 });
 
@@ -610,7 +679,7 @@ describe("staff", () => {
   });
 
   it("needs no more ops on IaaS's first VMs than on-prem, and a few on PaaS and SaaS, by default", () => {
-    const s = createSim(defaultConfig);
+    const s = createSim(smallestLaunch(defaultConfig));
     const first = (m: ModelId) => launched(s, s.newGame({ companyName: "Acme", productType: "social", model: m, seed: 1 }));
     const needed = MODEL_IDS.map((m) => s.opsNeededNow(first(m)));
     expect(needed[1]).toBeLessThanOrEqual(needed[0]!);
@@ -1301,7 +1370,7 @@ describe("servers on IaaS", () => {
   });
 
   it("starts with no VMs by default, and a medium app server and database launch every product with room to grow", () => {
-    const s = createSim(defaultConfig);
+    const s = createSim(smallestLaunch(defaultConfig));
     expect(s.opsNeeded("iaas")).toBe(0);
     for (const p of PRODUCT_TYPE_IDS) {
       expect(s.newGame({ companyName: "Acme", productType: p, model: "iaas", seed: 1 }).servers).toEqual([]);
@@ -1565,7 +1634,7 @@ describe("servers on-prem", () => {
   });
 
   it("by default, charges the server room up front and the first kit when it's bought, launching when it arrives", () => {
-    const s = createSim(defaultConfig);
+    const s = createSim(smallestLaunch(defaultConfig));
     const { onprem } = defaultConfig.models;
     // The model's upfront cost is the server room. There's no kit until the company buys some, so nothing is charged
     // twice.
@@ -1576,8 +1645,9 @@ describe("servers on-prem", () => {
       const own = s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1 });
       expect(own.cash).toBe(defaultConfig.startingCash - 5_000);
       expect(own.servers).toEqual([]);
-      // A large app server and database, £2,200 on day 1: starting cash covers them, leaving little to buy more with.
-      expect(setUp(s, own).cash).toBe(defaultConfig.startingCash - 7_200);
+      // A large app server and database, £2,200 on day 1 (video's massive app server, £2,600): starting cash covers
+      // them, leaving little to buy more with.
+      expect(setUp(s, own).cash).toBe(defaultConfig.startingCash - (p === "video" ? 7_600 : 7_200));
       const loaned = s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1, takeLoan: true });
       expect(loaned.cash).toBe(defaultConfig.startingCash + defaultConfig.loan.amount - 5_000);
       // The kit arrives on day 11, and the users with it.
@@ -1924,7 +1994,7 @@ describe("PaaS and SaaS leave on-prem and IaaS alone", () => {
 });
 
 describe("default PaaS and SaaS", () => {
-  const s = createSim(defaultConfig);
+  const s = createSim(smallestLaunch(defaultConfig));
   const { paas, iaas, saas } = defaultConfig.models;
   const perUnit = (price: number | undefined, units: number) => price! / units;
 
@@ -2697,7 +2767,7 @@ describe("default config", () => {
       // the extra VMs are only ready the next day, so its first day can be down too: the spike fires twice.
       expect(state.outageDays).toBeGreaterThanOrEqual(1);
       expect(state.outageDays).toBeLessThanOrEqual(3);
-      expect(state.users).toBeGreaterThan(defaultConfig.productTypes[p as "social"].growth.launchUsers * 5);
+      expect(state.users).toBeGreaterThan(defaultConfig.productTypes[p as "social"].growth.launchUsersMin * 5);
     }
   });
 
@@ -2785,7 +2855,7 @@ describe("default config", () => {
   });
 
   it("makes on-prem's server room and first kit the dearest start by far, and only SaaS charge per user", () => {
-    const s = createSim(defaultConfig);
+    const s = createSim(smallestLaunch(defaultConfig));
     // Everything paid by the end of day 1 with a first setup: the model's upfront cost and, on-prem, the first kit.
     const upfront = (m: (typeof MODEL_IDS)[number]) =>
       defaultConfig.startingCash - setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: m, seed: 1 })).cash;
@@ -4203,7 +4273,7 @@ describe("default events", () => {
   });
 
   it("fire an OS patch on day 3, so a company set up on day 1 meets an event as its first users arrive", () => {
-    const s = createSim(defaultConfig);
+    const s = createSim(smallestLaunch(defaultConfig));
     const state = s.advance(setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: "paas", seed: 7 })), 2).state;
     expect(state).toMatchObject({ day: 3, launchDay: 2 });
     expect(s.events(state).map((e) => e.id)).toEqual(["osPatch"]);
@@ -4600,7 +4670,7 @@ describe("support, tickets and satisfaction", () => {
       ...config,
       productTypes: {
         ...config.productTypes,
-        social: { ...config.productTypes.social, growth: { ...growth, launchUsers: 1000, marketSize: 1000 } },
+        social: { ...config.productTypes.social, growth: { ...growth, launchUsersMin: 1000, launchUsersMax: 1000, marketSize: 1000 } },
       },
     });
     const at = (sm: Sim, satisfaction: number) => ({
@@ -4914,7 +4984,7 @@ describe("free-to-paid conversion", () => {
         ...config.productTypes,
         social: {
           ...config.productTypes.social,
-          growth: { ...growth, launchUsers: 10_000, dailyGrowth: 0, growthNoise: 0 },
+          growth: { ...growth, launchUsersMin: 10_000, launchUsersMax: 10_000, dailyGrowth: 0, growthNoise: 0 },
           pricing: { fairPrice: 30, freeShare: 0.5, conversionRate: rate },
         },
       },

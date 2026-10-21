@@ -2,7 +2,7 @@ import type { GameConfig, ProductTypeId } from "./config.ts";
 import type { Events } from "./events.ts";
 import type { Features } from "./features.ts";
 import type { Pricing } from "./pricing.ts";
-import { vary } from "./rng.ts";
+import { nextRandom, seedRng, vary } from "./rng.ts";
 import type { GameState, UnitDemand } from "./state.ts";
 import type { Support } from "./support.ts";
 
@@ -17,10 +17,16 @@ export function createCustomers(
   pricing: Pricing,
   support: Support,
 ) {
-  /** A new company: no users until it launches (see Launch), so no load. */
-  function startingCustomers(productType: ProductTypeId) {
+  /**
+   * A new company: no users until it launches (see Launch), so no load. Its launch total is drawn evenly from the
+   * product's range, from a stream of its own seeded by the game's seed, so the game's other draws don't shift.
+   */
+  function startingCustomers(productType: ProductTypeId, seed: number) {
+    const { launchUsersMin: min, launchUsersMax: max } = config.productTypes[productType].growth;
+    const [r] = nextRandom(seedRng(seed ^ 0x1a0c4));
     return {
       launchDay: null,
+      launchUsers: Math.round(min + (Math.max(min, max) - min) * r),
       users: 0,
       ...pricing.startingPricing(productType, 0),
       load: 0,

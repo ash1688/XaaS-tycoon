@@ -2,7 +2,7 @@ import { expect, test, type Browser, type APIRequestContext } from "@playwright/
 import { E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
 import { createCode } from "./staff.ts";
 
-/** A new social network on a fresh code, opened on its Home page. */
+/** A new social network on a fresh code, opened on its Home page, with a way to read its users from the API. */
 async function newCompany(browser: Browser, request: APIRequestContext, name: string, model = "iaas") {
   const teacher = await (await browser.newContext()).newPage();
   await teacher.goto("/staff");
@@ -15,8 +15,10 @@ async function newCompany(browser: Browser, request: APIRequestContext, name: st
   const { id } = await created.json();
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
-  return student;
+  const users = async () => (await (await request.get(`/api/codes/${code}/companies/${id}`)).json()).users as number;
+  return Object.assign(student, { users });
 }
+const count = (n: number) => n.toLocaleString("en-GB");
 
 test("on IaaS, VMs rented on day 1 bring the first users on day 2, building up over 3 days", async ({ browser, request }) => {
   const student = await newCompany(browser, request, "Launch Ltd");
@@ -47,31 +49,43 @@ test("on IaaS, VMs rented on day 1 bring the first users on day 2, building up o
   await expect(card).toHaveAttribute("data-status", "upcoming");
   await expect(student.getByTestId("launch-headline")).toHaveText("Launch in 1 day");
   await expect(student.getByTestId("launch-text")).toHaveText(
-    "Your first users start arriving at the end of day 2, when your servers are ready, building up over 3 days to 4,000 users.",
+    "Your first users start arriving at the end of day 2, when your servers are ready, more each day for 3 days.",
   );
   await expect(servers).toContainText("(done)");
   await expect(student.getByTestId("launch-step-ops")).toContainText("Hire ops: 1 needed");
   await expect(student.getByTestId("launch-step-ops")).toContainText("(done)");
 
-  // 20%, 30% and 50% of the social network's 4,000 arrive over days 2 to 4.
+  // The game's launch users arrive over days 2 to 4, more each day. Home shows those who have joined, never the total.
   const ramp = [
-    { day: 2, users: "800", headline: "Launching: users arriving (day 1 of 3)" },
-    { day: 3, users: "2,000", headline: "Launching: users arriving (day 2 of 3)" },
-    { day: 4, users: "4,000", headline: "Launched on day 2" },
+    { day: 2, headline: "Launching: users arriving (day 1 of 3)" },
+    { day: 3, headline: "Launching: users arriving (day 2 of 3)" },
+    { day: 4, headline: "Launched on day 2" },
   ];
-  for (const { day, users, headline } of ramp) {
+  let before = 0;
+  for (const { day, headline } of ramp) {
     await student.getByRole("button", { name: "Continue" }).click();
     await expect(student.getByTestId("day")).toContainText(`${day} of ${E2E_FINAL_DAY}`);
-    await expect(student.getByTestId("users")).toHaveText(users);
     await expect(student.getByTestId("launch-headline")).toHaveText(headline);
+    const users = await student.users();
+    expect(users).toBeGreaterThan(before);
+    await expect(student.getByTestId("users")).toHaveText(count(users));
+    if (day < 4) {
+      await expect(student.getByTestId("launch-text")).toHaveText(
+        `${count(users)} users have joined so far, more on the way. Then normal growth takes over.`,
+      );
+    }
+    before = users;
   }
+  // All the launch users: 2,500 to 7,500.
+  expect(before).toBeGreaterThanOrEqual(2_500);
+  expect(before).toBeLessThanOrEqual(7_500);
   await expect(card).toHaveAttribute("data-status", "launched");
   await student.getByRole("button", { name: "Day log" }).click();
   // The day log has each day's arrivals; the last says the ramp is over.
   const arrivals = student.getByRole("dialog", { name: "Day log" }).getByTestId("launch");
   await expect(arrivals).toHaveCount(3);
   await expect(arrivals.filter({ hasText: "day 3 of 3" })).toHaveText(
-    "Launch, day 3 of 3: 2,000 new users arrived, 600 of them paying. That's everyone: normal growth takes over from tomorrow.",
+    /^Launch, day 3 of 3: [\d,]+ new users arrived, [\d,]+ of them paying\. That's everyone: normal growth takes over from tomorrow\.$/,
   );
 });
 
@@ -130,5 +144,6 @@ test("on PaaS, a managed database added from the empty state brings users from d
   }
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Home", exact: true }).click();
   await expect(student.getByTestId("launch-headline")).toHaveText("Launched on day 2");
-  await expect(student.getByTestId("users")).toHaveText("4,000");
+  await expect(student.getByTestId("users")).toHaveText(count(await student.users()));
+  expect(await student.users()).toBeGreaterThanOrEqual(2_500);
 });

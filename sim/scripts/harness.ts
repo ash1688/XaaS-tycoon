@@ -182,8 +182,8 @@ function plannedUnits(sim: Sim, state: GameState, strategy: Strategy): UnitsView
   if (!units) return null;
   const product = sim.config.productTypes[state.productType];
   const launch = sim.launch(state);
-  // Until all its launch users are in, it plans for all of them.
-  const users = launch.status === "launched" ? state.users : Math.max(state.users, launch.users);
+  // Until all its launch users are in, it plans for the most there might be: like a student, it can't see the total.
+  const users = launch.status === "launched" ? state.users : Math.max(state.users, product.growth.launchUsersMax);
   const peak = strategy.scaling === "ahead" && peakSoon(sim, state) ? (product.growth.seasonalSpike?.loadMultiplier ?? 1) : 1;
   const plan = users * peak * ahead(sim, state);
   const dbu = plan * product.demand.dbuPerUser;

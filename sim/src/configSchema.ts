@@ -142,7 +142,8 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     if (!product) continue;
     const s = product.name;
     const g = `productTypes.${p}.growth`;
-    add(`${g}.launchUsers`, "Customers", s, "Launch users", "Users who trickle in over the launch ramp, split paid and free by the free share. Normal growth follows.", range(0, 1_000_000, 100));
+    add(`${g}.launchUsersMin`, "Customers", s, "Launch users: fewest", "Each game draws how many users trickle in over its launch ramp from this range, split paid and free by the free share. Students see only those who have joined.", range(0, 1_000_000, 100));
+    add(`${g}.launchUsersMax`, "Customers", s, "Launch users: most", "The top of the range each game's launch users are drawn from.", range(0, 1_000_000, 100));
     add(`${g}.marketSize`, "Customers", s, "Market size", "Users the product can reach. Growth slows as users approach it.", range(1, 10_000_000, 1_000));
     add(`${g}.dailyGrowth`, "Customers", s, "Daily growth", "Share of users added each day while the market is wide open (0.05 = 5%).", range(0, 1, 0.005));
     add(`${g}.growthNoise`, "Customers", s, "Growth variation", "Daily growth varies randomly by up to this share either way.", SHARE);
@@ -370,6 +371,11 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
       `productTypes.${p}.pricing.fairPrice`,
       "pricing.maxPrice",
       "The highest price can't be below a product's fair price.",
+    ]),
+    ...PRODUCT_TYPE_IDS.filter((p) => base.productTypes[p]).map((p): [string, string, string] => [
+      `productTypes.${p}.growth.launchUsersMin`,
+      `productTypes.${p}.growth.launchUsersMax`,
+      "The most launch users can't be fewer than the fewest.",
     ]),
     ...base.events
       .filter((e) => e.schedule.type === "seeded")

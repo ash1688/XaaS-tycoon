@@ -23,11 +23,7 @@ export interface LaunchView {
   rampDays: number;
   /** Ramp days played so far, from 1 on the first day users arrived to rampDays: 0 before. */
   rampDay: number;
-  /** The launch total: users who arrive over the ramp. */
-  users: number;
-  /** Of them, those who pay at today's price: fewer at a price above the fair one, as for any new users. */
-  paidUsers: number;
-  /** Users who have arrived so far over the ramp. */
+  /** Users who have joined so far over the ramp. The launch total isn't shown: the student sees them as they come. */
   arrived: number;
   /** Whether the model has servers to set up before launch: false on a model with no capacity limit (SaaS). */
   needsServers: boolean;
@@ -51,7 +47,7 @@ export function createLaunch(config: GameConfig, servers: Servers, pricing: Pric
   const total = raw.reduce((sum, s) => sum + Math.max(0, s), 0);
   const shares = total > 0 ? raw.map((s) => Math.max(0, s) / total) : [1];
   const rampDays = shares.length;
-  const launchUsers = (state: GameState) => config.productTypes[state.productType].growth.launchUsers;
+  const launchUsers = (state: GameState) => state.launchUsers;
   /** Users who have arrived by the end of ramp day k (1 = the first), rounded so the days add up to the total. */
   const arrivedBy = (state: GameState, k: number) =>
     Math.round(launchUsers(state) * shares.slice(0, Math.max(0, k)).reduce((sum, s) => sum + s, 0));
@@ -115,15 +111,12 @@ export function createLaunch(config: GameConfig, servers: Servers, pricing: Pric
     const rampDay = state.launchDay === null ? 0 : Math.min(rampDays, state.day - state.launchDay + 1);
     const status =
       state.launchDay !== null ? (rampDay < rampDays ? "launching" : "launched") : day === null ? "waiting" : "upcoming";
-    const users = launchUsers(state);
     return {
       status,
       day,
       daysLeft: state.launchDay !== null || day === null ? null : day - state.day,
       rampDays,
       rampDay,
-      users,
-      paidUsers: Math.round(users * pricing.paidShareOfNew(state)),
       arrived: arrivedBy(state, rampDay),
       needsServers: servers.hasServers(state.model),
       setUp: state.launchDay !== null || day !== null,

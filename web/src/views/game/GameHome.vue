@@ -53,15 +53,13 @@ const launchText = computed(() => {
   const l = launch.value;
   const c = game.company;
   if (!l || !c) return "";
-  const total = `${formatCount(l.users)} users`;
-  const ramp = l.rampDays > 1 ? `, building up over ${days(l.rampDays)} to ${total}` : ` all ${total} at once`;
+  // Only the users who have joined are shown: how many are still to come stays a surprise.
+  const ramp = l.rampDays > 1 ? `, more each day for ${days(l.rampDays)}` : "";
   if (l.status === "launched") {
-    return `Your first users started arriving on day ${l.day}, and all ${total} were in by day ${launchOver.value}. They grow from here.`;
+    return `Your first ${formatCount(l.arrived)} users joined from day ${l.day} to day ${launchOver.value}. They grow from here.`;
   }
   if (l.status === "launching") {
-    const left = l.rampDays - l.rampDay;
-    const when = left === 1 ? "tomorrow" : `over the next ${days(left)}`;
-    return `${formatCount(l.arrived)} of your first ${total} have arrived. The rest come ${when}; then normal growth takes over.`;
+    return `${formatCount(l.arrived)} users have joined so far, more on the way. Then normal growth takes over.`;
   }
   if (l.status === "upcoming") {
     return `Your first users start arriving at the end of day ${l.day}, when your servers are ready${ramp}.`;
@@ -248,17 +246,6 @@ const alerts = computed(() => {
         <div data-testid="launch-card" :data-status="launch.status">
           <p class="overview-value" data-testid="launch-headline">{{ launchHeadline }}</p>
           <p class="muted" data-testid="launch-text">{{ launchText }}</p>
-          <div
-            v-if="launch.status === 'launching'"
-            class="meter"
-            role="meter"
-            aria-label="Launch users arrived"
-            :aria-valuenow="launch.arrived"
-            aria-valuemin="0"
-            :aria-valuemax="launch.users"
-          >
-            <div class="meter-fill ok" :style="{ width: `${(100 * launch.arrived) / Math.max(1, launch.users)}%` }"></div>
-          </div>
           <ul v-if="beforeUsers" class="launch-checklist" data-testid="launch-checklist">
             <li v-for="step in launchSteps" :key="step.id" :class="{ done: step.done }" :data-testid="`launch-step-${step.id}`">
               <span class="launch-check" aria-hidden="true">{{ step.done ? "✓" : "○" }}</span>
@@ -287,9 +274,9 @@ const alerts = computed(() => {
           <p>
             Your first users start arriving at the end of the first day you have servers ready to serve them: rented
             VMs are ready the day after you rent them, a platform's instances at once, and bought kit when it arrives.
-            They trickle in over {{ days(launch.rampDays) }}, more each day, until all {{ formatCount(launch.users) }}
-            are in; then normal growth takes over. Until then there are no users, no income and no tickets, but staff,
-            running costs and any loan repayments are still charged.
+            They trickle in over {{ days(launch.rampDays) }}, more each day, and you won't know how many until they've
+            all joined; then normal growth takes over. Until the first arrive there are no users, no income and no
+            tickets, but staff, running costs and any loan repayments are still charged.
           </p>
         </template>
       </OverviewCard>

@@ -247,7 +247,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       developers: config.staff.developers.startingCount,
       ops: config.staff.ops.startingCount,
       support: config.staff.support.startingCount,
-      ...customers.startingCustomers(productType),
+      ...customers.startingCustomers(productType, seed),
       ...support.startingSupport(),
       ...conversion.startingConversion(),
       spend: noSpend(),

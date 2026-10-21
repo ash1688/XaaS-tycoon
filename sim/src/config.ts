@@ -210,11 +210,13 @@ export interface SeasonalSpike {
 /** How a product's users grow and how much load they put on the system. */
 export interface GrowthProfile {
   /**
-   * The launch total: the product's first users, who trickle in over the launch ramp (see LaunchConfig), split paid
-   * and free by the product's freeShare, like any new users: a price above the fair one puts more on the free tier.
-   * Normal growth runs from the day after the ramp.
+   * The launch total's range. Each game draws its own total from it, evenly, when it starts: the product's first users,
+   * who trickle in over the launch ramp (see LaunchConfig), split paid and free by the product's freeShare like any
+   * new users, so a price above the fair one puts more on the free tier. Normal growth runs from the day after the
+   * ramp. The student never sees the total, only the users who have joined.
    */
-  launchUsers: number;
+  launchUsersMin: number;
+  launchUsersMax: number;
   /** Users the product can reach. Growth slows as users approach it. */
   marketSize: number;
   /** Share of current users added each day while the market is wide open (0.05 = 5%). */
@@ -566,7 +568,7 @@ export interface EventConfig {
  * A new company has no users and no servers. Its first users arrive at the end of the first day it has capacity to
  * serve them: servers ready by the end of that day, so rented VMs the day after they're rented, bought kit when it
  * arrives, a platform's instances and database at once. A model with no capacity limit (SaaS) is ready on day 1.
- * From then the product's launch users (see GrowthProfile.launchUsers) trickle in over the ramp, a share each day,
+ * From then the game's launch users (see GrowthProfile.launchUsersMin) trickle in over the ramp, a share each day,
  * each day's split paid and free like any new users. Normal growth takes over after it.
  *
  * Before the first users arrive there's nothing running: no users, no income, no tickets and no scripted events, so no
@@ -747,7 +749,8 @@ export const defaultConfig: GameConfig = {
       name: "E-commerce platform",
       profile: "Big seasonal traffic spikes",
       growth: {
-        launchUsers: 3_000,
+        launchUsersMin: 2_500,
+        launchUsersMax: 7_500,
         marketSize: 20_000,
         dailyGrowth: 0.03,
         growthNoise: 0.5,
@@ -801,7 +804,8 @@ export const defaultConfig: GameConfig = {
       name: "Social network",
       profile: "Steady viral growth",
       growth: {
-        launchUsers: 4_000,
+        launchUsersMin: 2_500,
+        launchUsersMax: 7_500,
         marketSize: 40_000,
         dailyGrowth: 0.05,
         growthNoise: 0.2,
@@ -853,7 +857,8 @@ export const defaultConfig: GameConfig = {
       name: "Video sharing platform",
       profile: "Heavy storage and bandwidth costs",
       growth: {
-        launchUsers: 1_600,
+        launchUsersMin: 2_500,
+        launchUsersMax: 7_500,
         marketSize: 20_000,
         dailyGrowth: 0.035,
         growthNoise: 0.4,
