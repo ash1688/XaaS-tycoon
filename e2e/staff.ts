@@ -1,4 +1,6 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type APIRequestContext, type Page } from "@playwright/test";
+import postgres from "postgres";
+import { E2E_DATABASE_URL } from "../playwright.config.ts";
 
 /**
  * Creates a login code from a signed-in staff page and returns it. The code comes from the server's reply, not the
@@ -16,4 +18,70 @@ export async function createCode(teacher: Page) {
   const { code } = (await response.json()) as { code: string };
   await expect(teacher.locator(`td[data-code="${code}"]`)).toBeVisible();
   return code;
+}
+
+/**
+ * A first setup for each model, the one round two gave a new company before launch day: a medium app server and
+ * database on IaaS, large ones on-prem, one app instance and a small managed database on PaaS, nothing on SaaS.
+ */
+const FIRST_SETUP: Record<string, object[]> = {
+  onprem: [
+    { type: "buyServer", server: "app", size: "large" },
+    { type: "buyServer", server: "database", size: "large" },
+  ],
+  iaas: [
+    { type: "rentServer", server: "app", size: "medium" },
+    { type: "rentServer", server: "database", size: "medium" },
+  ],
+  paas: [
+    { type: "setInstances", count: 1 },
+    { type: "setManagedService", service: "database", size: "small" },
+  ],
+  saas: [],
+};
+
+/** Round two's launch users for each product: what the specs' sums were worked out with. */
+const ROUND_TWO_LAUNCH: Record<string, number> = { ecommerce: 3_000, social: 4_000, video: 1_600 };
+
+/**
+ * Pins a new company's launch total in the test database. Each game draws its own from a range, so a spec whose sums
+ * depend on the users pins round two's number for its product instead.
+ */
+export async function pinLaunchUsers(id: string, users: number) {
+  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
+  try {
+    const [row] = await sql`select state from companies where id = ${id}`;
+    const state = row!.state as { launchUsers: number; launchDay: number | null; users: number; paidUsers: number };
+    // A company that can serve users at once (SaaS) has had its first day's share already: rescale it to the new total.
+    const scale = users / state.launchUsers;
+    const pinned = {
+      ...state,
+      launchUsers: users,
+      ...(state.launchDay !== null && {
+        users: Math.round(state.users * scale),
+        paidUsers: Math.round(state.paidUsers * scale),
+      }),
+    };
+    await sql`update companies set state = ${sql.json(pinned)} where id = ${id}`;
+  } finally {
+    await sql.end();
+  }
+}
+
+/**
+ * Pins a company's launch total to round two's for its product (see pinLaunchUsers), sets up its first servers
+ * through the API, as a student would on day 1, then plays on until all its launch users have arrived: the end of day
+ * 3 on SaaS, day 4 on IaaS and PaaS, and on-prem day 13, two days after its kit arrives. Returns the company then.
+ */
+export async function launch(request: APIRequestContext, code: string, id: string, model: string) {
+  const url = `/api/codes/${code}/companies/${id}`;
+  const { productType } = await (await request.get(url)).json();
+  await pinLaunchUsers(id, ROUND_TWO_LAUNCH[productType]!);
+  for (const action of FIRST_SETUP[model]!) expect((await request.post(`${url}/actions`, { data: action })).ok()).toBe(true);
+  for (;;) {
+    const res = await request.post(`${url}/continue`);
+    expect(res.ok()).toBe(true);
+    const { company } = await res.json();
+    if (company.launch.status === "launched") return company;
+  }
 }

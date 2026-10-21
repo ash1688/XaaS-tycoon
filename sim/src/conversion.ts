@@ -30,6 +30,7 @@ export interface ConversionView {
 }
 
 const HOURS_PER_DAY = 24;
+const percentFormat = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 });
 
 /**
  * Free-to-paid conversion: each day a share of free users start paying. The share is the product's base rate times
@@ -89,7 +90,7 @@ export function createConversion(config: GameConfig, features: Features, pricing
     const free = Math.max(0, users - paidUsers);
     const r = rate(state);
     const converted = Math.min(free, Math.round(free * r));
-    const percent = (100 * r).toLocaleString("en-GB", { maximumFractionDigits: 2 });
+    const percent = percentFormat.format(100 * r);
     const entries: LogEntry[] =
       converted > 0
         ? [

@@ -2920,6 +2920,52 @@ body.modal-open {
   color: var(--pos);
 }
 
+/* The launch entry in the day log. */
+.day-log li.event.launch {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.day-log li.event.launch .badge {
+  color: var(--pos);
+}
+
+/* The Home launch card's setup checklist. Its links sit above the card's whole-card button. */
+.launch-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.launch-checklist li {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.launch-checklist li.done {
+  color: var(--muted);
+}
+
+.launch-check {
+  flex: none;
+  width: 1.1rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.launch-checklist li.done .launch-check {
+  color: var(--pos);
+}
+
+.launch-checklist a {
+  position: relative;
+  z-index: 1;
+}
+
 /* Servers in units (IaaS): a bar each for CU, DBU and CH, the binding tier outlined. */
 .unit-intro {
   margin: 0 0 0.75rem;
@@ -3011,6 +3057,54 @@ body.modal-open {
   gap: 0.5rem 1rem;
   margin-top: 1rem;
   font-size: 0.95rem;
+}
+
+/* A size dropdown beside a − / + stepper: PaaS managed services, and each server type on IaaS and on-prem. */
+.managed-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem 1rem;
+}
+
+.size-select {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.size-select select {
+  color: var(--text);
+}
+
+/* A type's size dropdown and − / + stepper. */
+.server-step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin-top: 0.5rem;
+}
+
+.step-note {
+  margin: 0.4rem 0 0;
+  font-size: 0.85rem;
+}
+
+.stepper .stepper-value {
+  min-width: 4ch;
+  font-size: 1rem;
+  white-space: nowrap;
+}
+
+.stepper-why {
+  max-width: 22rem;
+  margin: 0.3rem 0 0;
+  font-size: 0.8rem;
 }
 
 .size-choices {

@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import Fastify, { type FastifyReply } from "fastify";
 import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
-import { and, asc, count, desc, eq, gte, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, getTableColumns, gte, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import {
   applyOverrides,
   configFields,
@@ -245,8 +245,8 @@ export async function buildApp(opts: AppOptions) {
     }
   }
 
-  function view(row: CompanyRow): CompanyView {
-    const sim = simOf(row);
+  /** What the student sees of a company. A caller that already has the row's sim passes it. */
+  function view(row: CompanyRow, sim = simOf(row)): CompanyView {
     const state = sim.load(row.state);
     return {
       id: row.id,
@@ -263,6 +263,7 @@ export async function buildApp(opts: AppOptions) {
       support: state.support,
       opsNeeded: sim.opsNeededNow(state),
       dailyStaffCost: sim.dailyStaffCost(state),
+      launch: sim.launch(state),
       users: state.users,
       paidUsers: state.paidUsers,
       freeUsers: state.users - state.paidUsers,
@@ -353,7 +354,7 @@ export async function buildApp(opts: AppOptions) {
         const { name, blurb, comparison, monthlyCost, monthlyCostPerUser } = config.models[id];
         const stack = responsibilityStack(id);
         const opsNeeded = sim.opsNeeded(id);
-        // On-prem's includes the starter kit it buys.
+        // On-prem's is the server room: the kit is bought on top, one server at a time.
         const upfrontCost = sim.upfrontCost(id);
         return { id, name, blurb, comparison, stack, opsNeeded, upfrontCost, monthlyCost, monthlyCostPerUser };
       }),
@@ -390,7 +391,8 @@ export async function buildApp(opts: AppOptions) {
       .where(eq(companies.loginCode, code.code))
       .orderBy(desc(companies.updatedAt));
     // Games from an older version can't be shown, so they're left out rather than breaking the whole list.
-    return { code: code.code, companies: rows.filter((r) => isCurrentState(r.state)).map(view) } satisfies CodeView;
+    const current = rows.filter((r) => isCurrentState(r.state));
+    return { code: code.code, companies: current.map((r) => view(r)) } satisfies CodeView;
   });
 
   app.post<{ Params: { code: string }; Body: NewCompanyBody }>(
@@ -628,21 +630,20 @@ export async function buildApp(opts: AppOptions) {
     id: string,
     step: (sim: Sim, state: GameState) => T,
   ): Promise<(T & { company: CompanyView }) | undefined> {
-    if (!UUID_PATTERN.test(id) || !(await findCode(code))) return undefined;
+    if (!CODE_PATTERN.test(code) || !UUID_PATTERN.test(id)) return undefined;
     return db.transaction(async (tx) => {
-      const [row] = await tx.select().from(companies).where(companyWhere(code, id)).for("update");
+      const [row] = await companyUnderCode(tx, code, id).for("update", { of: companies });
       if (!row) return undefined;
       if (row.status === "retired") {
         throw new SimError("retired", `${row.name} was retired, so this game is over. Start a new company to play again.`);
       }
       const sim = simOf(row);
       const result = step(sim, sim.load(row.state));
-      const [updated] = await tx
-        .update(companies)
-        .set({ ...columnsFor(sim, result.state), updatedAt: new Date() })
-        .where(eq(companies.id, row.id))
-        .returning();
-      return { ...result, company: view(updated!) };
+      const columns = { ...columnsFor(sim, result.state), updatedAt: new Date() };
+      await tx.update(companies).set(columns).where(eq(companies.id, row.id));
+      // The row as saved is the one read with these columns changed, so it isn't read back: that would fetch the state
+      // and config just written.
+      return { ...result, company: view({ ...row, ...columns }, sim) };
     });
   }
 
@@ -652,9 +653,21 @@ export async function buildApp(opts: AppOptions) {
     return and(eq(companies.id, id), eq(companies.loginCode, code));
   }
 
+  /**
+   * A company under a code that's still in use: as findCode then a select, in one round trip. Every student request
+   * starts with it.
+   */
+  function companyUnderCode(q: Pick<Db, "select">, code: string, id: string) {
+    return q
+      .select(getTableColumns(companies))
+      .from(companies)
+      .innerJoin(loginCodes, eq(loginCodes.code, companies.loginCode))
+      .where(and(companyWhere(code, id), eq(loginCodes.archived, false)));
+  }
+
   async function findCompany(code: string, id: string) {
-    if (!UUID_PATTERN.test(id) || !(await findCode(code))) return undefined;
-    const [row] = await db.select().from(companies).where(companyWhere(code, id));
+    if (!CODE_PATTERN.test(code) || !UUID_PATTERN.test(id)) return undefined;
+    const [row] = await companyUnderCode(db, code, id);
     return row;
   }
 

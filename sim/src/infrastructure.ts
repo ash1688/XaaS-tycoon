@@ -34,13 +34,14 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
   /** No servers and no fixed capacity: the provider scales, so capacity is never the constraint. */
   const unlimited = (model: ModelId) => !servers.hasServers(model) && config.models[model].capacity === undefined;
 
-  /** Ops staff a model needs to start with: on a model with servers, for its starter setup. */
+  /** Ops staff a new company on a model needs: its fixed number, plus any starter setup's a config gives it. */
   const opsNeeded = (model: ModelId) => servers.modelOpsNeeded(model);
 
   /**
    * What adopting a model costs up front: its upfront cost and, on a model that buys its servers, the kit at what it
-   * was bought for: a new company's starter kit, or the setup a migration builds there. The model's upfront cost is
-   * the rest of the setup (the server room), so nothing is charged twice.
+   * was bought for: the setup a migration builds there, or any starter kit a config gives a new company (the default
+   * gives none: a company buys its own, charged as it buys). The model's upfront cost is the rest of the setup (the
+   * server room), so nothing is charged twice.
    */
   function upfrontEntries(modelId: ModelId, setup?: Server[]): LogEntry[] {
     const { name, upfrontCost } = config.models[modelId];

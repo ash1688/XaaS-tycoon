@@ -19,7 +19,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 19;
+export const GAME_STATE_VERSION = 21;
 
 /** Money spent in each category. */
 export type Spend = Record<SpendCategory, number>;
@@ -205,6 +205,16 @@ export interface GameState {
   ops: number;
   /** Support staff: they answer customers' tickets, on every model. */
   support: number;
+  /**
+   * The day the company launched: its first users arrived at the end of it, the first day of the launch ramp. Null until
+   * then, when it has no users (see LaunchConfig).
+   */
+  launchDay: number | null;
+  /**
+   * The launch total: users who trickle in over the launch ramp, drawn from the product's range when the game starts.
+   * Kept from the student: the screens show only those who have joined.
+   */
+  launchUsers: number;
   /** Every user, paying or free. Free users add load and per-user fees just like paying ones. */
   users: number;
   /** The users who pay. The rest of `users` are on the free tier. */
@@ -219,9 +229,12 @@ export interface GameState {
   priceChanges: PriceChange[];
   /** Everything paying users have paid so far. Not part of spend: profit is income − spend. */
   income: number;
-  /** Load on the day just played. */
+  /** Load on the day just played. Over the launch ramp, the usual load of the users there now: what tomorrow brings. */
   load: number;
-  /** CU and DBU demand on the day just played, on any model. Only a model with servers serves it in units. */
+  /**
+   * CU and DBU demand on the day just played, on any model. Only a model with servers serves it in units. Over the
+   * launch ramp, the usual demand of the users there now.
+   */
   demand: UnitDemand;
   /** The servers the company has, ready or not, oldest first. Empty on a model without servers. */
   servers: Server[];
@@ -332,7 +345,7 @@ export interface LogEntry {
   /** Set on every charge, and only on charges. */
   category?: SpendCategory;
   /**
-   * Set on entries that need to stand out, such as an outage or bankruptcy. "income" marks money coming in, which the
+   * Set on entries that need to stand out, such as an outage, bankruptcy or the launch. "income" marks money coming in, which the
    * ledger counts as income rather than spend. "loan" marks the bank loan: money coming in with it is borrowed, which
    * is cash but not income.
    */
@@ -347,7 +360,8 @@ export interface LogEntry {
     | "support"
     | "price"
     | "conversion"
-    | "loan";
+    | "loan"
+    | "launch";
 }
 
 export interface DayLog {

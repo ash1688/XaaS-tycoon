@@ -31,7 +31,8 @@ export interface Strategy {
   support: boolean;
   /**
    * "ahead" adds servers ahead of demand (and on IaaS and PaaS, drops ones it doesn't need); "reactive" scales the
-   * same way, but only once a tier has filled up; "none" keeps the starter setup.
+   * same way, but only once a tier has filled up; "none" keeps its launch setup. Every strategy sets up servers for the
+   * launch total on day 1 (see playDay).
    */
   scaling: "ahead" | "reactive" | "none";
   /**
@@ -55,7 +56,7 @@ export const STRATEGIES: Strategy[] = [
   { id: "over-priced", description: "As sensible, at twice the fair price from day 1.", priceFactor: 2, support: true, scaling: "ahead", loan: "onprem" },
   { id: "under-priced", description: "As sensible, at 60% of the fair price from day 1.", priceFactor: 0.6, support: true, scaling: "ahead", loan: "onprem" },
   { id: "no-support", description: "As sensible, but never hires support beyond the starting staff.", priceFactor: 1, support: false, scaling: "ahead", loan: "onprem" },
-  { id: "no-scaling", description: "As sensible, but never adds servers to the starter setup.", priceFactor: 1, support: true, scaling: "none", loan: "onprem" },
+  { id: "no-scaling", description: "As sensible, but never adds servers to its launch setup.", priceFactor: 1, support: true, scaling: "none", loan: "onprem" },
   {
     id: "reactive-scaling",
     description: "As sensible, but scales only once a tier has filled up: after the outage, not before it.",
@@ -98,6 +99,8 @@ export interface GameResult {
   outcome: "finished" | "bankrupt" | "cant-start";
   /** The last day played. */
   day: number;
+  /** The day it launched: its first users arrived, starting the ramp. Null if it never did. */
+  launchDay: number | null;
   cash: number;
   /** The lowest cash at the end of any day. */
   minCash: number;
@@ -141,15 +144,19 @@ function staffTo(sim: Sim, state: GameState, pool: "ops" | "support", target: nu
 }
 
 /**
- * How far ahead of demand the bot keeps capacity: the growth it has seen over the last week, compounded over the days
- * until a server added today would serve (10 days for on-prem kit, the next day on IaaS, at once on PaaS), with a
- * margin for the product's day-to-day ups and downs in load.
+ * How far ahead of demand the bot keeps capacity: the growth it has seen over the last week since the launch ramp
+ * (before it has seen any, the product's daily growth), compounded over the days until a server added today would
+ * serve (10 days for on-prem kit, the next day on IaaS, at once on PaaS), with a margin for the product's day-to-day
+ * ups and downs in load.
  */
 function ahead(sim: Sim, state: GameState): number {
   const lead = sim.config.models[state.model].servers?.readyDays ?? 0;
-  const week = state.spendByDay.slice(-8);
-  const daily = week.length > 1 && week[0]!.users > 0 ? (state.users / week[0]!.users) ** (1 / (week.length - 1)) : 1;
-  const margin = 1.05 + sim.config.productTypes[state.productType].growth.loadNoise;
+  const { growth } = sim.config.productTypes[state.productType];
+  const launch = sim.launch(state);
+  const rampOver = state.launchDay === null ? Infinity : state.launchDay + launch.rampDays - 1;
+  const week = state.spendByDay.filter((d) => d.day >= rampOver && d.users > 0).slice(-8);
+  const daily = week.length > 1 ? (state.users / week[0]!.users) ** (1 / (week.length - 1)) : 1 + growth.dailyGrowth;
+  const margin = 1.05 + growth.loadNoise;
   return Math.max(1, daily) ** (lead + 1) * margin;
 }
 
@@ -165,16 +172,20 @@ function peakSoon(sim: Sim, state: GameState): boolean {
 }
 
 /**
- * The units view, with demand replaced by what the bot plans for: the users' usual demand, times how far ahead it plans,
- * and times the product's seasonal peak when one is due before new servers would be ready (a shop knows when its
- * sales are). So it doesn't buy servers for a two-day traffic spike that triples demand.
+ * The units view, with demand replaced by what the bot plans for: the users' usual demand (until the launch ramp
+ * ends, the launch total's), times how far ahead it plans, and times the product's seasonal peak when one is due before
+ * new servers would be ready (a shop knows when its sales are). So it doesn't buy servers for a two-day traffic spike
+ * that triples demand.
  */
 function plannedUnits(sim: Sim, state: GameState, strategy: Strategy): UnitsView | null {
   const units = sim.units(state);
   if (!units) return null;
   const product = sim.config.productTypes[state.productType];
+  const launch = sim.launch(state);
+  // Until all its launch users are in, it plans for the most there might be: like a student, it can't see the total.
+  const users = launch.status === "launched" ? state.users : Math.max(state.users, product.growth.launchUsersMax);
   const peak = strategy.scaling === "ahead" && peakSoon(sim, state) ? (product.growth.seasonalSpike?.loadMultiplier ?? 1) : 1;
-  const plan = state.users * peak * ahead(sim, state);
+  const plan = users * peak * ahead(sim, state);
   const dbu = plan * product.demand.dbuPerUser;
   const cacheable = dbu * sim.config.servers.cacheableShare;
   const absorbed = Math.min(units.ch.capacity, cacheable);
@@ -215,10 +226,11 @@ function scaleServers(sim: Sim, state: GameState, strategy: Strategy): GameState
 
   const dbuGap = units.dbu.demand - units.dbu.capacity;
   if (dbuGap > 0 && !pending("database") && !pending("cache")) {
-    // A cache is the cheap way to take load off the database, while there's cacheable demand it isn't taking.
+    // A cache is the cheap way to take load off the database, while there's cacheable demand it isn't taking; but
+    // the first is always a database, since a cache can't serve without one.
     const cacheRoom = units.ch.demand - units.ch.capacity;
     s =
-      cacheRoom > 0
+      cacheRoom > 0 && ofType("database").length > 0
         ? tryAction(sim, s, { type: add, server: "cache", size: sizeFor(sim, s, "cache", Math.min(dbuGap, cacheRoom), units.ch.capacity) })
         : tryAction(sim, s, { type: add, server: "database", size: sizeFor(sim, s, "database", dbuGap, units.dbu.capacity) });
   }
@@ -259,8 +271,8 @@ function scaleManaged(sim: Sim, state: GameState, strategy: Strategy): GameState
   let s = instances === managed.instances ? state : tryAction(sim, state, { type: "setInstances", count: instances });
   // The database sized for all the database demand before any cache; past the biggest, a cache for the rest.
   const dbu = units.dbu.beforeCache;
-  const db = managed.database.options.find((o) => o.units >= dbu) ?? managed.database.options[managed.database.options.length - 1]!;
-  if (db.size !== managed.database.size) s = tryAction(sim, s, { type: "setManagedService", service: "database", size: db.size });
+  const db = managed.databaseOptions.find((o) => o.units >= dbu) ?? managed.databaseOptions[managed.databaseOptions.length - 1]!;
+  if (db.size !== managed.database?.size) s = tryAction(sim, s, { type: "setManagedService", service: "database", size: db.size });
   const rest = dbu - db.units;
   const cache = rest > 0 ? (managed.cacheOptions.find((o) => o.units >= rest) ?? managed.cacheOptions[managed.cacheOptions.length - 1]!).size : null;
   if (cache !== (managed.cache?.size ?? null)) s = tryAction(sim, s, { type: "setManagedService", service: "cache", size: cache });
@@ -298,7 +310,9 @@ export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameSta
   }
   const units = sim.units(s);
   const full = !!units && (units.cu.demand >= units.cu.capacity || units.dbu.demand >= units.dbu.capacity);
-  if (strategy.scaling === "ahead" || (strategy.scaling === "reactive" && full)) {
+  // Before and over the launch ramp, every strategy sets up servers for the launch total: the first decision.
+  const launching = sim.launch(s).status !== "launched";
+  if (launching || strategy.scaling === "ahead" || (strategy.scaling === "reactive" && full)) {
     s = s.model === "paas" ? scaleManaged(sim, s, strategy) : scaleServers(sim, s, strategy);
   }
   // The ops its servers need, and enough for any event on its model that costs money without them (a security patch).
@@ -362,6 +376,7 @@ export function playGame(sim: Sim, { model, productType, strategy, seed }: GameS
     seed,
     outcome: summary.ending === "bankrupt" ? "bankrupt" : "finished",
     day: summary.day,
+    launchDay: state.launchDay,
     cash: summary.cash,
     minCash,
     income: summary.income,
@@ -390,6 +405,7 @@ function emptyResult(model: ModelId, productType: ProductTypeId, strategy: strin
     seed,
     outcome: "cant-start",
     day: 0,
+    launchDay: null,
     cash: 0,
     minCash: 0,
     income: 0,
@@ -492,13 +508,15 @@ const loanCell = (games: GameResult[]) => {
 /** A row of the strategy tables. Money and users are medians across the seeds; satisfaction and uptime means. */
 function row(cell: Cell): string[] {
   const g = cell.games.filter((x) => x.outcome !== "cant-start");
-  if (!g.length) return [SHORT[cell.model], cell.productType, "can't start", "", "", "", "", "", "", "", "", ""];
+  if (!g.length) return [SHORT[cell.model], cell.productType, "can't start", "", "", "", "", "", "", "", "", "", ""];
+  const launched = g.flatMap((x) => (x.launchDay === null ? [] : [x.launchDay]));
   const peak = median(g.map((x) => x.peakUsers));
   const paidShare = mean(g.map((x) => (x.peakUsers ? x.peakPaid / x.peakUsers : 0)));
   return [
     SHORT[cell.model],
     cell.productType,
     outcome(cell.games),
+    launched.length ? `d${whole(median(launched))}${launched.length < g.length ? ` (${launched.length}/${g.length})` : ""}` : "never",
     money(median(g.map((x) => x.cash))),
     money(median(g.map((x) => x.minCash))),
     money(median(g.map((x) => x.profit))),
@@ -571,7 +589,7 @@ export function renderReport(results: GameResult[], { title = "Balance report", 
     })];
   }))), "");
 
-  const head = ["Model", "Product", "Outcome", "Final cash", "Lowest cash", "Profit", "Peak users", "Satisfaction", "Uptime", "Outage days", "First over capacity", "Loan"];
+  const head = ["Model", "Product", "Outcome", "Launch", "Final cash", "Lowest cash", "Profit", "Peak users", "Satisfaction", "Uptime", "Outage days", "First over capacity", "Loan"];
   for (const s of used) {
     out.push(`## Strategy: ${s.id}`, "", s.description, "");
     out.push(table(head, all.filter((c) => c.strategy === s.id).map(row)), "");

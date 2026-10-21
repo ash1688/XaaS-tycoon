@@ -31,6 +31,70 @@ const phaseName = (id: string) => game.meta?.migrationPhases.find((p) => p.id ==
 // Earlier days played this session, newest first, under the latest one in the full log.
 const earlierDays = computed(() => game.dayLogs.slice(0, -1).toReversed());
 
+// The launch: waiting for capacity, its first users due, users trickling in over the ramp, and for a week after it,
+// the day it happened. Before the users come, a checklist of what to set up.
+const launch = computed(() => game.company?.launch);
+const launchOver = computed(() => (launch.value?.day ?? 0) + (launch.value?.rampDays ?? 1) - 1);
+const showLaunch = computed(() => {
+  const l = launch.value;
+  const c = game.company;
+  return !!l && !!c && !game.over && (l.status !== "launched" || c.day <= launchOver.value + 7);
+});
+const beforeUsers = computed(() => launch.value?.status === "waiting" || launch.value?.status === "upcoming");
+const launchHeadline = computed(() => {
+  const l = launch.value;
+  if (!l) return "";
+  if (l.status === "launched") return `Launched on day ${l.day}`;
+  if (l.status === "launching") return `Launching: users arriving (day ${l.rampDay} of ${l.rampDays})`;
+  if (l.status === "waiting") return "Waiting for capacity";
+  return `Launch in ${days(l.daysLeft ?? 0)}`;
+});
+const launchText = computed(() => {
+  const l = launch.value;
+  const c = game.company;
+  if (!l || !c) return "";
+  // Only the users who have joined are shown: how many are still to come stays a surprise.
+  const ramp = l.rampDays > 1 ? `, more each day for ${days(l.rampDays)}` : "";
+  if (l.status === "launched") {
+    return `Your first ${formatCount(l.arrived)} users joined from day ${l.day} to day ${launchOver.value}. They grow from here.`;
+  }
+  if (l.status === "launching") {
+    return `${formatCount(l.arrived)} users have joined so far, more on the way. Then normal growth takes over.`;
+  }
+  if (l.status === "upcoming") {
+    return `Your first users start arriving at the end of day ${l.day}, when your servers are ready${ramp}.`;
+  }
+  const delivery = game.buysServers ? ` Bought kit takes ${days(c.serverOptions[0]?.readyDays ?? 0)} to arrive.` : "";
+  return `Nothing is set up to serve users yet. Your first users start arriving the day your servers are ready${ramp}. Until then there's no income, but your costs still run.${delivery}`;
+});
+// What to do before launch, each with the page that does it.
+const launchSteps = computed(() => {
+  const c = game.company;
+  const l = c?.launch;
+  if (!c || !l) return [];
+  const steps: { id: string; text: string; done: boolean; page?: string; pageName?: string }[] = [];
+  if (!l.needsServers) steps.push({ id: "servers", text: "Nothing to set up: the provider runs the servers", done: true });
+  else
+    steps.push({
+      id: "servers",
+      text: game.managed
+        ? "Set up app instances and a managed database"
+        : `${game.buysServers ? "Buy" : "Rent"} your first servers: an app server and a database`,
+      done: l.setUp,
+      page: "infrastructure",
+      pageName: "Infrastructure",
+    });
+  if (l.opsNeeded > 0)
+    steps.push({
+      id: "ops",
+      text: `Hire ops: ${l.opsNeeded} needed to run ${l.needsServers ? "your servers" : "the service"}`,
+      done: c.ops >= l.opsNeeded,
+      page: "people",
+      pageName: "People",
+    });
+  return steps;
+});
+
 // Anything that needs the student's attention, each with the page that deals with it.
 const alerts = computed(() => {
   const c = game.company;
@@ -173,6 +237,50 @@ const alerts = computed(() => {
     <h2 v-if="game.over" class="overview-heading">Where it ended</h2>
     <h2 v-else class="visually-hidden">Overview</h2>
     <div class="overview-grid">
+      <OverviewCard
+        v-if="showLaunch && launch"
+        title="Launch"
+        full
+        :tone="launch.status === 'waiting' ? 'warn' : launch.status === 'launched' || launch.status === 'launching' ? 'ok' : undefined"
+      >
+        <div data-testid="launch-card" :data-status="launch.status">
+          <p class="overview-value" data-testid="launch-headline">{{ launchHeadline }}</p>
+          <p class="muted" data-testid="launch-text">{{ launchText }}</p>
+          <ul v-if="beforeUsers" class="launch-checklist" data-testid="launch-checklist">
+            <li v-for="step in launchSteps" :key="step.id" :class="{ done: step.done }" :data-testid="`launch-step-${step.id}`">
+              <span class="launch-check" aria-hidden="true">{{ step.done ? "✓" : "○" }}</span>
+              <span>
+                {{ step.text }}<span class="visually-hidden">{{ step.done ? " (done)" : " (to do)" }}</span>
+                <template v-if="step.page && !step.done">
+                  · <RouterLink :to="page(step.page)">{{ step.pageName }}</RouterLink>
+                </template>
+              </span>
+            </li>
+          </ul>
+        </div>
+        <template #detail>
+          <p>{{ launchText }}</p>
+          <ul v-if="beforeUsers" class="launch-checklist">
+            <li v-for="step in launchSteps" :key="step.id" :class="{ done: step.done }">
+              <span class="launch-check" aria-hidden="true">{{ step.done ? "✓" : "○" }}</span>
+              <span>
+                {{ step.text }}<span class="visually-hidden">{{ step.done ? " (done)" : " (to do)" }}</span>
+                <template v-if="step.page">
+                  · <RouterLink :to="page(step.page)">Open {{ step.pageName }}</RouterLink>
+                </template>
+              </span>
+            </li>
+          </ul>
+          <p>
+            Your first users start arriving at the end of the first day you have servers ready to serve them: rented
+            VMs are ready the day after you rent them, a platform's instances at once, and bought kit when it arrives.
+            They trickle in over {{ days(launch.rampDays) }}, more each day, and you won't know how many until they've
+            all joined; then normal growth takes over. Until the first arrive there are no users, no income and no
+            tickets, but staff, running costs and any loan repayments are still charged.
+          </p>
+        </template>
+      </OverviewCard>
+
       <OverviewCard title="Cash" :tone="game.company.cash < 0 ? 'warn' : undefined">
         <p :class="['overview-value', { neg: game.company.cash < 0 }]" data-testid="cash">
           {{ formatCash(game.company.cash) }}
@@ -333,7 +441,8 @@ const alerts = computed(() => {
         :tone="game.loadLevel === 'ok' && !game.units?.loadBalancer.uncovered ? undefined : 'warn'"
       >
         <p class="overview-value" data-testid="home-tightest">
-          {{ game.tightest.unit }} {{ game.tightest.capacity > 0 ? `${game.tightest.percent}%` : "full" }}
+          {{ game.tightest.unit }}
+          {{ game.tightest.capacity > 0 ? `${game.tightest.percent}%` : game.tightest.demand > 0 ? "full" : "none yet" }}
           <small>tightest</small>
         </p>
         <div class="meter" aria-hidden="true">

@@ -10,6 +10,7 @@ import type {
   FeatureGapView,
   FeatureView,
   GameSummary,
+  LaunchView,
   LoanQuote,
   LoanView,
   ManagedView,
@@ -65,9 +66,9 @@ export interface MetaView {
     comparison: ModelComparison;
     /** Responsibility stack, bottom layer first. */
     stack: StackLayer[];
-    /** Ops staff the model needs: on a model with servers, for the starter setup a company gets. */
+    /** Ops staff a new company on the model needs: the few PaaS and SaaS always need. Its servers' ops are on top. */
     opsNeeded: number;
-    /** Everything charged on adopting the model: on a model that buys its servers, the starter kit too. */
+    /** Charged on adopting the model: on-prem, the server room. Servers are bought or rented on top. */
     upfrontCost: number;
     monthlyCost: number;
     monthlyCostPerUser: number;
@@ -133,7 +134,13 @@ export interface CompanyView {
   opsNeeded: number;
   /** What the current headcount costs per day. */
   dailyStaffCost: number;
-  /** Every user, paying or free. */
+  /**
+   * The launch: "upcoming" with the launch day the setup gives and the days to it, "waiting" once the earliest launch
+   * day has passed with nothing set up (or arrived) to serve users, "launched" with the day it did. The launch burst of
+   * users (and of them those paying), whether the model has servers to set up, and whether they are.
+   */
+  launch: LaunchView;
+  /** Every user, paying or free. No users until launch. */
   users: number;
   /** Of the users, those who pay. */
   paidUsers: number;

@@ -1,6 +1,6 @@
 import { expect, test, type Browser, type APIRequestContext } from "@playwright/test";
 import { E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { createCode } from "./staff.ts";
+import { createCode, launch } from "./staff.ts";
 
 async function newCompany(browser: Browser, request: APIRequestContext, name: string, model: string) {
   const teacher = await (await browser.newContext()).newPage();
@@ -10,6 +10,8 @@ async function newCompany(browser: Browser, request: APIRequestContext, name: st
   const code = await createCode(teacher);
   const created = await request.post(`/api/codes/${code}/companies`, { data: { name, productType: "social", model } });
   const { id } = await created.json();
+  // Its first setup on day 1: the social network's 4,000 users arrive over the next 3 days.
+  await launch(request, code, id, model);
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
   return student;
@@ -24,32 +26,38 @@ test("on PaaS, raising the instance count grows CU capacity at once, with manage
   await expect(student.getByTestId("home-tightest")).toContainText("CU 60%");
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Infrastructure", exact: true }).click();
 
-  // The starter setup: one medium instance (10 CU) and a small managed database (10 DBU). The load balancer is built in.
+  // The first setup: one medium instance (10 CU) and a small managed database (10 DBU). The load balancer is built in.
   const platform = student.getByTestId("platform-panel");
   await expect(student.getByTestId("servers-panel")).toHaveCount(0);
   await expect(platform.getByTestId("lb-builtin")).toContainText("comes with the platform, free");
   await expect(platform.getByText("Managed by provider: no ops needed")).toHaveCount(3);
   const cu = student.getByRole("meter", { name: /^Compute \(CU\)/ });
   await expect(cu).toHaveAttribute("aria-valuemax", "10");
-  await expect(platform.getByTestId("instances-count")).toHaveText("1");
+  await expect(platform.getByTestId("instances-value")).toHaveText("1");
 
   // Two more instances: the CU bar grows straight away, before any Continue, and the ops needed stay at 1.
   await platform.getByTestId("instances-up").click();
-  await expect(platform.getByTestId("instances-count")).toHaveText("2");
+  await expect(platform.getByTestId("instances-value")).toHaveText("2");
   await platform.getByTestId("instances-up").click();
-  await expect(platform.getByTestId("instances-count")).toHaveText("3");
+  await expect(platform.getByTestId("instances-value")).toHaveText("3");
   await expect(cu).toHaveAttribute("aria-valuemax", "30");
   await expect(student.getByTestId("tier-cu-figures")).toHaveText("6 / 30 CU");
   await expect(platform.getByTestId("platform-note")).toContainText("you need just 1 ops");
 
-  // A bigger managed database, at once too.
-  await platform.getByTestId("managed-database").selectOption("medium");
+  // A bigger managed database, at once too: the size dropdown resizes the one there is. It can't be removed, and there's
+  // only ever one.
+  await expect(platform.getByTestId("managed-database-value")).toHaveText("1 small");
+  await expect(platform.getByRole("button", { name: "Remove the database" })).toBeDisabled();
+  await expect(platform.getByRole("button", { name: "Add another database" })).toBeDisabled();
+  await expect(platform.getByTestId("managed-database-why")).toContainText("Your product needs a database");
+  await platform.getByTestId("managed-database-size").selectOption("medium");
+  await expect(platform.getByTestId("managed-database-value")).toHaveText("1 medium");
   await expect(student.getByRole("meter", { name: /^Database \(DBU\)/ })).toHaveAttribute("aria-valuemax", "25");
   await expect(platform.getByTestId("platform-cost")).toHaveText("£4,700");
 
   // Billed from the next day, in infrastructure: no load balancer line.
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("day")).toContainText(`5 of ${E2E_FINAL_DAY}`);
   await expect(cu).toHaveAttribute("aria-valuemax", "30");
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Home", exact: true }).click();
   await student.getByRole("button", { name: "Day log" }).click();

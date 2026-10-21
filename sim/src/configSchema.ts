@@ -91,7 +91,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   for (const m of MODEL_IDS) {
     const s = MODEL_LABELS[m];
     const upfrontHelp = base.models[m]?.servers?.purchase
-      ? "Charged once on moving to this model: the server room. The starter servers are bought on top, at their purchase prices."
+      ? "Charged once on moving to this model: the server room. The servers are bought on top, at their purchase prices."
       : "Charged once on moving to this model.";
     add(`models.${m}.upfrontCost`, "Money", s, "Upfront cost", upfrontHelp, POUNDS);
     add(`models.${m}.monthlyCost`, "Money", s, "Monthly cost", "The provider's fixed bill (power and upkeep on-prem), billed daily.", range(0, 200_000, 100));
@@ -134,12 +134,16 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   }
 
   // Customers
+  (base.launch?.rampShares ?? []).forEach((_, i) => {
+    add(`launch.rampShares.${i}`, "Customers", "Launch", `Launch ramp: share on day ${i + 1}`, "Share of the launch users arriving on this day of the launch ramp, from the first day with servers ready. The days' shares are scaled to add up to the whole launch total.", SHARE);
+  });
   for (const p of PRODUCT_TYPE_IDS) {
     const product = base.productTypes[p];
     if (!product) continue;
     const s = product.name;
     const g = `productTypes.${p}.growth`;
-    add(`${g}.startingUsers`, "Customers", s, "Starting users", "Users a new company starts with.", range(0, 1_000_000, 100));
+    add(`${g}.launchUsersMin`, "Customers", s, "Launch users: fewest", "Each game draws how many users trickle in over its launch ramp from this range, split paid and free by the free share. Students see only those who have joined.", range(0, 1_000_000, 100));
+    add(`${g}.launchUsersMax`, "Customers", s, "Launch users: most", "The top of the range each game's launch users are drawn from.", range(0, 1_000_000, 100));
     add(`${g}.marketSize`, "Customers", s, "Market size", "Users the product can reach. Growth slows as users approach it.", range(1, 10_000_000, 1_000));
     add(`${g}.dailyGrowth`, "Customers", s, "Daily growth", "Share of users added each day while the market is wide open (0.05 = 5%).", range(0, 1, 0.005));
     add(`${g}.growthNoise`, "Customers", s, "Growth variation", "Daily growth varies randomly by up to this share either way.", SHARE);
@@ -245,21 +249,6 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
         }
       }
     }
-    servers.starter.forEach((s, i) => {
-      const name = base.servers.types[s.type]?.name.toLowerCase() ?? s.type;
-      if (servers.managed) {
-        if (s.type === "app") {
-          add(`models.${m}.servers.starter.${i}.count`, "Infrastructure", MODEL_LABELS[m], "Starter setup: app instances", "How many app instances a new company on this model starts with, ready for the first day.", range(1, 100, 1));
-        } else {
-          add(`models.${m}.servers.starter.${i}.count`, "Infrastructure", MODEL_LABELS[m], `Starter setup: ${s.size} managed ${name} (0 or 1)`, "Whether a new company on this model starts with this managed service, ready for the first day.", range(0, 1, 1));
-        }
-        return;
-      }
-      const help = servers.purchase
-        ? "How many a new company on this model starts with, bought at their purchase prices on top of the upfront cost."
-        : "How many a new company on this model starts with, ready for the first day.";
-      add(`models.${m}.servers.starter.${i}.count`, "Infrastructure", MODEL_LABELS[m], `Starter setup: ${s.size} ${name}s`, help, HEADCOUNT);
-    });
   }
   add("capacity.unstaffedShare", "Infrastructure", "", "Capacity with no ops", "Share of capacity a model keeps with no ops at all, rising with ops up to full.", SHARE);
   add("outage.baseHours", "Infrastructure", "", "Outage hours", "Hours down on any day load exceeds capacity.", HOURS);
@@ -382,6 +371,11 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
       `productTypes.${p}.pricing.fairPrice`,
       "pricing.maxPrice",
       "The highest price can't be below a product's fair price.",
+    ]),
+    ...PRODUCT_TYPE_IDS.filter((p) => base.productTypes[p]).map((p): [string, string, string] => [
+      `productTypes.${p}.growth.launchUsersMin`,
+      `productTypes.${p}.growth.launchUsersMax`,
+      "The most launch users can't be fewer than the fewest.",
     ]),
     ...base.events
       .filter((e) => e.schedule.type === "seeded")

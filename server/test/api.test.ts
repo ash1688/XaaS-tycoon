@@ -24,8 +24,9 @@ const PASSWORD = "test-teacher-password";
 const iaasServers = defaultConfig.models.iaas.servers!;
 const paasServers = defaultConfig.models.paas.servers!;
 const LIGHT_DEMAND = { cuPerUser: 0.0005, dbuPerUser: 0.0005 };
-// The server sizes, ops per server and starting users these tests' sums were worked out with (before the balance
-// pass), pinned so that tuning the defaults doesn't change them.
+// The server sizes, ops per server, starting users and starter setups these tests' sums were worked out with (before
+// the balance pass and launch day), pinned so that tuning the defaults doesn't change them. Each game launches as it
+// starts, with its starter setup in place and its launch users there; the launch tests change that with an override.
 const UNITS = { small: 10, medium: 15, large: 20, massive: 25 };
 const STARTING_USERS = { ecommerce: 2000, social: 1000, video: 1000 };
 const sim = createSim({
@@ -47,7 +48,14 @@ const sim = createSim({
     ...defaultConfig.models,
     onprem: {
       ...defaultConfig.models.onprem,
-      servers: { ...defaultConfig.models.onprem.servers!, opsPerServer: { app: 0.6, database: 0.6, cache: 0.3, loadBalancer: 0.3 } },
+      servers: {
+        ...defaultConfig.models.onprem.servers!,
+        opsPerServer: { app: 0.6, database: 0.6, cache: 0.3, loadBalancer: 0.3 },
+        starter: [
+          { type: "app", size: "large", count: 1 },
+          { type: "database", size: "large", count: 1 },
+        ],
+      },
     },
     iaas: {
       ...defaultConfig.models.iaas,
@@ -63,6 +71,10 @@ const sim = createSim({
           app: { ...iaasServers.monthlyCost.app, medium: 0 },
           database: { ...iaasServers.monthlyCost.database, medium: 0 },
         },
+        starter: [
+          { type: "app", size: "medium", count: 1 },
+          { type: "database", size: "medium", count: 1 },
+        ],
       },
     },
     paas: {
@@ -77,9 +89,14 @@ const sim = createSim({
           app: { medium: 0 },
           database: { ...paasServers.monthlyCost.database, small: 0 },
         },
+        starter: [
+          { type: "app", size: "medium", count: 1 },
+          { type: "database", size: "small", count: 1 },
+        ],
       },
     },
   },
+  launch: { rampShares: [1] },
   // Seeds are random here, so migrations never overrun.
   migration: { ...defaultConfig.migration, overrun: { ...defaultConfig.migration.overrun, chance: 0 } },
   // No starting staff, so continue charges only the model's running cost unless a test hires someone.
@@ -97,7 +114,11 @@ const sim = createSim({
       id,
       {
         ...p,
-        growth: { ...p.growth, startingUsers: STARTING_USERS[id as keyof typeof STARTING_USERS] },
+        growth: {
+          ...p.growth,
+          launchUsersMin: STARTING_USERS[id as keyof typeof STARTING_USERS],
+          launchUsersMax: STARTING_USERS[id as keyof typeof STARTING_USERS],
+        },
         pricing: { ...p.pricing, freeShare: 1, conversionRate: 0 },
         demand: LIGHT_DEMAND,
       },
@@ -935,7 +956,8 @@ describe("PaaS managed services and SaaS with no servers", () => {
       database: { size: "small", units: managed.units.database.small },
       cache: null,
     });
-    expect(company.managed!.database.options).toHaveLength(4);
+    expect(company.managed!.database!.options).toHaveLength(4);
+    expect(company.managed!.databaseOptions).toHaveLength(4);
     expect(company.managed!.cacheOptions).toContainEqual({
       size: "large",
       units: managed.units.cache.large,
@@ -1556,6 +1578,10 @@ describe("archiving and deleting", () => {
     // Archived codes are unknown to students.
     for (const url of [`/api/codes/${code}`, `/api/codes/${code}/companies/${company.id}`]) {
       const res = await app.inject({ method: "GET", url });
+      expect(res.statusCode).toBe(404);
+    }
+    for (const action of ["continue", "retire"]) {
+      const res = await app.inject({ method: "POST", url: `/api/codes/${code}/companies/${company.id}/${action}` });
       expect(res.statusCode).toBe(404);
     }
     expect((await newCompany(code)).statusCode).toBe(404);
@@ -2368,6 +2394,76 @@ describe("meta", () => {
     expect(owner("saas", "application")).toBe("shared");
     expect(owner("iaas", "os")).toBe("you");
     expect(meta.models.find((m: { id: string }) => m.id === "saas").comparison.opsNeeded).toBe("Very low");
+  });
+});
+
+describe("launch", () => {
+  // The default 3-day ramp, and IaaS with no starter setup, so a new IaaS company has nothing to serve users with.
+  const ramped = createSim({
+    ...sim.config,
+    launch: { rampShares: [0.2, 0.3, 0.5] },
+    models: {
+      ...sim.config.models,
+      iaas: { ...sim.config.models.iaas, servers: { ...sim.config.models.iaas.servers!, starter: [] } },
+    },
+  });
+  async function withRampedApp(test: (start: (model: string) => Promise<{ company: CompanyView; url: string }>, rampApp: Awaited<ReturnType<typeof buildApp>>) => Promise<void>) {
+    const rampApp = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), sim: ramped });
+    try {
+      const code = await newCode();
+      const start = async (model: string) => {
+        const payload = { name: "Acme", productType: "ecommerce", model };
+        const company = (await rampApp.inject({ method: "POST", url: `/api/codes/${code}/companies`, payload })).json<CompanyView>();
+        return { company, url: `/api/codes/${code}/companies/${company.id}` };
+      };
+      await test(start, rampApp);
+    } finally {
+      await rampApp.close();
+    }
+  }
+
+  it("shows a company with no capacity waiting, with no users", async () => {
+    await withRampedApp(async (start, rampApp) => {
+      const { company, url } = await start("iaas");
+      expect(company).toMatchObject({ day: 1, users: 0, paidUsers: 0 });
+      expect(company.launch).toEqual({
+        status: "waiting",
+        day: null,
+        daysLeft: null,
+        rampDays: 3,
+        rampDay: 0,
+        arrived: 0,
+        needsServers: true,
+        setUp: false,
+        opsNeeded: 0,
+      });
+      const next = (await rampApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+      expect(next.company).toMatchObject({ day: 2, users: 0, launch: { status: "waiting" } });
+    });
+  });
+
+  it("trickles the launch users in over the ramp, then shows the day it launched", async () => {
+    await withRampedApp(async (start, rampApp) => {
+      // SaaS can serve users from day 1: the first 20% of the shop's 2,000 arrive as the game starts.
+      const { company, url } = await start("saas");
+      expect(company).toMatchObject({ users: 400, launch: { status: "launching", day: 1, rampDay: 1, arrived: 400 } });
+      const next = async () => (await rampApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+      const second = await next();
+      expect(second.company).toMatchObject({ users: 1_000, launch: { status: "launching", rampDay: 2, arrived: 1_000 } });
+      expect(second.log.at(-1)!.entries).toContainEqual({
+        text: "Launch, day 2 of 3: 600 new users arrived, 0 of them paying.",
+        cashDelta: 0,
+        kind: "launch",
+      });
+      const third = await next();
+      expect(third.company).toMatchObject({ users: 2_000, launch: { status: "launched", day: 1, rampDay: 3, arrived: 2_000 } });
+    });
+  });
+
+  it("is launched in full as the game starts on a config with a one-day ramp and servers in place", async () => {
+    const code = await newCode();
+    const company = (await newCompany(code, { name: "Acme", productType: "ecommerce", model: "iaas" })).json<CompanyView>();
+    expect(company).toMatchObject({ users: STARTING_USERS.ecommerce, launch: { status: "launched", day: 1, rampDays: 1 } });
   });
 });
 
