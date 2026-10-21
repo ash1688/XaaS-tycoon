@@ -66,20 +66,25 @@ const setService = (service: ManagedService, value: string) =>
       <li data-testid="platform-database">
         <div class="server-info">
           <label for="managed-database">Managed database</label>
-          <span class="muted">
+          <span v-if="m.database" class="muted">
             {{ formatCount(m.database.units) }} DBU for {{ formatCash(m.database.monthlyCost) }} a month. One database,
             bigger as you grow.
+          </span>
+          <span v-else class="muted warn-text" data-testid="no-database">
+            None yet. Your product needs a database to serve users: pick a size.
           </span>
           <span class="managed-note">Stores your data. Managed by provider: no ops needed.</span>
         </div>
         <select
           id="managed-database"
-          :value="m.database.size"
+          :value="m.database?.size ?? ''"
           :disabled="game.busy || game.over"
           data-testid="managed-database"
           @change="setService('database', ($event.target as HTMLSelectElement).value)"
         >
-          <option v-for="o in m.database.options" :key="o.size" :value="o.size">
+          <!-- Shown only while there's none, so picking any size is a change. -->
+          <option v-if="!m.database" value="" disabled>Choose a size…</option>
+          <option v-for="o in m.databaseOptions" :key="o.size" :value="o.size">
             {{ o.size }} · {{ formatCount(o.units) }} DBU · {{ formatCash(o.monthlyCost) }}/mo
           </option>
         </select>

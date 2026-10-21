@@ -952,7 +952,8 @@ describe("PaaS managed services and SaaS with no servers", () => {
       database: { size: "small", units: managed.units.database.small },
       cache: null,
     });
-    expect(company.managed!.database.options).toHaveLength(4);
+    expect(company.managed!.database!.options).toHaveLength(4);
+    expect(company.managed!.databaseOptions).toHaveLength(4);
     expect(company.managed!.cacheOptions).toContainEqual({
       size: "large",
       units: managed.units.cache.large,

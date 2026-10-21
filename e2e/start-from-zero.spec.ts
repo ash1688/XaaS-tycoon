@@ -2,15 +2,15 @@ import { expect, test, type Browser, type APIRequestContext } from "@playwright/
 import { E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
 import { createCode } from "./staff.ts";
 
-/** A new IaaS social network on a fresh code, opened on its Home page. */
-async function newCompany(browser: Browser, request: APIRequestContext, name: string) {
+/** A new social network on a fresh code, opened on its Home page. */
+async function newCompany(browser: Browser, request: APIRequestContext, name: string, model = "iaas") {
   const teacher = await (await browser.newContext()).newPage();
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
   await teacher.getByRole("button", { name: "Sign in" }).click();
   const code = await createCode(teacher);
   const created = await request.post(`/api/codes/${code}/companies`, {
-    data: { name, productType: "social", model: "iaas" },
+    data: { name, productType: "social", model },
   });
   const { id } = await created.json();
   const student = await (await browser.newContext()).newPage();
@@ -74,4 +74,38 @@ test("a company that sets nothing up waits for capacity after day 3", async ({ b
   await expect(student.getByTestId("launch-headline")).toHaveText("Waiting for capacity");
   await expect(student.getByTestId("launch-text")).toContainText("Day 3 has passed and nothing is set up to serve users");
   await expect(student.getByTestId("users")).toHaveText("0");
+});
+
+test("on PaaS, a managed database picked from the empty state launches the company on day 3", async ({
+  browser,
+  request,
+}) => {
+  const student = await newCompany(browser, request, "Empty Platform Ltd", "paas");
+  await expect(student.getByTestId("launch-step-servers")).toContainText("Set up app instances and a managed database");
+  await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Infrastructure", exact: true }).click();
+
+  // Nothing runs yet, and the controls say so: no instances, and no database size shown as chosen.
+  const platform = student.getByTestId("platform-panel");
+  await expect(platform.getByTestId("instances-count")).toHaveText("0");
+  const database = platform.getByTestId("managed-database");
+  await expect(database).toHaveValue("");
+  await expect(database.locator("option:checked")).toHaveText("Choose a size…");
+  await expect(platform.getByTestId("no-database")).toContainText("None yet");
+  await expect(platform.getByTestId("managed-cache")).toHaveValue("");
+
+  // One instance and the small database, the first size in the list.
+  await platform.getByTestId("instances-up").click();
+  await expect(platform.getByTestId("instances-count")).toHaveText("1");
+  await database.selectOption("small");
+  await expect(database).toHaveValue("small");
+  await expect(platform.getByTestId("no-database")).toHaveCount(0);
+  await expect(database.locator("option", { hasText: "Choose a size" })).toHaveCount(0);
+
+  for (const day of [2, 3]) {
+    await student.getByRole("button", { name: "Continue" }).click();
+    await expect(student.getByTestId("day")).toContainText(`${day} of ${E2E_FINAL_DAY}`);
+  }
+  await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Home", exact: true }).click();
+  await expect(student.getByTestId("launch-headline")).toHaveText("Launched on day 3");
+  await expect(student.getByTestId("users")).toHaveText("4,000");
 });

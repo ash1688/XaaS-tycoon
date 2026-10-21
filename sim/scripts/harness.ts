@@ -268,9 +268,8 @@ function scaleManaged(sim: Sim, state: GameState, strategy: Strategy): GameState
   let s = instances === managed.instances ? state : tryAction(sim, state, { type: "setInstances", count: instances });
   // The database sized for all the database demand before any cache; past the biggest, a cache for the rest.
   const dbu = units.dbu.beforeCache;
-  const db = managed.database.options.find((o) => o.units >= dbu) ?? managed.database.options[managed.database.options.length - 1]!;
-  // With no database yet (before launch), the view shows the smallest with no units.
-  if (db.size !== managed.database.size || managed.database.units === 0) s = tryAction(sim, s, { type: "setManagedService", service: "database", size: db.size });
+  const db = managed.databaseOptions.find((o) => o.units >= dbu) ?? managed.databaseOptions[managed.databaseOptions.length - 1]!;
+  if (db.size !== managed.database?.size) s = tryAction(sim, s, { type: "setManagedService", service: "database", size: db.size });
   const rest = dbu - db.units;
   const cache = rest > 0 ? (managed.cacheOptions.find((o) => o.units >= rest) ?? managed.cacheOptions[managed.cacheOptions.length - 1]!).size : null;
   if (cache !== (managed.cache?.size ?? null)) s = tryAction(sim, s, { type: "setManagedService", service: "cache", size: cache });

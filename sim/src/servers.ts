@@ -154,7 +154,12 @@ export interface ManagedView {
   instanceUnits: number;
   /** One instance a month, after any provider price rises. */
   instanceMonthlyCost: number;
-  database: ManagedServiceView;
+  /**
+   * Null with no database: a new company has none until it picks a size, and can't launch without one. Options are
+   * on databaseOptions then.
+   */
+  database: ManagedServiceView | null;
+  databaseOptions: ManagedOption[];
   /** Null with no cache, which is allowed: options are on cacheOptions then. */
   cache: ManagedServiceView | null;
   cacheOptions: ManagedOption[];
@@ -607,15 +612,14 @@ export function createServers(config: GameConfig, finance: Finance) {
       const s = ofType(state, type)[0];
       return s ? { ...option(type, s.size), options: options(type) } : null;
     };
-    // A teacher's starter setup might leave the database out: shown as the smallest with nothing running, to pick one.
-    const noDatabase = { ...option("database", "small"), units: 0, monthlyCost: 0, options: options("database") };
     return {
       instances: ofType(state, "app").length,
       maxInstances: platform.maxInstances,
       instanceSize: platform.instanceSize,
       instanceUnits: unitsOn(state.model, { type: "app", size: platform.instanceSize }),
       instanceMonthlyCost: monthlyCost(state, state.model, "app", platform.instanceSize),
-      database: view("database") ?? noDatabase,
+      database: view("database"),
+      databaseOptions: options("database"),
       cache: view("cache"),
       cacheOptions: options("cache"),
       monthlyCost: monthlyServerCost(state),

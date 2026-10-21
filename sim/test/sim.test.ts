@@ -315,6 +315,9 @@ describe("launch", () => {
   });
 
   it("launches PaaS on day 3 once instances and a managed database are set up, and not with instances alone", () => {
+    // A new PaaS company runs no instances and no database, and its view says so rather than showing a size.
+    expect(defaults.managed(fresh(defaults, "paas"))).toMatchObject({ instances: 0, database: null, cache: null, monthlyCost: 0 });
+    expect(defaults.managed(fresh(defaults, "paas"))!.databaseOptions.map((o) => o.size)).toEqual(["small", "medium", "large", "massive"]);
     const instances = defaults.applyAction(fresh(defaults, "paas"), { type: "setInstances", count: 1 });
     expect(defaults.launch(instances).day).toBeNull();
     expect(playTo(defaults, instances, 5).launchDay).toBeNull();
@@ -1635,7 +1638,8 @@ describe("PaaS managed services", () => {
       cache: null,
       monthlyCost: 60,
     });
-    expect(paas.managed(state)!.database.options.map((o) => [o.size, o.units, o.monthlyCost])).toEqual([
+    expect(paas.managed(state)!.databaseOptions).toEqual(paas.managed(state)!.database!.options);
+    expect(paas.managed(state)!.database!.options.map((o) => [o.size, o.units, o.monthlyCost])).toEqual([
       ["small", 10, 30],
       ["medium", 100, 60],
       ["large", 1_000, 90],
@@ -2628,7 +2632,7 @@ describe("default config", () => {
         return act({ type: "setInstances", count: managed.instances + 1 });
       }
       if (units.dbu.demand > units.dbu.capacity / 2) {
-        const database = next(managed.database.size);
+        const database = managed.database ? next(managed.database.size) : "small";
         if (database) return act({ type: "setManagedService", service: "database", size: database });
         const cache = managed.cache ? next(managed.cache.size) : "small";
         if (cache) return act({ type: "setManagedService", service: "cache", size: cache });
