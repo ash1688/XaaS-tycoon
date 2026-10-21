@@ -33,6 +33,7 @@ const app = await buildApp({
   teacherPassword: PASSWORD,
   sessionSecret: "bench-session-secret-at-least-32-characters",
   rateLimit: false,
+  uiBatchesPerMinute: Infinity,
   // Room for the dashboard's 3 games per code.
   maxActiveCompanies: 3,
 });
@@ -105,6 +106,18 @@ const base = `/api/codes/${code}/companies/${id}`;
 const reqs: Record<string, Timing> = {};
 reqs["POST continue (day 170)"] = await timeIt(() => inject("POST", `${base}/continue`), () => setState(id, late));
 reqs["POST action: hire"] = await timeIt(() => inject("POST", `${base}/actions`, { type: "hire", pool: "support" }), () => setState(id, late));
+// The playtest log is written after the response, so the rows above don't include it: this one waits for it as well.
+reqs["POST continue, and its log write"] = await timeIt(async () => {
+  await inject("POST", `${base}/continue`);
+  await app.playLog.flush();
+}, () => setState(id, late));
+const uiBatch = {
+  events: Array.from({ length: 10 }, (_, i) => ({ type: "page", ago: i * 500, day: late.day, params: { page: "finance" } })),
+};
+reqs["POST ui-events (10 events), and its write"] = await timeIt(async () => {
+  await inject("POST", `${base}/ui-events`, uiBatch);
+  await app.playLog.flush();
+});
 reqs["GET company"] = await timeIt(() => inject("GET", base));
 reqs["GET company meta"] = await timeIt(() => inject("GET", `${base}/meta`));
 reqs["GET summary"] = await timeIt(() => inject("GET", `${base}/summary`));

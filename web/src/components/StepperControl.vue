@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, useId } from "vue";
+import { useGameIfAny } from "../game";
 
 // A − / + pair around the current value, which is announced as it changes. Each button says what it does, and when one
 // is disabled the reason is shown under it and tied to it, so nobody is left guessing why nothing happens.
@@ -16,8 +17,15 @@ const props = defineProps<{
   disabled?: boolean;
   testid: string;
 }>();
-defineEmits<{ down: []; up: [] }>();
+const emit = defineEmits<{ down: []; up: [] }>();
 const id = useId();
+// Each press goes in the playtest log, by the stepper's testid.
+const game = useGameIfAny();
+function press(value: "down" | "up") {
+  game?.track("control", { control: props.testid, value });
+  if (value === "down") emit("down");
+  else emit("up");
+}
 const why = computed(() => [props.downWhy, props.upWhy].filter(Boolean).join(" "));
 </script>
 
@@ -30,7 +38,7 @@ const why = computed(() => [props.downWhy, props.upWhy].filter(Boolean).join(" "
         :aria-label="downLabel"
         :aria-describedby="downWhy ? `${id}-why` : undefined"
         :data-testid="`${testid}-down`"
-        @click="$emit('down')"
+        @click="press('down')"
       >
         −
       </button>
@@ -41,7 +49,7 @@ const why = computed(() => [props.downWhy, props.upWhy].filter(Boolean).join(" "
         :aria-label="upLabel"
         :aria-describedby="upWhy ? `${id}-why` : undefined"
         :data-testid="`${testid}-up`"
-        @click="$emit('up')"
+        @click="press('up')"
       >
         +
       </button>

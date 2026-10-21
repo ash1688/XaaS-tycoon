@@ -21,6 +21,19 @@ const PAGES = [
 ];
 const onHome = computed(() => route.name === "game-home");
 
+// Each page visit goes in the playtest log, by its route name: "game-finance" is "finance".
+watch(
+  () => route.name,
+  (name) => typeof name === "string" && game.track("page", { page: name.replace(/^game-/, "") }),
+  { immediate: true },
+);
+
+function togglePlay() {
+  game.track("control", { control: "timed-flow", value: game.playing ? "pause" : "play" });
+  if (game.playing) game.pause();
+  else game.play();
+}
+
 // On narrow screens the page links fold away behind a menu button; Continue stays in the bar.
 const menuOpen = ref(false);
 const menuButton = ref<HTMLButtonElement>();
@@ -64,7 +77,7 @@ async function closeMenu() {
         </span>
         <div v-if="game.timedFlow && !game.over" class="timed-flow" data-testid="timed-flow">
           <!-- One button whose label changes, so keyboard focus stays on it. -->
-          <button class="ghost play-pause" @click="game.playing ? game.pause() : game.play()">
+          <button class="ghost play-pause" @click="togglePlay">
             {{ game.playing ? "Pause" : "Play" }}
           </button>
           <p class="muted timed-status" data-testid="timed-status">

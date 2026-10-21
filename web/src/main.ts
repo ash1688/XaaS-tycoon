@@ -16,6 +16,7 @@ import "./styles.css";
 const StaffView = () => import("./views/StaffView.vue");
 const StaffCompanyView = () => import("./views/StaffCompanyView.vue");
 const StaffConfigView = () => import("./views/StaffConfigView.vue");
+const StaffTimelineView = () => import("./views/StaffTimelineView.vue");
 
 const router = createRouter({
   history: createWebHistory(),
@@ -40,6 +41,7 @@ const router = createRouter({
     // Wide, so the live dashboard's columns fit on a projector.
     { path: "/staff", component: StaffView, meta: { wide: true } },
     { path: "/staff/companies/:id", component: StaffCompanyView, props: true },
+    { path: "/staff/companies/:id/timeline", component: StaffTimelineView, props: true },
     { path: "/staff/config", component: StaffConfigView },
   ],
   // A new page starts at the top. A link to a #anchor is left to the page, which scrolls to it.

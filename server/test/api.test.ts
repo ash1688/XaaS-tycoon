@@ -1462,7 +1462,13 @@ describe("teacher dashboard", () => {
     });
     expect(res.statusCode).toBe(200);
     const student = (await app.inject({ method: "GET", url: `/api/codes/${code}/companies/${company.id}/summary` })).json();
-    expect(res.json<TeacherSummaryView>()).toEqual({ code, status: "active", preset: "Default", summary: student });
+    expect(res.json<TeacherSummaryView>()).toEqual({
+      code,
+      status: "active",
+      preset: "Default",
+      player: expect.stringMatching(/^Player \d+$/),
+      summary: student,
+    });
   });
 
   it("is 404 for an unknown or malformed company id", async () => {

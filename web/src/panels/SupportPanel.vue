@@ -77,7 +77,7 @@ const satisfactionChange = computed(() =>
           class="ghost"
           :disabled="game.busy || game.over || game.company.support < 1"
           :aria-label="`Let go one ${pool.personName}`"
-          @click="game.act({ type: 'letGo', pool: 'support' })"
+          @click="game.actFrom('support-panel', { type: 'letGo', pool: 'support' })"
         >
           −
         </button>
@@ -86,7 +86,7 @@ const satisfactionChange = computed(() =>
           class="ghost"
           :disabled="game.busy || game.over"
           :aria-label="`Hire one ${pool.personName}`"
-          @click="game.act({ type: 'hire', pool: 'support' })"
+          @click="game.actFrom('support-panel', { type: 'hire', pool: 'support' })"
         >
           +
         </button>

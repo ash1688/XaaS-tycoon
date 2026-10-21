@@ -102,6 +102,10 @@ const opsFor = (types: ServerType[]) =>
 // student last picked, else the biggest they have of that type, else the smallest. + rents or buys one at once; −
 // opens the cancel (IaaS, pro rata) or sell-back (on-prem) confirmation.
 const picked = ref<Partial<Record<ServerType, ServerSize>>>({});
+function pickSize(type: ServerType, size: ServerSize) {
+  picked.value[type] = size;
+  game.track("control", { control: `size-${type}`, value: size });
+}
 const sizeFor = (type: ServerType): ServerSize =>
   picked.value[type] ??
   SERVER_SIZES.toReversed().find((size) => servers.value.some((s) => s.type === type && s.size === size)) ??
@@ -219,7 +223,7 @@ async function cancel() {
             :value="sizeFor(g.type)"
             :disabled="game.busy || game.over"
             :data-testid="`size-${g.type}`"
-            @change="picked[g.type] = ($event.target as HTMLSelectElement).value as ServerSize"
+            @change="pickSize(g.type, ($event.target as HTMLSelectElement).value as ServerSize)"
           >
             <option v-for="o in options.filter((x) => x.type === g.type)" :key="o.size" :value="o.size">
               {{ o.size }} · {{ formatCount(o.units) }} {{ UNIT[g.type] }} ·

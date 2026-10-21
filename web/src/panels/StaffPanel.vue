@@ -39,7 +39,7 @@ const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.fr
             class="ghost"
             :disabled="game.busy || game.over || game.company[pool.id] < 1"
             :aria-label="`Let go one ${pool.personName}`"
-            @click="game.act({ type: 'letGo', pool: pool.id })"
+            @click="game.actFrom(`staff-${pool.id}`, { type: 'letGo', pool: pool.id })"
           >
             −
           </button>
@@ -48,7 +48,7 @@ const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.fr
             class="ghost"
             :disabled="game.busy || game.over"
             :aria-label="`Hire one ${pool.personName}`"
-            @click="game.act({ type: 'hire', pool: pool.id })"
+            @click="game.actFrom(`staff-${pool.id}`, { type: 'hire', pool: pool.id })"
           >
             +
           </button>
@@ -64,7 +64,7 @@ const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.fr
           class="ghost"
           :disabled="game.busy || game.over || game.company[from.id] < 1"
           :aria-label="`Move one ${from.personName} to ${to.name.toLowerCase()}`"
-          @click="game.act({ type: 'moveStaff', from: from.id, to: to.id })"
+          @click="game.actFrom(`staff-move-${from.id}-to-${to.id}`, { type: 'moveStaff', from: from.id, to: to.id })"
         >
           {{ from.personName }} → {{ to.name.toLowerCase() }}
         </button>

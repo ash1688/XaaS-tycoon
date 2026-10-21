@@ -248,6 +248,11 @@ const formatTime = (d: Date) => d.toLocaleTimeString("en-GB", { timeStyle: "shor
                 <td>
                   <RouterLink :to="`/staff/companies/${g.id}`" class="live-name">{{ g.name }}</RouterLink>
                   <small class="muted">{{ productName(g.productType) }}</small>
+                  <small>
+                    <RouterLink :to="`/staff/companies/${g.id}/timeline`" data-testid="live-timeline">
+                      {{ g.player }}: timeline
+                    </RouterLink>
+                  </small>
                 </td>
                 <td class="col-mid">
                   {{ modelName(g.model) }}

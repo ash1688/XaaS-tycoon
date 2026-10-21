@@ -5,7 +5,10 @@ import type {
   CodeView,
   CompanyView,
   ContinueResult,
+  LogDeleteResult,
+  LogStatsView,
   MetaView,
+  PlayEventKind,
   MigrationQuoteView,
   NewCompanyBody,
   PresetCreateBody,
@@ -17,6 +20,7 @@ import type {
   TeacherCodeView,
   TeacherGamesView,
   TeacherSummaryView,
+  TimelineView,
 } from "@xaas/server/api-types";
 
 export class RequestError extends Error {
@@ -99,7 +103,22 @@ export const api = {
     request<PresetView>("PATCH", `/api/teacher/presets/${enc(id)}`, body),
   deletePreset: (id: string) => request<PresetsView>("DELETE", `/api/teacher/presets/${enc(id)}`),
   activatePreset: (id: string) => request<PresetsView>("POST", `/api/teacher/presets/${enc(id)}/activate`),
+
+  // The playtest log: a company's timeline, how much there is, and deleting it by game, by code or all.
+  timeline: (id: string, kind?: PlayEventKind) =>
+    request<TimelineView>("GET", `/api/teacher/companies/${enc(id)}/timeline${kind ? `?kind=${kind}` : ""}`),
+  logStats: () => request<LogStatsView>("GET", "/api/teacher/logs"),
+  deleteGameLogs: (id: string) => request<LogDeleteResult>("DELETE", `/api/teacher/companies/${enc(id)}/logs`),
+  deleteCodeLogs: (code: string) => request<LogDeleteResult>("DELETE", `/api/teacher/codes/${enc(code)}/logs`),
+  deleteAllLogs: () => request<LogDeleteResult>("DELETE", "/api/teacher/logs"),
 };
+
+/** The export's address, for a download link: the teacher's cookie goes with it. Empty filters are left out. */
+export function logExportUrl(format: "csv" | "json", filters: Record<string, string | undefined> = {}) {
+  const query = new URLSearchParams({ format });
+  for (const [key, value] of Object.entries(filters)) if (value) query.set(key, value);
+  return `/api/teacher/logs/export?${query}`;
+}
 
 const money = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 });
 export const formatCash = (n: number) => money.format(n);

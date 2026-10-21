@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { formatCash } from "../api";
 import { useGame } from "../game";
 import AppModal from "../components/AppModal.vue";
@@ -14,13 +14,22 @@ const repaidPercent = computed(() => (loan.value ? Math.round((100 * loan.value.
 const percent = (rate: number) => `${Math.round(rate * 1000) / 10}%`;
 
 const taking = ref(false);
+// For the playtest log: the quote in the modal, logged as it closes with whether the student took it.
+let took = false;
+watch(taking, (open) => {
+  if (open) return;
+  game.track("quote", { kind: "loan", confirmed: took });
+  took = false;
+});
 function open() {
   game.error = "";
   taking.value = true;
 }
 async function take() {
   await game.act({ type: "takeLoan" });
-  if (!game.error) taking.value = false;
+  if (game.error) return;
+  took = true;
+  taking.value = false;
 }
 </script>
 

@@ -1,10 +1,12 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   doublePrecision,
   index,
   integer,
   jsonb,
+  pgSequence,
   pgTable,
   text,
   timestamp,
@@ -18,6 +20,9 @@ export const loginCodes = pgTable("login_codes", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   archived: boolean("archived").notNull().default(false),
 });
+
+/** Numbers each company's playtest pseudonym ("Player 7"), so logs never need its name or code. */
+export const playerNumbers = pgSequence("player_numbers");
 
 export const companies = pgTable(
   "companies",
@@ -52,6 +57,11 @@ export const companies = pgTable(
     // Set when the teacher archives the game, which only moves it from the live dashboard to the Archived tab: the
     // student can keep playing it. Separate from status, which is where the game itself got to.
     archivedAt: timestamp("archived_at", { withTimezone: true }),
+    // The company's pseudonym in the playtest logs: "Player 7". Given when the game starts and never changes. Only the
+    // server links it back to the game, so an export carries the number alone.
+    player: integer("player")
+      .notNull()
+      .default(sql`nextval('player_numbers')`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -79,4 +89,33 @@ export const configPresets = pgTable(
     // Names are unique whatever their case, so "Easy mode" and "easy mode" can't both be listed.
     uniqueIndex("config_presets_name_lower_idx").on(sql`lower(${t.name})`),
   ],
+);
+
+/**
+ * The playtest log: one row per thing a student did, for the teacher to review how students play and where the game
+ * confuses them. Anonymised: a row has the company's id (for its timeline and for deleting with it) but never its name,
+ * login code, the student's IP or their browser. Exports name the company by its pseudonym alone.
+ */
+export const playEvents = pgTable(
+  "play_events",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    // The game day it happened on.
+    day: integer("day").notNull(),
+    // "game" from the server (actions, Continue, start and end), or "ui" from the student's browser.
+    kind: text("kind").notNull(),
+    // What happened: an action's type, "continue", "start" or "end"; or a UI event such as "page" or "modal".
+    type: text("type").notNull(),
+    // A game event's outcome: false with the error code when the game refused it. Null for UI events.
+    ok: boolean("ok"),
+    error: text("error"),
+    params: jsonb("params").$type<Record<string, unknown>>().notNull().default({}),
+    // A game event's key numbers just after it. Null for UI events.
+    snapshot: jsonb("snapshot").$type<Record<string, unknown>>(),
+  },
+  (t) => [index("play_events_company_at_idx").on(t.companyId, t.at), index("play_events_at_idx").on(t.at)],
 );

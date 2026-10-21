@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 import { SERVER_SIZES, SERVER_TYPES, type ModelId, type ServerType, type SetupItem } from "@xaas/sim";
 import type { MigrationQuoteView } from "@xaas/server/api-types";
 import { api, formatCash, formatCount } from "../api";
@@ -82,7 +82,20 @@ const addonsAtRisk = computed(() =>
     : [],
 );
 
+// For the playtest log: a quote shown is logged once the student starts the migration or drops it.
+function quoteDone(confirmed: boolean) {
+  if (quote.value) game.track("quote", { kind: "migration", target: quote.value.to, confirmed });
+}
+onBeforeUnmount(() => quoteDone(false));
+
+function cancelMigration() {
+  quoteDone(false);
+  confirmingMigration.value = false;
+  quote.value = undefined;
+}
+
 function pickTarget(id: ModelId) {
+  quoteDone(false);
   migrationTarget.value = id;
   confirmingMigration.value = false;
   quote.value = undefined;
@@ -91,6 +104,7 @@ function pickTarget(id: ModelId) {
 // Fetches the quote for the confirm step, so the student sees what it costs before committing.
 async function planMigration() {
   if (!migrationTarget.value) return;
+  quoteDone(false);
   game.busy = true;
   game.error = "";
   try {
@@ -107,6 +121,7 @@ async function startMigration() {
   if (!migrationTarget.value) return;
   await game.act({ type: "startMigration", model: migrationTarget.value });
   if (game.migration) {
+    quoteDone(true);
     migrationTarget.value = undefined;
     confirmingMigration.value = false;
     quote.value = undefined;
@@ -354,7 +369,7 @@ async function startMigration() {
         </ul>
         <div class="confirm-buttons">
           <button :disabled="game.busy" @click="startMigration">Start migration</button>
-          <button class="ghost" :disabled="game.busy" @click="confirmingMigration = false">Cancel</button>
+          <button class="ghost" :disabled="game.busy" @click="cancelMigration">Cancel</button>
         </div>
       </div>
     </template>
