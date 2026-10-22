@@ -385,7 +385,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     // there's nothing running for one to hit.
     const ramping = launch.rampDayOn(start, day) > 0;
     const live = start.launchDay !== null || ramping;
-    const checked: GameState = live ? { ...start, ...encounters.checkDay(start, day) } : start;
+    const check = live ? encounters.checkDay(start, day) : { state: {}, entries: [] };
+    const checked: GameState = { ...start, ...check.state };
     const today = live ? events.eventsToday(checked, day) : [];
     const state: GameState = { ...checked, ...events.lastingEffects(checked, day, today) };
 
@@ -420,6 +421,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     // Income comes from the users paying at the start of the day, at today's price, like the per-user fees, less any
     // who stopped paying today over the price: they won't pay it.
     const entries: LogEntry[] = [
+      ...check.entries,
       ...launched.entries,
       ...recorded.entries,
       ...(ramping ? [] : organic.entries),

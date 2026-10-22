@@ -4433,6 +4433,12 @@ describe("encounters", () => {
     const { state, log } = s.advance(start, 9);
     expect(state.dangerMeter).toBe(1);
     expect(eventDays(log)).toEqual([]);
+    expect(log.at(-1)!.entries[0]).toEqual({
+      text: "Danger meter: it reached the top and nothing went wrong this time. It starts again from 0.",
+      cashDelta: 0,
+      kind: "danger",
+    });
+    expect(log.slice(0, -1).flatMap((d) => d.entries).filter((e) => e.kind === "danger")).toEqual([]);
   });
 
   it("only lists events that hit the company's model, and drops one that no longer does", () => {

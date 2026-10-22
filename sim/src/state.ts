@@ -381,7 +381,8 @@ export interface LogEntry {
     | "price"
     | "conversion"
     | "loan"
-    | "launch";
+    | "launch"
+    | "danger";
 }
 
 export interface DayLog {

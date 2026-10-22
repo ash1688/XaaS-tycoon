@@ -192,7 +192,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const danger = sim.danger(state);
   const risks = danger.risks.map((r) => `${r.label.toLowerCase()} +${r.rise}`).join(", ");
   lines.push(
-    `danger meter: ${danger.meter} of ${danger.max} | rose ${danger.rise} today (well-run day +${danger.dailyRise}${risks ? `, ${risks}` : ""})`,
+    `danger meter: ${danger.meter} (no event waits past ${danger.max}) | rose ${danger.rise} today (well-run day +${danger.dailyRise}${risks ? `, ${risks}` : ""})`,
   );
   for (const r of danger.risks) lines.push(`  ${r.label}: ${r.detail}`);
   for (const e of sim.events(state)) lines.push(`event today: ${e.name}. ${e.outcome}`);
@@ -388,7 +388,7 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
 }
 
 /** Log entry kinds worth showing every day they appear. Feature and migration entries show only on days they stop time. */
-const SHOWN_KINDS = new Set(["outage", "event", "bankrupt", "finished", "support", "price", "launch"]);
+const SHOWN_KINDS = new Set(["outage", "event", "danger", "bankrupt", "finished", "support", "price", "launch"]);
 
 const builtCount = (state: GameState) => Object.values(state.features).filter((f) => f.status !== "building").length;
 

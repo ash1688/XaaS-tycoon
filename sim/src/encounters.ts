@@ -2,7 +2,7 @@ import { DANGER_RISKS, type DangerRisk, type EventConfig, type GameConfig } from
 import { layerOwner } from "./responsibility.ts";
 import { nextRandom } from "./rng.ts";
 import type { Servers } from "./servers.ts";
-import type { Encounter, GameState, ScheduledEvent } from "./state.ts";
+import type { Encounter, GameState, LogEntry, ScheduledEvent } from "./state.ts";
 
 /** One thing that made the danger meter climb faster on the day just played. */
 export interface DangerRiskView {
@@ -21,7 +21,7 @@ export interface DangerRiskView {
  */
 export interface DangerView {
   meter: number;
-  /** The top of the meter's scale: no threshold is higher. */
+  /** The top of the meter's scale: no threshold is higher. Reaching it with nothing on the list resets it quietly. */
   max: number;
   /** How much it rose on the day just played: 0 before launch. On a day an event fires, from 0. */
   rise: number;
@@ -95,13 +95,18 @@ export function createEncounters(config: GameConfig, servers: Servers) {
     const next = list[0];
     const fires = !!next && state.dangerMeter >= next.threshold;
     if (!fires && !(list.length === 0 && state.dangerMeter >= encounters.thresholdMax)) {
-      return { schedule: state.schedule, dangerMeter: state.dangerMeter, encounterList: list, encounterRng: state.encounterRng };
+      const kept = { schedule: state.schedule, dangerMeter: state.dangerMeter, encounterList: list, encounterRng: state.encounterRng };
+      return { state: kept, entries: [] as LogEntry[] };
     }
     const fired: ScheduledEvent[] = fires ? [{ event: next.event, day }] : [];
     // Fixed days still to come stay in order after it.
     const schedule = [...state.schedule, ...fired].sort((a, b) => a.day - b.day);
     const [encounterList, encounterRng] = roll({ ...state, schedule }, day, state.encounterRng);
-    return { schedule, dangerMeter: 0, encounterList, encounterRng };
+    // A fired event explains itself; a quiet reset says so, or the meter would drop to 0 with no reason given.
+    const entries: LogEntry[] = fires
+      ? []
+      : [{ text: "Danger meter: it reached the top and nothing went wrong this time. It starts again from 0.", cashDelta: 0, kind: "danger" }];
+    return { state: { schedule, dangerMeter: 0, encounterList, encounterRng }, entries };
   }
 
   /** The risks on a day played: what made it a risky day, worked out at the end of it. */
