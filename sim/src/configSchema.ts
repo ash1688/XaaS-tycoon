@@ -8,6 +8,7 @@ import {
   MIGRATION_PHASES,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
+  RACK_SIZES,
   SERVER_SIZES,
   SERVER_TYPES,
   STAFF_POOLS,
@@ -94,7 +95,8 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
       ? "Charged once on moving to this model: the server room. The servers are bought on top, at their purchase prices."
       : "Charged once on moving to this model.";
     add(`models.${m}.upfrontCost`, "Money", s, "Upfront cost", upfrontHelp, POUNDS);
-    add(`models.${m}.monthlyCost`, "Money", s, "Monthly cost", "The provider's fixed bill (power and upkeep on-prem), billed daily.", range(0, 200_000, 100));
+    add(`models.${m}.monthlyCost`, "Money", s, "Monthly cost", "The provider's fixed bill (the premises and bandwidth on-prem), billed daily.", range(0, 200_000, 100));
+    add(`models.${m}.powerAndCooling`, "Money", s, "Power and cooling a day", "Charged every day played, whatever the company runs. Highest on-prem, where you run the kit yourself.", range(0, 10_000, 1));
     add(`models.${m}.monthlyCostPerUser`, "Money", s, "Monthly cost per user", "Extra per user per month, billed daily on that day's users.", PER_USER);
     add(`models.${m}.exitPenalty`, "Money", s, "Exit penalty", "The provider's fee for leaving, charged when a migration away completes.", POUNDS);
   }
@@ -116,7 +118,13 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
       }
     }
     if (servers.purchase) {
-      add(`models.${m}.servers.purchase.sellBackShare`, "Money", MODEL_LABELS[m], "Sell-back share", "Share of what a server cost that selling it back refunds (0.4 = 40%), so bought kit is sold at a loss.", SHARE);
+      add(`models.${m}.servers.purchase.sellBackShare`, "Money", MODEL_LABELS[m], "Sell-back share", "Share of what a server or rack cost that selling it back refunds (0.4 = 40%), so bought kit is sold at a loss.", SHARE);
+      add(`models.${m}.servers.purchase.cablingCost`, "Money", MODEL_LABELS[m], "Cabling", "Charged on top of the price for each server or rack bought.", range(0, 100_000, 5));
+    }
+    if (servers.racks) {
+      for (const size of RACK_SIZES) {
+        add(`models.${m}.servers.racks.sizes.${size}.price`, "Money", MODEL_LABELS[m], `Rack (${size}): purchase price`, "What buying a rack of this size costs, charged at once (capex).", range(0, 1_000_000, 50));
+      }
     }
   }
   add("pricing.maxPrice", "Money", "", "Highest monthly price", "The most a student can charge each paying user a month. High on purpose.", range(1, 100_000, 1));
@@ -244,6 +252,14 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
       add(`models.${m}.servers.readyDays`, "Infrastructure", MODEL_LABELS[m], "Delivery time (days)", "Days from buying a server to it arriving. It's on order until then, and serves from the day after.", range(0, 60, 1));
     } else {
       add(`models.${m}.servers.readyDays`, "Infrastructure", MODEL_LABELS[m], "Days until a server is ready", "Days from adding a server to it being ready (1 = the next day). It serves from the day after.", range(0, 60, 1));
+    }
+    if (servers.racks) {
+      for (const size of RACK_SIZES) {
+        add(`models.${m}.servers.racks.sizes.${size}.units`, "Infrastructure", MODEL_LABELS[m], `Rack (${size}): rack units (U)`, "The U a rack of this size holds. Every server is installed in a rack with room for it.", range(1, 100, 1));
+      }
+      for (const size of SERVER_SIZES) {
+        add(`models.${m}.servers.racks.serverUnits.${size}`, "Infrastructure", MODEL_LABELS[m], `Server (${size}): rack units (U)`, "The U a server of this size takes in its rack, from the day it's ordered.", range(0, 100, 1));
+      }
     }
     if (servers.managed) {
       add(`models.${m}.servers.managed.maxInstances`, "Infrastructure", MODEL_LABELS[m], "Most app instances", "The most app instances a company can run on the platform.", range(1, 100, 1));
@@ -383,6 +399,14 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
       `productTypes.${p}.growth.launchUsersMax`,
       "The most launch users can't be fewer than the fewest.",
     ]),
+    // Every server has to fit in the biggest rack, or it could never be bought.
+    ...MODEL_IDS.filter((m) => base.models[m]?.servers?.racks).flatMap((m) =>
+      SERVER_SIZES.map((size): [string, string, string] => [
+        `models.${m}.servers.racks.serverUnits.${size}`,
+        `models.${m}.servers.racks.sizes.${RACK_SIZES[RACK_SIZES.length - 1]}.units`,
+        "Every server has to fit in the biggest rack.",
+      ]),
+    ),
     ...base.events
       .filter((e) => e.schedule.type === "seeded")
       .map((e): [string, string, string] => [

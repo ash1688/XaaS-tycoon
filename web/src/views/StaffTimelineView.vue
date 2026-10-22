@@ -120,6 +120,10 @@ function describe(e: PlayEventView): string {
     case "cancelServer":
     case "sellServer":
       return `${e.type === "cancelServer" ? "Cancelled" : "Sold"} server ${p.id}`;
+    case "buyRack":
+      return `Bought a ${p.size} rack`;
+    case "sellRack":
+      return `Sold rack ${p.id}`;
     case "setInstances":
       return `Set ${p.count} app instance${p.count === 1 ? "" : "s"}`;
     case "setManagedService":

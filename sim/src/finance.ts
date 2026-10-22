@@ -1,7 +1,7 @@
 import { SPEND_CATEGORIES, type GameConfig } from "./config.ts";
 import type { GameState, Loan, LogEntry, Spend } from "./state.ts";
 
-export const noSpend = (): Spend => ({ staff: 0, infrastructure: 0, addons: 0, debt: 0 });
+export const noSpend = (): Spend => ({ staff: 0, infrastructure: 0, cabling: 0, power: 0, addons: 0, debt: 0 });
 
 export const count = new Intl.NumberFormat("en-GB");
 

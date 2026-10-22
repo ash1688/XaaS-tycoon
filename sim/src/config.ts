@@ -15,7 +15,7 @@ export const MIGRATION_PHASES = ["planning", "testing", "moving"] as const;
 export type MigrationPhase = (typeof MIGRATION_PHASES)[number];
 
 /** Every charge is tagged with one of these, so students can see where their money goes. */
-export const SPEND_CATEGORIES = ["staff", "infrastructure", "addons", "debt"] as const;
+export const SPEND_CATEGORIES = ["staff", "infrastructure", "cabling", "power", "addons", "debt"] as const;
 export type SpendCategory = (typeof SPEND_CATEGORIES)[number];
 
 /**
@@ -28,6 +28,10 @@ export type ServerType = (typeof SERVER_TYPES)[number];
 /** Every server type comes in these sizes, smallest first. Saved in game state, so don't rename. */
 export const SERVER_SIZES = ["small", "medium", "large", "massive"] as const;
 export type ServerSize = (typeof SERVER_SIZES)[number];
+
+/** Racks come in these sizes, smallest first. Saved in game state, so don't rename. */
+export const RACK_SIZES = ["small", "medium", "large"] as const;
+export type RackSize = (typeof RACK_SIZES)[number];
 
 /** The capacity tiers servers are measured in: compute units, database units and cache hits. */
 export const UNIT_TIERS = ["cu", "dbu", "ch"] as const;
@@ -51,8 +55,13 @@ export interface ModelConfig {
    * (racks, networking, power and cooling): the servers are bought on top, one at a time, at their purchase prices.
    */
   upfrontCost: number;
-  /** Fixed provider bill (or power and upkeep on-prem) per month, billed as a daily share (opex). */
+  /** Fixed provider bill (on-prem, the premises and bandwidth) per month, billed as a daily share (opex). */
   monthlyCost: number;
+  /**
+   * Power and cooling a day, charged on every day played whatever the company runs (power). Highest on-prem, where you
+   * run the kit yourself, and falling through IaaS and PaaS to SaaS.
+   */
+  powerAndCooling: number;
   /** Extra per user per month, billed as a daily share on that day's users. SaaS charges per user. */
   monthlyCostPerUser: number;
   /**
@@ -95,6 +104,22 @@ export interface ServerPurchaseConfig {
   price: Record<ServerType, Record<ServerSize, number>>;
   /** Share of the purchase price you get back on selling a server (0.4 = 40%). */
   sellBackShare: number;
+  /** Cabling: charged on top of the price for each piece of hardware bought, a server or a rack (cabling). */
+  cablingCost: number;
+}
+
+/**
+ * Racks, on a model that buys its servers. Each server is installed in a rack and takes rack units (U) by its size,
+ * from the day it's ordered, so a server can't be bought without a rack that has room for it. Racks are bought
+ * outright, installed at once, and sold back like servers once they're empty.
+ */
+export interface RacksConfig {
+  /** Each size of rack: the U it holds and its purchase price. */
+  sizes: Record<RackSize, { units: number; price: number }>;
+  /** The U a server of each size takes, whatever its type. */
+  serverUnits: Record<ServerSize, number>;
+  /** Racks a company gets on adopting the model, bought with its upfront cost: what the server room comes with. */
+  starter: RackSize[];
 }
 
 /**
@@ -122,6 +147,8 @@ export interface ModelServersConfig {
   opsPerServer?: Record<ServerType, number>;
   /** Set on a model that buys its servers rather than renting them. */
   purchase?: ServerPurchaseConfig;
+  /** Set on a model whose servers go in racks (on-prem). */
+  racks?: RacksConfig;
   /** Set on a model whose platform runs the servers for you (PaaS). */
   managed?: ManagedServersConfig;
   /**
@@ -674,11 +701,14 @@ export const defaultConfig: GameConfig = {
       name: "Own servers (on-prem)",
       blurb: "Buy and run your own kit.",
       comparison: { upfrontCost: "High", monthlyCost: "Low–medium", opsNeeded: "High", control: "Full" },
-      // The server room: racks, networking, power and cooling. The servers are bought on top: a first app server and
-      // database of a size that leaves room to grow (£2,200 for large ones) make on-prem by far the dearest to start.
-      upfrontCost: 3_000,
-      // The premises, bandwidth and the room's own power. Each server's power and upkeep is on top.
-      monthlyCost: 1_000,
+      // The server room: networking and fit-out. It comes with a medium rack (bought on top, with its cabling); the
+      // servers are bought on top too: a first app server and database of a size that leaves room to grow (£2,200 for
+      // large ones) make on-prem by far the dearest to start.
+      upfrontCost: 2_500,
+      // The premises and bandwidth. Power and cooling, and each server's power and upkeep, are on top.
+      monthlyCost: 400,
+      // Running and cooling the room yourself: the dearest of any model. Placeholder.
+      powerAndCooling: 25,
       monthlyCostPerUser: 0,
       exitPenalty: 0,
       // A server costs about five weeks' rent of the same VM and a tenth of that rent a month to run, so it pays for
@@ -695,6 +725,15 @@ export const defaultConfig: GameConfig = {
             loadBalancer: { small: 250, medium: 400, large: 550, massive: 750 },
           },
           sellBackShare: 0.4,
+          // Placeholder: per server or rack bought.
+          cablingCost: 50,
+        },
+        // Placeholders. The server room's medium rack holds a first setup with room to grow a little; a growing
+        // company needs more racks as well as more servers. Bigger racks cost less per U.
+        racks: {
+          sizes: { small: { units: 12, price: 300 }, medium: { units: 24, price: 500 }, large: { units: 42, price: 800 } },
+          serverUnits: { small: 1, medium: 2, large: 4, massive: 8 },
+          starter: ["medium"],
         },
         monthlyCost: {
           app: { small: 30, medium: 45, large: 80, massive: 110 },
@@ -712,7 +751,9 @@ export const defaultConfig: GameConfig = {
       comparison: { upfrontCost: "Low", monthlyCost: "Medium", opsNeeded: "Medium", control: "High" },
       upfrontCost: 2_000,
       // The account, storage and bandwidth. The VMs are rented on top.
-      monthlyCost: 1_000,
+      monthlyCost: 700,
+      // The provider's power and cooling, passed on. Placeholder.
+      powerAndCooling: 10,
       monthlyCostPerUser: 0,
       exitPenalty: 3_000,
       // Bigger VMs cost less per unit (a small app server £50 a CU, a massive one £37), and caches are the cheap way to
@@ -734,7 +775,9 @@ export const defaultConfig: GameConfig = {
       comparison: { upfrontCost: "Low", monthlyCost: "Medium–high", opsNeeded: "Low", control: "Medium" },
       upfrontCost: 1_000,
       // The platform account. Instances and managed services are billed on top.
-      monthlyCost: 1_500,
+      monthlyCost: 1_300,
+      // The provider's power and cooling, passed on. Placeholder.
+      powerAndCooling: 6,
       monthlyCostPerUser: 0,
       // A small, fixed team to deploy and keep the service running, however many instances: the platform runs them.
       opsNeeded: 1,
@@ -764,7 +807,9 @@ export const defaultConfig: GameConfig = {
       blurb: "Build inside someone else's SaaS platform, like a shop on Shopify.",
       comparison: { upfrontCost: "Low", monthlyCost: "Per user, plus add-ons", opsNeeded: "Very low", control: "Low" },
       upfrontCost: 500,
-      monthlyCost: 1_000,
+      monthlyCost: 900,
+      // Your share of the provider's power and cooling: the least of any model. Placeholder.
+      powerAndCooling: 3,
       // Every user, free ones included. There are no servers and no capacity limit: the provider scales. Cheap for a shop
       // whose users mostly pay, dear for a social network whose users are mostly free.
       monthlyCostPerUser: 0.35,
