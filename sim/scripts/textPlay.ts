@@ -189,6 +189,12 @@ export function renderStatus(sim: Sim, state: GameState): string {
   if (loan) lines.push(`loan: ${money(loan.remaining)} left, ${money(loan.dailyRepayment)}/day for ${loan.daysLeft} more days`);
   const migration = sim.migration(state);
   if (migration) lines.push(`migration: ${migration.from}→${migration.to}, ${migration.phase}, ${migration.daysLeft} days left`);
+  const danger = sim.danger(state);
+  const risks = danger.risks.map((r) => `${r.label.toLowerCase()} +${r.rise}`).join(", ");
+  lines.push(
+    `danger meter: ${danger.meter} of ${danger.max} | rose ${danger.rise} today (well-run day +${danger.dailyRise}${risks ? `, ${risks}` : ""})`,
+  );
+  for (const r of danger.risks) lines.push(`  ${r.label}: ${r.detail}`);
   for (const e of sim.events(state)) lines.push(`event today: ${e.name}. ${e.outcome}`);
   for (const g of sim.featureGaps(state)) lines.push(`feature gap: ${g.name}. ${g.detail}`);
   return lines.join("\n");
@@ -395,6 +401,10 @@ function stopReasons(sim: Sim, before: GameState, after: GameState): string[] {
   const events = sim.events(after).filter((e) => (e.hit || e.shortOfOps) && !yesterday.has(e.id));
   if (events.length) reasons.push(`event: ${events.map((e) => e.name).join(", ")}`);
   if (after.outageDays > before.outageDays) reasons.push("outage");
+  // A risk that's new today makes the danger meter climb faster: worth a decision before the next random event.
+  const risksBefore = new Set(sim.danger(before).risks.map((r) => r.id));
+  const newRisks = sim.danger(after).risks.filter((r) => !risksBefore.has(r.id));
+  if (newRisks.length) reasons.push(`danger meter climbing faster: ${newRisks.map((r) => r.label.toLowerCase()).join(", ")}`);
   if (builtCount(after) > builtCount(before)) reasons.push("feature built");
   const launchBefore = sim.launch(before).status;
   const launchAfter = sim.launch(after).status;
@@ -419,8 +429,8 @@ function stopReasons(sim: Sim, before: GameState, after: GameState): string[] {
 }
 
 /**
- * Plays up to `days` days, one at a time, and stops early when something needs a decision: an event, outage, built
- * feature, migration step, the launch, a server arriving, capacity running out, satisfaction falling hard, cash about to
+ * Plays up to `days` days, one at a time, and stops early when something needs a decision: an event, outage, a new
+ * risk on the danger meter, built feature, migration step, the launch, a server arriving, capacity running out, satisfaction falling hard, cash about to
  * run out, or the price unlocking. Returns the notable lines of each day played and why it stopped.
  */
 export function advanceUntil(sim: Sim, state: GameState, days: number, who: Player): Turn {

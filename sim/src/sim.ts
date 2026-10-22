@@ -1,6 +1,7 @@
 import { defaultConfig, type GameConfig, type ModelId, type ServerCount } from "./config.ts";
 import { createConversion, type ConversionView } from "./conversion.ts";
 import { createCustomers } from "./customers.ts";
+import { createEncounters, type DangerView } from "./encounters.ts";
 import { createEvents, type EventView, type FeatureGapView } from "./events.ts";
 import { createFeatures, type FeatureView } from "./features.ts";
 import { createFinance, noSpend, pounds } from "./finance.ts";
@@ -33,6 +34,7 @@ import { createSupport } from "./support.ts";
 // The sim's one public interface is createSim. Its modules are internal; only the types and helpers the server and
 // web client need are re-exported here.
 export type { ConversionDriver, ConversionDriverId, ConversionView } from "./conversion.ts";
+export type { DangerRiskView, DangerView } from "./encounters.ts";
 export type { EventView, FeatureGapView } from "./events.ts";
 export type { FeatureStatus, FeatureView } from "./features.ts";
 export type { ProviderView } from "./infrastructure.ts";
@@ -67,6 +69,7 @@ export {
   type AdvanceResult,
   type DayLog,
   type DaySpend,
+  type Encounter,
   type EventRecord,
   type FeatureGap,
   type FeatureProgress,
@@ -216,6 +219,8 @@ export interface Sim {
   migrationQuote(state: GameState, target: string): MigrationQuote;
   /** Scripted events that were on during the day just played, each explained, in config order. */
   events(state: GameState): EventView[];
+  /** The danger meter: how fast trouble is building, and why. The encounter list itself stays hidden. */
+  danger(state: GameState): DangerView;
   /** Feature gaps still slowing growth, oldest first. Shown every day, not just the day the event fired. */
   featureGaps(state: GameState): FeatureGapView[];
   /** How the company did: final figures, spend by category, migrations and spend over time. */
@@ -237,6 +242,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   const summary = createSummary(config, infra);
   const loan = createLoan(config, finance);
   const launch = createLaunch(config, servers, pricing);
+  const encounters = createEncounters(config, servers);
 
   function newGame({ companyName, productType, model, seed, takeLoan = false }: NewGameParams): GameState {
     const name = companyName.trim();
@@ -249,7 +255,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     }
     if (!isProductTypeId(productType)) throw new SimError("unknown_product_type", "Pick a product type from the list.");
     if (!isModelId(model)) throw new SimError("unknown_model", "Pick a deployment model from the list.");
-    const [schedule, rng] = events.rollSchedule(seedRng(seed), 1);
+    const schedule = events.fixedSchedule(1);
+    // Encounters have their own random sequence, seeded apart from the game's.
+    const starting = encounters.startingEncounters({ model, schedule, featureGaps: [], dangerRisks: [] }, seedRng(seed ^ 0x5eed));
     // A new company has no servers, unless a config starts it with some, ready for the first day played.
     const setup = servers.starter(model, 1);
     const state: GameState = {
@@ -260,7 +268,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       model,
       day: 1,
       cash: config.startingCash,
-      rng,
+      rng: seedRng(seed),
       developers: config.staff.developers.startingCount,
       ops: config.staff.ops.startingCount,
       support: config.staff.support.startingCount,
@@ -276,6 +284,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       migrations: 0,
       loan: null,
       schedule,
+      ...starting,
       events: [],
       priceRises: {},
       addonPriceRise: 1,
@@ -371,12 +380,14 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   function advanceOneDay(start: GameState): AdvanceResult {
     const day = start.day + 1;
 
-    // Scripted events on today. A price rise or feature gap from today counts from today's bill and growth. Before the
-    // first users arrive there's nothing running for one to hit.
+    // Events on today: a random one fires if the danger meter has reached the next threshold on the encounter list.
+    // A price rise or feature gap from today counts from today's bill and growth. Before the first users arrive
+    // there's nothing running for one to hit.
     const ramping = launch.rampDayOn(start, day) > 0;
     const live = start.launchDay !== null || ramping;
-    const today = live ? events.eventsToday(start, day) : [];
-    const state: GameState = { ...start, ...events.lastingEffects(start, day, today) };
+    const checked: GameState = live ? { ...start, ...encounters.checkDay(start, day) } : start;
+    const today = live ? events.eventsToday(checked, day) : [];
+    const state: GameState = { ...checked, ...events.lastingEffects(checked, day, today) };
 
     // Today's load against capacity, then growth, which slows on an outage day.
     const served = infra.serveLoad(state, day, today);
@@ -453,8 +464,10 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       conversions: state.conversions + converted.conversionsToday,
       loan: repayment.loan,
     };
+    // The danger meter rises with the day's risks, on the model the day was played on.
+    const risen: GameState = { ...played, ...encounters.riseDay(played, live, served.overloaded) };
     // The migration moves on after the day is played and billed, so a model switch takes effect from tomorrow.
-    const migrated = migration.migrationDay(played);
+    const migrated = migration.migrationDay(risen);
     entries.push(...migrated.entries);
     const settled = finance.settle(migrated.state, day, entries);
     return { state: settled.state, log: [{ day, entries: settled.entries }] };
@@ -529,6 +542,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     migration: (s) => migration.migration(load(s)),
     migrationQuote: (s, target) => migration.migrationQuote(load(s), target),
     events: (s) => events.events(load(s)),
+    danger: (s) => encounters.danger(load(s)),
     featureGaps: (s) => events.featureGaps(load(s)),
     summarise: (s) => summary.summarise(load(s)),
   };

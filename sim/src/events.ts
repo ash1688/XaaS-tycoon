@@ -1,6 +1,5 @@
 import type { EventConfig, EventEffect, EventOutcome, GameConfig, ModelId, ProductTypeId } from "./config.ts";
 import { layerOwner, layerResponsibility, type LayerId, type Owner } from "./responsibility.ts";
-import { nextRandom } from "./rng.ts";
 import type { EventRecord, FeatureGap, GameState, LogEntry, ScheduledEvent } from "./state.ts";
 
 /** A scripted event that was on during the day just played, explained for the student. */
@@ -53,34 +52,20 @@ export interface EventToday {
 
 const NO_EFFECT: EventEffect = { detail: "" };
 
-/** Scripted events: when they fire, how each plays out on each model, and what lasts after the day. */
+/**
+ * Events: how each plays out on each model, and what lasts after the day. Random ones fire from the encounter list
+ * (see encounters.ts); either way, a day an event fires on is in the state's schedule.
+ */
 export function createEvents(config: GameConfig) {
   const eventConfig = (id: string) => config.events.find((e) => e.id === id);
 
-  /**
-   * The days each event fires on, in day order. Fixed days come from config; seeded ones are picked with the RNG,
-   * drawing once per day picked. Only days after afterDay are kept, as the game has already played the rest.
-   */
-  function rollSchedule(rng: number, afterDay: number): [schedule: ScheduledEvent[], next: number] {
-    const schedule: ScheduledEvent[] = [];
-    for (const event of config.events) {
-      const when = event.schedule;
-      let days = when.type === "fixed" ? when.days : [];
-      if (when.type === "seeded") {
-        // A partial shuffle of the days in range, so each pick is a different day.
-        const range = Array.from({ length: Math.max(0, when.toDay - when.fromDay + 1) }, (_, i) => when.fromDay + i);
-        for (let i = 0; i < Math.min(when.count, range.length); i++) {
-          const [r, next] = nextRandom(rng);
-          rng = next;
-          const j = i + Math.floor(r * (range.length - i));
-          [range[i], range[j]] = [range[j]!, range[i]!];
-        }
-        days = range.slice(0, when.count);
-      }
-      schedule.push(...days.filter((day) => day > afterDay).map((day) => ({ event: event.id, day })));
-    }
+  /** The fixed days events fire on, outside the encounter system, in day order. Only days after afterDay are kept. */
+  function fixedSchedule(afterDay: number): ScheduledEvent[] {
+    const schedule = config.events.flatMap((event) =>
+      (event.schedule?.days ?? []).filter((day) => day > afterDay).map((day) => ({ event: event.id, day })),
+    );
     // A stable sort, so events on the same day keep config order.
-    return [schedule.sort((a, b) => a.day - b.day), rng];
+    return schedule.sort((a, b) => a.day - b.day);
   }
 
   /**
@@ -251,7 +236,7 @@ export function createEvents(config: GameConfig) {
   }
 
   return {
-    rollSchedule,
+    fixedSchedule,
     eventsToday,
     scaledUp,
     gapFeature,

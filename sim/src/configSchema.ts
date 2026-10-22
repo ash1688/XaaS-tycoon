@@ -3,8 +3,9 @@
 //
 // A path names one number in the config, dot-separated. Lists of things with an id (features, events) are keyed by
 // id, other lists by position: "models.iaas.monthlyCost", "productTypes.video.features.hd.devDays",
-// "events.osPatch.schedule.days.0". Overrides are a flat map of path to number: only the numbers that differ.
+// "events.osPatch.encounter.chance". Overrides are a flat map of path to number: only the numbers that differ.
 import {
+  DANGER_RISKS,
   MIGRATION_PHASES,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
@@ -12,6 +13,7 @@ import {
   SERVER_TYPES,
   STAFF_POOLS,
   defaultConfig,
+  type DangerRisk,
   type GameConfig,
 } from "./config.ts";
 
@@ -47,6 +49,11 @@ export const CONFIG_EXCLUSIONS: Record<string, string> = {
 };
 
 const MODEL_LABELS = { onprem: "On-prem", iaas: "IaaS", paas: "PaaS", saas: "SaaS" } as const;
+const RISK_LABELS: Record<DangerRisk, string> = {
+  unpatched: "servers unpatched",
+  overloaded: "capacity overloaded",
+  lowSatisfaction: "low satisfaction",
+};
 
 type Range = Pick<ConfigField, "min" | "max" | "step">;
 const range = (min: number, max: number, step: number): Range => ({ min, max, step });
@@ -293,18 +300,26 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
 
   // Events
   add("finalDay", "Events", "", "Game length (days)", "The last day played. The game ends once it has been played.", range(2, 365, 1));
+  add("encounters.dailyRise", "Events", "Danger meter", "Daily rise", "How much the danger meter rises on a well-run day after launch. A random event fires when it reaches the next threshold on the encounter list.", range(0, 20, 0.1));
+  for (const r of DANGER_RISKS) {
+    add(`encounters.riskRise.${r}`, "Events", "Danger meter", `Extra rise: ${RISK_LABELS[r]}`, "Added to the day's rise on a day with this risk.", range(0, 20, 0.1));
+  }
+  add("encounters.thresholdMin", "Events", "Danger meter", "Lowest threshold", "No event's threshold is lower: over the most a day can rise, the shortest gap between random events.", range(1, 365, 1));
+  add("encounters.thresholdMax", "Events", "Danger meter", "Highest threshold", "No event's threshold is higher. Unlikely events get thresholds up to this.", range(1, 365, 1));
   for (const event of base.events) {
     const at = `events.${event.id}`;
     const s = event.name;
-    if (event.schedule.type === "fixed") {
-      event.schedule.days.forEach((_, i) => {
-        add(`${at}.schedule.days.${i}`, "Events", s, `Fires on day (${i + 1})`, "A day it fires on in every game.", GAME_DAY);
-      });
-    } else {
-      add(`${at}.schedule.count`, "Events", s, "Times it fires", "How many different days it fires on, picked at random per game.", range(0, 20, 1));
-      add(`${at}.schedule.fromDay`, "Events", s, "Earliest day", "The first day it can be picked for.", GAME_DAY);
-      add(`${at}.schedule.toDay`, "Events", s, "Latest day", "The last day it can be picked for.", GAME_DAY);
+    if (event.encounter) {
+      add(`${at}.encounter.chance`, "Events", s, "Encounter chance", "The chance it goes on each encounter list rolled (0.5 = 1 in 2). 0 takes it out of random events.", SHARE);
+      for (const r of DANGER_RISKS) {
+        add(`${at}.encounter.risks.${r}`, "Events", s, `Chance multiplier: ${RISK_LABELS[r]}`, `Its chance is multiplied by this on a list rolled after a day with this risk.`, MULTIPLIER);
+      }
+      add(`${at}.encounter.maxTimes`, "Events", s, "Most times per game", "After firing this many times it no longer goes on the encounter list.", range(0, 20, 1));
+      add(`${at}.encounter.fromDay`, "Events", s, "Earliest day", "It can't go on an encounter list rolled before this day.", GAME_DAY);
     }
+    event.schedule?.days.forEach((_, i) => {
+      add(`${at}.schedule.days.${i}`, "Events", s, `Fires on day (${i + 1})`, "A day it fires on in every game, outside the danger meter.", GAME_DAY);
+    });
     add(`${at}.days`, "Events", s, "Days it lasts", "Days it lasts from the day it fires.", range(1, 30, 1));
     add(`${at}.load.multiplier`, "Events", s, "Load multiplier", "While it's on, the day's load is multiplied by this…", MULTIPLIER);
     add(`${at}.load.extra`, "Events", s, "Extra load", "…and this much load is added.", range(0, 1_000_000, 1_000));
@@ -383,13 +398,7 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
       `productTypes.${p}.growth.launchUsersMax`,
       "The most launch users can't be fewer than the fewest.",
     ]),
-    ...base.events
-      .filter((e) => e.schedule.type === "seeded")
-      .map((e): [string, string, string] => [
-        `events.${e.id}.schedule.fromDay`,
-        `events.${e.id}.schedule.toDay`,
-        "The latest day can't be before the earliest day.",
-      ]),
+    ["encounters.thresholdMin", "encounters.thresholdMax", "The highest threshold can't be below the lowest."],
   ];
   for (const [low, high, message] of pairs) {
     if ((getAt(config, high) as number) < (getAt(config, low) as number)) {
