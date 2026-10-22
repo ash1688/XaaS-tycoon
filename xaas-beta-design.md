@@ -470,3 +470,29 @@ A permanent **tutorial company** that every student has alongside their real one
 - It doesn't count towards the 3-active-companies limit, the leaderboard or the teacher's live dashboard.
 
 *"I understood what I was supposed to do from the start" scored 3.3/5 in the alpha survey.*
+
+## AI playtesting
+
+A lightweight way for an AI to play the game, so balance and exploits can be tested before students see them. In the alpha, students found the price exploits within minutes; an AI that plays like a min-maxer should find them first.
+
+**Not the web page.** The AI plays the simulation directly through a compact text format that's quicker and cheaper to read:
+
+- Each turn the AI gets a **short state summary**: day and date, cash and runway, users by customer type, capacity by tier, satisfaction and uptime, plus anything waiting on it (alerts, investor offers, deals, events).
+- With it comes the **list of actions it can take right now**, each with its allowed range (e.g. `setPrice 1–1000`, `hire support junior 1–50`).
+- The AI replies with the actions it wants, then says how far to advance. Time pauses on the same triggers as the timed flow.
+- Every game writes the **same log format as a real playtest**, so the same analysis runs on AI games and student games, and they can be compared.
+
+**Playstyles.** Each AI game is given a playstyle that sets how it thinks and plays:
+
+| Playstyle | How it plays |
+|---|---|
+| Min-maxer | Hunts for the most efficient route and any exploit; reads every number and tests the edges (extreme prices, mass hiring, timing tricks) |
+| Maxer | Goes for the biggest company: aggressive growth, every investor, every deal, high risk |
+| Average Joe | Plays like a typical student: skims, mostly lets time run, reacts to problems late, follows the obvious prompts |
+| Low and slow | Cautious: no loan, few risks, steady growth, keeps a cash cushion |
+| Chaos tester | Tries odd things just to see what happens, like the alpha student who let everyone go and charged £1 |
+
+- Playstyles can be combined with any product, model, game length and difficulty, and run in batches with fixed random seeds so results can be repeated.
+- **Average Joe matters most for balance:** if typical students can't break even, the game is too hard. **Min-maxer matters most for exploits:** anything it finds, students will too.
+
+This sits alongside the existing scripted balance harness (`sim/scripts/harness.ts`), which plays thousands of rule-based games quickly. The scripted bots measure balance at volume; the AI playstyles bring judgement, and find what the scripts weren't written to look for.

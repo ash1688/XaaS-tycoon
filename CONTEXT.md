@@ -209,6 +209,16 @@ _Avoid_: Bid, deal (a deal is a customer contract)
 The student's reply to an offer, asking for different terms. A dice roll decides how far the next offer moves towards it.
 _Avoid_: Counter-offer, haggle
 
+### Testing
+
+**AI playtester**:
+An AI that plays the simulation through a compact text format instead of the web page, to test balance and find exploits.
+_Avoid_: Bot (a bot is a scripted strategy in the balance harness), agent
+
+**Playstyle**:
+The way an AI playtester is told to play: min-maxer, maxer, average Joe, low and slow, or chaos tester.
+_Avoid_: Persona, strategy (a strategy is a scripted bot), personality
+
 ## Flagged ambiguities
 
 - **Bankrupt vs liquidation:** the alpha ends a game as "bankrupt" the moment cash runs out. In the beta that moment is a rescue buyout, and only the second time is **liquidation**. The alpha's "bankrupt" status means what the beta calls liquidation.
