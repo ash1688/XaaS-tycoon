@@ -1,10 +1,12 @@
 import {
+  GAME_LENGTH_IDS,
   MANAGED_SERVICES,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
   SERVER_SIZES,
   SERVER_TYPES,
   STAFF_POOLS,
+  type GameLengthId,
   type ManagedService,
   type MigrationPhase,
   type ModelId,
@@ -19,7 +21,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 21;
+export const GAME_STATE_VERSION = 22;
 
 /** Money spent in each category. */
 export type Spend = Record<SpendCategory, number>;
@@ -184,12 +186,12 @@ export interface PriceChange {
 /**
  * A bankrupt game is over, and so is a finished one: one that has played the configured final day. Either way it
  * accepts no more actions or advances. The final day is the last day played, so a 180-day game plays day 180 in full
- * (billed, with its events) and finishes at the end of it.
+ * (billed, with its events) and finishes at the end of it. A game the teacher ends early is finished too.
  */
 export type GameStatus = "playing" | "bankrupt" | "finished";
 
-/** How a game ended, for the summary. */
-export type GameEnding = "completed" | "bankrupt";
+/** How a game ended, for the summary: "ended" when the teacher ended it before its final day. */
+export type GameEnding = "completed" | "bankrupt" | "ended";
 
 /** Plain, JSON-serialisable game state. The server stores it as-is. */
 export interface GameState {
@@ -198,6 +200,12 @@ export interface GameState {
   companyName: string;
   productType: ProductTypeId;
   model: ModelId;
+  /** The game length the student picked when starting the company. */
+  gameLength: GameLengthId;
+  /** The last day played: the game finishes once it has been played. Set from the game length at the start. */
+  finalDay: number;
+  /** True once the teacher has ended the game, scored as it stood. */
+  endedByTeacher: boolean;
   day: number;
   cash: number;
   rng: number;
@@ -338,6 +346,8 @@ export interface NewGameParams {
   seed: number;
   /** Take the bank loan at the start, on its best terms. */
   takeLoan?: boolean;
+  /** One of the game lengths the config allows. Left out, the first it allows (180 days by default). */
+  gameLength?: string;
 }
 
 export interface LogEntry {
@@ -393,6 +403,10 @@ export class SimError extends Error {
 /** Whether something stored is a game from this version. Anything else is refused, not upgraded. */
 export function isCurrentState(saved: unknown): saved is GameState {
   return typeof saved === "object" && saved !== null && (saved as { version?: unknown }).version === GAME_STATE_VERSION;
+}
+
+export function isGameLengthId(v: string): v is GameLengthId {
+  return (GAME_LENGTH_IDS as readonly string[]).includes(v);
 }
 
 export function isModelId(v: string): v is ModelId {

@@ -1,4 +1,4 @@
-import { SPEND_CATEGORIES, type GameConfig, type ModelId, type ProductTypeId } from "./config.ts";
+import { SPEND_CATEGORIES, type GameConfig, type GameLengthId, type ModelId, type ProductTypeId } from "./config.ts";
 import { interestIn, profitCosts } from "./finance.ts";
 import type { Infrastructure } from "./infrastructure.ts";
 import type { DaySpend, GameEnding, GameState, Spend } from "./state.ts";
@@ -58,6 +58,8 @@ export interface GameSummary {
   ending: GameEnding | null;
   /** The last day played. */
   day: number;
+  gameLength: GameLengthId;
+  /** The game length's last day. */
   finalDay: number;
   cash: number;
   users: number;
@@ -130,14 +132,19 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
       ? played.reduce((sum, d) => sum + d.satisfaction, 0) / played.length
       : state.satisfaction;
     const costs = profitCosts(state.spend, loan);
-    const ending = state.status === "playing" ? null : state.status === "bankrupt" ? "bankrupt" : "completed";
+    const ending =
+      state.status === "playing" ? null
+      : state.status === "bankrupt" ? "bankrupt"
+      : state.endedByTeacher ? "ended"
+      : "completed";
     return {
       companyName: state.companyName,
       productType: state.productType,
       model: state.model,
       ending,
       day: state.day,
-      finalDay: config.finalDay,
+      gameLength: state.gameLength,
+      finalDay: state.finalDay,
       cash: state.cash,
       users: state.users,
       paidUsers: state.paidUsers,

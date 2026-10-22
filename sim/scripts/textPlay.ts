@@ -3,6 +3,7 @@
 // decision. Every game writes the same rows as the classroom playtest log, so the same analysis runs on both.
 // A tool for testing the game, not part of it. See play.ts for the command line.
 import {
+  gameLengthName,
   MANAGED_SERVICES,
   MODEL_IDS,
   SERVER_SIZES,
@@ -119,9 +120,13 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const fair = sim.fairPrice(state);
   const lock = sim.priceLockDaysLeft(state);
   const left = runway(sim, state);
-  const daysToPlay = sim.config.finalDay - state.day;
-  const lasts = left === null ? "not losing money" : left > daysToPlay ? `lasts past day ${sim.config.finalDay}` : `${left} days`;
-  lines.push(`== ${state.companyName} | ${state.productType} on ${state.model} | day ${state.day}/${sim.config.finalDay} | ${state.status.toUpperCase()}`);
+  const daysToPlay = state.finalDay - state.day;
+  const lasts = left === null ? "not losing money" : left > daysToPlay ? `lasts past day ${state.finalDay}` : `${left} days`;
+  const status = state.endedByTeacher ? "ENDED BY TEACHER" : state.status.toUpperCase();
+  lines.push(
+    `== ${state.companyName} | ${state.productType} on ${state.model} | day ${state.day}/${state.finalDay} ` +
+      `(${gameLengthName(sim.config, state.gameLength)}) | ${status}`,
+  );
   lines.push(
     `cash ${money(state.cash)} | income ${money(sim.dailyIncome(state))}/day | costs ${money(dailyCosts(sim, state))}/day | runway ${lasts}`,
   );
@@ -241,6 +246,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
     lines.push(`  loan   (${money(loanQuote.amount)} now, ${money(loanQuote.dailyRepayment)}/day for ${loanQuote.days} days)`);
   }
   lines.push(`  next [days]   (advance up to that many days, default 7; stops early when something needs you)`);
+  lines.push(`  end   (as the teacher: end the game now, scored as it stands)`);
   return lines.join("\n");
 }
 
@@ -249,7 +255,9 @@ export type Command =
   | { kind: "action"; action: Action; times: number }
   | { kind: "preview"; price: number }
   | { kind: "quote"; model: string }
-  | { kind: "next"; days: number };
+  | { kind: "next"; days: number }
+  /** The teacher ends the game, as from the staff panel. */
+  | { kind: "end" };
 
 function oneOf<T extends string>(word: string | undefined, values: readonly T[], what: string): T {
   if (word && (values as readonly string[]).includes(word)) return word as T;
@@ -317,6 +325,8 @@ export function parseCommand(text: string): Command {
       return one({ type: "takeLoan" });
     case "next":
       return { kind: "next", days: args[0] === undefined ? 7 : count(args[0]) };
+    case "end":
+      return { kind: "end" };
     default:
       throw new SimError("bad_command", `Unknown command "${verb ?? ""}". Run "look" for the commands that work now.`);
   }
@@ -361,6 +371,12 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
           (q.warning ? `. Warning: ${q.warning}` : ""),
       ],
     };
+  }
+  if (command.kind === "end") {
+    const ended = sim.endGame(state);
+    // Logged as the classroom server logs a game the teacher ends.
+    const row = logRow(sim, ended, who, "end", { status: ended.status, endedBy: "teacher" });
+    return { state: ended, rows: [row], lines: [`GAME OVER: ended by the teacher on day ${ended.day}`] };
   }
   if (command.kind !== "action") throw new Error("Advance with advanceUntil.");
   let current = state;

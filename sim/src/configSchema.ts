@@ -5,6 +5,7 @@
 // id, other lists by position: "models.iaas.monthlyCost", "productTypes.video.features.hd.devDays",
 // "events.osPatch.schedule.days.0". Overrides are a flat map of path to number: only the numbers that differ.
 import {
+  GAME_LENGTH_IDS,
   MIGRATION_PHASES,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
@@ -12,6 +13,7 @@ import {
   SERVER_TYPES,
   STAFF_POOLS,
   defaultConfig,
+  gameLengthName,
   type GameConfig,
 } from "./config.ts";
 
@@ -31,6 +33,8 @@ export interface ConfigField {
   min: number;
   max: number;
   step: number;
+  /** "toggle" for a setting that's on (1) or off (0), drawn as a checkbox. */
+  kind?: "toggle";
 }
 
 /** Path → number, for only the numbers that differ from the base config. */
@@ -48,8 +52,9 @@ export const CONFIG_EXCLUSIONS: Record<string, string> = {
 
 const MODEL_LABELS = { onprem: "On-prem", iaas: "IaaS", paas: "PaaS", saas: "SaaS" } as const;
 
-type Range = Pick<ConfigField, "min" | "max" | "step">;
+type Range = Pick<ConfigField, "min" | "max" | "step" | "kind">;
 const range = (min: number, max: number, step: number): Range => ({ min, max, step });
+const TOGGLE = { ...range(0, 1, 1), kind: "toggle" as const };
 
 const POUNDS = range(0, 1_000_000, 100);
 const PER_USER = range(0, 10, 0.01);
@@ -292,7 +297,11 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("migration.overrun.maxDays", "Migration", "", "Overrun: most extra days", "An overrun adds between the fewest and most extra days.", range(0, 60, 1));
 
   // Events
-  add("finalDay", "Events", "", "Game length (days)", "The last day played. The game ends once it has been played.", range(2, 365, 1));
+  add("finalDay", "Events", "Game length", "Short game length (days)", "The last day played in the shortest game length (180 days by default). The game ends once it has been played. The bank loan is repaid by this day in every length.", range(2, 365, 1));
+  for (const l of GAME_LENGTH_IDS) {
+    const name = l === "180-days" ? "the short game" : gameLengthName(base, l);
+    add(`allowedGameLengths.${l}`, "Events", "Game length", `Allow ${name}`, "Students can pick this length when starting a company. A change only affects new games.", TOGGLE);
+  }
   for (const event of base.events) {
     const at = `events.${event.id}`;
     const s = event.name;
@@ -391,6 +400,10 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
         "The latest day can't be before the earliest day.",
       ]),
   ];
+  if (GAME_LENGTH_IDS.every((l) => config.allowedGameLengths[l] !== 1)) {
+    const changed = GAME_LENGTH_IDS.find((l) => `allowedGameLengths.${l}` in overrides) ?? GAME_LENGTH_IDS[0];
+    errors[`allowedGameLengths.${changed}`] = "At least one game length must be allowed.";
+  }
   for (const [low, high, message] of pairs) {
     if ((getAt(config, high) as number) < (getAt(config, low) as number)) {
       errors[high in overrides ? high : low] = message;

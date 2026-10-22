@@ -47,7 +47,8 @@ export function createLoan(config: GameConfig, finance: Finance) {
     if (state.loan) {
       return new SimError("loan_taken", "You've already taken the bank loan. Each company can only have one.");
     }
-    const days = config.finalDay - state.day;
+    // Repaid by the 180-day game's last day whatever the game length, so a longer game can't borrow after it.
+    const days = Math.max(0, config.finalDay - state.day);
     if (days < minDays) {
       return new SimError(
         "too_late_for_loan",
