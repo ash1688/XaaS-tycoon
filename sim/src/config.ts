@@ -987,9 +987,9 @@ export const defaultConfig: GameConfig = {
   // Casual users react at the fair price, as everyone did in the alpha; the others put up with more, and go free less.
   customerTypes: {
     casual: { name: "Casual users", blurb: "Use it now and then. Low willingness to pay; go free readily.", thresholdMultiple: 1, toFreeShare: 0.6 },
-    enthusiasts: { name: "Enthusiasts", blurb: "Keen regular users. Will pay a bit more; sometimes go free.", thresholdMultiple: 1.5, toFreeShare: 0.4 },
-    professionals: { name: "Professionals", blurb: "Use it for work. Pay well; rarely go free.", thresholdMultiple: 2.5, toFreeShare: 0.2 },
-    businesses: { name: "Businesses", blurb: "Run on it. Pay the most; rarely go free, they leave.", thresholdMultiple: 4, toFreeShare: 0.1 },
+    enthusiasts: { name: "Enthusiasts", blurb: "Keen regular users. Will pay a bit more; sometimes go free.", thresholdMultiple: 1.25, toFreeShare: 0.4 },
+    professionals: { name: "Professionals", blurb: "Use it for work. Pay well; rarely go free.", thresholdMultiple: 2, toFreeShare: 0.2 },
+    businesses: { name: "Businesses", blurb: "Run on it. Pay the most; rarely go free, they leave.", thresholdMultiple: 3, toFreeShare: 0.1 },
   },
   staff: {
     developers: { name: "Developers", personName: "developer", dayRate: 120, startingCount: 2 },

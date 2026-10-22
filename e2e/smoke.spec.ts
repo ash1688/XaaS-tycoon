@@ -906,7 +906,7 @@ test("a student sets a price, plays a day and sees the income on Finance", async
   await input.fill("30");
   // Six times the fair price: the live preview shows almost every payer going (only some professionals and businesses
   // put up with it), so income ends up far lower.
-  await expect(dialog.getByTestId("preview-income")).toHaveText("£26");
+  await expect(dialog.getByTestId("preview-income")).toHaveText("£23");
   // A gentler rise instead: £6, a fifth above fair. 1,200 paying users at £6 a month would bring in £240 a day.
   await input.fill("6");
   await dialog.getByRole("button", { name: "Set price" }).click();
@@ -963,20 +963,20 @@ test("a student previews prices live, raises the price, and sees the backlash an
   await expect(preview).toContainText("That's your price now");
 
   // 1,200 paying users at £5. A 25% rise's reaction is each customer type's weighted by its share of users: 12.5% of
-  // the 70% casual users, 5.4% of the 20% enthusiasts, 2.5% of the 8% professionals and 1.3% of the 2% businesses,
-  // 10.1% in all. It affects 121 of them over the wave: 52 leave and 69 drop to free, leaving 1,079 paying £6.25 a
-  // month, £225 a day.
+  // the 70% casual users, 7.2% of the 20% enthusiasts, 3.5% of the 8% professionals and 1.9% of the 2% businesses,
+  // 10.5% in all. It affects 126 of them over the wave: 55 leave and 71 drop to free, leaving 1,074 paying £6.25 a
+  // month, £224 a day.
   const input = dialog.getByLabel("Monthly price per paying user (£)");
   await input.fill("6.25");
-  await expect(preview.getByTestId("preview-left")).toHaveText("52");
-  await expect(preview.getByTestId("preview-to-free")).toHaveText("69");
-  await expect(preview.getByTestId("preview-income")).toHaveText("£225");
+  await expect(preview.getByTestId("preview-left")).toHaveText("55");
+  await expect(preview.getByTestId("preview-to-free")).toHaveText("71");
+  await expect(preview.getByTestId("preview-income")).toHaveText("£224");
   await expect(preview.getByTestId("preview-reaction")).toHaveText(
-    "Price reaction: 10.1% of paying users. That's each customer type's reaction weighted by its share of users: casual users 12.5% × 70%, enthusiasts 5.4% × 20%, professionals 2.5% × 8%, businesses 1.3% × 2%.",
+    "Price reaction: 10.5% of paying users. That's each customer type's reaction weighted by its share of users: casual users 12.5% × 70%, enthusiasts 7.2% × 20%, professionals 3.5% × 8%, businesses 1.9% × 2%.",
   );
   // The effect in one sentence, against today's £200 a day.
   await expect(preview.getByTestId("price-verdict")).toHaveText(
-    "At £6.25 you'd make £25 a day more than now (£225 a day) once the wave settles. 52 paying users leave and 69 drop to free.",
+    "At £6.25 you'd make £24 a day more than now (£224 a day) once the wave settles. 55 paying users leave and 71 drop to free.",
   );
   await expect(preview.getByRole("img", { name: /The wave day by day/ })).toBeVisible();
   // A cut previews a positive wave instead, updating as the price changes.
@@ -994,7 +994,7 @@ test("a student previews prices live, raises the price, and sees the backlash an
   await expect(compare.getByRole("row")).toHaveCount(4);
 
   await input.fill("6.25");
-  await expect(preview.getByTestId("preview-left")).toHaveText("52");
+  await expect(preview.getByTestId("preview-left")).toHaveText("55");
   await dialog.getByRole("button", { name: "Set price" }).click();
   await expect(dialog).toBeHidden();
   await expect(student.getByTestId("price")).toHaveText("£6.25");
@@ -1018,7 +1018,7 @@ test("a student previews prices live, raises the price, and sees the backlash an
   await expect(student.getByTestId("home-wave")).toContainText("Day 1");
   await goTo(student, "Customers");
   await expect(student.getByTestId("customers-wave")).toContainText("Your price rise has cost");
-  // The customer mix: £6.25 is over the casual users' £5 threshold, and no one else's.
+  // The customer mix: £6.25 is over the casual users' £5 threshold, and right on the enthusiasts'.
   const mix = student.getByTestId("customer-mix");
   await expect(mix.getByTestId("mix-over")).toContainText("above what casual users think it's worth");
   await expect(mix.locator('tr[data-type="casual"] td').last()).toHaveText(/^\s*£5\s*you're over\s*$/);
@@ -1128,7 +1128,7 @@ test("free users start paying each day, and Customers shows what's helping or hu
   // The customer mix: a bar of the social network's mix, with each type's price threshold marked on a scale.
   const mix = student.getByTestId("customer-mix");
   await expect(mix.getByRole("img")).toHaveAttribute("aria-label", "Casual users 70%, Enthusiasts 20%, Professionals 8%, Businesses 2%");
-  await expect(mix.getByTestId("mix-thresholds").locator(".mix-threshold")).toHaveText(["£5", "£7.50", "£12.50", "£20"]);
+  await expect(mix.getByTestId("mix-thresholds").locator(".mix-threshold")).toHaveText(["£5", "£6.25", "£10", "£15"]);
   await expect(mix.getByTestId("mix-over")).toBeHidden();
 
   // The day log says so too.
