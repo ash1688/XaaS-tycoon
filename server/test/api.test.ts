@@ -52,7 +52,7 @@ const sim = createSim({
       ...defaultConfig.models.onprem,
       servers: {
         ...defaultConfig.models.onprem.servers!,
-        opsPerServer: { app: 0.6, database: 0.6, cache: 0.3, loadBalancer: 0.3 },
+        opsPerServer: { app: 0.6, database: 0.6, cache: 0.3, loadBalancer: 0.3, api: 0.6 },
         starter: [
           { type: "app", size: "large", count: 1 },
           { type: "database", size: "large", count: 1 },
@@ -67,7 +67,7 @@ const sim = createSim({
       exitPenalty: 200,
       servers: {
         ...iaasServers,
-        opsPerServer: { app: 0.5, database: 0.5, cache: 0.25, loadBalancer: 0.25 },
+        opsPerServer: { app: 0.5, database: 0.5, cache: 0.25, loadBalancer: 0.25, api: 0.5 },
         monthlyCost: {
           ...iaasServers.monthlyCost,
           app: { ...iaasServers.monthlyCost.app, medium: 0 },
@@ -3012,5 +3012,92 @@ describe("rate limits", () => {
     expect(blocked.statusCode).toBe(429);
     expect(blocked.cookies).toHaveLength(0);
     expect((await login(PASSWORD, "10.0.0.5")).statusCode).toBe(200);
+  });
+});
+
+describe("paid APIs", () => {
+  async function setup(model = "iaas", productType = "ecommerce") {
+    // Cheap enough to buy from the starting cash here.
+    await useOverrides({ "productTypes.ecommerce.api.price": 500 });
+    const code = await newCode();
+    const company = (await newCompany(code, { name: "Acme", productType, model })).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
+    const next = async () => (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    return { company, act, next };
+  }
+
+  it("offers e-commerce's API, buys it, and serves its calls as far as the APIU go", async () => {
+    const { company, act, next } = await setup();
+    expect(company.api).toMatchObject({ name: "Shop API", price: 500, owned: false, calls: 0 });
+    const bought = await act({ type: "buyApi" });
+    expect(bought.statusCode).toBe(200);
+    expect(bought.json<CompanyView>()).toMatchObject({ cash: company.cash - 500, api: { owned: true, calls: 2_000 } });
+    expect((await act({ type: "buyApi" })).json()).toMatchObject({ error: "api_owned" });
+    // No APIU yet: every call is dropped, and the log says so.
+    const { company: after, log } = await next();
+    expect(after.api).toMatchObject({ served: 0, dropped: 2_000, apiu: { capacity: 0 } });
+    expect(log.flatMap((d) => d.entries).some((e) => e.kind === "api" && e.text.includes("calls dropped"))).toBe(true);
+    // API servers are on offer now.
+    expect(after.serverOptions.some((o) => o.type === "api")).toBe(true);
+  });
+
+  it("switches an app server between CU and APIU", async () => {
+    const { company, act } = await setup();
+    await act({ type: "buyApi" });
+    const app1 = company.servers.find((s) => s.type === "app")!;
+    const switched = (await act({ type: "switchServer", id: app1.id, gives: "apiu" })).json<CompanyView>();
+    expect(switched.servers.find((s) => s.id === app1.id)).toMatchObject({ apiu: true });
+    expect(switched.units!.cu.capacity).toBe(0);
+    expect(switched.api!.apiu!.capacity).toBeGreaterThan(0);
+    const back = (await act({ type: "switchServer", id: app1.id, gives: "cu" })).json<CompanyView>();
+    expect(back.units!.cu.capacity).toBe(company.units!.cu.capacity);
+    expect(back.api!.apiu!.capacity).toBe(0);
+  });
+
+  it("validates the API actions, and the sim refuses what doesn't fit", async () => {
+    const { company, act } = await setup();
+    for (const payload of [
+      { type: "switchServer", id: 1 },
+      { type: "switchServer", gives: "apiu" },
+      { type: "switchServer", id: 1, gives: "dbu" },
+      { type: "setApiInstances" },
+      { type: "setApiInstances", count: -1 },
+      { type: "hire", pool: "ops", count: 0 },
+    ]) {
+      expect((await act(payload)).statusCode, JSON.stringify(payload)).toBe(400);
+    }
+    const app1 = company.servers.find((s) => s.type === "app")!;
+    expect((await act({ type: "switchServer", id: app1.id, gives: "apiu" })).json()).toMatchObject({ error: "no_api" });
+    expect((await act({ type: "rentServer", server: "api", size: "small" })).json()).toMatchObject({ error: "no_api" });
+    expect((await act({ type: "setApiInstances", count: 1 })).json()).toMatchObject({ error: "not_managed" });
+  });
+
+  it("runs API instances on PaaS, none to start", async () => {
+    const { act } = await setup("paas");
+    await act({ type: "buyApi" });
+    const two = (await act({ type: "setApiInstances", count: 2 })).json<CompanyView>();
+    expect(two.managed).toMatchObject({ apiInstances: 2, apiInstanceUnits: 10 });
+    expect(two.api!.apiu!.capacity).toBeGreaterThan(0);
+    const none = (await act({ type: "setApiInstances", count: 0 })).json<CompanyView>();
+    expect(none.managed!.apiInstances).toBe(0);
+  });
+
+  it("lets the provider run it on SaaS, for a fee per call", async () => {
+    const { act, next } = await setup("saas");
+    const bought = (await act({ type: "buyApi" })).json<CompanyView>();
+    expect(bought.api).toMatchObject({ providerRuns: true, apiu: null, feePerCall: 0.004, dailyFee: 8, dailyIncome: 20 });
+    const { company, log } = await next();
+    const entries = log.flatMap((d) => d.entries);
+    if (company.outageDays === 0) {
+      expect(entries).toContainEqual(expect.objectContaining({ kind: "income", cashDelta: 20, text: expect.stringContaining("Shop API") }));
+      expect(entries).toContainEqual(expect.objectContaining({ category: "infrastructure", cashDelta: -8, text: expect.stringContaining("runs your Shop API") }));
+    }
+  });
+
+  it("isn't offered on a product without one", async () => {
+    const { company, act } = await setup("saas", "social");
+    expect(company.api).toBeNull();
+    expect((await act({ type: "buyApi" })).json()).toMatchObject({ error: "no_api" });
   });
 });

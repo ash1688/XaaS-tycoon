@@ -1,3 +1,4 @@
+import { createApi, type ApiView } from "./api.ts";
 import { defaultConfig, type GameConfig, type ModelId, type ServerCount } from "./config.ts";
 import { createConversion, type ConversionView } from "./conversion.ts";
 import { createCustomers } from "./customers.ts";
@@ -32,6 +33,7 @@ import { createSupport } from "./support.ts";
 
 // The sim's one public interface is createSim. Its modules are internal; only the types and helpers the server and
 // web client need are re-exported here.
+export type { ApiView } from "./api.ts";
 export type { ConversionDriver, ConversionDriverId, ConversionView } from "./conversion.ts";
 export type { EventView, FeatureGapView } from "./events.ts";
 export type { FeatureStatus, FeatureView } from "./features.ts";
@@ -65,6 +67,7 @@ export {
   SimError,
   type Action,
   type AdvanceResult,
+  type ApiState,
   type DayLog,
   type DaySpend,
   type EventRecord,
@@ -87,7 +90,7 @@ export {
 } from "./state.ts";
 
 /**
- * What a usual day does to cash at today's users, price, staff, servers and loan, leaving out one-offs such as events
+ * What a usual day does to cash at today's users, price, API calls, staff, servers and loan, leaving out one-offs such as events
  * and a migration's first-day charges: income, running costs and the difference. days is how many more days cash lasts
  * at that rate before going below £0, or null when the company isn't losing money.
  */
@@ -220,6 +223,12 @@ export interface Sim {
   featureGaps(state: GameState): FeatureGapView[];
   /** How the company did: final figures, spend by category, migrations and spend over time. */
   summarise(state: GameState): GameSummary;
+  /**
+   * The product's paid API: its price before it's bought; once bought, its calls, what they earn, the APIU they need
+   * against what the servers give (or on SaaS, the provider's fee per call), and any slowdown after an outage. Null on
+   * a product without one.
+   */
+  api(state: GameState): ApiView | null;
 }
 
 export function createSim(config: GameConfig = defaultConfig): Sim {
@@ -237,6 +246,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   const summary = createSummary(config, infra);
   const loan = createLoan(config, finance);
   const launch = createLaunch(config, servers, pricing);
+  const api = createApi(config, features, finance, infra.apiuOn);
 
   function newGame({ companyName, productType, model, seed, takeLoan = false }: NewGameParams): GameState {
     const name = companyName.trim();
@@ -280,6 +290,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       priceRises: {},
       addonPriceRise: 1,
       featureGaps: [],
+      api: null,
     };
     // The loan arrives with the upfront bill. A model that costs more up front than the company has would bankrupt it
     // on day 1, so it's refused instead: on-prem needs the loan.
@@ -363,6 +374,12 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         return servers.setManagedService(state, action.service, action.size);
       case "takeLoan":
         return loan.takeLoan(state);
+      case "buyApi":
+        return api.buyApi(state);
+      case "switchServer":
+        return servers.switchServer(state, action.id, action.gives);
+      case "setApiInstances":
+        return servers.setApiInstances(state, action.count);
       default:
         throw new SimError("unknown_action", "That action isn't recognised.");
     }
@@ -392,6 +409,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const { users, paidUsers, launchDay } = launched.state;
     const rng = grown.rng;
 
+    // The paid API's calls, served as far as the APIU go. Its traffic for tomorrow follows the users paying tonight.
+    const calls = api.apiDay(state, day, served.hoursDown, paidUsers, live);
+
     // Support answers what it can of today's tickets: the users' usual ones plus every burst, from downtime and from
     // a price rise's backlash. Satisfaction moves after, and sets tomorrow's growth and churn.
     const bursts = [...support.outageBursts(state, served.hoursDown), ...wave.bursts];
@@ -418,6 +438,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       ...care.entries,
       ...build.entries,
       ...pricing.incomeEntries(state, wave.refused + (ramping ? 0 : organic.pricedOut)),
+      ...calls.entries,
       ...infra.infrastructureEntries(state, state.model, state.users),
       ...migration.migrationCharges(state),
       ...features.addonEntries(state),
@@ -452,6 +473,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       conversionsToday: converted.conversionsToday,
       conversions: state.conversions + converted.conversionsToday,
       loan: repayment.loan,
+      api: calls.api,
     };
     // The migration moves on after the day is played and billed, so a model switch takes effect from tomorrow.
     const migrated = migration.migrationDay(played);
@@ -469,8 +491,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       ...staff.staffEntries(state),
     ];
     const repayment = state.loan ? Math.min(state.loan.dailyRepayment, state.loan.total - state.loan.repaid) : 0;
-    const dailyCosts = repayment - charges.reduce((sum, e) => sum + e.cashDelta, 0);
-    const dailyIncome = pricing.dailyIncome(state);
+    const calls = api.usualDay(state);
+    const dailyCosts = repayment + calls.fee - charges.reduce((sum, e) => sum + e.cashDelta, 0);
+    const dailyIncome = pricing.dailyIncome(state) + calls.income;
     const dailyNet = dailyIncome - dailyCosts;
     const days = dailyNet < 0 ? Math.max(0, Math.floor(state.cash / -dailyNet)) : null;
     return { dailyIncome, dailyCosts, dailyNet, days };
@@ -531,5 +554,6 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     events: (s) => events.events(load(s)),
     featureGaps: (s) => events.featureGaps(load(s)),
     summarise: (s) => summary.summarise(load(s)),
+    api: (s) => api.apiView(load(s)),
   };
 }

@@ -58,11 +58,13 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
   /**
    * The company's usual CU and DBU demand today: every user at the product's demand per user, before load variation,
    * seasons and events. A migration sizes the setup it builds to this, plus headroom (see Servers.sizeSetupFor), so a
-   * traffic spike on the day it starts doesn't oversize it.
+   * traffic spike on the day it starts doesn't oversize it. With a paid API, the APIU its calls need too.
    */
   function usualDemand(state: GameState): UnitDemand {
     const { cuPerUser, dbuPerUser } = config.productTypes[state.productType].demand;
-    return { cu: state.users * cuPerUser, dbu: state.users * dbuPerUser };
+    const demand: UnitDemand = { cu: state.users * cuPerUser, dbu: state.users * dbuPerUser };
+    if (state.api) demand.apiu = state.api.calls / config.api.callsPerApiu;
+    return demand;
   }
 
   /** A model's monthly and per-user prices, after any provider price rises. */
@@ -124,6 +126,12 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
 
   /** Units the servers give on a day, after any cut for missing ops. */
   const unitCapacity = (state: GameState, day: number) => servers.capacityOn(state, day, capacityFactor(state));
+
+  /**
+   * APIU for the paid API's calls on a day, after any cut for missing ops, or null on a model without servers: there
+   * the provider runs the API.
+   */
+  const apiuOn = (state: GameState, day: number) => (servers.hasServers(state.model) ? unitCapacity(state, day).apiu : null);
 
   /**
    * Capacity with the current model and staff, before any event scales it. On a model with servers, the load its
@@ -282,6 +290,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     upfrontEntries,
     upfrontCost,
     usualDemand,
+    apiuOn,
     sizeSetupFor: servers.sizeSetupFor,
     infrastructureEntries,
     dailyInfrastructure,

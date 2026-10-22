@@ -1,6 +1,7 @@
 // Shapes the API sends and receives. Type-only, so the web client can import it.
 import type {
   Action,
+  ApiView,
   ConfigErrors,
   ConfigField,
   ConfigOverrides,
@@ -265,6 +266,13 @@ export interface CompanyView {
    * every day, not just the day the event fired.
    */
   featureGaps: FeatureGapView[];
+  /**
+   * The product's paid API: its price until it's bought; then its calls a day and where they're heading, calls served
+   * and dropped on the day just played and what they earned, what a usual day earns, the APIU the calls need against
+   * what the ready servers give (null on SaaS, where the provider runs it for a fee per call) and any slow growth after
+   * an outage. Null on a product without one.
+   */
+  api: ApiView | null;
 }
 
 

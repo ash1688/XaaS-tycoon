@@ -254,6 +254,8 @@ function scaleServers(sim: Sim, state: GameState, strategy: Strategy): GameState
       database: (n) => units.dbu.capacity - n >= units.dbu.demand * 1.5,
       cache: (n) => units.ch.capacity - n >= units.ch.demand && units.dbu.capacity >= (units.dbu.demand + n) * 1.5,
       loadBalancer: (n) => coverage - n >= apps,
+      // The harness never buys an API, so has no API servers to drop.
+      api: () => false,
     };
     for (const type of ["app", "database", "cache", "loadBalancer"] as const) {
       const ready = ofType(type).filter((v) => v.status === "ready");

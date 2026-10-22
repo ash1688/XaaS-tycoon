@@ -8,15 +8,18 @@ import StepperControl from "../components/StepperControl.vue";
 
 // The company's servers, grouped by type and size. On IaaS they're rented and cancelled; on-prem they're bought, sit on
 // order until they arrive, and are sold back at a loss. Each type gives one kind of unit; a load balancer gives none,
-// but without enough of them extra app servers don't count.
+// but without enough of them extra app servers don't count. With a paid API, API servers give APIU, and app servers
+// can be switched between giving CU and giving APIU.
 const game = useGame();
-const UNIT: Record<ServerType, string> = { app: "CU", database: "DBU", cache: "CH", loadBalancer: "app servers" };
+const UNIT: Record<ServerType, string> = { app: "CU", database: "DBU", cache: "CH", loadBalancer: "app servers", api: "APIU" };
 const PLURAL: Record<ServerType, string> = {
   app: "App servers",
   database: "Databases",
   cache: "Caches",
   loadBalancer: "Load balancers",
+  api: "API servers",
 };
+const hasApi = computed(() => !!game.company?.api?.owned);
 
 const options = computed(() => game.company?.serverOptions ?? []);
 const servers = computed(() => game.company?.servers ?? []);
@@ -31,17 +34,27 @@ const sellBackPercent = computed(() => Math.round(100 * (options.value[0]?.sellB
 const days = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
 
 // Every type, each with what the company has of it by size, smallest first. On-prem, kit on order is listed apart.
+// API servers only with a paid API. App servers switched to APIU are counted apart from the CU.
 const groups = computed(() =>
-  SERVER_TYPES.map((type) => {
+  SERVER_TYPES.filter((type) => type !== "api" || hasApi.value || servers.value.some((s) => s.type === "api")).map((type) => {
     const sizes = SERVER_SIZES.map((size) => {
       const list = servers.value.filter((s) => s.type === type && s.size === size && (!buying.value || s.status === "ready"));
       const pending = list.filter((s) => s.status === "pending");
-      return { size, list, pending, units: list.reduce((sum, s) => sum + s.units, 0) };
+      const switched = list.filter((s) => s.apiu);
+      const units = list.filter((s) => !s.apiu).reduce((sum, s) => sum + s.units, 0);
+      return { size, list, pending, switched, units, apiu: switched.reduce((sum, s) => sum + s.units, 0) };
     }).filter((g) => g.list.length);
     const count = sizes.reduce((n, g) => n + g.list.length, 0);
-    return { type, sizes, count, units: sizes.reduce((sum, g) => sum + g.units, 0) };
+    const apiu = sizes.reduce((sum, g) => sum + g.apiu, 0);
+    return { type, sizes, count, units: sizes.reduce((sum, g) => sum + g.units, 0), apiu };
   }),
 );
+
+// Switching one app server of a size between CU and APIU: the newest that gives the other.
+async function switchOne(list: ServerView[], gives: "cu" | "apiu") {
+  const server = list.findLast((s) => s.apiu === (gives === "cu"));
+  if (server) await game.act({ type: "switchServer", id: server.id, gives });
+}
 const hasServers = computed(() => servers.value.length > 0);
 const onOrderOf = (type: ServerType) => game.onOrder.filter((s) => s.type === type).length;
 
@@ -61,7 +74,8 @@ const lb = computed(() => game.units?.loadBalancer);
 const lbStatus = computed(() => {
   const from = game.meta?.loadBalancerFrom ?? 2;
   const verb = game.addVerb;
-  const appCount = servers.value.filter((s) => s.type === "app").length;
+  // App servers switched to APIU serve API calls, which don't go through the load balancers.
+  const appCount = servers.value.filter((s) => s.type === "app" && !s.apiu).length;
   const balancers = servers.value.filter((s) => s.type === "loadBalancer");
   const coverage = balancers.reduce((sum, s) => sum + s.units, 0);
   const apps = `${appCount} app server${appCount === 1 ? "" : "s"}`;
@@ -124,7 +138,9 @@ const sizeFor = (type: ServerType): ServerSize =>
   "small";
 const ofSize = (type: ServerType, size: ServerSize) => servers.value.filter((s) => s.type === type && s.size === size);
 const optionFor = (type: ServerType) => options.value.find((o) => o.type === type && o.size === sizeFor(type));
-const one = (type: ServerType) => `${sizeFor(type)} ${typeName(type).toLowerCase()}`;
+// Names mid-sentence: lower case, but "API" keeps its capitals.
+const lower = (name: string) => (name.startsWith("API") ? name : name.toLowerCase());
+const one = (type: ServerType) => `${sizeFor(type)} ${lower(typeName(type))}`;
 const verbs = computed(() => (buying.value ? { add: "Buy", remove: "Sell" } : { add: "Rent", remove: "Cancel" }));
 
 function stepValue(type: ServerType) {
@@ -158,7 +174,7 @@ function stepNote(type: ServerType) {
     short > 0
       ? ` You'd need ${ops} ops in all and have ${game.company.ops}: hire ${short} more, or capacity is cut.`
       : ` You'd need ${ops} ops in all; you have ${game.company.ops}.`;
-  const appServers = servers.value.filter((s) => s.type === "app").length + 1;
+  const appServers = servers.value.filter((s) => s.type === "app" && !s.apiu).length + 1;
   const lbHint =
     type === "app" && appServers >= (game.meta?.loadBalancerFrom ?? 2)
       ? ` With ${appServers} app servers, you'll need load balancers to serve them all.`
@@ -217,6 +233,10 @@ async function cancel() {
         <strong>Load balancers:</strong> from {{ game.meta?.loadBalancerFrom ?? 2 }} app servers up, traffic only
         reaches the app servers a load balancer covers. Each size covers a set number of them.
       </li>
+      <li v-if="hasApi" data-testid="apiu-rule">
+        <strong>API calls:</strong> your API's calls need APIU. API servers give it, or switch an app server to give
+        APIU instead of CU, as many of either: that trades user capacity for API capacity.
+      </li>
     </ul>
 
     <p v-if="!hasServers" class="muted" data-testid="no-servers">
@@ -228,6 +248,7 @@ async function cancel() {
         <h3>{{ PLURAL[g.type] }}</h3>
         <span class="muted" :data-testid="`count-${g.type}`">
           {{ g.count }} {{ buying ? "in place" : "rented" }}<template v-if="g.count"> · {{ formatCount(g.units) }} {{ UNIT[g.type] }}</template
+          ><template v-if="g.apiu"> · {{ formatCount(g.apiu) }} APIU</template
           ><template v-if="buying && onOrderOf(g.type)"> · {{ onOrderOf(g.type) }} on order</template>
         </span>
       </div>
@@ -241,12 +262,33 @@ async function cancel() {
           <div class="server-info">
             <strong>{{ typeName(g.type) }} · {{ s.size }} × {{ s.list.length }}</strong>
             <span class="muted">
-              {{ formatCount(s.units) }} {{ UNIT[g.type] }} ·
+              {{ formatCount(s.units) }} {{ UNIT[g.type] }}<template v-if="s.apiu"> and {{ formatCount(s.apiu) }} APIU</template> ·
               {{ formatCash(s.list.reduce((sum, x) => sum + x.monthlyCost, 0)) }} a month{{ buying ? " to run" : "" }}
+            </span>
+            <span v-if="s.switched.length" class="managed-note" :data-testid="`switched-${s.size}`">
+              {{ s.switched.length }} switched to APIU, serving API calls instead of users
             </span>
             <span v-if="s.pending.length" class="pending-note" :data-testid="`pending-${g.type}-${s.size}`">
               {{ s.pending.length }} setting up, {{ readyWhen(s.pending[0]!) }}
             </span>
+          </div>
+          <div v-if="g.type === 'app' && hasApi" class="switch-buttons">
+            <button
+              class="ghost"
+              :disabled="game.busy || game.over || s.switched.length === s.list.length"
+              :data-testid="`switch-apiu-${s.size}`"
+              @click="switchOne(s.list, 'apiu')"
+            >
+              Switch one to APIU
+            </button>
+            <button
+              class="ghost"
+              :disabled="game.busy || game.over || !s.switched.length"
+              :data-testid="`switch-cu-${s.size}`"
+              @click="switchOne(s.list, 'cu')"
+            >
+              Switch one to CU
+            </button>
           </div>
         </li>
       </ul>
@@ -266,7 +308,7 @@ async function cancel() {
           </select>
         </label>
         <StepperControl
-          :label="`${sizeFor(g.type)} ${PLURAL[g.type].toLowerCase()}`"
+          :label="`${sizeFor(g.type)} ${lower(PLURAL[g.type])}`"
           :value="stepValue(g.type)"
           :down-label="`${verbs.remove} a ${one(g.type)}`"
           :up-label="`${verbs.add} a ${one(g.type)}`"
@@ -300,7 +342,7 @@ async function cancel() {
           <div
             class="order-meter"
             role="progressbar"
-            :aria-label="`${o.size} ${o.name.toLowerCase()} delivery`"
+            :aria-label="`${o.size} ${lower(o.name)} delivery`"
             :aria-valuenow="o.progress"
             aria-valuemin="0"
             aria-valuemax="100"
@@ -332,7 +374,7 @@ async function cancel() {
         <p v-if="game.error" class="error" role="alert">{{ game.error }}</p>
         <template v-if="buying">
           <p>
-            Sell a {{ cancelling.size }} {{ cancelling.name.toLowerCase() }}
+            Sell a {{ cancelling.size }} {{ lower(cancelling.name) }}
             ({{ formatCount(cancelling.units) }} {{ UNIT[cancelling.type] }})?
           </p>
           <p class="sell-note" data-testid="sell-note">
@@ -352,7 +394,7 @@ async function cancel() {
         </template>
         <template v-else>
           <p>
-            Cancel a {{ cancelling.size }} {{ cancelling.name.toLowerCase() }}
+            Cancel a {{ cancelling.size }} {{ lower(cancelling.name) }}
             ({{ formatCount(cancelling.units) }} {{ UNIT[cancelling.type] }}, {{ formatCash(cancelling.monthlyCost) }} a
             month)?
           </p>

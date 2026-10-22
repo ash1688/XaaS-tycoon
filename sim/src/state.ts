@@ -19,7 +19,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 21;
+export const GAME_STATE_VERSION = 22;
 
 /** Money spent in each category. */
 export type Spend = Record<SpendCategory, number>;
@@ -165,12 +165,31 @@ export interface Server {
   readyDay: number;
   /** What it was bought for, on a model that buys its servers. Selling it back refunds a share of this. */
   paid?: number;
+  /** An app server switched from giving CU to giving APIU, for the paid API's calls. Left out while it gives CU. */
+  apiu?: boolean;
+}
+
+/**
+ * The company's paid API, once bought. Traffic is the calls a day developers make; each day it moves towards a target
+ * set by paying users and features (see ApiConfig).
+ */
+export interface ApiState {
+  /** Calls a day developers make now: what the next day played brings, before any are dropped. */
+  calls: number;
+  /** Calls served on the day just played: each earned its price. */
+  served: number;
+  /** Calls dropped on the day just played: beyond the APIU, or while the service was down. */
+  dropped: number;
+  /** After an outage, API growth is slow until this day has been played. 0 before any outage. */
+  slowUntil: number;
 }
 
 /** CU and DBU demand on the day just played: what every user needed, before any cache. */
 export interface UnitDemand {
   cu: number;
   dbu: number;
+  /** APIU the paid API's calls need, when sizing a setup. Left out of the day's demand and with no API. */
+  apiu?: number;
 }
 
 /** A price change, for the summary. */
@@ -284,6 +303,8 @@ export interface GameState {
   conversionsToday: number;
   /** Free users who have started paying in all, the same way. */
   conversions: number;
+  /** The paid API, once bought: null until then, and on a product without one. */
+  api: ApiState | null;
 }
 
 /** Something the player does between days. */
@@ -329,7 +350,16 @@ export type Action =
    * Takes the bank loan, if it wasn't taken at the start: the money arrives at once, and repayments start the next day
    * played, at today's rate. One per company, and not with too few days left to repay it.
    */
-  | { type: "takeLoan" };
+  | { type: "takeLoan" }
+  /** Buys the product's paid API, charged at once. Calls start arriving from the next day played. */
+  | { type: "buyApi" }
+  /**
+   * Switches one of the company's app servers between giving CU and giving APIU, on a model where you add servers one
+   * at a time. It serves the other way from the next day played.
+   */
+  | { type: "switchServer"; id: number; gives: "cu" | "apiu" }
+  /** Sets how many API instances run on PaaS, from 0 to the platform's most, like the app instance count. */
+  | { type: "setApiInstances"; count: number };
 
 export interface NewGameParams {
   companyName: string;
@@ -362,7 +392,8 @@ export interface LogEntry {
     | "price"
     | "conversion"
     | "loan"
-    | "launch";
+    | "launch"
+    | "api";
 }
 
 export interface DayLog {

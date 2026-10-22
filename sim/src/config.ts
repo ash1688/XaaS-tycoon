@@ -20,9 +20,10 @@ export type SpendCategory = (typeof SPEND_CATEGORIES)[number];
 
 /**
  * Kinds of server. App servers give compute (CU), databases give database units (DBU) and caches give cache hits
- * (CH). A load balancer gives no units: it spreads traffic over app servers. Saved in game state, so don't rename.
+ * (CH). A load balancer gives no units: it spreads traffic over app servers. API servers give APIU, for the paid API's
+ * calls (see ApiConfig). Saved in game state, so don't rename.
  */
-export const SERVER_TYPES = ["app", "database", "cache", "loadBalancer"] as const;
+export const SERVER_TYPES = ["app", "database", "cache", "loadBalancer", "api"] as const;
 export type ServerType = (typeof SERVER_TYPES)[number];
 
 /** Every server type comes in these sizes, smallest first. Saved in game state, so don't rename. */
@@ -293,6 +294,23 @@ export interface ProductTypeConfig {
   support: ProductSupport;
   /** The fixed list of 3–5 features this product can have. */
   features: FeatureConfig[];
+  /** The paid API other businesses build on, for a product that would have one. Left out, the product has none. */
+  api?: ProductApiConfig;
+}
+
+/**
+ * A product's paid API: other businesses build on it, and each call earns a little (see ApiConfig). The company buys
+ * it once; calls then grow towards a target set by its paying users and features.
+ */
+export interface ProductApiConfig {
+  /** "Shop API". */
+  name: string;
+  /** One line on what other businesses do with it. */
+  blurb: string;
+  /** What buying it costs, once, charged at once (infrastructure). */
+  price: number;
+  /** API calls a day each paying user brings: developers build on popular platforms. */
+  callsPerPaidUser: number;
 }
 
 /** What happens on a day when load exceeds capacity. */
@@ -637,6 +655,38 @@ export interface LoanConfig {
   minDays: number;
 }
 
+/**
+ * Paid APIs, for a product that has one (see ProductApiConfig). Each call served earns pricePerCall. Calls need APIU,
+ * from API servers or app servers switched from CU to APIU (on PaaS, API instances): calls beyond the APIU are
+ * dropped, and their income with them. On SaaS the provider runs the API, so it needs no APIU, but takes a fee per
+ * call served.
+ *
+ * Traffic, the calls a day developers make, moves each day a share of the way towards a target: paying users ×
+ * callsPerPaidUser × (1 + perFeature × active features). Calls dropped for want of APIU slow it, in step with the
+ * share dropped. A day with an outage loses outageDrop of the traffic, and for slowDays after it growth is multiplied by
+ * slowGrowth: developers don't trust a flaky API.
+ */
+export interface ApiConfig {
+  /** What each call served earns (0.01 = 1p). */
+  pricePerCall: number;
+  /** Calls one APIU serves in a day. */
+  callsPerApiu: number;
+  /** Calls a day when the API is bought. */
+  startingCalls: number;
+  /** Share of the gap to the target traffic closed each day (0.1 = a tenth). */
+  dailyGrowth: number;
+  /** Each active feature or add-on adds this to the target's multiplier (0.15 = 15% more calls each). */
+  perFeature: number;
+  /** Share of the traffic lost on a day with an outage. */
+  outageDrop: number;
+  /** Days after an outage that API growth stays slow. */
+  slowDays: number;
+  /** Growth is multiplied by this while it's slow. */
+  slowGrowth: number;
+  /** On SaaS, the provider's fee for each call served, before any provider price rise. */
+  saasFeePerCall: number;
+}
+
 export interface GameConfig {
   startingCash: number;
   /** The last day played. The game ends once it has been played, so day finalDay is played in full. */
@@ -655,6 +705,7 @@ export interface GameConfig {
   support: SupportConfig;
   conversion: ConversionConfig;
   addons: AddonConfig;
+  api: ApiConfig;
   migration: MigrationConfig;
   /** Scripted events, in the order they're logged on a day when more than one is on. */
   events: EventConfig[];
@@ -693,6 +744,7 @@ export const defaultConfig: GameConfig = {
             database: { small: 450, medium: 700, large: 1_200, massive: 1_650 },
             cache: { small: 150, medium: 250, large: 400, massive: 550 },
             loadBalancer: { small: 250, medium: 400, large: 550, massive: 750 },
+            api: { small: 400, medium: 550, large: 1_000, massive: 1_400 },
           },
           sellBackShare: 0.4,
         },
@@ -701,9 +753,10 @@ export const defaultConfig: GameConfig = {
           database: { small: 35, medium: 55, large: 95, massive: 130 },
           cache: { small: 10, medium: 20, large: 30, massive: 45 },
           loadBalancer: { small: 20, medium: 30, large: 45, massive: 60 },
+          api: { small: 30, medium: 45, large: 80, massive: 110 },
         },
         readyDays: 7,
-        opsPerServer: { app: 0.25, database: 0.25, cache: 0.1, loadBalancer: 0.1 },
+        opsPerServer: { app: 0.25, database: 0.25, cache: 0.1, loadBalancer: 0.1, api: 0.25 },
       },
     },
     iaas: {
@@ -723,9 +776,10 @@ export const defaultConfig: GameConfig = {
           database: { small: 360, medium: 540, large: 960, massive: 1_320 },
           cache: { small: 120, medium: 180, large: 320, massive: 440 },
           loadBalancer: { small: 200, medium: 300, large: 450, massive: 600 },
+          api: { small: 300, medium: 450, large: 800, massive: 1_100 },
         },
         readyDays: 1,
-        opsPerServer: { app: 0.2, database: 0.2, cache: 0.1, loadBalancer: 0.1 },
+        opsPerServer: { app: 0.2, database: 0.2, cache: 0.1, loadBalancer: 0.1, api: 0.2 },
       },
     },
     paas: {
@@ -746,6 +800,7 @@ export const defaultConfig: GameConfig = {
       servers: {
         monthlyCost: {
           app: { medium: 900 },
+          api: { medium: 900 },
           database: { small: 900, medium: 2_000, large: 3_800, massive: 7_200 },
           cache: { small: 300, medium: 650, large: 1_200, massive: 2_200 },
         },
@@ -828,6 +883,13 @@ export const defaultConfig: GameConfig = {
           addonPricePerUser: 0.015,
         },
       ],
+      // Other shops, marketplaces and delivery firms check stock and place orders through it.
+      api: {
+        name: "Shop API",
+        blurb: "Other businesses check stock, place orders and track deliveries through your shop.",
+        price: 4_000,
+        callsPerPaidUser: 3,
+      },
     },
     social: {
       name: "Social network",
@@ -966,6 +1028,12 @@ export const defaultConfig: GameConfig = {
         blurb: "Spreads traffic over your app servers. Needed once you run 2 or more.",
         units: { small: 2, medium: 4, large: 8, massive: 16 },
       },
+      // The same sizes as an app server, so switching an app server to APIU gives as many APIU as it gave CU.
+      api: {
+        name: "API server",
+        blurb: "Serves your paid API's calls: API units (APIU).",
+        units: { small: 6, medium: 10, large: 20, massive: 30 },
+      },
     },
     loadBalancerFrom: 2,
     cacheableShare: 0.5,
@@ -1029,6 +1097,20 @@ export const defaultConfig: GameConfig = {
   },
   // A 20-day feature costs £2,000 to set up: all four on day 1 would take half the starting cash.
   addons: { minConfigDevelopers: 2, setupFeePerDevDay: 100 },
+  // An APIU serves 1,000 calls a day, so a small API server (6 APIU) earns about £60 a day when full, for £300 a month
+  // on IaaS. A CU earns far more from users, so switching app servers to APIU only pays with CU to spare. A shop with
+  // 3,000 paying users heads for 9,000 calls a day (£90), and more with features. On SaaS the provider keeps 0.4p.
+  api: {
+    pricePerCall: 0.01,
+    callsPerApiu: 1_000,
+    startingCalls: 2_000,
+    dailyGrowth: 0.1,
+    perFeature: 0.15,
+    outageDrop: 0.2,
+    slowDays: 7,
+    slowGrowth: 0.25,
+    saasFeePerCall: 0.004,
+  },
   migration: {
     phases: {
       planning: { name: "Planning", days: 5 },

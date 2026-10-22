@@ -22,7 +22,7 @@ npm run -s play -- summary <game>
   `npm run -s play -- do <game> "preview 8; quote iaas"`.
 - `next [days]` (inside `do`) moves time on, 7 days by default, and **stops early** when something needs a
   decision: an event that hurts, an outage, a built feature, a server arriving, capacity running out, satisfaction
-  falling, cash about to run out, or the price lock ending. Any commands after a stop are skipped. Events that need
+  falling, cash about to run out, the price lock ending, or paid API calls starting to be dropped. Any commands after a stop are skipped. Events that need
   nothing from you are shown but don't stop time.
 - `preview <price>` and `quote <model>` show what a price change or migration would do without doing it.
 - `summary` shows the final figures once the game is over.
