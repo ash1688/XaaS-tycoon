@@ -17,10 +17,10 @@ test("on-prem, buying a server charges it up front and shows it on order, counti
     data: { name: "Kit Ltd", productType: "social", model: "onprem", takeLoan: true },
   });
   const { id } = await created.json();
-  // A large app server and database bought on day 1 arrive on day 11, and the users start arriving with them.
+  // A large app server and database bought on day 1 arrive on day 8, and the users start arriving with them.
   const { cash, day, launch: started } = await launch(request, code, id, "onprem");
-  expect(started.day).toBe(11);
-  expect(day).toBe(13);
+  expect(started.day).toBe(8);
+  expect(day).toBe(10);
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
@@ -38,7 +38,7 @@ test("on-prem, buying a server charges it up front and shows it on order, counti
   await expect(note).toContainText("6 CU");
   await expect(note).toContainText("£400 up front");
   await expect(note).toContainText("£30 a month");
-  await expect(note).toContainText("arrives in 10 days");
+  await expect(note).toContainText("arrives in 7 days");
   await servers.getByRole("button", { name: "Buy a small app server" }).click();
   await expect(servers.getByTestId("step-app-value")).toHaveText("1 small (1 on order)");
   // Still on order, so there's none to sell yet.
@@ -50,13 +50,13 @@ test("on-prem, buying a server charges it up front and shows it on order, counti
   expect(bought.cash).toBe(cash - 400);
   const order = servers.getByTestId("on-order").locator('[data-order="app-small"]');
   await expect(order).toContainText("App server · small");
-  await expect(order).toContainText("Arrives in 10 days");
+  await expect(order).toContainText("Arrives in 7 days");
   await expect(servers.getByTestId("on-order")).toContainText("Orders can't be cancelled");
 
   // A day on, one fewer day to wait; Home's capacity card notes it.
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`14 of ${E2E_FINAL_DAY}`);
-  await expect(order).toContainText("Arrives in 9 days");
+  await expect(student.getByTestId("day")).toContainText(`11 of ${E2E_FINAL_DAY}`);
+  await expect(order).toContainText("Arrives in 6 days");
 
   // Selling says what you get back, at a loss. Keep it, though.
   await servers.getByTestId("size-app").selectOption("large");
@@ -66,5 +66,5 @@ test("on-prem, buying a server charges it up front and shows it on order, counti
   await sell.getByRole("button", { name: "Keep it" }).click();
 
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Home", exact: true }).click();
-  await expect(student.getByTestId("home-on-order")).toContainText("1 server on order, the next arriving in 9 days");
+  await expect(student.getByTestId("home-on-order")).toContainText("1 server on order, the next arriving in 6 days");
 });
