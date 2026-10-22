@@ -5,6 +5,7 @@ import {
   SERVER_SIZES,
   SERVER_TYPES,
   STAFF_POOLS,
+  type CustomerTypeId,
   type ManagedService,
   type MigrationPhase,
   type ModelId,
@@ -19,7 +20,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 21;
+export const GAME_STATE_VERSION = 22;
 
 /** Money spent in each category. */
 export type Spend = Record<SpendCategory, number>;
@@ -219,6 +220,11 @@ export interface GameState {
   users: number;
   /** The users who pay. The rest of `users` are on the free tier. */
   paidUsers: number;
+  /**
+   * Each customer type's share of the users, adding up to 1: the product's mix to begin with. A price change's reaction
+   * is each type's reaction weighted by its share.
+   */
+  customerMix: Record<CustomerTypeId, number>;
   /** The monthly price each paying user pays, a day's share at a time. A change applies from the next day played. */
   price: number;
   /** The wave from the last price change, kept after it ends; null before any change. */

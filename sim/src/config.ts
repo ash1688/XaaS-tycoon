@@ -7,6 +7,10 @@ export type ModelId = (typeof MODEL_IDS)[number];
 export const PRODUCT_TYPE_IDS = ["ecommerce", "social", "video"] as const;
 export type ProductTypeId = (typeof PRODUCT_TYPE_IDS)[number];
 
+/** Customer types, from the least willing to pay to the most. Saved in game state, so don't rename. */
+export const CUSTOMER_TYPE_IDS = ["casual", "enthusiasts", "professionals", "businesses"] as const;
+export type CustomerTypeId = (typeof CUSTOMER_TYPE_IDS)[number];
+
 export const STAFF_POOLS = ["developers", "ops", "support"] as const;
 export type StaffPool = (typeof STAFF_POOLS)[number];
 
@@ -262,6 +266,11 @@ export interface ProductPricing {
    * ConversionConfig for what raises and lowers it.
    */
   conversionRate: number;
+  /**
+   * The product's customer mix: each customer type's share of its users. Scaled to add up to 1, so they can be set
+   * as shares or as percentages.
+   */
+  customerMix: Record<CustomerTypeId, number>;
 }
 
 /** How many support tickets a product's users raise. Free users raise them too, but fewer. */
@@ -364,7 +373,9 @@ export interface PricingConfig {
   waveCurve: number;
   /**
    * Share of paying users a rise affects at d = 1 (doubling a fair price), before the cap. Each affected user leaves
-   * or drops to free. The share is riseStrength × d^waveCurve × (new price ÷ fair price)^dearness.
+   * or drops to free. The share is riseStrength × d^waveCurve × (new price ÷ fair price)^dearness. Each customer type
+   * works this out against its own price threshold in place of the fair price, and the reaction is their weighted
+   * average (see CustomerTypeConfig).
    */
   riseStrength: number;
   /**
@@ -379,7 +390,10 @@ export interface PricingConfig {
    * a price many times what it's worth.
    */
   maxRiseShare: number;
-  /** Of the paying users a rise affects, the share who drop to the free tier. The rest leave altogether. */
+  /**
+   * Of the paying users who stop paying each day (over the price, support or downtime), the share who drop to the free
+   * tier. The rest leave altogether. A rise's wave uses each customer type's own share instead (toFreeShare).
+   */
   dropToFreeShare: number;
   /** Support tickets each affected user raises over a rise's backlash: complaints, cancellations, refund requests. */
   backlashTicketsPerUser: number;
@@ -398,8 +412,9 @@ export interface PricingConfig {
   priceMemoryDays: number;
   /**
    * Share of paying users who stop paying each day at twice the fair price: priceChurn × (price ÷ fair price − 1)²,
-   * so barely any just above the fair price and most of them far above it. At most maxPriceChurn a day. Like a
-   * rise's, dropToFreeShare of them drop to free and the rest leave.
+   * so barely any just above the fair price and most of them far above it. At most maxPriceChurn a day. Each customer
+   * type works this out against its own price threshold, weighted by its share of users. dropToFreeShare of them drop
+   * to free and the rest leave.
    */
   priceChurn: number;
   maxPriceChurn: number;
@@ -626,6 +641,22 @@ export interface LaunchConfig {
  * With the defaults over 180 days: taken at the start, 10% (£216 a day for 179 days, £38,664 in all); on day 60,
  * 21.8% (£356 a day for 120 days, £42,720); on day 120, 33.8% (£781 a day for 60 days, £46,860).
  */
+/**
+ * A customer type: a group of users with its own price threshold. A price rise hits each type as the alpha's rise hit
+ * everyone, but measured against the type's threshold rather than the fair price, so casual users react hard where
+ * businesses barely notice. The price reaction is each type's reaction weighted by its share of users (see
+ * ProductPricing.customerMix); daily price churn and sticker shock are weighted the same way.
+ */
+export interface CustomerTypeConfig {
+  name: string;
+  /** One line on who they are. */
+  blurb: string;
+  /** The type's price threshold, as a multiple of the product's fair price (2 = twice the fair price). */
+  thresholdMultiple: number;
+  /** Of the type's paying users a price rise loses, the share who drop to free. The rest leave. */
+  toFreeShare: number;
+}
+
 export interface LoanConfig {
   /** What the bank lends. */
   amount: number;
@@ -645,6 +676,7 @@ export interface GameConfig {
   launch: LaunchConfig;
   models: Record<ModelId, ModelConfig>;
   productTypes: Record<ProductTypeId, ProductTypeConfig>;
+  customerTypes: Record<CustomerTypeId, CustomerTypeConfig>;
   staff: Record<StaffPool, StaffPoolConfig>;
   capacity: CapacityConfig;
   servers: ServersConfig;
@@ -791,7 +823,13 @@ export const defaultConfig: GameConfig = {
       // small app server serves 3,000 shoppers, a medium 5,000, a large 10,000 and a massive 15,000.
       demand: { cuPerUser: 0.002, dbuPerUser: 0.002 },
       // Shoppers mostly pay: a shop's free tier is browsing without an account.
-      pricing: { fairPrice: 5, freeShare: 0.3, conversionRate: 0.0012 },
+      // Shops sell to businesses as well as shoppers, so it's the most upmarket mix.
+      pricing: {
+        fairPrice: 5,
+        freeShare: 0.3,
+        conversionRate: 0.0012,
+        customerMix: { casual: 0.35, enthusiasts: 0.25, professionals: 0.2, businesses: 0.2 },
+      },
       // Orders go wrong: paying shoppers raise as many tickets as any product's.
       support: { ticketsPerPaidUser: 0.01, ticketsPerFreeUser: 0.003 },
       features: [
@@ -844,7 +882,13 @@ export const defaultConfig: GameConfig = {
       // Feeds and friends lists: light on both, but there are a lot of users.
       demand: { cuPerUser: 0.0015, dbuPerUser: 0.0015 },
       // Mostly free, like most social networks: a few pay for extras.
-      pricing: { fairPrice: 5, freeShare: 0.7, conversionRate: 0.0008 },
+      // Mostly casual users, as in the design's worked example.
+      pricing: {
+        fairPrice: 5,
+        freeShare: 0.7,
+        conversionRate: 0.0008,
+        customerMix: { casual: 0.7, enthusiasts: 0.2, professionals: 0.08, businesses: 0.02 },
+      },
       // Few tickets per user, but a lot of users.
       support: { ticketsPerPaidUser: 0.006, ticketsPerFreeUser: 0.0015 },
       features: [
@@ -896,7 +940,13 @@ export const defaultConfig: GameConfig = {
       },
       // Encoding and streaming: compute-heavy, with a light database. Its big, steady server bill is where owning kit pays.
       demand: { cuPerUser: 0.004, dbuPerUser: 0.002 },
-      pricing: { fairPrice: 9, freeShare: 0.6, conversionRate: 0.001 },
+      // Viewers, a good share of keen fans and some creators who earn from it.
+      pricing: {
+        fairPrice: 9,
+        freeShare: 0.6,
+        conversionRate: 0.001,
+        customerMix: { casual: 0.55, enthusiasts: 0.3, professionals: 0.12, businesses: 0.03 },
+      },
       support: { ticketsPerPaidUser: 0.01, ticketsPerFreeUser: 0.003 },
       features: [
         {
@@ -933,6 +983,13 @@ export const defaultConfig: GameConfig = {
         },
       ],
     },
+  },
+  // Casual users react at the fair price, as everyone did in the alpha; the others put up with more, and go free less.
+  customerTypes: {
+    casual: { name: "Casual users", blurb: "Use it now and then. Low willingness to pay; go free readily.", thresholdMultiple: 1, toFreeShare: 0.6 },
+    enthusiasts: { name: "Enthusiasts", blurb: "Keen regular users. Will pay a bit more; sometimes go free.", thresholdMultiple: 1.5, toFreeShare: 0.4 },
+    professionals: { name: "Professionals", blurb: "Use it for work. Pay well; rarely go free.", thresholdMultiple: 2.5, toFreeShare: 0.2 },
+    businesses: { name: "Businesses", blurb: "Run on it. Pay the most; rarely go free, they leave.", thresholdMultiple: 4, toFreeShare: 0.1 },
   },
   staff: {
     developers: { name: "Developers", personName: "developer", dayRate: 120, startingCount: 2 },

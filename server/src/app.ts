@@ -323,6 +323,7 @@ export async function buildApp(opts: AppOptions) {
       income: state.income,
       priceWave: sim.priceWave(state),
       priceLockDaysLeft: sim.priceLockDaysLeft(state),
+      customerMix: sim.customerMix(state),
       conversion: sim.conversion(state),
       ticketsToday: state.ticketsToday,
       burstTickets: state.burstTickets,

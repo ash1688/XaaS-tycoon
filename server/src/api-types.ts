@@ -5,6 +5,7 @@ import type {
   ConfigField,
   ConfigOverrides,
   ConversionView,
+  CustomerMixView,
   DayLog,
   EventView,
   FeatureGapView,
@@ -167,6 +168,11 @@ export interface CompanyView {
   priceWave: PriceWaveView | null;
   /** Days until the price can be changed again after the last change. 0 when it can. */
   priceLockDaysLeft: number;
+  /**
+   * The customer mix: each customer type's share of users, least willing to pay first, with its price threshold to
+   * mark on the bar and whether the price is over it.
+   */
+  customerMix: CustomerMixView;
   /**
    * Free-to-paid conversion: free users who started paying on the day just played and in all (a price wave's upgrades
    * aren't counted here), the base and current daily rates (from the next day played), recent uptime, and each

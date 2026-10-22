@@ -25,6 +25,8 @@ npm run -s play -- summary <game>
   falling, cash about to run out, or the price lock ending. Any commands after a stop are skipped. Events that need
   nothing from you are shown but don't stop time.
 - `preview <price>` and `quote <model>` show what a price change or migration would do without doing it.
+  A price rise's reaction is each customer type's reaction weighted by its share of users: the status shows your
+  customer mix, each type's price threshold, and `!` where your price is over it.
 - `summary` shows the final figures once the game is over.
 
 Run `look` whenever you're unsure what you can do. Keep going until the game ends: day 180, or bankruptcy.

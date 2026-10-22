@@ -2582,6 +2582,29 @@ describe("pricing and income", () => {
     expect((await act({ type: "setPrice", price: 40 })).statusCode).toBe(200);
   });
 
+  it("shows the customer mix with each type's threshold, and a rise's reaction weighted by it", async () => {
+    const { company, url } = await setup({
+      "productTypes.ecommerce.pricing.freeShare": 0.5,
+      "productTypes.ecommerce.pricing.customerMix.casual": 0.5,
+      "productTypes.ecommerce.pricing.customerMix.enthusiasts": 0.5,
+      "productTypes.ecommerce.pricing.customerMix.professionals": 0,
+      "productTypes.ecommerce.pricing.customerMix.businesses": 0,
+      "customerTypes.enthusiasts.thresholdMultiple": 2,
+    });
+    expect(company.customerMix).toMatchObject({ price: fairPrice, fairPrice });
+    expect(company.customerMix.types.map(({ id, share, threshold, overThreshold }) => ({ id, share, threshold, overThreshold }))).toEqual([
+      { id: "casual", share: 0.5, threshold: fairPrice, overThreshold: false },
+      { id: "enthusiasts", share: 0.5, threshold: fairPrice * 2, overThreshold: false },
+      { id: "professionals", share: 0, threshold: fairPrice * sim.config.customerTypes.professionals.thresholdMultiple, overThreshold: false },
+      { id: "businesses", share: 0, threshold: fairPrice * sim.config.customerTypes.businesses.thresholdMultiple, overThreshold: false },
+    ]);
+    const body = (await app.inject({ method: "GET", url: `${url}/price-preview?price=${fairPrice * 1.5}` })).json<PricePreviewView>();
+    const [casual, enthusiasts] = body.reactions;
+    expect(casual!.reaction).toBeGreaterThan(enthusiasts!.reaction);
+    expect(body.reaction).toBeCloseTo(0.5 * casual!.reaction + 0.5 * enthusiasts!.reaction, 12);
+    expect(body.total.left + body.total.toFree).toBe(Math.round(company.paidUsers * body.reaction));
+  });
+
   it("previews a price without changing anything, and the preview matches the wave that follows", async () => {
     const { url, act, next } = await setup({ "productTypes.ecommerce.pricing.freeShare": 0.5 });
     const preview = async (price: unknown) => app.inject({ method: "GET", url: `${url}/price-preview?price=${price}` });
