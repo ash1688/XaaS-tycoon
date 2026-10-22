@@ -158,6 +158,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     }
   }
   add("outage.growthMultiplier", "Customers", "", "Growth on an outage day", "Growth is multiplied by this on a day with an outage.", SHARE);
+  add("outage.paidChurnPerHour", "Customers", "", "Payers lost per hour down", "Share of paying users who stop paying for each hour of downtime (0.002 = 0.2%).", range(0, 0.1, 0.0005));
   add("pricing.growthSensitivity", "Customers", "", "Price effect on growth", "Growth is multiplied by (price ÷ fair price) to minus this. 0 for no effect.", range(0, 5, 0.05));
   add("pricing.maxGrowthBoost", "Customers", "", "Most a low price speeds growth", "A price below the fair price multiplies growth by at most this.", range(1, 10, 0.05));
   add("pricing.paidShareSensitivity", "Customers", "", "Price effect on new payers", "The paid share of new users is multiplied by (price ÷ fair price) to minus this.", range(0, 5, 0.05));
@@ -177,6 +178,9 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("pricing.maxCutGain", "Customers", W, "Cut: most new users", "The most new users one cut can bring, as a share of users.", range(0, 5, 0.05));
   add("pricing.cutUpgradeStrength", "Customers", W, "Cut: upgrades", "A cut turns this × (cut ÷ fair price)^curve of free users into payers, before the cap.", range(0, 5, 0.05));
   add("pricing.maxCutUpgrade", "Customers", W, "Cut: most upgrades", "The most of the free users one cut can turn into payers.", SHARE);
+  add("pricing.priceMemoryDays", "Customers", W, "Price memory (days)", "A cut only counts below the lowest price customers remember from this many days, so undoing a rise brings no wave.", range(0, 180, 1));
+  add("pricing.priceChurn", "Customers", "", "Payers lost to a dear price", "Share of paying users who stop paying each day at twice the fair price; × (price ÷ fair − 1)² in general.", range(0, 0.5, 0.001));
+  add("pricing.maxPriceChurn", "Customers", "", "Most payers lost to a dear price a day", "The most of the paying users a dear price can lose in a day.", SHARE);
 
   // Customers: free-to-paid conversion. The daily rate is the product's base rate × each multiplier, at most the cap.
   const C = "Free-to-paid conversion";
@@ -204,6 +208,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("support.poorSatisfaction", "Customers", "Support", "Poor satisfaction %", "Falling below this is logged as a warning.", range(0, 100, 1));
   add("support.growthAtZero", "Customers", "Support", "Growth at 0% satisfaction", "Daily growth is multiplied by this at 0% satisfaction, rising to 1 at good satisfaction.", SHARE);
   add("support.churnAtZero", "Customers", "Support", "Churn at 0% satisfaction", "Share of users who leave each day at 0% satisfaction, falling to none at good satisfaction.", range(0, 0.5, 0.001));
+  add("support.paidChurnAtZero", "Customers", "Support", "Payers lost at 0% satisfaction", "On top, the share of paying users who stop paying each day at 0% satisfaction, falling to none at good satisfaction.", range(0, 0.5, 0.001));
 
   // Infrastructure
   for (const p of PRODUCT_TYPE_IDS) {
@@ -274,6 +279,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   }
   add("support.ticketsPerPerson", "People", "", "Tickets per support person", "Tickets one support person clears a day.", range(1, 1_000, 1));
   add("addons.minConfigDevelopers", "People", "", "Developers to configure add-ons", "On SaaS, add-ons can't be bought with fewer developers than this.", HEADCOUNT);
+  add("addons.setupFeePerDevDay", "Money", "", "Add-on set-up fee per developer-day", "On SaaS, an add-on costs this × the developer-days it would take to build, once, when it's bought.", range(0, 10_000, 10));
 
   // Migration
   for (const phase of MIGRATION_PHASES) {

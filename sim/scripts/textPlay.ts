@@ -206,7 +206,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
     const verb = state.model === "saas" ? "addon" : "build";
     lines.push(
       `  ${verb} <${notStarted.map((f) => f.id).join("|")}>   ${notStarted
-        .map((f) => (state.model === "saas" ? `${f.id} ${money(f.addonPricePerUser)}/user/month` : `${f.id} ${f.devDays} dev-days`))
+        .map((f) => (state.model === "saas" ? `${f.id} ${money(f.addonSetupFee)} + ${money(f.addonPricePerUser)}/user/month` : `${f.id} ${f.devDays} dev-days`))
         .join(", ")}`,
     );
   }
@@ -357,7 +357,8 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
       lines: [
         `quote ${q.from}→${q.to}: ${q.days} days, ${money(q.total)} in all (upfront ${money(q.upfrontCost)}, double billing ${money(q.doubleBilling)}, ` +
           `exit ${money(q.exitPenalty)}, sell back ${money(q.sellBack)}); new setup ${money(q.setupMonthly)}/month, ops needed ${q.opsNeeded}` +
-          (q.lostAddons.length ? `; loses add-ons: ${q.lostAddons.map((a) => a.name).join(", ")}` : ""),
+          (q.lostAddons.length ? `; loses add-ons: ${q.lostAddons.map((a) => a.name).join(", ")}` : "") +
+          (q.warning ? `. Warning: ${q.warning}` : ""),
       ],
     };
   }
