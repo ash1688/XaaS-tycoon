@@ -23,6 +23,7 @@ import type {
   ModelId,
   ProductTypeId,
   ProviderView,
+  RunwayView,
   ServerOption,
   ServerView,
   Spend,
@@ -132,6 +133,11 @@ export interface CompanyView {
    * they've arrived).
    */
   opsNeeded: number;
+  /**
+   * Ops staff the company will need once every server it has is in service: on-prem, kit on order included. The same
+   * as opsNeeded where nothing is on order.
+   */
+  opsNeededOnceReady: number;
   /** What the current headcount costs per day. */
   dailyStaffCost: number;
   /**
@@ -234,6 +240,12 @@ export interface CompanyView {
    * repayment and the days to repay it. Null when it can't be taken: one has been, or there are too few days left.
    */
   loanQuote: LoanQuote | null;
+  /**
+   * What a usual day does to cash at today's figures: income, running costs (staff, infrastructure, add-ons, a
+   * migration's second bill and loan repayments) and the difference, with the days of cash left at that rate, or null
+   * when the company isn't losing money.
+   */
+  runway: RunwayView;
   /** The product's features, with each one's status (built, building or a SaaS add-on) and build progress. */
   features: FeatureView[];
   /**

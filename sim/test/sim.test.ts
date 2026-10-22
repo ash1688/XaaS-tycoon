@@ -624,6 +624,18 @@ describe("staff", () => {
     expect(state).toMatchObject({ developers: 1, ops: 1, support: 1 });
   });
 
+  it("hires and lets go several at once", () => {
+    const many = (type: "hire" | "letGo", pool: StaffPool, count: number): Action => ({ type, pool, count });
+    const state = apply(start(), many("hire", "support", 25), many("letGo", "support", 10));
+    expect(state.support).toBe(15);
+    expect(() => apply(state, many("letGo", "support", 16))).toThrow(
+      expect.objectContaining({ code: "no_staff", message: "You only have 15 support to let go." }),
+    );
+    for (const count of [0, -1, 1.5]) {
+      expect(() => apply(state, many("hire", "ops", count))).toThrow(expect.objectContaining({ code: "bad_count" }));
+    }
+  });
+
   it("does not move time on or touch cash", () => {
     const state = apply(start(), hire("ops"));
     expect(state).toMatchObject({ day: 1, cash: 1000 });
@@ -1209,6 +1221,12 @@ describe("servers on IaaS", () => {
     expect(flat.units(three)!.cu.capacity).toBe(20);
     expect(flat.units({ ...three, servers: [...three.servers, { id: 9, type: "loadBalancer", size: "small", readyDay: 1 }] })!.cu.capacity).toBe(30);
 
+    // Counting servers still being set up, so the shortfall shows the day the second app server is rented.
+    const renting = rent(one, "app", "small");
+    expect(lb(renting)).toMatchObject({ appServers: 1, uncovered: 0 });
+    expect(flat.units(renting)!.loadBalancerOnceReady).toMatchObject({ appServers: 2, needed: true, uncovered: 1 });
+    expect(flat.units(rent(renting, "loadBalancer", "small"))!.loadBalancerOnceReady).toMatchObject({ uncovered: 0 });
+
     // Uncovered app servers can't stop an outage.
     const crowded = withUsers(fleet(begin(), ["app", "small"], ["app", "small"], BIG_DB), 1_500);
     expect(outages(flat.advance(crowded).log)).toHaveLength(1);
@@ -1548,6 +1566,8 @@ describe("servers on-prem", () => {
     expect(own.opsNeeded("onprem")).toBe(2);
     const ordered = buy(buy(state, "cache", "small"), "app", "small");
     expect(own.opsNeededNow(ordered)).toBe(2);
+    // Kit on order needs its ops once it arrives: shown ahead.
+    expect(own.opsNeededOnceReady(ordered)).toBe(4);
     expect(own.opsNeededNow(own.advance(ordered, 10).state)).toBe(4);
     expect(own.opsNeededNow(sell(own.advance(ordered, 10).state, 4))).toBe(3);
     // With 1 of the 2 ops needed, each tier keeps 40% + 60% × ½ = 70%.
@@ -2209,6 +2229,29 @@ describe("bankruptcy", () => {
       cash: 0,
       status: "playing",
     });
+  });
+});
+
+describe("runway", () => {
+  const apply = (state: GameState, ...actions: Action[]) => actions.reduce((st, a) => sim.applyAction(st, a), state);
+
+  it("is a usual day's costs against income, and the days of cash that leaves", () => {
+    // £20 a day on IaaS and nothing coming in: £1,000 lasts 50 days.
+    expect(sim.runway(start())).toEqual({ dailyIncome: 0, dailyCosts: 20, dailyNet: -20, days: 50 });
+    const staffed = apply(start(), { type: "hire", pool: "developers", count: 2 }, { type: "hire", pool: "ops" });
+    const runway = sim.runway(staffed);
+    expect(runway).toMatchObject({ dailyCosts: 20 + 14 + 3, dailyNet: -37, days: 27 });
+    // The same as the day actually played costs.
+    expect(sim.advance(staffed).state.cash - staffed.cash).toBe(runway.dailyNet);
+  });
+
+  it("counts loan repayments, and is null days when not losing money", () => {
+    const rich = createSim({ ...config, startingCash: 100_000 });
+    const borrowed = rich.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, takeLoan: true });
+    expect(rich.runway(borrowed)).toMatchObject({ dailyCosts: 20 + 110, dailyNet: -130 });
+    const paying = { ...start(), users: 10_000, paidUsers: 10_000 };
+    expect(sim.runway(paying).dailyIncome).toBeGreaterThan(20);
+    expect(sim.runway(paying).days).toBeNull();
   });
 });
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { watch } from "vue";
 import { formatCash } from "../../api";
-import { useGame } from "../../game";
+import { days, useGame } from "../../game";
 import CashChart from "../../components/CashChart.vue";
 import BalanceSheet from "../../panels/BalanceSheet.vue";
 import LoanPanel from "../../panels/LoanPanel.vue";
@@ -44,8 +44,26 @@ watch(
           <span class="label">Loan repayment a day</span>
           <span class="value">{{ formatCash(game.company.loan.dailyRepayment) }}</span>
         </div>
+        <div v-if="!game.over" class="stat" data-testid="finance-runway">
+          <span class="label">Runway</span>
+          <span :class="['value', { neg: game.lowCash }]">
+            {{
+              game.company.runway.days === null
+                ? "Not losing money"
+                : game.company.runway.days
+                  ? days(game.company.runway.days)
+                  : "Under a day"
+            }}
+          </span>
+          <small>
+            {{ game.company.runway.dailyNet < 0 ? "−" : "+" }}{{ formatCash(Math.abs(game.company.runway.dailyNet)) }} on a
+            usual day
+          </small>
+        </div>
       </div>
-      <p class="muted">Below £0 the company is bankrupt and the game ends.</p>
+      <p class="muted">
+        Below £0 the company is bankrupt and the game ends. Runway is how long your cash lasts at today's income and costs.
+      </p>
     </section>
     <BalanceSheet />
     <LoanPanel />

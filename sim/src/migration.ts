@@ -372,5 +372,5 @@ export function createMigration(
     return { state: switched, entries };
   }
 
-  return { startMigration, migrationQuote, migrationCharges, migration, migrationDay };
+  return { startMigration, migrationQuote, migrationCharges, newSetupEntries, migration, migrationDay };
 }

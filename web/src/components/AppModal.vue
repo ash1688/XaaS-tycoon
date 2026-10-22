@@ -4,6 +4,8 @@ import { useGameIfAny } from "../game";
 
 // A modal dialog: labelled by its title, keeps keyboard focus inside while open, closes on Escape, the close button or
 // a click on the backdrop, and hands focus back to whatever opened it. The rest of the page is inert while it's open.
+// A backdrop click straight after opening is ignored: it's the second click of a double-click on whatever opened it,
+// which used to close the modal before it could be read.
 const props = defineProps<{ open: boolean; title: string }>();
 const emit = defineEmits<{ close: [] }>();
 
@@ -13,6 +15,12 @@ let trigger: HTMLElement | null = null;
 // In a game, each modal goes in the playtest log when it closes, with how long it was open.
 const game = useGameIfAny();
 let openedAt = 0;
+
+const BACKDROP_GRACE_MS = 500;
+function onBackdrop() {
+  if (Date.now() - openedAt < BACKDROP_GRACE_MS) return;
+  emit("close");
+}
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -73,7 +81,7 @@ function onKeydown(e: KeyboardEvent) {
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="modal-backdrop" @mousedown.self="emit('close')">
+    <div v-if="open" class="modal-backdrop" @mousedown.self="onBackdrop">
       <div
         ref="dialog"
         class="modal"

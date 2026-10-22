@@ -311,6 +311,7 @@ export async function buildApp(opts: AppOptions) {
       ops: state.ops,
       support: state.support,
       opsNeeded: sim.opsNeededNow(state),
+      opsNeededOnceReady: sim.opsNeededOnceReady(state),
       dailyStaffCost: sim.dailyStaffCost(state),
       launch: sim.launch(state),
       users: state.users,
@@ -344,6 +345,7 @@ export async function buildApp(opts: AppOptions) {
       spend: state.spend,
       loan: sim.loan(state),
       loanQuote: sim.loanQuote(state),
+      runway: sim.runway(state),
       features: sim.features(state),
       migration: sim.migration(state),
       migrations: state.migrations,
@@ -617,7 +619,8 @@ export async function buildApp(opts: AppOptions) {
             // cancelServer and sellServer: one of the company's servers, by id. The sim checks it's theirs.
             id: { type: "integer", minimum: 1 },
             // setInstances: how many app instances to run on PaaS. The sim checks it against the platform's most.
-            count: { type: "integer", minimum: 1 },
+            // hire and letGo: how many people at once, one if left out. Capped so a typo can't hire thousands.
+            count: { type: "integer", minimum: 1, maximum: 999 },
             // setManagedService: a managed service on PaaS and its size, or null to turn the cache off.
             service: { enum: [...MANAGED_SERVICES] },
           },

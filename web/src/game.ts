@@ -13,6 +13,9 @@ export const namesList = (names: string[]) =>
 /** Over 100% is an outage (on a cache, full); close to it is a warning that one is coming. */
 const levelOf = (percent: number) => (percent > 100 ? "over" : percent >= 80 ? "high" : "ok");
 
+/** With this many days of cash left or fewer, every page warns, while a loan or cost cuts can still help. */
+export const LOW_CASH_DAYS = 5;
+
 export const TIER_INFO = [
   { id: "cu", unit: "CU", name: "Compute", servers: "app servers" },
   { id: "dbu", unit: "DBU", name: "Database", servers: "databases" },
@@ -71,6 +74,14 @@ export function createGame(code: string, id: string) {
   const summary = ref<SummaryView>();
 
   const understaffed = computed(() => !!company.value && company.value.ops < company.value.opsNeeded);
+  // Ops that kit on order will need once it arrives, beyond those on the team: a shortfall coming, not here yet.
+  const opsShortSoon = computed(() =>
+    company.value && !understaffed.value ? Math.max(0, company.value.opsNeededOnceReady - company.value.ops) : 0,
+  );
+
+  // Cash: what a usual day does to it, and how many days it lasts at that rate (null when not losing money).
+  const runway = computed(() => company.value?.runway ?? null);
+  const lowCash = computed(() => !over.value && runway.value?.days != null && runway.value.days <= LOW_CASH_DAYS);
 
   // Servers in units, on a model with them (on-prem, IaaS and PaaS): CU, DBU and CH demand against capacity. Over 100%
   // on CU or DBU is an outage; the cache just takes what it can. A tier with no capacity and some demand shows as 999%,
@@ -90,6 +101,12 @@ export function createGame(code: string, id: string) {
   });
   // The tier that runs out first sets capacity: the one to watch.
   const tightest = computed(() => tiers.value.find((t) => t.binding));
+  // App servers that won't get traffic once the servers being set up or on order are ready, beyond today's: the load
+  // balancer shortfall coming.
+  const lbShortSoon = computed(() => {
+    const u = units.value;
+    return u ? Math.max(0, u.loadBalancerOnceReady.uncovered - u.loadBalancer.uncovered) : 0;
+  });
   // On-prem buys its servers rather than renting them: they're on order, adding nothing, until they arrive.
   const buysServers = computed(() => company.value?.serverOptions[0]?.price != null);
   const addVerb = computed(() => (buysServers.value ? "buy" : "rent"));
@@ -311,6 +328,10 @@ export function createGame(code: string, id: string) {
     over,
     summary,
     understaffed,
+    opsShortSoon,
+    runway,
+    lowCash,
+    lbShortSoon,
     units,
     managed,
     provider,

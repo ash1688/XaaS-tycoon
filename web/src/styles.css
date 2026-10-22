@@ -526,6 +526,26 @@ fieldset > p {
   color: var(--warn);
 }
 
+/* Low cash: on every page while a loan or cost cuts can still help. */
+.low-cash {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.75rem;
+  margin: 0 0 1rem;
+  padding: 0.7rem 1rem;
+  border-radius: 10px;
+  border: 2px solid var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.low-cash p {
+  flex: 1 1 20rem;
+  margin: 0;
+  color: var(--text);
+}
+
 .bankrupt h2 {
   margin: 0.5rem 0 0.25rem;
 }
@@ -795,6 +815,23 @@ fieldset > p {
   font-size: 1.4rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+/* Hire or let go many at once: a number box and its two buttons, under each team's − / +. */
+.staff-bulk {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.6rem;
+}
+
+.staff-bulk input {
+  width: 5.5rem;
+}
+
+.staff-bulk-cost {
+  font-size: 0.9rem;
 }
 
 .ops-needed {
@@ -2737,6 +2774,65 @@ body.modal-open {
 
 .price-preview:empty {
   display: none;
+}
+
+/* Servers: the rules up front, and a tier nearly full flagged where more servers are added. */
+.server-rules {
+  margin: 0.5rem 0;
+  padding-left: 1.1rem;
+  font-size: 0.9rem;
+}
+
+.tier-warning {
+  margin: 0.25rem 0;
+  font-size: 0.9rem;
+}
+
+.tier-warning .badge,
+.nearly-full-badge {
+  margin-right: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--warn);
+}
+
+.nearly-full-badge {
+  margin-left: 0.35rem;
+}
+
+.price-quick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.price-quick button {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.9rem;
+}
+
+.price-verdict {
+  margin: 0;
+  font-weight: 700;
+}
+
+.price-verdict.pos {
+  color: var(--pos);
+}
+
+.price-verdict.neg {
+  color: var(--neg);
+}
+
+.price-compare td button {
+  padding: 0.15rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.price-compare .best-badge {
+  margin-left: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--pos);
 }
 
 .price-preview-title {

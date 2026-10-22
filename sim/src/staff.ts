@@ -3,13 +3,15 @@ import { isStaffPool, SimError, type GameState, type LogEntry } from "./state.ts
 
 /** Staff: hiring, letting go and moving people between developers, ops and support, and their pay. */
 export function createStaff(config: GameConfig) {
-  function changeStaff(state: GameState, type: "hire" | "letGo", pool: StaffPool): GameState {
+  /** Hires or lets go `count` people at once, one by default. Letting go more than the pool has is refused. */
+  function changeStaff(state: GameState, type: "hire" | "letGo", pool: StaffPool, count = 1): GameState {
     if (!isStaffPool(pool)) throw new SimError("unknown_pool", "Pick developers, ops or support.");
-    if (type === "hire") return { ...state, [pool]: state[pool] + 1 };
-    if (state[pool] < 1) {
-      throw new SimError("no_staff", `You have no ${config.staff[pool].name.toLowerCase()} to let go.`);
-    }
-    return { ...state, [pool]: state[pool] - 1 };
+    if (!Number.isInteger(count) || count < 1) throw new SimError("bad_count", "Pick a whole number of people, at least 1.");
+    if (type === "hire") return { ...state, [pool]: state[pool] + count };
+    const name = config.staff[pool].name.toLowerCase();
+    if (state[pool] < 1) throw new SimError("no_staff", `You have no ${name} to let go.`);
+    if (state[pool] < count) throw new SimError("no_staff", `You only have ${state[pool]} ${name} to let go.`);
+    return { ...state, [pool]: state[pool] - count };
   }
 
   function moveStaff(state: GameState, to: StaffPool, from: StaffPool = to === "developers" ? "ops" : "developers"): GameState {

@@ -92,6 +92,18 @@ const lbStatus = computed(() => {
   return { tone: "ok", text: `${lbs} ${serves} your ${apps}, ${more}.` };
 });
 
+// The rules that catch players out, said up front: every server needs a share of an ops person, and from a few app
+// servers up, each needs a load balancer to get traffic.
+const opsRule = computed(() => {
+  const shares = SERVER_TYPES.map((t) => ({ t, share: opsShare(t) })).filter((x) => x.share > 0);
+  if (!shares.length) return "";
+  const each = shares.map(({ t, share }) => `${PLURAL[t].toLowerCase()} ${share} each`).join(", ");
+  return `Every server takes up part of an ops person's time (${each}), added up and rounded up.`;
+});
+// Each tier's bar, by the type of server that gives it, to flag one that's nearly full where more are added.
+const TIER_OF: Partial<Record<ServerType, "cu" | "dbu">> = { app: "cu", database: "dbu" };
+const tierFor = (type: ServerType) => game.tiers.find((t) => t.id === TIER_OF[type] && t.capacity > 0 && t.level !== "ok");
+
 // Ops a set of servers needs: each one's share, added up and rounded up, as the game counts it. On-prem, only kit that
 // has arrived needs ops.
 const opsShare = (type: ServerType) => options.value.find((o) => o.type === type)?.ops ?? 0;
@@ -141,7 +153,11 @@ function stepNote(type: ServerType) {
   if (!o || !game.company) return "";
   const what = `${formatCount(o.units)} ${UNIT[type]}`;
   const ops = opsFor([...servers.value.map((s) => s.type), type]);
-  const opsText = ` You'd need ${ops} ops in all; you have ${game.company.ops}.`;
+  const short = ops - game.company.ops;
+  const opsText =
+    short > 0
+      ? ` You'd need ${ops} ops in all and have ${game.company.ops}: hire ${short} more, or capacity is cut.`
+      : ` You'd need ${ops} ops in all; you have ${game.company.ops}.`;
   const appServers = servers.value.filter((s) => s.type === "app").length + 1;
   const lbHint =
     type === "app" && appServers >= (game.meta?.loadBalancerFrom ?? 2)
@@ -190,6 +206,19 @@ async function cancel() {
       <span>{{ lbStatus.text }}</span>
     </p>
 
+    <ul class="server-rules muted" data-testid="server-rules">
+      <li v-if="opsRule">
+        <strong>Ops:</strong> {{ opsRule }} You need <strong>{{ game.company.opsNeeded }}</strong> now<template
+          v-if="game.company.opsNeededOnceReady > game.company.opsNeeded"
+          >, <strong>{{ game.company.opsNeededOnceReady }}</strong> once your kit on order arrives</template
+        >; you have {{ game.company.ops }}.
+      </li>
+      <li>
+        <strong>Load balancers:</strong> from {{ game.meta?.loadBalancerFrom ?? 2 }} app servers up, traffic only
+        reaches the app servers a load balancer covers. Each size covers a set number of them.
+      </li>
+    </ul>
+
     <p v-if="!hasServers" class="muted" data-testid="no-servers">
       You have no {{ buying ? "servers in place" : "servers" }}, so nothing can serve your users.
       {{ buying ? "Buy an app server and a database with +, and allow for the delivery time." : "Rent an app server and a database with +." }}
@@ -202,6 +231,11 @@ async function cancel() {
           ><template v-if="buying && onOrderOf(g.type)"> · {{ onOrderOf(g.type) }} on order</template>
         </span>
       </div>
+      <p v-if="tierFor(g.type)" class="warn-text tier-warning" :data-testid="`tier-warning-${g.type}`">
+        <span class="badge">{{ tierFor(g.type)!.level === "over" ? "Over capacity" : "Nearly full" }}</span>
+        {{ tierFor(g.type)!.name }} is at {{ tierFor(g.type)!.percent }}%: {{ game.tierFix(tierFor(g.type)!.id) }}
+        {{ tierFor(g.type)!.level === "over" ? "now" : "before it hits 100%" }}.
+      </p>
       <ul v-if="g.sizes.length" class="server-list">
         <li v-for="s in g.sizes" :key="s.size" :data-server="`${g.type}-${s.size}`">
           <div class="server-info">

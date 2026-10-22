@@ -100,6 +100,25 @@ const alerts = computed(() => {
   const c = game.company;
   if (!c || game.over) return [];
   const list: { id: string; text: string; detail: string; page: string; pageName: string }[] = [];
+  // Running out of cash ends the game and capacity creeps up day by day, so they come first.
+  if (game.lowCash && game.runway)
+    list.push({
+      id: "low-cash",
+      text: game.runway.days ? `Cash runs out in about ${days(game.runway.days)}` : "Cash runs out tomorrow",
+      detail: `You're losing ${formatCash(-game.runway.dailyNet)} a day. ${c.loanQuote ? "Take a bank loan or cut costs" : "Cut costs"} before you go below £0: once you're bankrupt, the bank won't lend.`,
+      page: "finance",
+      pageName: "Finance",
+    });
+  if (game.loadLevel !== "ok")
+    list.push({
+      id: "load",
+      text: game.loadLevel === "over" ? "Over capacity" : "Close to capacity",
+      detail: game.tightest
+        ? `${game.tightest.name} (${game.tightest.unit}) is at ${game.tightest.percent}% of capacity. Over 100% is an outage: ${game.tierFix(game.tightest.id)}.`
+        : `Load is ${game.loadPercent}% of capacity. Over 100% is an outage.`,
+      page: "infrastructure",
+      pageName: "Infrastructure",
+    });
   for (const e of game.events)
     list.push({
       id: `event-${e.id}`,
@@ -142,16 +161,6 @@ const alerts = computed(() => {
       page: "customers",
       pageName: "Customers",
     });
-  if (game.loadLevel !== "ok")
-    list.push({
-      id: "load",
-      text: game.loadLevel === "over" ? "Over capacity" : "Close to capacity",
-      detail: game.tightest
-        ? `${game.tightest.name} (${game.tightest.unit}) is at ${game.tightest.percent}% of capacity. Over 100% is an outage: ${game.tierFix(game.tightest.id)}.`
-        : `Load is ${game.loadPercent}% of capacity. Over 100% is an outage.`,
-      page: "infrastructure",
-      pageName: "Infrastructure",
-    });
   if (game.units?.loadBalancer.uncovered)
     list.push({
       id: "load-balancer",
@@ -159,6 +168,22 @@ const alerts = computed(() => {
       detail: `${game.units.loadBalancer.uncovered} of your ${game.units.loadBalancer.appServers} app servers get no traffic until a load balancer covers them.`,
       page: "infrastructure",
       pageName: "Infrastructure",
+    });
+  else if (game.lbShortSoon)
+    list.push({
+      id: "load-balancer-soon",
+      text: "Load balancer needed soon",
+      detail: `Once your new servers are ready, ${game.lbShortSoon} app server${game.lbShortSoon === 1 ? "" : "s"} will get no traffic: from ${game.meta?.loadBalancerFrom ?? 2} app servers up, each one needs a load balancer to cover it. ${game.addVerb === "buy" ? "Buy" : "Rent"} one now.`,
+      page: "infrastructure",
+      pageName: "Infrastructure",
+    });
+  if (game.opsShortSoon)
+    list.push({
+      id: "ops-soon",
+      text: `Ops needed soon: ${game.opsShortSoon} short`,
+      detail: `Every server needs a share of an ops person's time. Once the kit on order arrives you'll need ${c.opsNeededOnceReady} ops; you have ${c.ops}. Too few, and capacity is cut.`,
+      page: "people",
+      pageName: "People",
     });
   if (game.building && game.building.daysLeft === null && !game.onSaas)
     list.push({
@@ -203,7 +228,8 @@ const alerts = computed(() => {
       <h2>Game over: you ran out of cash</h2>
       <p>
         {{ game.company.name }} went below £0 on day {{ game.company.day }}, so the game has ended. You can't continue
-        or change anything. Look at where your money went below, then
+        or change anything, and it's too late for a bank loan: banks don't lend once you've gone under. Look at where
+        your money went below, then
         <RouterLink :to="`/play/${game.code}`">start a new company</RouterLink> and try a different plan.
       </p>
     </div>
@@ -281,7 +307,7 @@ const alerts = computed(() => {
         </template>
       </OverviewCard>
 
-      <OverviewCard title="Cash" :tone="game.company.cash < 0 ? 'warn' : undefined">
+      <OverviewCard title="Cash" :tone="game.company.cash < 0 || game.lowCash ? 'warn' : undefined">
         <p :class="['overview-value', { neg: game.company.cash < 0 }]" data-testid="cash">
           {{ formatCash(game.company.cash) }}
         </p>
@@ -293,6 +319,15 @@ const alerts = computed(() => {
           Infrastructure {{ formatCash(game.company.monthlyInfrastructureCost) }} a month, staff
           {{ formatCash(game.company.dailyStaffCost) }} a day.
         </p>
+        <p v-if="!game.over" :class="['runway', { 'warn-text': game.lowCash }]" data-testid="home-runway">
+          <template v-if="game.company.runway.days === null">
+            Not losing money: <strong class="pos">+{{ formatCash(game.company.runway.dailyNet) }}</strong> a day.
+          </template>
+          <template v-else>
+            Runway <strong>{{ game.company.runway.days ? days(game.company.runway.days) : "under a day" }}</strong>: losing
+            {{ formatCash(-game.company.runway.dailyNet) }} a day.
+          </template>
+        </p>
         <p class="muted" data-testid="home-loan">
           <template v-if="game.company.loan?.remaining">
             Includes a {{ formatCash(game.company.loan.amount) }} bank loan:
@@ -300,12 +335,21 @@ const alerts = computed(() => {
             {{ game.company.finalDay }}, {{ formatCash(game.company.loan.remaining) }} left.
           </template>
           <template v-else-if="game.company.loan">Bank loan repaid in full.</template>
-          <template v-else-if="game.company.loanQuote">
+          <template v-else-if="game.bankrupt">No bank loan: banks don't lend once you've gone under.</template>
+          <template v-else-if="game.company.loanQuote && !game.over">
             No bank loan. You can borrow {{ formatCash(game.company.loanQuote.amount) }} on Finance.
           </template>
           <template v-else>No bank loan.</template>
         </p>
         <template #detail>
+          <p v-if="!game.over" data-testid="runway-detail">
+            A usual day brings in {{ formatCash(game.company.runway.dailyIncome) }} and costs
+            {{ formatCash(game.company.runway.dailyCosts) }}<template v-if="game.company.runway.days === null">, so
+              cash is growing.</template
+            ><template v-else>: at that rate your {{ formatCash(game.company.cash) }} lasts about
+              {{ days(game.company.runway.days) }}. Below £0 the game ends.</template
+            >
+          </p>
           <SpendPanel />
           <p class="modal-link"><RouterLink :to="page('finance')">Open Finance</RouterLink></p>
         </template>
@@ -438,12 +482,15 @@ const alerts = computed(() => {
       <OverviewCard
         v-if="game.tightest"
         title="Capacity"
-        :tone="game.loadLevel === 'ok' && !game.units?.loadBalancer.uncovered ? undefined : 'warn'"
+        :tone="game.loadLevel === 'ok' && !game.units?.loadBalancer.uncovered && !game.lbShortSoon ? undefined : 'warn'"
       >
         <p class="overview-value" data-testid="home-tightest">
           {{ game.tightest.unit }}
           {{ game.tightest.capacity > 0 ? `${game.tightest.percent}%` : game.tightest.demand > 0 ? "full" : "none yet" }}
           <small>tightest</small>
+          <span v-if="game.tightest.capacity > 0 && game.tightest.level !== 'ok'" class="badge warn-badge" data-testid="home-nearly-full">
+            {{ game.tightest.level === "over" ? "Over" : "Nearly full" }}
+          </span>
         </p>
         <div class="meter" aria-hidden="true">
           <div
@@ -454,7 +501,11 @@ const alerts = computed(() => {
         <p class="muted" data-testid="home-capacity">
           {{ game.tightest.name }} sets your capacity: {{ formatCount(game.tightest.demand) }} of
           {{ formatCount(game.tightest.capacity) }} {{ game.tightest.unit }}.
+          <span v-if="game.tightest.capacity > 0 && game.tightest.level === 'high'" class="warn-text">
+            Nearly full: {{ game.tierFix(game.tightest.id) }} before it hits 100%.
+          </span>
           <span v-if="game.units?.loadBalancer.uncovered" class="warn-text">Load balancer needed.</span>
+          <span v-else-if="game.lbShortSoon" class="warn-text">Load balancer needed once your new servers are ready.</span>
           <span v-if="game.onOrder.length" data-testid="home-on-order">
             {{ game.onOrder.length }} server{{ game.onOrder.length === 1 ? "" : "s" }} on order, the next arriving in
             {{ Math.min(...game.onOrder.map((s) => s.daysLeft)) }}
@@ -522,7 +573,7 @@ const alerts = computed(() => {
         </template>
       </OverviewCard>
 
-      <OverviewCard title="Staff" :tone="game.understaffed ? 'warn' : undefined">
+      <OverviewCard title="Staff" :tone="game.understaffed || game.opsShortSoon ? 'warn' : undefined">
         <p class="overview-value" data-testid="home-staff">
           {{ game.company.developers }} <small>dev</small> · {{ game.company.ops }} <small>ops</small> ·
           {{ game.company.support }} <small>support</small>
@@ -531,6 +582,9 @@ const alerts = computed(() => {
           {{ formatCash(game.company.dailyStaffCost) }} a day.
           <span v-if="game.understaffed" class="warn-text">
             {{ game.company.opsNeeded - game.company.ops }} ops short.
+          </span>
+          <span v-else-if="game.opsShortSoon" class="warn-text">
+            {{ game.opsShortSoon }} more ops needed once your kit arrives.
           </span>
         </p>
         <template #detail>

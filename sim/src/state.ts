@@ -288,8 +288,9 @@ export interface GameState {
 
 /** Something the player does between days. */
 export type Action =
-  | { type: "hire"; pool: StaffPool }
-  | { type: "letGo"; pool: StaffPool }
+  /** Hires or lets go people in one pool: `count` of them, one if it's left out. */
+  | { type: "hire"; pool: StaffPool; count?: number }
+  | { type: "letGo"; pool: StaffPool; count?: number }
   /** Starts building one of the product's features. One build at a time; not on SaaS. */
   | { type: "buildFeature"; feature: string }
   /** Buys one of the product's features as an add-on, active at once. SaaS only, with a configuration team. */

@@ -50,8 +50,14 @@ test("on IaaS, renting an app server and a load balancer grows the CU capacity b
   await servers.getByRole("button", { name: "Rent a large app server" }).click();
   await expect(servers.getByTestId("step-app-value")).toHaveText("1 large");
   await expect(servers.getByTestId("pending-app-large")).toContainText("1 setting up, ready after the next day");
-  // Two app servers need a load balancer.
+  // Two app servers need a load balancer: said before the new one is ready, here and on Home.
   await expect(student.getByTestId("lb-status")).toContainText("2 app servers need a load balancer");
+  await expect(student.getByTestId("tier-cu")).toContainText("Once your new servers are ready, 1 app server won't count");
+  await expect(servers.getByTestId("server-rules")).toContainText("from 2 app servers up");
+  await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Home", exact: true }).click();
+  await expect(student.getByTestId("home-capacity")).toContainText("Load balancer needed once your new servers are ready");
+  await expect(student.getByTestId("home-alerts")).toContainText("Load balancer needed soon");
+  await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Infrastructure", exact: true }).click();
 
   await expect(servers.getByTestId("step-note-loadBalancer")).toContainText("(2 app servers) for £200 a month");
   await servers.getByRole("button", { name: "Rent a small load balancer" }).click();
