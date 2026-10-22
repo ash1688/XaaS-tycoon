@@ -307,12 +307,13 @@ CISO, CMO and head of people were added to fit the new events, marketing spend a
 
 ### More products
 
-Two new product types join e-commerce, social and video:
+Three new product types join e-commerce, social and video, making six:
 
 | Product type | Profile (placeholder) |
 |---|---|
 | AI assistant | Very heavy compute per user (GPU), costly to run; users willing to pay well |
 | Games network (an online store and multiplayer service, like Steam, PSN or Xbox Live) | Huge spikes on big game launches and holidays; a subscription for online play |
+| Payments app (like Stripe or Monzo) | Light, steady load with payday and Black Friday peaks; mostly business customers; outages and breaches hurt most, so uptime, security and compliance are the challenge |
 
 Each product gets its own feature list and SaaS add-ons. The game shows generic names, not real brands.
 
@@ -363,6 +364,27 @@ The lesson: the more of the stack you own, the more you can optimise it yourself
 - It's a short-term fix: pushing kit hard keeps the service up while new servers are on their ~10-day delivery, but leaving it high for weeks costs more in crashes than it saves.
 
 This only exists on-prem because only on-prem gives you access to the physical hardware. *The risk curve and limits are placeholders for balancing.*
+
+### Deals
+
+From time to time a company approaches the student to use their service. Each deal offers:
+
+- **A set number of users** who all arrive when the deal starts, so the student has to have capacity ready.
+- **A set price per user**, fixed for the length of the deal (e.g. 90 days), whatever the student's normal price.
+- **An SLA (service level agreement)** with conditions, for example 99.5% uptime, support tickets answered within a day, or satisfaction above 80%.
+- **Daily penalties** for every day the SLA is broken. Breaking it too often lets the company end the deal early and take its users with it.
+
+The student can accept or decline, and the offer expires after a few days. Bigger deals come later and only to companies with a good uptime record. Deals teach students to check they can deliver before signing, and why providers sell SLAs. *Sizes, prices and penalties are placeholders.*
+
+### APIs
+
+Products that would have one in real life (AI assistant, payments app, e-commerce and the games network) can offer a **paid API** that other businesses build on.
+
+- The API is a feature the student **unlocks through the tiers or buys**.
+- Each API call earns a tiny amount, about **1p**.
+- Calls start in the thousands a day and can grow into the hundreds of thousands, so it adds up the more the student can handle.
+- **API calls use capacity like users do.** Running out of capacity drops calls and loses the income, so the API rewards headroom and good infrastructure.
+- API customers can also come through deals, with their own SLA.
 
 ### Competitors and marketing
 
