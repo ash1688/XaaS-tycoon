@@ -15,10 +15,18 @@ import {
 } from "drizzle-orm/pg-core";
 import type { ConfigOverrides, GameConfig, GameState } from "@xaas/sim";
 
+/** Numbers each login code's playtest tester ID ("Tester 4"), so a student's games can be grouped without the code. */
+export const testerNumbers = pgSequence("tester_numbers");
+
 export const loginCodes = pgTable("login_codes", {
   code: text("code").primaryKey(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   archived: boolean("archived").notNull().default(false),
+  // The student's ID in the playtest logs: "Tester 4". Each code is one student's, so every game they start, however
+  // often they restart, shares it while each game keeps its own "Player N". Given when the code is made, never changes.
+  tester: integer("tester")
+    .notNull()
+    .default(sql`nextval('tester_numbers')`),
 });
 
 /** Numbers each company's playtest pseudonym ("Player 7"), so logs never need its name or code. */

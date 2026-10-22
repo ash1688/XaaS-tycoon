@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { createSim, defaultConfig } from "@xaas/sim";
 import { buildApp, UI_BATCHES_PER_MINUTE, UI_EVENTS_PER_BATCH } from "../src/app.ts";
-import { EXPORT_COLUMNS } from "../src/playLog.ts";
+import { EXPORT_COLUMNS, snapshotOf } from "../src/playLog.ts";
 import type {
   CompanyView,
   LogDeleteResult,
@@ -126,6 +126,7 @@ describe("game events", () => {
       uptime: Math.round(after.uptime * 10) / 10,
       tier: after.units!.binding,
       tierUse: expect.any(Number),
+      noCapacity: false,
       model: "iaas",
       developers: after.developers,
       ops: after.ops,
@@ -296,8 +297,9 @@ describe("anonymity", () => {
     const players = Object.fromEntries(dashboard.codes[0]!.companies.map((g) => [g.id, g.player]));
     expect(players).toEqual({ [first.company.id]: t1.player, [second.company.id]: t2.player });
     const rows = (await exported("?format=json")).json<{ player: string; type: string }[]>();
-    expect(rows.filter((r) => r.player === t1.player).map((r) => r.type)).toEqual(["start", "continue", "continue"]);
-    expect(rows.filter((r) => r.player === t2.player).map((r) => r.type)).toEqual(["start", "continue"]);
+    // Each still being played, so each ends with an inferred end row.
+    expect(rows.filter((r) => r.player === t1.player).map((r) => r.type)).toEqual(["start", "continue", "continue", "end"]);
+    expect(rows.filter((r) => r.player === t2.player).map((r) => r.type)).toEqual(["start", "continue", "end"]);
   });
 });
 
@@ -311,7 +313,8 @@ describe("export", () => {
     expect(res.headers["content-disposition"]).toMatch(/^attachment; filename="playtest-log-\d{4}-\d{2}-\d{2}\.csv"$/);
     const [header, ...lines] = res.body.trim().split("\r\n");
     expect(header).toBe(EXPORT_COLUMNS.join(","));
-    expect(lines).toHaveLength(3);
+    // The game's three events, then the end row inferred for a game still being played.
+    expect(lines).toHaveLength(4);
     const price = lines[2]!.split(",");
     const col = (name: string) => EXPORT_COLUMNS.indexOf(name as (typeof EXPORT_COLUMNS)[number]);
     expect(price[col("type")]).toBe("setPrice");
@@ -336,17 +339,114 @@ describe("export", () => {
     const easy = await newGame(a.code);
     const types = async (q: string) => (await exported(`?format=json&${q}`)).json<{ player: string; type: string; preset: string }[]>();
 
-    expect(await types(`code=${a.code}`)).toHaveLength(2);
-    expect((await types(`code=${b.code}`)).map((r) => r.type)).toEqual(["start", "page"]);
-    expect((await types("preset=Easy")).map((r) => r.player)).toEqual([(await timeline(easy.company.id)).player]);
-    expect(await types("preset=Default")).toHaveLength(3);
+    // Each game's events, and an inferred end for each, as none has ended.
+    expect(await types(`code=${a.code}`)).toHaveLength(4);
+    expect((await types(`code=${b.code}`)).map((r) => r.type)).toEqual(["start", "page", "end"]);
+    const easyPlayer = (await timeline(easy.company.id)).player;
+    expect((await types("preset=Easy")).map((r) => r.player)).toEqual([easyPlayer, easyPlayer]);
+    expect(await types("preset=Default")).toHaveLength(5);
     expect((await types("kind=ui")).map((r) => r.type)).toEqual(["page"]);
     const future = new Date(Date.now() + 60_000).toISOString();
     expect(await types(`from=${encodeURIComponent(future)}`)).toEqual([]);
-    expect(await types(`to=${encodeURIComponent(future)}`)).toHaveLength(4);
+    expect(await types(`to=${encodeURIComponent(future)}`)).toHaveLength(7);
     const bad = await app.inject({ method: "GET", url: "/api/teacher/logs/export?from=yesterday", cookies });
     expect(bad.statusCode).toBe(400);
     expect((await app.inject({ method: "GET", url: "/api/teacher/logs/export?code=12", cookies })).statusCode).toBe(400);
+  });
+});
+
+describe("tester IDs, capacity and ends", () => {
+  type Row = { tester: string; player: string; type: string; day: number; cash: number | null; params: Record<string, unknown> };
+  const exportedRows = async (query = "") => (await exported(`?format=json${query}`)).json<Row[]>();
+
+  it("gives every game under a code the same tester ID, however often the student restarts", async () => {
+    const first = await newGame();
+    expect((await app.inject({ method: "POST", url: `${first.url}/retire` })).statusCode).toBe(200);
+    const restart = await newGame(first.code);
+    const other = await newGame();
+    const [t1, t2, t3] = await Promise.all([first, restart, other].map((g) => timeline(g.company.id)));
+    expect(t1!.tester).toMatch(/^Tester \d+$/);
+    expect(t2!.tester).toBe(t1!.tester);
+    expect(t2!.player).not.toBe(t1!.player);
+    expect(t3!.tester).not.toBe(t1!.tester);
+
+    const rows = await exportedRows();
+    const playersOf = (tester: string) => [...new Set(rows.filter((r) => r.tester === tester).map((r) => r.player))];
+    expect(playersOf(t1!.tester).sort()).toEqual([t1!.player, t2!.player].sort());
+    expect(playersOf(t3!.tester)).toEqual([t3!.player]);
+    const [header, line] = (await exported()).body.split("\r\n");
+    const col = EXPORT_COLUMNS.indexOf("tester");
+    expect(header!.split(",")[col]).toBe("tester");
+    expect(line!.split(",")[col]).toMatch(/^Tester \d+$/);
+  });
+
+  it("logs demand with no capacity as a null tierUse with noCapacity, never 999", () => {
+    const company = {
+      day: 3,
+      cash: 100,
+      paidUsers: 5,
+      freeUsers: 5,
+      dailyIncome: 10,
+      satisfaction: 50,
+      uptime: 90,
+      model: "iaas",
+      developers: 1,
+      ops: 1,
+      support: 1,
+      loan: null,
+      load: 0,
+      capacity: 0,
+      units: { binding: "cu", cu: { demand: 4, capacity: 0 }, dbu: { demand: 1, capacity: 0 } },
+    };
+    expect(snapshotOf(company as unknown as CompanyView)).toMatchObject({ tier: "cu", tierUse: null, noCapacity: true });
+    const idle = { ...company, units: { binding: "cu", cu: { demand: 0, capacity: 0 }, dbu: { demand: 0, capacity: 0 } } };
+    expect(snapshotOf(idle as unknown as CompanyView)).toMatchObject({ tierUse: 0, noCapacity: false });
+  });
+
+  it("exports and shows a 999 logged before the fix as null with noCapacity", async () => {
+    const { company } = await newGame();
+    const [start] = (await timeline(company.id)).events;
+    await testDb.db.execute(
+      sql`update play_events set snapshot = jsonb_set(snapshot - 'noCapacity', '{tierUse}', '999') where id = ${start!.id}`,
+    );
+    const [row] = (await exported("?format=json&kind=game")).json<{ tierUse: number | null; noCapacity: boolean }[]>();
+    expect(row).toMatchObject({ tierUse: null, noCapacity: true });
+    expect((await timeline(company.id)).events[0]!.snapshot).toMatchObject({ tierUse: null, noCapacity: true });
+    expect((await exported()).body).not.toMatch(/(^|,)999(,|$)/m);
+  });
+
+  it("gives every game in the export one end row, inferring it for a game the student stopped playing", async () => {
+    const finished = await newGame();
+    for (let i = 0; i < 10 && (await finished.play()).json().company?.status === "active"; i++);
+    const retired = await newGame(finished.code);
+    expect((await app.inject({ method: "POST", url: `${retired.url}/retire` })).statusCode).toBe(200);
+    const abandoned = await newGame(finished.code);
+    await abandoned.play();
+    await abandoned.ui({ events: [{ type: "page", ago: 0, day: 1, params: { page: "home" } }] });
+
+    const rows = await exportedRows();
+    const [fin, ret, aban] = await Promise.all(
+      [finished, retired, abandoned].map(async (g) => {
+        const { player } = await timeline(g.company.id);
+        return rows.filter((r) => r.player === player);
+      }),
+    );
+    for (const game of [fin!, ret!, aban!]) expect(game.filter((r) => r.type === "end")).toHaveLength(1);
+    expect(fin!.at(-1)!.params).toEqual({ status: "finished" });
+    expect(ret!.at(-1)!.params).toEqual({ status: "retired" });
+    // The abandoned game's inferred end comes after its last event, UI ones included, with its numbers as they are.
+    expect(aban!.map((r) => r.type)).toEqual(["start", "continue", "page", "end"]);
+    const end = aban!.at(-1)!;
+    expect(end).toMatchObject({ params: { status: "abandoned", inferred: true }, day: abandoned.company.day + 1 });
+    expect(end.cash).not.toBeNull();
+    // Worked out at export, never stored, so the game can still be played on.
+    expect((await storedRows()).filter((r) => r.row.includes('"type":"end"'))).toHaveLength(2);
+
+    // Not in a UI-only export, nor in one that stops before the game's last event.
+    expect((await exportedRows("&kind=ui")).map((r) => r.type)).toEqual(["page"]);
+    const startAt = (await timeline(abandoned.company.id)).events[0]!.at;
+    const early = await exportedRows(`&code=${abandoned.code}&to=${encodeURIComponent(startAt)}`);
+    expect(early.filter((r) => r.params.inferred)).toEqual([]);
   });
 });
 
