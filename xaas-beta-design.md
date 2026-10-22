@@ -473,7 +473,7 @@ A permanent **tutorial company** that every student has alongside their real one
 
 ## AI playtesting
 
-A lightweight way for an AI to play the game, so balance and exploits can be tested before students see them. In the alpha, students found the price exploits within minutes; an AI that plays like a min-maxer should find them first.
+A lightweight way for an AI to play the game, so balance and exploits can be tested before students see them. **Built for the alpha:** `npm run -s play` in the `sim` package, briefed by `sim/scripts/ai-playtest.md`. It was used to verify the alpha patch (#83), and it grows with each beta system. In the alpha, students found the price exploits within minutes; an AI that plays like a min-maxer should find them first.
 
 **Not the web page.** The AI plays the simulation directly through a compact text format that's quicker and cheaper to read:
 
