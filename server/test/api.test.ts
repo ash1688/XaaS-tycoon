@@ -32,6 +32,8 @@ const STARTING_USERS = { ecommerce: 2000, social: 1000, video: 1000 };
 const sim = createSim({
   ...defaultConfig,
   startingCash: 1000,
+  // Add-ons cost only their per-user price, so buying one fits in the starting cash.
+  addons: { ...defaultConfig.addons, setupFeePerDevDay: 0 },
   servers: {
     ...defaultConfig.servers,
     types: {
@@ -860,8 +862,8 @@ describe("servers on-prem", () => {
 
   it("starts with the starter kit bought on top of the server room, and offers kit to buy", async () => {
     const { company } = await setup();
-    expect(company.cash).toBe(100_000 - 5_000 - 1_000 - 1_200);
-    expect(company.spend.infrastructure).toBe(7_200);
+    expect(company.cash).toBe(100_000 - 3_000 - 1_000 - 1_200);
+    expect(company.spend.infrastructure).toBe(5_200);
     expect(company.servers).toEqual([
       expect.objectContaining({ id: 1, type: "app", size: "large", status: "ready", daysLeft: 0, paid: 1_000, sellBack: 400 }),
       expect.objectContaining({ id: 2, type: "database", size: "large", status: "ready", daysLeft: 0, paid: 1_200, sellBack: 480 }),
@@ -875,11 +877,11 @@ describe("servers on-prem", () => {
         price: onprem.purchase!.price.cache.small,
         monthlyCost: onprem.monthlyCost.cache!.small,
         sellBackShare: 0.4,
-        readyDays: 10,
+        readyDays: 7,
       }),
     );
     const meta = (await ownApp.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
-    expect(meta.models.find((m) => m.id === "onprem")!.upfrontCost).toBe(7_200);
+    expect(meta.models.find((m) => m.id === "onprem")!.upfrontCost).toBe(5_200);
   });
 
   it("buys kit, charging it at once, on order with the days left until it arrives", async () => {
@@ -888,13 +890,13 @@ describe("servers on-prem", () => {
     expect(res.statusCode).toBe(200);
     const bought = res.json<CompanyView>();
     expect(bought.cash).toBe(before.cash - onprem.purchase!.price.app.small);
-    expect(bought.servers.at(-1)).toMatchObject({ id: 3, type: "app", size: "small", status: "pending", daysLeft: 10 });
+    expect(bought.servers.at(-1)).toMatchObject({ id: 3, type: "app", size: "small", status: "pending", daysLeft: 7 });
     // On order: no capacity and no ops needed until it arrives.
     expect(bought.units).toEqual(before.units);
     expect(bought.opsNeeded).toBe(before.opsNeeded);
-    expect((await get()).servers.at(-1)).toMatchObject({ status: "pending", daysLeft: 10 });
+    expect((await get()).servers.at(-1)).toMatchObject({ status: "pending", daysLeft: 7 });
     const { company } = await next();
-    expect(company.servers.at(-1)).toMatchObject({ status: "pending", daysLeft: 9 });
+    expect(company.servers.at(-1)).toMatchObject({ status: "pending", daysLeft: 6 });
   });
 
   it("sells kit back for its share, but not kit still on order", async () => {
@@ -1215,7 +1217,7 @@ describe("bank loan", () => {
     expect(without.json()).toMatchObject({ error: "cant_afford", message: expect.stringContaining("bank loan") });
     const withLoan = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "onprem", takeLoan: true });
     expect(withLoan.statusCode).toBe(201);
-    expect(withLoan.json<CompanyView>().cash).toBe(1_000 + 35_000 - 7_200);
+    expect(withLoan.json<CompanyView>().cash).toBe(1_000 + 35_000 - 5_200);
   });
 });
 
@@ -1386,7 +1388,8 @@ describe("teacher dashboard", () => {
   });
 
   it("gives each game's income on the last day, profit, satisfaction, paid and free users and the loan", async () => {
-    await useOverrides({ "productTypes.ecommerce.pricing.freeShare": 0.5 });
+    // A £40 price keeps its payers: no rise wave or daily churn from a price above fair.
+    await useOverrides({ "productTypes.ecommerce.pricing.freeShare": 0.5, "pricing.riseStrength": 0, "pricing.priceChurn": 0 });
     const code = await newCode();
     const body = { name: "Lender", productType: "ecommerce", model: "iaas", takeLoan: true };
     const lender = (await newCompany(code, body)).json<CompanyView>();
@@ -1972,6 +1975,9 @@ describe("migration quote", () => {
       total: 100 + 140 + 350 + 200,
       overrun: { chance: 0, minDays: 2, maxDays: 5 },
       lostAddons: [],
+      // £1,000 less the total, which leaves under a month of running costs.
+      cashLeft: 1000 - 790,
+      warning: expect.stringMatching(/^This would leave you £210, about \d+ days of running costs before any income\./),
     });
     expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({ cash: 1000, migration: null });
   });
@@ -1982,10 +1988,10 @@ describe("migration quote", () => {
     const { price } = defaultConfig.models.onprem.servers!.purchase!;
     const upkeep = defaultConfig.models.onprem.servers!.monthlyCost;
     expect(onprem.setup).toEqual([
-      { type: "app", size: "small", name: "App server", count: 1, units: 10, upfront: price.app.small, monthly: upkeep.app!.small!, daysLeft: 10 },
-      { type: "database", size: "small", name: "Database", count: 1, units: 10, upfront: price.database.small, monthly: upkeep.database!.small!, daysLeft: 10 },
+      { type: "app", size: "small", name: "App server", count: 1, units: 10, upfront: price.app.small, monthly: upkeep.app!.small!, daysLeft: 7 },
+      { type: "database", size: "small", name: "Database", count: 1, units: 10, upfront: price.database.small, monthly: upkeep.database!.small!, daysLeft: 7 },
     ]);
-    expect(onprem).toMatchObject({ setupUpfront: price.app.small + price.database.small, deliveryDays: 10 });
+    expect(onprem).toMatchObject({ setupUpfront: price.app.small + price.database.small, deliveryDays: 7 });
     expect(onprem.upfrontCost).toBe(defaultConfig.models.onprem.upfrontCost + onprem.setupUpfront);
     expect((await quote("saas")).json<MigrationQuoteView>()).toMatchObject({ setup: [], setupMonthly: 0 });
   });
@@ -2500,7 +2506,8 @@ describe("pricing and income", () => {
   });
 
   it("sets the price, keeps it across reloads, and pays paid users × price ÷ 30 on continue", async () => {
-    const { url, act, next } = await setup({ "productTypes.ecommerce.pricing.freeShare": 0.5 });
+    // A £30 price keeps its payers: no rise wave or daily churn from a price above fair.
+    const { url, act, next } = await setup({ "productTypes.ecommerce.pricing.freeShare": 0.5, "pricing.riseStrength": 0, "pricing.priceChurn": 0 });
     const set = await act({ type: "setPrice", price: 30 });
     expect(set.statusCode).toBe(200);
     // 1,000 paying users at £30 a month: £1,000 a day. Nothing is paid until the day is played.

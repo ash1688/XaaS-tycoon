@@ -2,6 +2,7 @@
 // and reports how each model and product did. A tool for tuning the defaults, not part of the game. See balance.ts.
 import {
   createSim,
+  profitCosts,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
   SimError,
@@ -106,6 +107,8 @@ export interface GameResult {
   minCash: number;
   income: number;
   profit: number;
+  /** The first day profit so far (income less the costs against profit) reached zero: null if it never did. */
+  breakEvenDay: number | null;
   peakUsers: number;
   peakPaid: number;
   users: number;
@@ -146,7 +149,7 @@ function staffTo(sim: Sim, state: GameState, pool: "ops" | "support", target: nu
 /**
  * How far ahead of demand the bot keeps capacity: the growth it has seen over the last week since the launch ramp
  * (before it has seen any, the product's daily growth), compounded over the days until a server added today would
- * serve (10 days for on-prem kit, the next day on IaaS, at once on PaaS), with a margin for the product's day-to-day
+ * serve (7 days for on-prem kit, the next day on IaaS, at once on PaaS), with a margin for the product's day-to-day
  * ups and downs in load.
  */
 function ahead(sim: Sim, state: GameState): number {
@@ -280,13 +283,17 @@ function scaleManaged(sim: Sim, state: GameState, strategy: Strategy): GameState
 }
 
 /**
- * Features: on SaaS buys every add-on on day 1; elsewhere the developers build the product's features one after
- * another, cheapest first.
+ * Features: on SaaS buys add-ons, cheapest set-up first, whenever one leaves a month of running costs in the bank;
+ * elsewhere the developers build the product's features one after another, cheapest first.
  */
 function buildFeatures(sim: Sim, state: GameState): GameState {
   const features = sim.features(state);
   if (state.model === "saas") {
-    return features.filter((f) => f.status === "notStarted").reduce((s, f) => tryAction(sim, s, { type: "buyAddon", feature: f.id }), state);
+    const month = sim.dailyStaffCost(state) * 30 + sim.monthlyInfrastructureCost(state) + sim.monthlyAddonCost(state);
+    return features
+      .filter((f) => f.status === "notStarted")
+      .sort((a, b) => a.addonSetupFee - b.addonSetupFee)
+      .reduce((s, f) => (s.cash - f.addonSetupFee >= month ? tryAction(sim, s, { type: "buyAddon", feature: f.id }) : s), state);
   }
   if (features.some((f) => f.status === "building")) return state;
   const next = features.filter((f) => f.status === "notStarted").sort((a, b) => a.devDays - b.devDays)[0];
@@ -381,6 +388,7 @@ export function playGame(sim: Sim, { model, productType, strategy, seed }: GameS
     minCash,
     income: summary.income,
     profit: summary.profit,
+    breakEvenDay: breakEven(state),
     peakUsers: summary.peak.users,
     peakPaid: summary.peak.paidUsers,
     users: summary.users,
@@ -397,6 +405,18 @@ export function playGame(sim: Sim, { model, productType, strategy, seed }: GameS
   };
 }
 
+/** The first day profit so far reached zero, counting only the interest in loan repayments, as the summary does. */
+function breakEven(state: GameState): number | null {
+  const spend = { staff: 0, infrastructure: 0, addons: 0, debt: 0 };
+  let income = 0;
+  for (const d of state.spendByDay) {
+    for (const c of ["staff", "infrastructure", "addons", "debt"] as const) spend[c] += d[c];
+    income += d.income;
+    if (income > 0 && income >= profitCosts(spend, state.loan)) return d.day;
+  }
+  return null;
+}
+
 function emptyResult(model: ModelId, productType: ProductTypeId, strategy: string, seed: number): GameResult {
   return {
     model,
@@ -410,6 +430,7 @@ function emptyResult(model: ModelId, productType: ProductTypeId, strategy: strin
     minCash: 0,
     income: 0,
     profit: 0,
+    breakEvenDay: null,
     peakUsers: 0,
     peakPaid: 0,
     users: 0,
@@ -505,10 +526,17 @@ const loanCell = (games: GameResult[]) => {
   return taken.length ? `d${taken[0]!.loanDay}` : "no";
 };
 
+/** The median break-even day of the games that broke even, and how many did if not all: "d52", "d60 (3/5)", "never". */
+function breakEvenCell(games: GameResult[]): string {
+  const days = games.flatMap((g) => (g.breakEvenDay === null ? [] : [g.breakEvenDay]));
+  if (!days.length) return "never";
+  return `d${whole(median(days))}${days.length < games.length ? ` (${days.length}/${games.length})` : ""}`;
+}
+
 /** A row of the strategy tables. Money and users are medians across the seeds; satisfaction and uptime means. */
 function row(cell: Cell): string[] {
   const g = cell.games.filter((x) => x.outcome !== "cant-start");
-  if (!g.length) return [SHORT[cell.model], cell.productType, "can't start", "", "", "", "", "", "", "", "", "", ""];
+  if (!g.length) return [SHORT[cell.model], cell.productType, "can't start", "", "", "", "", "", "", "", "", "", "", ""];
   const launched = g.flatMap((x) => (x.launchDay === null ? [] : [x.launchDay]));
   const peak = median(g.map((x) => x.peakUsers));
   const paidShare = mean(g.map((x) => (x.peakUsers ? x.peakPaid / x.peakUsers : 0)));
@@ -520,6 +548,7 @@ function row(cell: Cell): string[] {
     money(median(g.map((x) => x.cash))),
     money(median(g.map((x) => x.minCash))),
     money(median(g.map((x) => x.profit))),
+    breakEvenCell(g),
     `${whole(peak)} (${Math.round(paidShare * 100)}% paid)`,
     `${Math.round(mean(g.map((x) => x.satisfaction)))}%`,
     `${mean(g.map((x) => x.uptime)).toFixed(1)}%`,
@@ -589,7 +618,7 @@ export function renderReport(results: GameResult[], { title = "Balance report", 
     })];
   }))), "");
 
-  const head = ["Model", "Product", "Outcome", "Launch", "Final cash", "Lowest cash", "Profit", "Peak users", "Satisfaction", "Uptime", "Outage days", "First over capacity", "Loan"];
+  const head = ["Model", "Product", "Outcome", "Launch", "Final cash", "Lowest cash", "Profit", "Break-even", "Peak users", "Satisfaction", "Uptime", "Outage days", "First over capacity", "Loan"];
   for (const s of used) {
     out.push(`## Strategy: ${s.id}`, "", s.description, "");
     out.push(table(head, all.filter((c) => c.strategy === s.id).map(row)), "");

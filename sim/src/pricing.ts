@@ -113,16 +113,40 @@ export function createPricing(config: GameConfig) {
   }
 
   /**
-   * How a wave shares its whole effect across its days: firstDayShare on day 1, the small next-day reaction, and the
-   * rest over the remaining days on a sine curve, building to a peak in the middle and fading, like word spreading.
+   * How a wave shares its whole effect across its days: a first-day share, the quick reaction, and the rest over the
+   * remaining days on a sine curve, building to a peak in the middle and fading, like word spreading.
    */
-  function waveShape(): number[] {
-    const { waveDays, firstDayShare } = config.pricing;
+  function waveShape(first: number): number[] {
+    const { waveDays } = config.pricing;
     if (waveDays <= 1) return [1];
     const rest = Array.from({ length: waveDays - 1 }, (_, i) => Math.sin((Math.PI * (i + 1)) / waveDays));
     const sum = rest.reduce((a, b) => a + b, 0);
-    return [firstDayShare, ...rest.map((w) => ((1 - firstDayShare) * w) / sum)];
+    return [first, ...rest.map((w) => ((1 - first) * w) / sum)];
   }
+
+  /**
+   * The share of a wave that lands on its first day: firstDayShare, except for sticker shock. A rise to a dear price
+   * loses (1 - fair price / new price)^3 of its payers at once, before they pay it: an eighth on doubling the fair
+   * price, half at five times it and nearly all at many times it.
+   */
+  function firstDayShare(state: GameState, to: number): number {
+    const { firstDayShare } = config.pricing;
+    if (to <= state.price) return firstDayShare;
+    return Math.max(firstDayShare, Math.max(0, 1 - fairPrice(state.productType) / to) ** 3);
+  }
+
+  /**
+   * The lowest price customers remember: the lowest in effect over the last priceMemoryDays, today's included. A cut
+   * only counts below it.
+   */
+  function rememberedPrice(state: GameState): number {
+    const since = state.day - config.pricing.priceMemoryDays;
+    return state.priceChanges.reduce((low, c) => (c.day > since ? Math.min(low, c.from) : low), state.price);
+  }
+
+  /** How dear a price is: (price / fair price)^dearness, and 1 at or below the fair price. */
+  const dearnessOf = (productType: ProductTypeId, price: number) =>
+    Math.max(1, price / fairPrice(productType)) ** config.pricing.dearness;
 
   /** Splits a whole number over the shape so the days add up to it exactly. */
   function spread(total: number, shape: number[]): number[] {
@@ -140,23 +164,29 @@ export function createPricing(config: GameConfig) {
   /**
    * The whole wave a change from today's price to `to` would cause, from today's users. Its size scales with the
    * change against the fair price, raised to waveCurve, so a small tweak barely registers and a big jump hits hard.
+   * A rise hits harder the dearer the new price, and at many times the fair price almost nobody keeps paying. A cut
+   * counts only below the lowest price customers remember, and brings fewer the dearer it leaves the price: a cut from
+   * £300 to £295 is still £295 to them.
    */
   function waveTotal(state: GameState, to: number): WaveEffect {
     const p = config.pricing;
     const fair = fairPrice(state.productType);
-    const size = (Math.abs(to - state.price) / fair) ** p.waveCurve;
     const total = noEffect();
     if (to > state.price) {
-      const dearer = Math.max(1, to / fair) ** p.dearness;
-      const affected = Math.round(state.paidUsers * Math.min(p.maxRiseShare, p.riseStrength * size * dearer));
+      const size = ((to - state.price) / fair) ** p.waveCurve;
+      const dearer = dearnessOf(state.productType, to);
+      const most = 1 - (1 - p.maxRiseShare) / dearer;
+      const affected = Math.round(state.paidUsers * Math.min(most, p.riseStrength * size * dearer));
       total.toFree = Math.round(affected * p.dropToFreeShare);
       total.left = affected - total.toFree;
       total.tickets = Math.round(affected * p.backlashTicketsPerUser);
     } else if (to < state.price) {
-      total.joined = Math.round(state.users * Math.min(p.maxCutGain, p.cutGainStrength * size));
+      const size = (Math.max(0, rememberedPrice(state) - to) / fair) ** p.waveCurve;
+      const appeal = 1 / dearnessOf(state.productType, to);
+      total.joined = Math.round(state.users * Math.min(p.maxCutGain, p.cutGainStrength * size) * appeal);
       total.joinedPaid = Math.round(total.joined * paidShareOfNew({ ...state, price: to }));
       const free = state.users - state.paidUsers;
-      total.upgraded = Math.round(free * Math.min(p.maxCutUpgrade, p.cutUpgradeStrength * size));
+      total.upgraded = Math.round(free * Math.min(p.maxCutUpgrade, p.cutUpgradeStrength * size) * appeal);
     }
     return total;
   }
@@ -164,7 +194,7 @@ export function createPricing(config: GameConfig) {
   /** The wave planned day by day. Each number is spread over the shape on its own, so every total adds up exactly. */
   function planDays(state: GameState, to: number): WaveEffect[] {
     const total = waveTotal(state, to);
-    const shape = waveShape();
+    const shape = waveShape(firstDayShare(state, to));
     const columns = EFFECT_KEYS.map((k) => [k, spread(total[k], shape)] as const);
     return shape.map((_, i) => {
       const day = noEffect();
@@ -242,7 +272,9 @@ export function createPricing(config: GameConfig) {
     const wave = state.priceWave;
     const i = wave ? day - wave.firstDay : -1;
     const plan = wave?.days[i];
-    if (!wave || !plan) return { users, paidUsers, priceWave: wave, bursts: [] as TicketBurst[], entries: [] as LogEntry[] };
+    if (!wave || !plan) {
+      return { users, paidUsers, priceWave: wave, refused: 0, bursts: [] as TicketBurst[], entries: [] as LogEntry[] };
+    }
 
     const today: WaveEffect = { ...plan };
     today.left = Math.min(plan.left, paidUsers);
@@ -256,6 +288,8 @@ export function createPricing(config: GameConfig) {
       users: users - today.left + today.joined,
       paidUsers: paidUsers - today.left - today.toFree + today.upgraded + today.joinedPaid,
       priceWave: { ...wave, done },
+      // Paying users a rise lost today refused the new price, so they don't pay it today either.
+      refused: wave.direction === "rise" ? today.left + today.toFree : 0,
       bursts,
       entries: waveEntries(wave, i, today, i === n - 1 ? done : null),
     };
@@ -313,12 +347,25 @@ export function createPricing(config: GameConfig) {
   /** A day's income: paid users × price ÷ daysPerMonth, rounded to the pound, the same rule as monthly costs. */
   const dailyIncome = (state: GameState) => Math.round((state.paidUsers * state.price) / config.billing.daysPerMonth);
 
-  /** The day's income, from the paying users at the start of the day. None when nobody pays. */
-  function incomeEntries(state: GameState): LogEntry[] {
-    const income = dailyIncome(state);
+  /**
+   * The day's income, from the paying users at the start of the day, less any a price rise lost today: they refused
+   * the new price rather than pay it. None when nobody pays.
+   */
+  function incomeEntries(state: GameState, refused = 0): LogEntry[] {
+    const paidUsers = Math.max(0, state.paidUsers - refused);
+    const income = dailyIncome({ ...state, paidUsers });
     if (income <= 0) return [];
-    const text = `Income: ${count.format(state.paidUsers)} paying users at ${pounds(state.price)} a month`;
+    const text = `Income: ${count.format(paidUsers)} paying users at ${pounds(state.price)} a month`;
     return [{ text, cashDelta: income, kind: "income" }];
+  }
+
+  /**
+   * Share of paying users who stop paying in a day because the price is above what the product's worth: priceChurn
+   * times (price / fair price - 1)^2, at most maxPriceChurn. None at or below the fair price.
+   */
+  function priceChurn(state: GameState): number {
+    const { priceChurn, maxPriceChurn } = config.pricing;
+    return Math.min(maxPriceChurn, priceChurn * Math.max(0, priceRatio(state) - 1) ** 2);
   }
 
   return {
@@ -332,6 +379,7 @@ export function createPricing(config: GameConfig) {
     priceGrowth,
     paidUsersAfter,
     paidShareOfNew,
+    priceChurn,
     dailyIncome,
     incomeEntries,
   };
