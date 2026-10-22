@@ -216,8 +216,12 @@ An AI that plays the simulation through a compact text format instead of the web
 _Avoid_: Bot (a bot is a scripted strategy in the balance harness), agent
 
 **Playstyle**:
-The way an AI playtester is told to play: min-maxer, maxer, average Joe, low and slow, or chaos tester.
+The way an AI playtester is told to play: min-maxer, maxer, average Joe, low and slow, chaos tester, Spiffin Brit, Reamu Keaves or Hodd Toward.
 _Avoid_: Persona, strategy (a strategy is a scripted bot), personality
+
+**Game summary**:
+What an AI playtester hands back after a game: how it ended, the score, key moments, what it tried and anything that felt broken or exploitable.
+_Avoid_: Report, results
 
 ## Flagged ambiguities
 

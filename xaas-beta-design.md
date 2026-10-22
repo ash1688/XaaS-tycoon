@@ -491,7 +491,11 @@ A lightweight way for an AI to play the game, so balance and exploits can be tes
 | Average Joe | Plays like a typical student: skims, mostly lets time run, reacts to problems late, follows the obvious prompts |
 | Low and slow | Cautious: no loan, few risks, steady growth, keeps a cash cushion |
 | Chaos tester | Tries odd things just to see what happens, like the alpha student who let everyone go and charged £1 |
+| Spiffin Brit | Plays like the exploit YouTuber: looks for one ridiculous loophole and rides it as far as it goes, narrating how the system is "working as intended" |
+| Reamu Keaves | Breathtakingly wholesome: pays staff well, never lets anyone go, keeps prices fair and customers happy, and treats every investor with kindness. Tests whether doing right by everyone can still win |
+| Hodd Toward | "It just works!" Ships every feature and tier as fast as possible, overpromises on deals and SLAs, and never tests capacity first. Tests what happens when you sell more than you can deliver |
 
+- **Running it:** start a batch of AI playtesters, for example one per playstyle, each playing its own game in parallel. Each hands back a **game summary**: how the game ended, the score, key moments (first profit, investors taken, rescues, events), what it tried and anything that felt broken or exploitable. The summaries are then presented side by side, alongside the logs.
 - Playstyles can be combined with any product, model, game length and difficulty, and run in batches with fixed random seeds so results can be repeated.
 - **Average Joe matters most for balance:** if typical students can't break even, the game is too hard. **Min-maxer matters most for exploits:** anything it finds, students will too.
 
