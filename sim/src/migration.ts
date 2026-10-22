@@ -1,7 +1,8 @@
-import { MIGRATION_PHASES, type GameConfig, type MigrationPhase, type ModelId } from "./config.ts";
+import { MIGRATION_PHASES, STAFF_POOLS, type GameConfig, type MigrationPhase, type ModelId } from "./config.ts";
 import type { Events } from "./events.ts";
 import type { Features } from "./features.ts";
 import type { Infrastructure } from "./infrastructure.ts";
+import { pounds } from "./finance.ts";
 import { nextRandom } from "./rng.ts";
 import type { Servers, SetupItem } from "./servers.ts";
 import { isModelId, SimError, type GameState, type LogEntry, type Migration, type Server, type UnitDemand } from "./state.ts";
@@ -80,7 +81,17 @@ export interface MigrationQuote {
    * each takes to rebuild. Empty unless leaving SaaS. These are today's; any bought before you leave go too.
    */
   lostAddons: LostAddon[];
+  /** Cash left once it's all paid, before any income: today's cash less the total. Below 0, it can't be paid. */
+  cashLeft: number;
+  /**
+   * A warning when the cash left would cover less than lowCashDays of today's running costs (staff and the current
+   * bill), or none. Migrating that short of cash is how companies go bankrupt mid-move.
+   */
+  warning: string | null;
 }
+
+/** Days of running costs a migration should leave in the bank: with less, its quote warns. */
+const LOW_CASH_DAYS = 30;
 
 /** An add-on that won't come with you when you leave SaaS. */
 export interface LostAddon {
@@ -128,6 +139,22 @@ export function createMigration(
    * sizeSetupFor): rented servers on the model's usual terms, bought kit ordered today and paid for on the first day.
    */
   function startMigration(state: GameState, model: string): GameState {
+    const started = planMigration(state, model);
+    // The upfront bill lands on the first day, so a migration that costs more up front than the company has is
+    // refused rather than bankrupting it.
+    const upfront = infra.upfrontCost(started.migration!.to, started.migration!.servers);
+    if (upfront > state.cash) {
+      throw new SimError(
+        "cant_afford",
+        `Moving to ${config.models[started.migration!.to].name} costs ${pounds(upfront)} up front and you have ${pounds(state.cash)}.`,
+        { cost: upfront, cash: state.cash },
+      );
+    }
+    return started;
+  }
+
+  /** The migration as it would start, without checking it can be paid for. */
+  function planMigration(state: GameState, model: string): GameState {
     const to = migrationTarget(state, model);
     const setup = servers.setupFor(state, to, infra.usualDemand(state));
     const migration: Migration = { to, phase: MIGRATION_PHASES[0], phaseDaysDone: 0, overrunDays: 0, servers: setup.servers };
@@ -139,7 +166,7 @@ export function createMigration(
    * by, so the rounding matches too, and bought kit costs its upkeep only once it has arrived, as it's billed.
    */
   function migrationQuote(state: GameState, target: string): MigrationQuote {
-    const started = startMigration(state, target);
+    const started = planMigration(state, target);
     const m = started.migration!;
     const to = m.to;
     const days = MIGRATION_PHASES.reduce((sum, p) => sum + config.migration.phases[p].days, 0);
@@ -159,6 +186,18 @@ export function createMigration(
     const tidy = (n: number) => Math.round(n * 100) / 100;
     const { chance, minDays, maxDays } = config.migration.overrun;
     const lostAddons = features.addonsLeftBehind(state, to).map(({ id, name, devDays }) => ({ id, name, devDays }));
+    const total = upfrontCost + doubleBilling + proRata + exitPenalty - sellBack;
+    const cashLeft = state.cash - total;
+    const staffDaily = STAFF_POOLS.reduce((sum, p) => sum + state[p] * config.staff[p].dayRate, 0);
+    const running = staffDaily + infra.dailyInfrastructure(state, state.model, state.users) + features.dailyAddonCost(state);
+    const lowCash = running * LOW_CASH_DAYS;
+    const warning =
+      cashLeft < 0
+        ? `You can't afford this: it costs ${pounds(total)} and you have ${pounds(state.cash)}.`
+        : cashLeft < lowCash
+          ? `This would leave you ${pounds(cashLeft)}, about ${Math.floor(cashLeft / Math.max(1, running))} days of running costs before any income. ` +
+            `Migrating this short of cash is how companies go bankrupt mid-move: take the bank loan first, or wait until you have more.`
+          : null;
     return {
       from: state.model,
       to,
@@ -175,9 +214,11 @@ export function createMigration(
       proRata,
       exitPenalty,
       sellBack,
-      total: upfrontCost + doubleBilling + proRata + exitPenalty - sellBack,
+      total,
       overrun: { chance, minDays, maxDays },
       lostAddons,
+      cashLeft,
+      warning,
     };
   }
 
@@ -266,7 +307,7 @@ export function createMigration(
     // setup goes: rented servers are cancelled, having been billed up to and including today (pro rata, like the
     // model's own bill), and bought kit is sold back at a loss. SaaS has no servers, so moving there drops them all
     // and capacity is the provider's. Bought kit for the new setup was ordered on the first day, so with the default
-    // 10-day delivery inside a 14-day move it has arrived; an overrun only makes the move longer. If a teacher sets a
+    // 7-day delivery inside a 14-day move it has arrived; an overrun only makes the move longer. If a teacher sets a
     // delivery longer than the move, kit still on order arrives later and serves from then.
     const switched: GameState = {
       ...state,

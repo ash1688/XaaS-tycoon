@@ -303,6 +303,8 @@ export interface OutageConfig {
   hoursPerOverload: number;
   /** Growth is multiplied by this on an outage day. */
   growthMultiplier: number;
+  /** Share of paying users who stop paying for each hour down, of any kind (0.001 = 0.1% an hour). */
+  paidChurnPerHour: number;
 }
 
 export interface CapacityConfig {
@@ -366,11 +368,16 @@ export interface PricingConfig {
    */
   riseStrength: number;
   /**
-   * How much harder a rise hits the further above the fair price it goes: the share is multiplied by (new price ÷
-   * fair price) to this power when that's above 1. 0 for no effect. Stops small rises adding up for free.
+   * How much a price above the fair price puts customers off, as (new price ÷ fair price) to this power when that's
+   * above 1. 0 for no effect. A rise's share is multiplied by it, so small rises don't add up for free; a cut's new
+   * users and upgrades are divided by it, so a cut that leaves the price dear brings few.
    */
   dearness: number;
-  /** The most of the paying users one rise can affect (0.9 = 90%). */
+  /**
+   * The most of the paying users one rise to near the fair price can affect (0.9 = 90%). The dearer the new price, the
+   * fewer can stay: at most (1 − this) ÷ (new price ÷ fair price)^dearness of them keep paying, so almost nobody pays
+   * a price many times what it's worth.
+   */
   maxRiseShare: number;
   /** Of the paying users a rise affects, the share who drop to the free tier. The rest leave altogether. */
   dropToFreeShare: number;
@@ -384,6 +391,18 @@ export interface PricingConfig {
   cutUpgradeStrength: number;
   /** The most of the free users one cut can turn into payers. */
   maxCutUpgrade: number;
+  /**
+   * Days customers remember a lower price. A cut only counts for how far it goes below the lowest price in that time,
+   * so undoing a rise, or cycling up and back down, brings no new wave.
+   */
+  priceMemoryDays: number;
+  /**
+   * Share of paying users who stop paying each day at twice the fair price: priceChurn × (price ÷ fair price − 1)²,
+   * so barely any just above the fair price and most of them far above it. At most maxPriceChurn a day. Like a
+   * rise's, dropToFreeShare of them drop to free and the rest leave.
+   */
+  priceChurn: number;
+  maxPriceChurn: number;
 }
 
 /**
@@ -414,6 +433,11 @@ export interface SupportConfig {
   growthAtZero: number;
   /** Share of users who leave each day at 0% satisfaction, falling in a straight line to none at goodSatisfaction. */
   churnAtZero: number;
+  /**
+   * On top of that, the share of paying users who stop paying each day at 0% satisfaction, falling in a straight line
+   * to none at goodSatisfaction. Unhappy customers stop paying first.
+   */
+  paidChurnAtZero: number;
 }
 
 /**
@@ -456,6 +480,11 @@ export interface AddonConfig {
    * Add-ons already bought keep working, as the provider runs them.
    */
   minConfigDevelopers: number;
+  /**
+   * The one-off fee to set an add-on up, per developer-day it would take to build: buying saves the time, not the
+   * money. Paid when it's bought, so a new company has to choose which it can afford first.
+   */
+  setupFeePerDevDay: number;
 }
 
 export interface MigrationPhaseConfig {
@@ -638,7 +667,7 @@ export const defaultConfig: GameConfig = {
   finalDay: 180,
   maxCompanyNameLength: 40,
   // Users trickle in over 3 days, building up. SaaS starts on day 1; a platform set up or VMs rented on day 1 start on
-  // day 2; on-prem kit bought on day 1 arrives on day 11, so it starts over a week after the cloud models.
+  // day 2; on-prem kit bought on day 1 arrives on day 8, so it starts nearly a week after the cloud models.
   launch: { rampShares: [0.2, 0.3, 0.5] },
   models: {
     onprem: {
@@ -647,14 +676,14 @@ export const defaultConfig: GameConfig = {
       comparison: { upfrontCost: "High", monthlyCost: "Low–medium", opsNeeded: "High", control: "Full" },
       // The server room: racks, networking, power and cooling. The servers are bought on top: a first app server and
       // database of a size that leaves room to grow (£2,200 for large ones) make on-prem by far the dearest to start.
-      upfrontCost: 5_000,
+      upfrontCost: 3_000,
       // The premises, bandwidth and the room's own power. Each server's power and upkeep is on top.
       monthlyCost: 1_000,
       monthlyCostPerUser: 0,
       exitPenalty: 0,
       // A server costs about five weeks' rent of the same VM and a tenth of that rent a month to run, so it pays for
       // itself in under two months. That makes on-prem the cheapest at scale for a product with steady, heavy load
-      // (video). But you buy for your peak, ten days ahead: a spiky shop or a fast-growing social network pays for kit
+      // (video). But you buy for your peak, a week ahead: a spiky shop or a fast-growing social network pays for kit
       // that sits idle, and a traffic spike melts it. Selling one back gets 40% of what you paid. Kit you rack, power
       // and patch yourself needs a little more ops than a VM, and patching it takes two people.
       servers: {
@@ -673,7 +702,7 @@ export const defaultConfig: GameConfig = {
           cache: { small: 10, medium: 20, large: 30, massive: 45 },
           loadBalancer: { small: 20, medium: 30, large: 45, massive: 60 },
         },
-        readyDays: 10,
+        readyDays: 7,
         opsPerServer: { app: 0.25, database: 0.25, cache: 0.1, loadBalancer: 0.1 },
       },
     },
@@ -941,7 +970,7 @@ export const defaultConfig: GameConfig = {
     loadBalancerFrom: 2,
     cacheableShare: 0.5,
   },
-  outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25 },
+  outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25, paidChurnPerHour: 0.001 },
   billing: { daysPerMonth: 30 },
   // Enough for on-prem to buy kit ahead of demand from the start, or to see an IaaS, PaaS or SaaS company through a
   // tight start, for about £3,700 of interest. See LoanConfig for the interest formula.
@@ -968,6 +997,11 @@ export const defaultConfig: GameConfig = {
     maxCutGain: 0.5,
     cutUpgradeStrength: 0.5,
     maxCutUpgrade: 0.5,
+    // Customers remember the lowest price for two months, and at twice the fair price 0.5% of payers stop paying each
+    // day: at four times it 4.5%, and from 11 times half of them.
+    priceMemoryDays: 60,
+    priceChurn: 0.005,
+    maxPriceChurn: 0.5,
   },
   support: {
     ticketsPerPerson: 30,
@@ -979,6 +1013,7 @@ export const defaultConfig: GameConfig = {
     poorSatisfaction: 40,
     growthAtZero: 0.3,
     churnAtZero: 0.02,
+    paidChurnAtZero: 0.02,
   },
   // At the fair price with nothing helping or hurting, a shop converts 0.12% of its free users a day. Features, uptime
   // and satisfaction can more than double that, so free users are worth having, but most stay free, still adding load
@@ -992,7 +1027,8 @@ export const defaultConfig: GameConfig = {
     priceSensitivity: 2,
     maxRate: 0.05,
   },
-  addons: { minConfigDevelopers: 2 },
+  // A 20-day feature costs £2,000 to set up: all four on day 1 would take half the starting cash.
+  addons: { minConfigDevelopers: 2, setupFeePerDevDay: 100 },
   migration: {
     phases: {
       planning: { name: "Planning", days: 5 },

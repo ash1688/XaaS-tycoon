@@ -98,6 +98,9 @@ function noWaves() {
     maxCutGain: 0.5,
     cutUpgradeStrength: 0,
     maxCutUpgrade: 0.5,
+    priceMemoryDays: 0,
+    priceChurn: 0,
+    maxPriceChurn: 0.5,
   };
 }
 
@@ -160,7 +163,7 @@ const config: GameConfig = {
     loadBalancerFrom: 2,
     cacheableShare: 0.5,
   },
-  outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25 },
+  outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25, paidChurnPerHour: 0 },
   billing: { daysPerMonth: 30 },
   // Taken at the start: £17,900 at 10%, £19,690 over 179 days, £110 a day.
   loan: { amount: 17_900, baseRate: 0.1, ratePerDay: 0.002, minDays: 14 },
@@ -182,10 +185,11 @@ const config: GameConfig = {
     poorSatisfaction: 40,
     growthAtZero: 0.3,
     churnAtZero: 0.02,
+    paidChurnAtZero: 0,
   },
   // Conversion at its default strengths, but every product's base rate is 0 unless a test sets one.
   conversion: { ...defaultConfig.conversion },
-  addons: { minConfigDevelopers: 1 },
+  addons: { minConfigDevelopers: 1, setupFeePerDevDay: 0 },
   migration: {
     phases: {
       planning: { name: "Planning", days: 5 },
@@ -220,7 +224,7 @@ const roomyDefaults: GameConfig = smallestLaunch({ ...defaultConfig, startingCas
 
 /**
  * A first setup on the default config, as a student might set it up on day 1: a medium app server and database on
- * IaaS; large ones on-prem, with more room since kit takes 10 days to arrive; one app instance and a small managed
+ * IaaS; large ones on-prem, with more room since kit takes a week to arrive; one app instance and a small managed
  * database on PaaS. Nothing on SaaS, which has no servers. Video needs five times the compute per user, so its app
  * servers are a size up, and on PaaS it runs two instances.
  */
@@ -387,14 +391,14 @@ describe("launch", () => {
   it("starts on-prem's users trickling in on the day its first kit arrives, with the normal delivery time", () => {
     const state = setUp(defaults, fresh(defaults, "onprem", "video", true));
     // The kit on order needs an ops person once it arrives, though none yet.
-    expect(defaults.launch(state)).toMatchObject({ status: "upcoming", day: 11, daysLeft: 10, opsNeeded: 1 });
+    expect(defaults.launch(state)).toMatchObject({ status: "upcoming", day: 8, daysLeft: 7, opsNeeded: 1 });
     expect(defaults.opsNeededNow(state)).toBe(0);
-    const waiting = playTo(defaults, state, 10);
+    const waiting = playTo(defaults, state, 7);
     expect(waiting).toMatchObject({ users: 0, launchDay: null });
-    expect(defaults.launch(waiting)).toMatchObject({ status: "upcoming", day: 11, daysLeft: 1 });
+    expect(defaults.launch(waiting)).toMatchObject({ status: "upcoming", day: 8, daysLeft: 1 });
     // Video's 1,600: 320, then 800, then all of them.
-    expect(usersOn(defaults, state, 11, 13)).toEqual([320, 800, 1_600]);
-    expect(defaults.launch(playTo(defaults, state, 13))).toMatchObject({ status: "launched", day: 11, daysLeft: null });
+    expect(usersOn(defaults, state, 8, 10)).toEqual([320, 800, 1_600]);
+    expect(defaults.launch(playTo(defaults, state, 10))).toMatchObject({ status: "launched", day: 8, daysLeft: null });
   });
 
   it("waits for capacity, starting the ramp on the first day the company has it", () => {
@@ -717,7 +721,7 @@ describe("features", () => {
 
   it("lists the product's features from config, none started", () => {
     expect(sim.features(startOn())).toEqual(
-      features.map((f) => ({ ...f, status: "notStarted", progress: 0, daysLeft: null })),
+      features.map((f) => ({ ...f, status: "notStarted", progress: 0, daysLeft: null, addonSetupFee: 0 })),
     );
   });
 
@@ -887,7 +891,7 @@ describe("SaaS add-ons", () => {
   });
 
   it("needs the configuration team from config to buy one", () => {
-    const strict = createSim({ ...config, addons: { minConfigDevelopers: 2 } });
+    const strict = createSim({ ...config, addons: { minConfigDevelopers: 2, setupFeePerDevDay: 0 } });
     const state = (developers: number) => ({
       ...strict.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 42 }),
       developers,
@@ -1659,20 +1663,20 @@ describe("servers on-prem", () => {
     // The model's upfront cost is the server room. There's no kit until the company buys some, so nothing is charged
     // twice.
     expect(s.upfrontCost("onprem")).toBe(onprem.upfrontCost);
-    expect(s.upfrontCost("onprem")).toBe(5_000);
-    expect(onprem.servers!.readyDays).toBe(10);
+    expect(s.upfrontCost("onprem")).toBe(3_000);
+    expect(onprem.servers!.readyDays).toBe(7);
     for (const p of PRODUCT_TYPE_IDS) {
       const own = s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1 });
-      expect(own.cash).toBe(defaultConfig.startingCash - 5_000);
+      expect(own.cash).toBe(defaultConfig.startingCash - 3_000);
       expect(own.servers).toEqual([]);
       // A large app server and database, £2,200 on day 1 (video's massive app server, £2,600): starting cash covers
       // them, leaving little to buy more with.
-      expect(setUp(s, own).cash).toBe(defaultConfig.startingCash - (p === "video" ? 7_600 : 7_200));
+      expect(setUp(s, own).cash).toBe(defaultConfig.startingCash - (p === "video" ? 5_600 : 5_200));
       const loaned = s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1, takeLoan: true });
-      expect(loaned.cash).toBe(defaultConfig.startingCash + defaultConfig.loan.amount - 5_000);
-      // The kit arrives on day 11, and the users with it.
+      expect(loaned.cash).toBe(defaultConfig.startingCash + defaultConfig.loan.amount - 3_000);
+      // The kit arrives on day 8, and the users with it.
       const state = launched(s, loaned);
-      expect(state.launchDay, p).toBe(11);
+      expect(state.launchDay, p).toBe(8);
       expect(s.units({ ...state, ops: s.opsNeededNow(state) })!.usersSupported, p).toBeGreaterThan(state.users * 2);
     }
     // Every bought server sells back at a loss, and costs more up front than a month's rent of the same VM.
@@ -2776,7 +2780,7 @@ describe("default config", () => {
     const rent = (server: ServerType) =>
       rentAhead(sim180.applyAction(state, { type, server, size: "massive" }));
     const { cu, dbu, ch, loadBalancer } = units;
-    // VMs are ready the next day, so it waits for any being set up. Kit takes 10 days to arrive, so on-prem buys
+    // VMs are ready the next day, so it waits for any being set up. Kit takes a week to arrive, so on-prem buys
     // further ahead, and waits only for kit of the same type already on order.
     const onprem = state.model === "onprem";
     const ahead = onprem ? 2.5 : 2;
@@ -2902,7 +2906,7 @@ describe("default config", () => {
     // Everything paid by the end of day 1 with a first setup: the model's upfront cost and, on-prem, the first kit.
     const upfront = (m: (typeof MODEL_IDS)[number]) =>
       defaultConfig.startingCash - setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: m, seed: 1 })).cash;
-    for (const m of ["iaas", "paas", "saas"] as const) expect(upfront("onprem")).toBeGreaterThan(upfront(m) * 3);
+    for (const m of ["iaas", "paas", "saas"] as const) expect(upfront("onprem")).toBeGreaterThan(upfront(m) * 2);
     expect(upfront("onprem")).toBeGreaterThan(s.upfrontCost("onprem"));
     expect(MODEL_IDS.filter((m) => defaultConfig.models[m].monthlyCostPerUser > 0)).toEqual(["saas"]);
   });
@@ -3256,6 +3260,9 @@ describe("migration costs", () => {
         total: 1078,
         overrun: { chance: 0, minDays: 2, maxDays: 4 },
         lostAddons: [],
+        // £1,000 in the bank, so it says so.
+        cashLeft: -78,
+        warning: "You can't afford this: it costs £1,078 and you have £1,000.",
       });
     });
 
@@ -3645,12 +3652,12 @@ describe("migration with servers", () => {
     // 20,000 users need 60 CU and 80 DBU; plus a quarter, 75 and 100.
     expect(onprem.sizedFor).toEqual({ cu: 75, dbu: 100 });
     expect(onprem.setup.map((i) => [i.name, i.size, i.count, i.upfront, i.monthly, i.daysLeft])).toEqual([
-      ["App server", "massive", 3, 3 * 2_550, 3 * 85, 10],
-      ["Database", "massive", 4, 4 * 3_300, 4 * 110, 10],
-      ["Load balancer", "medium", 1, 900, 30, 10],
+      ["App server", "massive", 3, 3 * 2_550, 3 * 85, 7],
+      ["Database", "massive", 4, 4 * 3_300, 4 * 110, 7],
+      ["Load balancer", "medium", 1, 900, 30, 7],
     ]);
     // 3 app servers and 4 databases at 0.6 ops each, and a load balancer at 0.3: 4.5, so 5.
-    expect(onprem).toMatchObject({ setupUpfront: 21_750, setupMonthly: 725, deliveryDays: 10, opsNeeded: 5 });
+    expect(onprem).toMatchObject({ setupUpfront: 21_750, setupMonthly: 725, deliveryDays: 7, opsNeeded: 5 });
     // The server room and the kit, on the first day.
     expect(onprem.upfrontCost).toBe(calm.models.onprem.upfrontCost + 21_750);
 
@@ -3688,9 +3695,9 @@ describe("migration with servers", () => {
       expect(t.filter((x) => x.includes(") rent: "))).toHaveLength(2);
       expect(t).toContain("Double billing: Own servers (on-prem) running costs (£1,500 a month)");
     }
-    // Ordered on day 1 and arriving 10 days later, the kit's power and upkeep is billed from the day after.
+    // Ordered on day 1 and arriving 7 days later, the kit's power and upkeep is billed from the day after.
     const upkeepDays = log.filter((d) => d.entries.some((e) => e.text.includes("power and upkeep"))).map((d) => d.day);
-    expect(upkeepDays).toEqual([12, 13, 14, 15]);
+    expect(upkeepDays).toEqual([9, 10, 11, 12, 13, 14, 15]);
     expect(texts(log.slice(0, 1))).toContain("New setup: bought 3 massive app servers at £2,550 each");
 
     const paas = s.advance(s.applyAction(on("iaas", 20_000), migrate("paas")), 1).log;
@@ -3711,9 +3718,9 @@ describe("migration with servers", () => {
       ["database", "medium"],
     ]);
     expect(s.migration(moving)!.setup.map((i) => [i.type, i.count, i.daysLeft])).toEqual([
-      ["app", 3, 10],
-      ["database", 4, 10],
-      ["loadBalancer", 1, 10],
+      ["app", 3, 7],
+      ["database", 4, 7],
+      ["loadBalancer", 1, 7],
     ]);
     expect(s.migration(moving)!.setupMonthly).toBe(725);
     const later = s.advance(moving, 10).state;
@@ -4809,7 +4816,8 @@ describe("price waves and the price lock", () => {
   const waved = (overrides: Partial<GameConfig["pricing"]> = {}) =>
     createSim({
       ...config,
-      pricing: { ...defaultConfig.pricing, ...overrides },
+      // No price churn, so a price above fair loses payers only through its wave.
+      pricing: { ...defaultConfig.pricing, priceChurn: 0, ...overrides },
       support: { ...config.support, churnAtZero: 0 },
       productTypes: {
         ...config.productTypes,
@@ -4887,7 +4895,8 @@ describe("price waves and the price lock", () => {
     // Bigger changes always hit harder, up to the cap.
     const sizes = [33, 36, 40, 45, 50].map(affected);
     for (let i = 1; i < sizes.length; i++) expect(sizes[i]).toBeGreaterThan(sizes[i - 1]!);
-    expect(affected(1000)).toBe(Math.round(600 * defaultConfig.pricing.maxRiseShare));
+    // At most all but (1 − maxRiseShare) ÷ dearness keep paying: almost nobody at 33 times the fair price.
+    expect(affected(1000)).toBe(Math.round(600 * (1 - (1 - defaultConfig.pricing.maxRiseShare) / (1000 / 30))));
     // The same for cuts.
     const gained = (price: number) => s.pricePreview(start, price).total.joined;
     expect(gained(28.5)).toBeLessThan(gained(15) / 10);
@@ -4993,10 +5002,11 @@ describe("price waves and the price lock", () => {
     const end = s.advance(after3, 4);
     expect(priceLog(end.log).at(-1)).toMatch(/^The backlash from your price rise is over\. In all, \d+ paying users left and \d+ dropped to free\.$/);
     expect(s.priceWave(end.state)).toBeNull();
+    // A cut below the £30 customers remember, so it brings a wave.
     state = s.advance(end.state, 7).state;
-    expect(s.applyAction(state, setPrice(25)).priceChanges).toHaveLength(2);
-    expect(priceLog(s.advance(s.applyAction(state, setPrice(25))).log)[0]).toMatch(
-      /^Customers noticed your price cut from £45 to £25: \d+ new users joined and \d+ free users started paying\./,
+    expect(s.applyAction(state, setPrice(20)).priceChanges).toHaveLength(2);
+    expect(priceLog(s.advance(s.applyAction(state, setPrice(20))).log)[0]).toMatch(
+      /^Customers noticed your price cut from £45 to £20: \d+ new users joined and \d+ free users started paying\./,
     );
   });
 
@@ -5220,5 +5230,229 @@ describe("free-to-paid conversion", () => {
       expect(chance).toBeGreaterThan(0.1);
       expect(chance).toBeLessThan(0.6);
     }
+  });
+});
+
+describe("alpha patch: pricing exploits and balance", () => {
+  // A shop at a £30 fair price, 600 of 1,000 users paying, with no growth, conversion or random variation and no
+  // satisfaction churn, so every change in paying users comes from the price. Pricing at its default strengths.
+  const priced = (overrides: Partial<GameConfig["pricing"]> = {}, extra: Partial<GameConfig> = {}) =>
+    createSim({
+      ...config,
+      pricing: { ...defaultConfig.pricing, ...overrides },
+      support: { ...config.support, churnAtZero: 0 },
+      productTypes: {
+        ...config.productTypes,
+        ecommerce: {
+          ...config.productTypes.ecommerce,
+          growth: { ...growth, dailyGrowth: 0, growthNoise: 0 },
+          pricing: { fairPrice: 30, freeShare: 0.4, conversionRate: 0 },
+        },
+      },
+      ...extra,
+    });
+  const s = priced();
+  const begin = (sm = s) => sm.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 });
+  const setPrice = (price: number): Action => ({ type: "setPrice", price });
+  const income = (log: DayLog[]) => log.flatMap((d) => d.entries).filter((e) => e.kind === "income").reduce((sum, e) => sum + e.cashDelta, 0);
+  const gained = (sm: Sim, state: GameState, price: number) => {
+    const t = sm.pricePreview(state, price).total;
+    return t.joined + t.upgraded;
+  };
+
+  describe("price ladder", () => {
+    it("brings almost nothing from a cut that leaves the price far above fair", () => {
+      // Set £300 and wait past the price memory, so £300 is all customers remember.
+      const dear = s.advance(s.applyAction(begin(), setPrice(300)), 70).state;
+      const fromFair = gained(s, begin(), 20);
+      expect(fromFair).toBeGreaterThan(50);
+      // A £10 cut from £300 is the same size as one from £30 to £20, but £290 is still nearly ten times the fair price.
+      expect(gained(s, dear, 290)).toBeLessThan(fromFair / 5);
+      // Laddering down 4% at a time from there brings next to nothing at each step.
+      expect(gained(s, dear, 288)).toBeLessThan(fromFair / 5);
+    });
+
+    it("counts a cut only below the lowest price customers remember", () => {
+      // Up to £45 and back to £30 two weeks later: undoing a rise brings no wave.
+      const risen = s.advance(s.applyAction(begin(), setPrice(45)), 14).state;
+      expect(s.pricePreview(risen, 30).total).toMatchObject({ joined: 0, joinedPaid: 0, upgraded: 0 });
+      // Below £30 it counts for the part below: a cut to £25 brings about what £30 to £25 would, not £45 to £25.
+      expect(gained(s, risen, 25)).toBeGreaterThan(0);
+      expect(gained(s, risen, 25)).toBeLessThanOrEqual(gained(s, begin(), 25));
+      // Once customers have forgotten £30, the cut back counts in full.
+      const later = s.advance(risen, defaultConfig.pricing.priceMemoryDays).state;
+      expect(gained(s, later, 30)).toBeGreaterThan(0);
+      // The memory is config: with none, every cut counts from today's price.
+      const forgetful = priced({ priceMemoryDays: 0 });
+      expect(gained(forgetful, forgetful.advance(forgetful.applyAction(begin(forgetful), setPrice(45)), 14).state, 30)).toBeGreaterThan(0);
+    });
+  });
+
+  describe("a price many times the fair one", () => {
+    it("keeps almost no paying users, however a rise is capped", () => {
+      const preview = s.pricePreview(begin(), 1000);
+      expect(preview.paidUsers).toBeLessThan(600 * 0.01);
+      expect(preview.dailyIncome).toBeLessThan(begin().paidUsers);
+    });
+
+    it("loses paying users every day it stays above the fair price, more the dearer it is", () => {
+      // Waves off, so only the daily churn moves paying users.
+      const flat = priced({ riseStrength: 0, cutGainStrength: 0, cutUpgradeStrength: 0 });
+      const after = (price: number, days: number) => flat.advance(flat.applyAction(begin(flat), setPrice(price)), days).state.paidUsers;
+      expect(after(30, 10)).toBe(600);
+      expect(after(25, 10)).toBe(600);
+      expect(after(60, 10)).toBeLessThan(600);
+      expect(after(60, 10)).toBeGreaterThan(550);
+      expect(after(150, 10)).toBeLessThan(after(60, 10) / 2);
+      expect(after(1000, 10)).toBe(0);
+      // Those who stop paying split between leaving and dropping to free, and the day's log says why.
+      const { state, log } = flat.advance(flat.applyAction(begin(flat), setPrice(150)));
+      expect(state.users).toBeLessThan(1000);
+      expect(state.users - state.paidUsers).toBeGreaterThan(400);
+      expect(log[0]!.entries.map((e) => e.text)).toContainEqual(expect.stringMatching(/^Paying users lost: \d+ left and \d+ dropped to free, because your price is above what they think it's worth\.$/));
+      // From config.
+      const none = priced({ riseStrength: 0, priceChurn: 0 });
+      expect(none.advance(none.applyAction(begin(none), setPrice(150)), 10).state.paidUsers).toBe(600);
+    });
+
+    it("loses most of a dear rise on its first day, before anyone pays the new price", () => {
+      // At the fair price, 600 payers bring £600 a day.
+      const start = begin();
+      expect(s.advance(start).log[0]!.entries.find((e) => e.kind === "income")!.cashDelta).toBe(600);
+      const { log } = s.advance(s.applyAction(start, setPrice(1000)));
+      // Those who refuse £1,000 don't pay it, so the first day at £1,000 brings in less than a day at £30.
+      expect(income(log)).toBeLessThan(600);
+      // A modest rise still lands gradually: a small reaction on its first day.
+      const first = s.pricePreview(start, 36).days[0]!;
+      const total = s.pricePreview(start, 36).total;
+      expect(first.left + first.toFree).toBeLessThanOrEqual(Math.ceil((total.left + total.toFree) * defaultConfig.pricing.firstDayShare));
+    });
+
+    it("makes a last-minute rise to the maximum pay less than keeping the fair price", () => {
+      const start = begin();
+      const kept = income(s.advance(start, 9).log);
+      const raised = income(s.advance(s.applyAction(start, setPrice(1000)), 9).log);
+      expect(raised).toBeLessThan(kept);
+    });
+
+    it("gives price cycling nothing: up to the maximum and back down leaves fewer payers and less income", () => {
+      let state = begin();
+      let earned = 0;
+      for (const price of [1000, 30, 1000, 30]) {
+        const played = s.advance(s.applyAction(state, setPrice(price)), 14);
+        state = played.state;
+        earned += income(played.log);
+      }
+      const steady = s.advance(begin(), 56);
+      expect(state.paidUsers).toBeLessThan(100);
+      expect(earned).toBeLessThan(income(steady.log) / 2);
+    });
+  });
+
+  describe("satisfaction and outages", () => {
+    // 1,000 users, 600 paying, no tickets: satisfaction only moves where a test sets it.
+    const unhappy = (support: Partial<GameConfig["support"]> = {}) =>
+      priced({}, { support: { ...config.support, churnAtZero: 0, paidChurnAtZero: 0.03, ...support } });
+
+    it("drives paying users away at low satisfaction, on top of churn", () => {
+      const sm = unhappy();
+      const at = (satisfaction: number) => sm.advance({ ...begin(sm), satisfaction });
+      expect(at(100).state.paidUsers).toBe(600);
+      expect(at(70).state.paidUsers).toBe(600);
+      // 3% of payers a day at 0%, half that at half of good.
+      expect(at(0).state.paidUsers).toBe(600 - 18);
+      expect(at(35).state.paidUsers).toBe(600 - 9);
+      expect(at(0).log[0]!.entries.map((e) => e.text)).toContainEqual(
+        "Paying users lost: 11 left and 7 dropped to free, because they're unhappy with support.",
+      );
+      // A month at 0% loses well over half of them.
+      let state = begin(sm);
+      for (let i = 0; i < 30; i++) state = sm.advance({ ...state, satisfaction: 0 }).state;
+      expect(state.paidUsers).toBeLessThan(260);
+      const off = unhappy({ paidChurnAtZero: 0 });
+      expect(off.advance({ ...begin(off), satisfaction: 0 }).state.paidUsers).toBe(600);
+    });
+
+    it("drives paying users away for each hour down", () => {
+      const outage: EventConfig = {
+        id: "providerOutage",
+        name: "Provider outage",
+        description: "The provider's data centre lost power.",
+        layer: "facilities",
+        schedule: { type: "fixed", days: [2] },
+        days: 1,
+        effects: { iaas: { downtimeHours: 10, detail: "Down." } },
+      };
+      const down = (paidChurnPerHour: number) => {
+        const sm = priced({}, { events: [outage], outage: { ...config.outage, paidChurnPerHour } });
+        return sm.advance(begin(sm)).state;
+      };
+      expect(down(0).paidUsers).toBe(600);
+      // 10 hours at 0.1% an hour: 1% of payers.
+      expect(down(0.001).paidUsers).toBe(594);
+      expect(down(0.001).downtimeHours).toBe(10);
+    });
+  });
+
+  describe("on-prem start", () => {
+    it("leaves a company without the loan cash for a month after its first kit, which arrives in a week", () => {
+      const sm = createSim(smallestLaunch(defaultConfig));
+      for (const p of PRODUCT_TYPE_IDS) {
+        const set = setUp(sm, sm.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1 }));
+        const daily = sm.dailyStaffCost(set) + sm.monthlyInfrastructureCost(set) / 30;
+        expect(set.cash / daily, p).toBeGreaterThan(14);
+        expect(launched(sm, set).launchDay, p).toBe(8);
+      }
+    });
+  });
+
+  describe("migration", () => {
+    it("warns in the quote when a migration would leave less than a month of running costs", () => {
+      const sm = createSim(defaultConfig);
+      const early = sm.advance(sm.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 3 }), 5).state;
+      const quote = sm.migrationQuote(early, "onprem");
+      expect(quote.cashLeft).toBe(early.cash - quote.total);
+      expect(quote.warning).toMatch(/^This would leave you £[\d,]+, about \d+ days of running costs before any income\./);
+      // With the loan in the bank, it doesn't.
+      expect(sm.migrationQuote({ ...early, cash: early.cash + defaultConfig.loan.amount }, "onprem").warning).toBeNull();
+    });
+
+    it("refuses a migration whose upfront bill is more than the company has", () => {
+      const sm = createSim(defaultConfig);
+      const early = sm.advance(sm.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 3 }), 5).state;
+      const broke = { ...early, cash: 1_000 };
+      expect(() => sm.applyAction(broke, { type: "startMigration", model: "onprem" })).toThrow(
+        expect.objectContaining({ code: "cant_afford" }),
+      );
+      expect(sm.migrationQuote(broke, "onprem").warning).toMatch(/^You can't afford this/);
+      expect(sm.applyAction(early, { type: "startMigration", model: "onprem" }).migration).not.toBeNull();
+    });
+  });
+
+  describe("SaaS add-ons", () => {
+    // £100 a developer-day: checkout's 6 days cost £600 to set up, reviews' 5 £500 and search's 4 £400.
+    const fees = createSim({ ...config, startingCash: 1_000, addons: { minConfigDevelopers: 1, setupFeePerDevDay: 100 } });
+    const onSaas = () => ({ ...fees.newGame({ companyName: "Acme", productType: "ecommerce", model: "saas", seed: 42 }), developers: 1 });
+    const buy = (feature: string): Action => ({ type: "buyAddon", feature });
+
+    it("charges a set-up fee for its developer-days when bought, shown on the features", () => {
+      const start = onSaas();
+      expect(fees.features(start).map((f) => f.addonSetupFee)).toEqual([600, 500, 400]);
+      const state = fees.applyAction(start, buy("checkout"));
+      expect(state.cash).toBe(start.cash - 600);
+      expect(state.spend.addons).toBe(start.spend.addons + 600);
+    });
+
+    it("refuses one the company can't afford, so it has to choose", () => {
+      const state = fees.applyAction(onSaas(), buy("checkout"));
+      expect(() => fees.applyAction(state, buy("reviews"))).toThrow(
+        expect.objectContaining({ code: "cant_afford", message: "Setting up Reviews costs £500 and you have £400." }),
+      );
+      expect(fees.applyAction(state, buy("search")).cash).toBe(0);
+    });
+
+    it("costs more after a provider price rise on add-ons", () => {
+      expect(fees.features({ ...onSaas(), addonPriceRise: 1.25 })[0]!.addonSetupFee).toBe(750);
+    });
   });
 });

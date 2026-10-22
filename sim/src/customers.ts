@@ -1,9 +1,10 @@
 import type { GameConfig, ProductTypeId } from "./config.ts";
 import type { Events } from "./events.ts";
 import type { Features } from "./features.ts";
+import { count } from "./finance.ts";
 import type { Pricing } from "./pricing.ts";
 import { nextRandom, seedRng, vary } from "./rng.ts";
-import type { GameState, UnitDemand } from "./state.ts";
+import type { GameState, LogEntry, UnitDemand } from "./state.ts";
 import type { Support } from "./support.ts";
 
 /**
@@ -81,23 +82,52 @@ export function createCustomers(
     return [support.satisfactionChurn(state)];
   }
 
+  /** Each share of paying users who stop paying in a day, on top of churn, the price's first. Added together. */
+  function paidChurnShares(state: GameState, hoursDown: number): number[] {
+    return [pricing.priceChurn(state), support.satisfactionPaidChurn(state), config.outage.paidChurnPerHour * hoursDown];
+  }
+
   /**
-   * The users at the end of a day, and how many of them pay. Some leave first (churn), paid and free alike; then new
-   * users arrive. Growth slows as the market fills up, on an outage day, at a high price and with low satisfaction.
+   * The users at the end of a day, and how many of them pay. Some leave first (churn), paid and free alike; then
+   * paying users stop paying at a price well above the fair one, with low satisfaction and for each hour down, some
+   * dropping to free and the rest leaving; then new users arrive. Growth slows as the market fills up, on an outage
+   * day, at a high price and with low satisfaction.
    */
-  function grow(state: GameState, day: number, outage: boolean, rng: number) {
+  function grow(state: GameState, day: number, hoursDown: number, rng: number) {
     const profile = config.productTypes[state.productType].growth;
     const [growthVariation, next] = vary(rng, profile.growthNoise);
-    const rate = growthFactors(state, day, outage).reduce(
+    const rate = growthFactors(state, day, hoursDown > 0).reduce(
       (r, f) => r * f,
       profile.dailyGrowth * (1 - state.users / profile.marketSize) * growthVariation,
     );
     const churnShare = Math.min(1, churnShares(state).reduce((sum, c) => sum + c, 0));
     const churned = Math.round(state.users * churnShare);
     const stayed = state.users - churned;
-    const kept: GameState = { ...state, users: stayed, paidUsers: pricing.paidUsersAfter(state, stayed) };
-    const users = Math.max(0, stayed + Math.round(state.users * rate));
-    return { users, paidUsers: pricing.paidUsersAfter(kept, users), churned, rng: next };
+    const stayedPaid = pricing.paidUsersAfter(state, stayed);
+    const shares = paidChurnShares(state, hoursDown);
+    const allShares = shares.reduce((sum, c) => sum + c, 0);
+    const stoppedPaying = Math.round(stayedPaid * Math.min(1, allShares));
+    // Those who stopped over the price wouldn't pay it today: income leaves them out.
+    const pricedOut = allShares > 0 ? Math.round((stoppedPaying * shares[0]!) / allShares) : 0;
+    const droppedToFree = Math.round(stoppedPaying * config.pricing.dropToFreeShare);
+    const leftPaying = stoppedPaying - droppedToFree;
+    const kept: GameState = { ...state, users: stayed - leftPaying, paidUsers: stayedPaid - stoppedPaying };
+    const users = Math.max(0, kept.users + Math.round(state.users * rate));
+    const entries: LogEntry[] =
+      stoppedPaying > 0
+        ? [{ text: stoppedPayingText(state, hoursDown, leftPaying, droppedToFree), cashDelta: 0 }]
+        : [];
+    return { users, paidUsers: pricing.paidUsersAfter(kept, users), churned, pricedOut, rng: next, entries };
+  }
+
+  /** How many paying users stopped paying today, and why: "Paying users lost: 12 left and 8 dropped to free, because …". */
+  function stoppedPayingText(state: GameState, hoursDown: number, left: number, toFree: number): string {
+    const why = [
+      pricing.priceChurn(state) > 0 ? "your price is above what they think it's worth" : "",
+      support.satisfactionPaidChurn(state) > 0 ? "they're unhappy with support" : "",
+      hoursDown > 0 ? "the service was down" : "",
+    ].filter(Boolean);
+    return `Paying users lost: ${count.format(left)} left and ${count.format(toFree)} dropped to free, because ${why.join(" and ")}.`;
   }
 
   return { startingCustomers, baseLoad, baseDemand, grow };

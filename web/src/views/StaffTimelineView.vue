@@ -139,7 +139,8 @@ function numbers(s: PlaySnapshot) {
     `satisfaction ${s.satisfaction}%`,
     `uptime ${formatUptime(s.uptime)}`,
   ];
-  if (s.tierUse !== null) parts.push(`${s.tier ? s.tier.toUpperCase() : "capacity"} ${s.tierUse}% used`);
+  if (s.noCapacity) parts.push(`${s.tier ? s.tier.toUpperCase() : "capacity"}: demand with no capacity`);
+  else if (s.tierUse !== null) parts.push(`${s.tier ? s.tier.toUpperCase() : "capacity"} ${s.tierUse}% used`);
   parts.push(`${s.developers} dev · ${s.ops} ops · ${s.support} support`);
   if (s.loan !== "none") parts.push(s.loan === "repaying" ? `loan ${formatCash(s.loanRemaining ?? 0)} left` : "loan repaid");
   return parts;
@@ -169,7 +170,8 @@ const counts = computed(() => {
     <p class="muted timeline-meta">
       <strong>{{ data.name }}</strong> · code <span class="mono">{{ formatCode(data.code) }}</span> ·
       {{ productName(data.productType) }} · preset {{ data.preset }} · {{ data.status }}.
-      The export names this company <strong>{{ data.player }}</strong> only.
+      The export names this company <strong>{{ data.player }}</strong> only, and its student
+      <strong>{{ data.tester }}</strong>.
     </p>
 
     <section class="card" aria-labelledby="timeline-heading" data-testid="timeline">

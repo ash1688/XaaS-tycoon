@@ -1,5 +1,5 @@
 import type { FeatureConfig, GameConfig, ModelId } from "./config.ts";
-import { count, pounds, risen } from "./finance.ts";
+import { count, pounds, risen, type Finance } from "./finance.ts";
 import { SimError, type FeatureProgress, type GameState, type LogEntry } from "./state.ts";
 
 export type FeatureStatus = "notStarted" | FeatureProgress["status"];
@@ -11,11 +11,17 @@ export interface FeatureView extends FeatureConfig {
   progress: number;
   /** Days until a build finishes at today's developers. Null unless building, with no developers, or paused on SaaS. */
   daysLeft: number | null;
+  /** On SaaS, the one-off fee to set it up as an add-on, on top of its per-user price. */
+  addonSetupFee: number;
 }
 
 /** Features and add-ons: building them in developer-days, buying them on SaaS, and billing the add-ons. */
-export function createFeatures(config: GameConfig) {
+export function createFeatures(config: GameConfig, finance: Finance) {
   const featureList = (state: GameState) => config.productTypes[state.productType].features;
+
+  /** The one-off fee to set an add-on up: its developer-days × setupFeePerDevDay, after any provider price rise. */
+  const setupFee = (state: GameState, f: FeatureConfig) =>
+    Math.round(risen(f.devDays * config.addons.setupFeePerDevDay, state.addonPriceRise));
 
   const isActive = (state: GameState, id: string) => {
     const status = state.features[id]?.status;
@@ -60,7 +66,17 @@ export function createFeatures(config: GameConfig) {
         `Add-ons still need configuring: hire at least ${needed} developer${needed === 1 ? "" : "s"} first.`,
       );
     }
-    return { ...state, features: { ...state.features, [id]: { status: "addon", progress: 0 } } };
+    // Paid when it's bought: the provider's fee to set it up.
+    const fee = setupFee(state, feature);
+    if (fee > state.cash) {
+      throw new SimError("cant_afford", `Setting up ${feature.name} costs ${pounds(fee)} and you have ${pounds(state.cash)}.`, {
+        cost: fee,
+        cash: state.cash,
+      });
+    }
+    const bought: GameState = { ...state, features: { ...state.features, [id]: { status: "addon", progress: 0 } } };
+    if (fee <= 0) return bought;
+    return finance.chargeNow(bought, [{ text: `Add-on set-up: ${feature.name}`, cashDelta: -fee, category: "addons" }]);
   }
 
   /**
@@ -91,7 +107,7 @@ export function createFeatures(config: GameConfig) {
       const { status, progress } = state.features[f.id] ?? { status: "notStarted" as const, progress: 0 };
       const daysLeft =
         status === "building" && state.developers > 0 && state.model !== "saas" ? Math.ceil((f.devDays - progress) / state.developers) : null;
-      return { ...f, status, progress, daysLeft };
+      return { ...f, status, progress, daysLeft, addonSetupFee: setupFee(state, f) };
     });
   }
 
@@ -123,6 +139,9 @@ export function createFeatures(config: GameConfig) {
     });
   }
 
+  /** What the active add-ons cost a day at today's users, as billed. */
+  const dailyAddonCost = (state: GameState) => -addonEntries(state).reduce((sum, e) => sum + e.cashDelta, 0);
+
   function monthlyAddonCost(state: GameState): number {
     const perUser = activeAddons(state).reduce((sum, f) => sum + risen(f.addonPricePerUser, state.addonPriceRise), 0);
     return Math.round(state.users * perUser);
@@ -138,6 +157,7 @@ export function createFeatures(config: GameConfig) {
     activeCount,
     addonsLeftBehind,
     addonEntries,
+    dailyAddonCost,
     monthlyAddonCost,
   };
 }

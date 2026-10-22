@@ -448,8 +448,13 @@ export interface PlaySnapshot {
   uptime: number;
   /** The capacity tier that runs out first, on a model with servers. */
   tier: "cu" | "dbu" | null;
-  /** How much of capacity is in use, in %: the binding tier's, or load against capacity. Null with no limit (SaaS). */
+  /**
+   * How much of capacity is in use, in %: the binding tier's, or load against capacity. Null with no limit (SaaS), and
+   * with demand but no capacity at all (see noCapacity).
+   */
   tierUse: number | null;
+  /** The binding tier had demand and no capacity, so there's no percentage. */
+  noCapacity: boolean;
   model: ModelId;
   developers: number;
   ops: number;
@@ -516,6 +521,8 @@ export interface TimelineView {
   id: string;
   /** The pseudonym the export uses. */
   player: string;
+  /** The student's tester ID in the export, shared by every game under their code. */
+  tester: string;
   name: string;
   code: string;
   preset: string;

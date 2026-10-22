@@ -53,6 +53,9 @@ export function createSupport(config: GameConfig) {
   /** Share of users who leave in a day because of low satisfaction: none while it's good, churnAtZero at 0%. */
   const satisfactionChurn = (state: GameState) => config.support.churnAtZero * shortfall(state);
 
+  /** Share of paying users who stop paying each day because of low satisfaction, on top: paidChurnAtZero at 0%. */
+  const satisfactionPaidChurn = (state: GameState) => config.support.paidChurnAtZero * shortfall(state);
+
   /** A log line for each threshold satisfaction crossed today, either way. */
   function thresholdEntries(before: number, after: number): LogEntry[] {
     const { goodSatisfaction: good, poorSatisfaction: poor } = config.support;
@@ -121,6 +124,7 @@ export function createSupport(config: GameConfig) {
     dailyClearance,
     satisfactionGrowth,
     satisfactionChurn,
+    satisfactionPaidChurn,
     supportDay,
   };
 }

@@ -224,12 +224,12 @@ export interface Sim {
 
 export function createSim(config: GameConfig = defaultConfig): Sim {
   const events = createEvents(config);
-  const features = createFeatures(config);
+  const finance = createFinance(config);
+  const features = createFeatures(config, finance);
   const pricing = createPricing(config);
   const support = createSupport(config);
   const customers = createCustomers(config, features, events, pricing, support);
   const conversion = createConversion(config, features, pricing);
-  const finance = createFinance(config);
   const servers = createServers(config, finance);
   const infra = createInfrastructure(config, customers, events, servers);
   const staff = createStaff(config);
@@ -381,7 +381,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     // Today's load against capacity, then growth, which slows on an outage day.
     const served = infra.serveLoad(state, day, today);
     // Over the launch ramp the arriving users are the growth: normal growth takes over after it.
-    const organic = customers.grow(state, day, served.hoursDown > 0, served.rng);
+    const organic = customers.grow(state, day, served.hoursDown, served.rng);
     const grown = ramping ? { ...organic, users: state.users, paidUsers: state.paidUsers } : organic;
     // Then any price wave takes its share for the day, planned when the price changed.
     const wave = pricing.waveDay(state, day, grown.users, grown.paidUsers);
@@ -406,16 +406,18 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const recorded = events.record(state, today, served.overloaded);
     // The loan is repaid every day, whatever else happens.
     const repayment = loan.repaymentDay(state, day);
-    // Income comes from the users paying at the start of the day, at today's price, like the per-user fees.
+    // Income comes from the users paying at the start of the day, at today's price, like the per-user fees, less any
+    // who stopped paying today over the price: they won't pay it.
     const entries: LogEntry[] = [
       ...launched.entries,
       ...recorded.entries,
+      ...(ramping ? [] : organic.entries),
       ...(served.outage ? [served.outage] : []),
       ...wave.entries,
       ...converted.entries,
       ...care.entries,
       ...build.entries,
-      ...pricing.incomeEntries(state),
+      ...pricing.incomeEntries(state, wave.refused + (ramping ? 0 : organic.pricedOut)),
       ...infra.infrastructureEntries(state, state.model, state.users),
       ...migration.migrationCharges(state),
       ...features.addonEntries(state),
