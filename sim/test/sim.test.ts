@@ -165,8 +165,9 @@ const config: GameConfig = {
   },
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25, paidChurnPerHour: 0 },
   billing: { daysPerMonth: 30 },
-  // Taken at the start: £17,900 at 10%, £19,690 over 179 days, £110 a day.
-  loan: { amount: 17_900, baseRate: 0.1, ratePerDay: 0.002, minDays: 14 },
+  // Taken at the start: £17,900 at 10%, £19,690 over 179 days, £110 a day. The term is a day shorter for each day
+  // later it's taken, so like the final day.
+  loan: { amount: 17_900, baseRate: 0.1, ratePerDay: 0.002, termDays: 179, termPerDay: 1, minTermDays: 1, minDays: 14 },
   // No price waves unless a test says otherwise, so a price change only has its ongoing effect on growth and payers.
   pricing: {
     maxPrice: 1_000,
@@ -2271,7 +2272,18 @@ describe("bank loan", () => {
   it("can be taken at the start: the money arrives on day 1 as borrowing, not income", () => {
     const state = begin(true);
     expect(state.cash).toBe(100_000 + 17_900);
-    expect(state.loan).toEqual({ amount: 17_900, day: 1, rate: 0.1, dailyRepayment: 110, total: 19_690, repaid: 0 });
+    expect(state.loan).toEqual({
+      amount: 17_900,
+      day: 1,
+      rate: 0.1,
+      term: 179,
+      lastDay: 180,
+      dailyRepayment: 110,
+      total: 19_690,
+      repaid: 0,
+      interestPaid: 0,
+      paidOffDay: null,
+    });
     expect(state.spendByDay).toEqual([
       {
         day: 1,
@@ -2281,6 +2293,7 @@ describe("bank loan", () => {
         debt: 0,
         income: 0,
         borrowed: 17_900,
+        interest: 0,
         users: 1000,
         paidUsers: 0,
         satisfaction: 100,
@@ -2341,7 +2354,7 @@ describe("bank loan", () => {
     const notes = loanNotes(log);
     expect(notes).toHaveLength(2);
     expect(notes[0]).toMatchObject({ day: 61, text: expect.stringContaining("on day 60 at 21.8% interest") });
-    expect(notes[0]!.text).toContain("£182 a day until day 180");
+    expect(notes[0]!.text).toContain("£182 a day for 120 days, until day 180");
     expect(notes[1]).toMatchObject({ day: 180, text: expect.stringContaining("repaid in full") });
   });
 
@@ -2356,8 +2369,8 @@ describe("bank loan", () => {
     expect(loanNotes(log).at(-1)!.day).toBe(180);
   });
 
-  it("allows only one loan per company", () => {
-    const refused = expect.objectContaining({ code: "loan_taken" });
+  it("refuses a second loan while one is being repaid", () => {
+    const refused = expect.objectContaining({ code: "loan_open" });
     expect(() => rich.applyAction(begin(true), takeLoan)).toThrow(refused);
     const taken = rich.applyAction(onDay60(), takeLoan);
     expect(() => rich.applyAction(taken, takeLoan)).toThrow(SimError);
@@ -2366,8 +2379,8 @@ describe("bank loan", () => {
     expect(rich.loanQuote(begin(true))).toBeNull();
   });
 
-  it("isn't lent with fewer than the fewest repayment days left", () => {
-    // Day 166 leaves 14 days to repay: the fewest. Day 167 leaves 13.
+  it("isn't lent in the game's last days", () => {
+    // Day 166 leaves 14 days: the fewest. Day 167 leaves 13.
     const day166 = rich.advance(begin(), 165).state;
     expect(rich.loanQuote(day166)).toMatchObject({ days: 14 });
     const day167 = rich.advance(day166).state;
@@ -2398,7 +2411,9 @@ describe("bank loan", () => {
     expect(days[0]!.cash).toBe(begin().cash);
     // Profit counts only the interest in the repayments: the principal paid back was borrowed, not earned.
     const { loan } = state;
-    const principal = state.spend.debt - Math.round((state.spend.debt * (loan!.total - loan!.amount)) / loan!.total);
+    expect(state.interestPaid).toBe(Math.round((state.spend.debt * (loan!.total - loan!.amount)) / loan!.total));
+    expect(state.interestPaid).toBe(state.spendByDay.reduce((sum, d) => sum + d.interest, 0));
+    const principal = state.spend.debt - state.interestPaid;
     expect(principal).toBeGreaterThan(0);
     const profit = rich.summarise(state).profit;
     expect(profit).toBeCloseTo(state.income - costs + principal, 6);
@@ -2422,14 +2437,139 @@ describe("bank loan", () => {
     const play = () => rich.advance(rich.applyAction(onDay60(), takeLoan), 50);
     expect(play()).toEqual(play());
   });
+
+  describe("with a fixed term", () => {
+    // A 120-day term at the start, half a day shorter for each day later, and never under 60, whatever the game's
+    // length.
+    const termed = (finalDay: number) =>
+      createSim({
+        ...config,
+        startingCash: 100_000,
+        finalDay,
+        loan: { ...config.loan, termDays: 120, termPerDay: 0.5, minTermDays: 60 },
+      });
+    const long = termed(400);
+    const startLong = (takeLoan = false) =>
+      long.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, takeLoan });
+    const repayLoan: Action = { type: "repayLoan" };
+
+    it("repays over the same term in any game length", () => {
+      // £19,690 over 120 days, rounded up to £165 a day.
+      const quote = { amount: 17_900, rate: 0.1, interest: 1_900, total: 19_800, dailyRepayment: 165, days: 120 };
+      for (const finalDay of [30, 180, 400]) {
+        expect(termed(finalDay).startLoanQuote()).toEqual({ ...quote, lastDay: 121 });
+      }
+      const { state, log } = long.advance(startLong(true), 199);
+      expect(state.day).toBe(200);
+      expect(debts(log)).toHaveLength(120);
+      expect(log.find((d) => d.day === 121)!.entries.some((e) => e.text.includes("repaid in full"))).toBe(true);
+      expect(log.find((d) => d.day === 122)!.entries.some((e) => e.category === "debt")).toBe(false);
+      expect(long.loan(state)).toMatchObject({ remaining: 0, daysLeft: 0, repaidInFull: true });
+      expect(state.interestPaid).toBe(1_900);
+    });
+
+    it("runs past the final day of a short game, ending with some still to repay", () => {
+      const short = termed(30);
+      const { state } = short.advance(
+        short.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, takeLoan: true }),
+        29,
+      );
+      expect(state.status).toBe("finished");
+      expect(short.summarise(state).loan).toMatchObject({
+        loans: 1,
+        repaid: 29 * 165,
+        remaining: 19_800 - 29 * 165,
+        fullyRepaid: false,
+      });
+    });
+
+    it("is shorter, and dearer, taken later", () => {
+      const day61 = long.loanQuote(long.advance(startLong(), 60).state)!;
+      // 22% over 90 days.
+      expect(day61).toMatchObject({ rate: 0.22, days: 90, lastDay: 151 });
+      const day200 = long.loanQuote(long.advance(startLong(), 199).state)!;
+      expect(day200).toMatchObject({ days: 60, lastDay: 260 });
+      expect(day200.interest).toBeGreaterThan(day61.interest);
+    });
+
+    it("allows a new loan once the last is repaid, at the later day's terms", () => {
+      const repaid = long.advance(startLong(true), 120).state;
+      expect(repaid.day).toBe(121);
+      const quote = long.loanQuote(repaid)!;
+      expect(quote).toMatchObject({ rate: 0.34, days: 60, lastDay: 181 });
+      const second = long.applyAction(repaid, takeLoan);
+      expect(second.cash).toBe(repaid.cash + 17_900);
+      expect(second.pastLoans).toEqual([repaid.loan]);
+      expect(second.loan).toMatchObject({ day: 121, rate: 0.34, repaid: 0 });
+      expect(() => long.applyAction(second, takeLoan)).toThrow(expect.objectContaining({ code: "loan_open" }));
+
+      const { state, log } = long.advance(second, 100);
+      expect(debts(log)).toHaveLength(60);
+      const summary = long.summarise(state);
+      expect(summary.loan).toMatchObject({
+        loans: 2,
+        day: 1,
+        amount: 35_800,
+        total: 19_800 + quote.total,
+        repaid: 19_800 + quote.total,
+        interestPaid: 1_900 + quote.interest,
+        principalRepaid: 35_800,
+        remaining: 0,
+        fullyRepaid: true,
+      });
+      // Only the two loans' interest counts against profit.
+      const plain = long.summarise(long.advance(startLong(), 220).state);
+      expect(summary.profit).toBeCloseTo(plain.profit - 1_900 - quote.interest, 6);
+    });
+
+    it("can be paid off early with what's left of the money borrowed, saving the interest still to come", () => {
+      const midway = long.advance(startLong(true), 30).state;
+      // 30 repayments of £165 so far, £1,900 × 4,950 ÷ 19,800 = £475 of them interest, so £4,475 of the £17,900
+      // is paid back.
+      const view = long.loan(midway)!;
+      expect(view).toMatchObject({ repaid: 4_950, interestPaid: 475, remaining: 14_850, daysLeft: 90 });
+      expect(view).toMatchObject({ payoff: 13_425, interestSaved: 1_425, repaidInFull: false });
+
+      const paidOff = long.applyAction(midway, repayLoan);
+      expect(paidOff.cash).toBe(midway.cash - 13_425);
+      expect(paidOff.loan).toMatchObject({ repaid: 18_375, interestPaid: 475, paidOffDay: 31 });
+      expect(paidOff.spend.debt).toBe(18_375);
+      expect(paidOff.interestPaid).toBe(475);
+      expect(long.loan(paidOff)).toMatchObject({ remaining: 0, payoff: 0, repaidInFull: true });
+
+      // No more repayments, and a new loan can be taken.
+      const { state, log } = long.advance(paidOff, 100);
+      expect(debts(log)).toHaveLength(0);
+      expect(long.loanQuote(paidOff)).not.toBeNull();
+
+      // Against keeping it to the end of the term, profit is better by the interest saved.
+      const kept = long.summarise(long.advance(startLong(true), 130).state);
+      const early = long.summarise(state);
+      expect(early.profit).toBeCloseTo(kept.profit + 1_425, 6);
+      expect(early.loan).toMatchObject({ repaid: 18_375, interestPaid: 475, interestSaved: 1_425, fullyRepaid: true });
+      expect(early.cash).toBe(kept.cash + 1_425);
+    });
+
+    it("refuses to pay off without a loan being repaid, or without the cash", () => {
+      const noLoan = expect.objectContaining({ code: "no_loan" });
+      expect(() => long.applyAction(startLong(), repayLoan)).toThrow(noLoan);
+      expect(() => long.applyAction(long.advance(startLong(true), 120).state, repayLoan)).toThrow(noLoan);
+      const midway = long.advance(startLong(true), 30).state;
+      expect(() => long.applyAction({ ...midway, cash: 13_424 }, repayLoan)).toThrow(
+        expect.objectContaining({ code: "not_enough_cash", details: { cost: 13_425, cash: 13_424 } }),
+      );
+    });
+  });
 });
 
 describe("game end and summary", () => {
-  // A 30-day game, with cash for two migrations. IaaS costs 20 a day and £100 upfront; PaaS 30 a day.
+  // A 30-day game, with cash for two migrations. IaaS costs 20 a day and £100 upfront; PaaS 30 a day. A loan's term
+  // ends on the final day.
   const shortConfig: GameConfig = {
     ...config,
     startingCash: 100_000,
     finalDay: 30,
+    loan: { ...config.loan, termDays: 29 },
     models: { ...config.models, iaas: { ...config.models.iaas, upfrontCost: 100 } },
   };
   const s = createSim(shortConfig);
@@ -2533,6 +2673,7 @@ describe("game end and summary", () => {
       debt: 0,
       income: 0,
       borrowed: 0,
+      interest: 0,
       users: 1000,
       paidUsers: 0,
       satisfaction: 100,
@@ -2666,12 +2807,15 @@ describe("game end and summary", () => {
       const { state, summary } = play();
       expect(summary.priceChanges).toBe(1);
       expect(summary.loan).toEqual({
+        loans: 1,
         day: 10,
         amount: 17_900,
         total: state.loan!.total,
         repaid: state.loan!.total,
         interestPaid: state.loan!.total - 17_900,
         principalRepaid: 17_900,
+        interestSaved: 0,
+        remaining: 0,
         fullyRepaid: true,
       });
       expect(summary.spend.debt).toBe(state.loan!.total);
@@ -2683,6 +2827,7 @@ describe("game end and summary", () => {
       expect(busy.summarise(midway).loan).toMatchObject({
         day: 10,
         repaid: 5 * midway.loan!.dailyRepayment,
+        remaining: midway.loan!.total - 5 * midway.loan!.dailyRepayment,
         fullyRepaid: false,
       });
     });

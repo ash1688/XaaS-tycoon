@@ -25,6 +25,8 @@ npm run -s play -- summary <game>
   falling, cash about to run out, or the price lock ending. Any commands after a stop are skipped. Events that need
   nothing from you are shown but don't stop time.
 - `preview <price>` and `quote <model>` show what a price change or migration would do without doing it.
+- `loan` takes a bank loan, repaid daily over a fixed term; `repayloan` pays it off early to save interest. One loan
+  at a time: once it's repaid, `loan` is offered again.
 - `summary` shows the final figures once the game is over.
 
 Run `look` whenever you're unsure what you can do. Keep going until the game ends: day 180, or bankruptcy.

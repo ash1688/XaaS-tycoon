@@ -612,19 +612,22 @@ export interface LaunchConfig {
 }
 
 /**
- * The bank loan: one per company, taken when the game starts or at any point after. It's repaid in equal daily
- * repayments (debt) from the next day played to the final day, whatever happens, so the later it's taken the fewer
- * days there are to repay it, and the bank charges more interest too.
+ * Bank loans: one at a time, taken when the game starts or at any point after, and another once the last is repaid.
+ * Each is repaid in equal daily repayments (debt) over a fixed term from the next day played, whatever happens and
+ * whatever the game's length, so it can run past the final day. The later it's taken, the shorter the term and the
+ * more interest the bank charges. Paying one off early costs the money borrowed not yet paid back, and saves the
+ * interest still to come.
  *
  * Interest is simple, on the whole amount, at a rate set by the day the loan is taken (day 1 at the start):
  *
  *   rate = baseRate + ratePerDay × (day − 1)
- *   days = finalDay − day                             (repayment days left)
+ *   days = max(minTermDays, termDays − termPerDay × (day − 1)), rounded      (the term)
  *   dailyRepayment = amount × (1 + rate) ÷ days, rounded up to the pound like every charge
  *   total repaid = dailyRepayment × days; interest = total repaid − amount
  *
- * With the defaults over 180 days: taken at the start, 10% (£216 a day for 179 days, £38,664 in all); on day 60,
- * 21.8% (£356 a day for 120 days, £42,720); on day 120, 33.8% (£781 a day for 60 days, £46,860).
+ * Each repayment is interest and principal in the loan's own proportion. With the defaults: taken at the start, 10%
+ * (£321 a day for 120 days, £38,520 in all); on day 61, 22% (£475 a day for 90 days, £42,750); on day 121, 34%
+ * (£782 a day for 60 days, £46,920).
  */
 export interface LoanConfig {
   /** What the bank lends. */
@@ -633,7 +636,13 @@ export interface LoanConfig {
   baseRate: number;
   /** Added to the rate for each day later it's taken (0.002 = 0.2 percentage points a day). */
   ratePerDay: number;
-  /** The bank won't lend with fewer repayment days than this left. */
+  /** The term of a loan taken at the start: its repayment days. */
+  termDays: number;
+  /** Taken off the term for each day later it's taken. */
+  termPerDay: number;
+  /** The shortest term, however late it's taken. */
+  minTermDays: number;
+  /** The bank won't lend with fewer days than this left in the game. */
   minDays: number;
 }
 
@@ -973,8 +982,8 @@ export const defaultConfig: GameConfig = {
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25, paidChurnPerHour: 0.001 },
   billing: { daysPerMonth: 30 },
   // Enough for on-prem to buy kit ahead of demand from the start, or to see an IaaS, PaaS or SaaS company through a
-  // tight start, for about £3,700 of interest. See LoanConfig for the interest formula.
-  loan: { amount: 35_000, baseRate: 0.1, ratePerDay: 0.002, minDays: 14 },
+  // tight start, for about £3,500 of interest. See LoanConfig for the interest formula.
+  loan: { amount: 35_000, baseRate: 0.1, ratePerDay: 0.002, termDays: 120, termPerDay: 0.5, minTermDays: 60, minDays: 14 },
   pricing: {
     maxPrice: 1_000,
     growthSensitivity: 1,

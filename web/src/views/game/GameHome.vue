@@ -332,7 +332,7 @@ const alerts = computed(() => {
           <template v-if="game.company.loan?.remaining">
             Includes a {{ formatCash(game.company.loan.amount) }} bank loan:
             <strong>{{ formatCash(game.company.loan.dailyRepayment) }}</strong> a day to repay until day
-            {{ game.company.finalDay }}, {{ formatCash(game.company.loan.remaining) }} left.
+            {{ game.company.loan.lastDay }}, {{ formatCash(game.company.loan.remaining) }} left.
           </template>
           <template v-else-if="game.company.loan">Bank loan repaid in full.</template>
           <template v-else-if="game.bankrupt">No bank loan: banks don't lend once you've gone under.</template>
