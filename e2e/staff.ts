@@ -1,6 +1,6 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 import postgres from "postgres";
-import { E2E_DATABASE_URL } from "../playwright.config.ts";
+import { E2E_DATABASE_URL, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
 
 /**
  * Creates a login code from a signed-in staff page and returns it. The code comes from the server's reply, not the
@@ -83,5 +83,38 @@ export async function launch(request: APIRequestContext, code: string, id: strin
     expect(res.ok()).toBe(true);
     const { company } = await res.json();
     if (company.launch.status === "launched") return company;
+  }
+}
+
+/**
+ * Makes random events certain for the games started while `start` runs: only the one event can come up, at a
+ * threshold of `threshold` on the danger meter. It rises 1 a day, and half as fast again with servers unpatched; the
+ * other risks add nothing, so an outage can't bring the next event sooner. Its preset is active only while `start`
+ * runs, then Default is again and the preset goes, so later games and specs play the defaults.
+ */
+export async function withOnlyEncounter<T>(
+  request: APIRequestContext,
+  event: string,
+  threshold: number,
+  start: () => Promise<T>,
+): Promise<T> {
+  const ids = ["trafficSpike", "osPatch", "providerPriceRise", "providerOutage", "saasFeatureGap"];
+  const overrides: Record<string, number> = {
+    "encounters.thresholdMin": threshold,
+    "encounters.thresholdMax": threshold,
+    "encounters.riskRise.overloaded": 0,
+    "encounters.riskRise.lowSatisfaction": 0,
+    ...Object.fromEntries(ids.map((id) => [`events.${id}.encounter.chance`, id === event ? 1 : 0])),
+  };
+  expect((await request.post("/api/teacher/login", { data: { password: E2E_TEACHER_PASSWORD } })).ok()).toBe(true);
+  const created = await request.post("/api/teacher/presets", { data: { name: `Only ${event}`, overrides } });
+  expect(created.ok()).toBe(true);
+  const { id } = (await created.json()) as { id: string };
+  try {
+    expect((await request.post(`/api/teacher/presets/${id}/activate`)).ok()).toBe(true);
+    return await start();
+  } finally {
+    await request.post("/api/teacher/presets/default/activate");
+    await request.delete(`/api/teacher/presets/${id}`);
   }
 }

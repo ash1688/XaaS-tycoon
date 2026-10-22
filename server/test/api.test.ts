@@ -2127,6 +2127,51 @@ describe("leaving SaaS (vendor lock-in)", () => {
   });
 });
 
+describe("encounters", () => {
+  // Only the OS patch, certain to come up, at a threshold of 2: it fires when the meter reaches 2.
+  const encounterSim = createSim({
+    ...sim.config,
+    encounters: { ...sim.config.encounters, thresholdMin: 2, thresholdMax: 2 },
+    events: [{ ...defaultConfig.events.find((e) => e.id === "osPatch")!, encounter: { chance: 1 } }],
+  });
+  let encounterApp: Awaited<ReturnType<typeof buildApp>>;
+
+  beforeAll(async () => {
+    encounterApp = await buildApp({
+      db: testDb.db,
+      teacherPassword: PASSWORD,
+      sessionSecret: "x".repeat(32),
+      sim: encounterSim,
+    });
+  });
+
+  afterAll(async () => {
+    await encounterApp?.close();
+  });
+
+  it("shows the danger meter rising, then the event it fires, then the meter back from 0", async () => {
+    const code = await newCode();
+    // SaaS launches as the game starts, so the meter rises from day 2.
+    const created = await encounterApp.inject({
+      method: "POST",
+      url: `/api/codes/${code}/companies`,
+      payload: { name: "Acme", productType: "social", model: "saas" },
+    });
+    const url = `/api/codes/${code}/companies/${created.json<CompanyView>().id}`;
+    expect(created.json<CompanyView>().danger).toEqual({ meter: 0, max: 2, rise: 0, dailyRise: 1, risks: [] });
+    const next = async () => (await encounterApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+
+    expect((await next()).company).toMatchObject({ day: 2, events: [], danger: { meter: 1, rise: 1, risks: [] } });
+    expect((await next()).company).toMatchObject({ day: 3, events: [], danger: { meter: 2 } });
+    const { company } = await next();
+    expect(company.day).toBe(4);
+    expect(company.events).toEqual([expect.objectContaining({ id: "osPatch", owner: "provider", hit: false })]);
+    expect(company.danger).toMatchObject({ meter: 1, rise: 1 });
+    // Saved with the day: a reload shows the same.
+    expect((await encounterApp.inject({ method: "GET", url })).json<CompanyView>().danger).toEqual(company.danger);
+  });
+});
+
 describe("scripted events", () => {
   // The default events, on fixed days: the OS patch on day 2 and the traffic spike on day 3. Cash to pay for them.
   const event = (id: string) => defaultConfig.events.find((e) => e.id === id)!;

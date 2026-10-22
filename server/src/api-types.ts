@@ -5,6 +5,7 @@ import type {
   ConfigField,
   ConfigOverrides,
   ConversionView,
+  DangerView,
   DayLog,
   EventView,
   FeatureGapView,
@@ -260,6 +261,11 @@ export interface CompanyView {
    * layer that decided it and who owns that layer on the model it hit, and how it played out. Empty on other days.
    */
   events: EventView[];
+  /**
+   * The danger meter: how fast trouble is building and why. A random event fires when it reaches the next threshold
+   * on the encounter list, which stays hidden.
+   */
+  danger: DangerView;
   /**
    * Features the platform can't provide, each still slowing growth until the company migrates off that model. Shown
    * every day, not just the day the event fired.

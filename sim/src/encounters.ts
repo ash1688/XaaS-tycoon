@@ -111,7 +111,8 @@ export function createEncounters(config: GameConfig, servers: Servers) {
       overloaded,
       lowSatisfaction: state.satisfaction < config.support.poorSatisfaction,
     };
-    return DANGER_RISKS.filter((r) => on[r]);
+    // A risk configured to add nothing doesn't make the meter climb faster, so it isn't one.
+    return DANGER_RISKS.filter((r) => on[r] && encounters.riskRise[r] > 0);
   }
 
   /** How much the meter rises for a day with these risks. */
