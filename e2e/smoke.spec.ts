@@ -294,10 +294,11 @@ test("a SaaS company buys an add-on and pays for it per user", async ({ browser,
   await goTo(student, "Finance");
   await expect(student.getByTestId("model-costs")).toContainText("£320 a month for add-ons");
 
-  // A day's share of the add-on bill: £320 ÷ 30, rounded to £11, tagged add-ons.
+  // The add-on's one-off setup fee (Direct messages is 20 developer-days at £100 each, £2,000), plus a day's share of
+  // the add-on bill: £320 ÷ 30, rounded to £11, all tagged add-ons.
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).toContainText(`4 of ${E2E_FINAL_DAY}`);
-  await expect(student.getByTestId("spend-addons")).toHaveText("£11");
+  await expect(student.getByTestId("spend-addons")).toHaveText("£2,011");
   await expect((await openDayLog(student)).locator('[data-category="addons"]')).toContainText(
     "Add-on: Direct messages (4,000 users at £0.08 a month)",
   );
@@ -903,30 +904,36 @@ test("a student sets a price, plays a day and sees the income on Finance", async
   await dialog.getByRole("button", { name: "Set price" }).click();
   await expect(dialog.getByRole("alert")).toContainText("above £0");
   await input.fill("30");
-  // Six times the fair price: the live preview shows most payers going, so income ends up far lower.
-  await expect(dialog.getByTestId("preview-income")).toHaveText("£120");
+  // Six times the fair price: the live preview shows almost every payer going, so income ends up far lower.
+  await expect(dialog.getByTestId("preview-income")).toHaveText("£20");
+  // A gentler rise instead: £6, a fifth above fair. 1,200 paying users at £6 a month would bring in £240 a day.
+  await input.fill("6");
   await dialog.getByRole("button", { name: "Set price" }).click();
   await expect(dialog).toBeHidden();
-  await expect(student.getByTestId("price")).toHaveText("£30");
-  await expect(student.getByTestId("daily-income")).toHaveText("£1,200");
+  await expect(student.getByTestId("price")).toHaveText("£6");
+  await expect(student.getByTestId("daily-income")).toHaveText("£240");
 
-  // It applies from the next day: 1,200 paying users at £30 a month bring in £1,200.
+  // It applies from the next day. A few payers refuse the new price at once, so the day's income is whatever the ones
+  // who stayed paid: read it from the company's running income.
+  const before = (await (await request.get(`/api/codes/${code}/companies/${id}`)).json()).income;
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).toContainText(`5 of ${E2E_FINAL_DAY}`);
   await goTo(student, "Finance");
   const sheet = student.getByTestId("balance-sheet");
   await expect(sheet).toContainText("Day 5");
-  await expect(student.getByTestId("balance-day-income")).toHaveText("£1,200");
+  const { income, spend } = await (await request.get(`/api/codes/${code}/companies/${id}`)).json();
+  const dayIncome = Math.round(income - before);
+  const pounds = (n: number) => `${n < 0 ? "−" : ""}£${Math.abs(n).toLocaleString("en-GB")}`;
+  await expect(student.getByTestId("balance-day-income")).toHaveText(pounds(dayIncome));
   // Against it, IaaS's £66 a day and 2 developers, 1 ops person and 1 support person (£460 a day). Over the game so
   // far, the income from the days users were arriving too, against IaaS's £2,000 up front and 4 days' costs.
-  await expect(student.getByTestId("balance-day-profit")).toHaveText("£674");
-  const { income, spend } = await (await request.get(`/api/codes/${code}/companies/${id}`)).json();
+  await expect(student.getByTestId("balance-day-profit")).toHaveText(pounds(dayIncome - 526));
   const profit = income - (spend.staff + spend.infrastructure + spend.addons);
   expect(spend.staff + spend.infrastructure).toBe(2_000 + 4 * 526);
   await expect(student.getByTestId("balance-income")).toHaveText(`£${income.toLocaleString("en-GB")}`);
   await expect(student.getByTestId("balance-profit")).toHaveText(`−£${(-profit).toLocaleString("en-GB")}`);
   await expect(student.getByTestId("cash-chart")).toBeVisible();
-  await expect((await openDayLog(student)).getByTestId("log-income")).toHaveText("+£1,200");
+  await expect((await openDayLog(student)).getByTestId("log-income")).toHaveText(`+£${dayIncome.toLocaleString("en-GB")}`);
 });
 
 test("a student previews prices live, raises the price, and sees the backlash and the lock count down", async ({
