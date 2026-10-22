@@ -36,6 +36,10 @@ export const profitCosts = (spend: Spend, loan: Pick<Loan, "amount" | "total"> |
 const borrowedIn = (entries: LogEntry[]) =>
   entries.reduce((sum, e) => sum + (e.kind === "loan" && !e.category ? e.cashDelta : 0), 0);
 
+/** Money from funders in some entries, less a grant paid back. Cash, but neither income nor a charge. */
+const raisedIn = (entries: LogEntry[]) =>
+  entries.reduce((sum, e) => sum + (e.kind === "funding" && !e.category ? e.cashDelta : 0), 0);
+
 /** Where the customers stood at the end of a day, kept with its spend for the summary. */
 const customersAt = ({ users, paidUsers, satisfaction }: GameState) => ({ users, paidUsers, satisfaction });
 
@@ -43,8 +47,8 @@ const customersAt = ({ users, paidUsers, satisfaction }: GameState) => ({ users,
 export function createFinance(config: GameConfig) {
   /**
    * The ledger. Applies a day's entries to cash, adds each charge to its category's running total and the day's
-   * spend, and income to its own total, apart from the costs, so profit is income − profitCosts. Money borrowed is
-   * cash but neither, kept on the day so the cash chart adds up. Then ends the game if cash has gone below zero or this
+   * spend, and income to its own total, apart from the costs, so profit is income − profitCosts. Money borrowed or
+   * raised from funders is cash but neither, kept on the day so the cash chart adds up. Then ends the game if cash has gone below zero or this
    * was the final day. Returns the entries with any notice of the end added. Going bankrupt on the final day counts as
    * bankrupt.
    */
@@ -65,7 +69,14 @@ export function createFinance(config: GameConfig) {
       income: state.income + dayIncome,
       spendByDay: [
         ...state.spendByDay,
-        { day, ...daySpend, income: dayIncome, borrowed: borrowedIn(entries), ...customersAt(state) },
+        {
+          day,
+          ...daySpend,
+          income: dayIncome,
+          borrowed: borrowedIn(entries),
+          raised: raisedIn(entries),
+          ...customersAt(state),
+        },
       ],
     };
     if (cash < 0) {
@@ -85,7 +96,7 @@ export function createFinance(config: GameConfig) {
   }
 
   /**
-   * Charges (or refunds) made between days, such as buying a server, and money borrowed then: applied to cash and
+   * Charges (or refunds) made between days, such as buying a server, and money borrowed or raised then: applied to cash and
    * spend at once, and counted in the day just played, so the cost and cash charts still add up. Never ends the game:
    * an action that would leave cash below zero is refused before it gets here.
    */
@@ -95,6 +106,7 @@ export function createFinance(config: GameConfig) {
     const spend = noSpend();
     for (const c of SPEND_CATEGORIES) spend[c] = state.spend[c] + daySpend[c];
     const borrowed = borrowedIn(entries);
+    const raised = raisedIn(entries);
     const last = state.spendByDay.at(-1);
     const spendByDay =
       last?.day === state.day
@@ -104,9 +116,10 @@ export function createFinance(config: GameConfig) {
               ...last,
               ...Object.fromEntries(SPEND_CATEGORIES.map((c) => [c, last[c] + daySpend[c]])),
               borrowed: last.borrowed + borrowed,
+              raised: last.raised + raised,
             },
           ]
-        : [...state.spendByDay, { day: state.day, ...daySpend, income: 0, borrowed, ...customersAt(state) }];
+        : [...state.spendByDay, { day: state.day, ...daySpend, income: 0, borrowed, raised, ...customersAt(state) }];
     return { ...state, cash: state.cash + entries.reduce((sum, e) => sum + e.cashDelta, 0), spend, spendByDay };
   }
 

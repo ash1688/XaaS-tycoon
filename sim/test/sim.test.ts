@@ -167,6 +167,9 @@ const config: GameConfig = {
   billing: { daysPerMonth: 30 },
   // Taken at the start: £17,900 at 10%, £19,690 over 179 days, £110 a day.
   loan: { amount: 17_900, baseRate: 0.1, ratePerDay: 0.002, minDays: 14 },
+  shares: { min: 10_000, max: 100_000, default: 10_000 },
+  valuation: defaultConfig.valuation,
+  funding: defaultConfig.funding,
   // No price waves unless a test says otherwise, so a price change only has its ongoing effect on growth and payers.
   pricing: {
     maxPrice: 1_000,
@@ -2281,6 +2284,7 @@ describe("bank loan", () => {
         debt: 0,
         income: 0,
         borrowed: 17_900,
+        raised: 0,
         users: 1000,
         paidUsers: 0,
         satisfaction: 100,
@@ -2533,6 +2537,7 @@ describe("game end and summary", () => {
       debt: 0,
       income: 0,
       borrowed: 0,
+      raised: 0,
       users: 1000,
       paidUsers: 0,
       satisfaction: 100,

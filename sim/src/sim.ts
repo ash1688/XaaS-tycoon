@@ -11,6 +11,7 @@ import { createMigration, type MigrationQuote, type MigrationView } from "./migr
 import { isNameAllowed } from "./nameFilter.ts";
 import { createPricing, type PricePreview, type PriceWaveView } from "./pricing.ts";
 import { seedRng } from "./rng.ts";
+import { createShares, type CapTableView, type FundingView, type ValuationView } from "./shares.ts";
 import { createServers, type ManagedView, type ServerOption, type ServerView, type UnitsView } from "./servers.ts";
 import { createStaff } from "./staff.ts";
 import {
@@ -51,11 +52,24 @@ export type {
   TierView,
   UnitsView,
 } from "./servers.ts";
+export type {
+  CapTableRow,
+  CapTableView,
+  FriendsAndFamilyOffer,
+  FundingView,
+  GrantOffer,
+  GrantView,
+  ValuationDriver,
+  ValuationDriverId,
+  ValuationView,
+} from "./shares.ts";
 export type { GameSummary, IncomeCostDay, LoanSummary, PeakUsers, SummaryDay } from "./summary.ts";
 export { interestIn, profitCosts } from "./finance.ts";
 export {
+  FUNDER_IDS,
   GAME_STATE_VERSION,
   isCurrentState,
+  isFunderId,
   isManagedService,
   isModelId,
   isProductTypeId,
@@ -70,9 +84,13 @@ export {
   type EventRecord,
   type FeatureGap,
   type FeatureProgress,
+  type FriendsAndFamilyFunding,
+  type Funding,
+  type FunderId,
   type GameEnding,
   type GameState,
   type GameStatus,
+  type GrantFunding,
   type Loan,
   type LogEntry,
   type Migration,
@@ -81,6 +99,7 @@ export {
   type PriceWave,
   type ScheduledEvent,
   type Server,
+  type Shareholder,
   type Spend,
   type UnitDemand,
   type WaveEffect,
@@ -203,6 +222,18 @@ export interface Sim {
   /** What a usual day does to cash at today's figures, and how many days of cash that leaves. */
   runway(state: GameState): RunwayView;
   /**
+   * What the company is worth today by the formula (see ValuationConfig): the valuation, shares in issue, share price,
+   * and the drivers pushing it up or down, in pounds, which add up to it.
+   */
+  valuation(state: GameState): ValuationView;
+  /** Who owns the company: each shareholder's shares, share and what they're worth, the student first. */
+  capTable(state: GameState): CapTableView;
+  /**
+   * Friends and family and the grant: each one's open offer, with what accepting it now would do (new shares and
+   * dilution; the grant's condition), or how it was answered and, for the grant, how its condition stands.
+   */
+  funding(state: GameState): FundingView;
+  /**
    * Where the company is with its launch: waiting for capacity, its first users due, arriving over the ramp, or
    * launched; the day they started (or will start) arriving, and the launch total.
    */
@@ -237,8 +268,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   const summary = createSummary(config, infra);
   const loan = createLoan(config, finance);
   const launch = createLaunch(config, servers, pricing);
+  const shares = createShares(config, finance, pricing, conversion);
 
-  function newGame({ companyName, productType, model, seed, takeLoan = false }: NewGameParams): GameState {
+  function newGame({ companyName, productType, model, seed, takeLoan = false, shares: shareCount }: NewGameParams): GameState {
     const name = companyName.trim();
     if (!name) throw new SimError("name_required", "Enter a company name.");
     if (name.length > config.maxCompanyNameLength) {
@@ -249,6 +281,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     }
     if (!isProductTypeId(productType)) throw new SimError("unknown_product_type", "Pick a product type from the list.");
     if (!isModelId(model)) throw new SimError("unknown_model", "Pick a deployment model from the list.");
+    const owned = shares.startingShares(shareCount);
     const [schedule, rng] = events.rollSchedule(seedRng(seed), 1);
     // A new company has no servers, unless a config starts it with some, ready for the first day played.
     const setup = servers.starter(model, 1);
@@ -275,6 +308,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       migration: null,
       migrations: 0,
       loan: null,
+      ...owned,
       schedule,
       events: [],
       priceRises: {},
@@ -363,6 +397,10 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         return servers.setManagedService(state, action.service, action.size);
       case "takeLoan":
         return loan.takeLoan(state);
+      case "acceptFunding":
+        return shares.acceptFunding(state, action.funder);
+      case "declineFunding":
+        return shares.declineFunding(state, action.funder);
       default:
         throw new SimError("unknown_action", "That action isn't recognised.");
     }
@@ -406,6 +444,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const recorded = events.record(state, today, served.overloaded);
     // The loan is repaid every day, whatever else happens.
     const repayment = loan.repaymentDay(state, day);
+    // A grant's uptime condition counts today's hours down, and may withdraw it.
+    const grant = shares.grantDay(state, day, served.hoursDown);
     // Income comes from the users paying at the start of the day, at today's price, like the per-user fees, less any
     // who stopped paying today over the price: they won't pay it.
     const entries: LogEntry[] = [
@@ -425,6 +465,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       ...served.charges,
       ...events.costEntries(today),
       ...repayment.entries,
+      ...grant.entries,
     ];
     const played: GameState = {
       ...state,
@@ -452,6 +493,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       conversionsToday: converted.conversionsToday,
       conversions: state.conversions + converted.conversionsToday,
       loan: repayment.loan,
+      funding: grant.funding,
     };
     // The migration moves on after the day is played and billed, so a model switch takes effect from tomorrow.
     const migrated = migration.migrationDay(played);
@@ -525,6 +567,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     loanQuote: (s) => loan.loanQuote(load(s)),
     startLoanQuote: () => loan.termsOn(1),
     runway: (s) => runway(load(s)),
+    valuation: (s) => shares.valuation(load(s)),
+    capTable: (s) => shares.capTable(load(s)),
+    funding: (s) => shares.funding(load(s)),
     launch: (s) => launch.launchView(load(s)),
     migration: (s) => migration.migration(load(s)),
     migrationQuote: (s, target) => migration.migrationQuote(load(s), target),

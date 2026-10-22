@@ -11,6 +11,7 @@ import {
   STAFF_POOLS,
   type Action,
   type DayLog,
+  type FunderId,
   type GameState,
   type ManagedService,
   type ModelId,
@@ -56,6 +57,10 @@ export interface Player {
 
 const money = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
 const pct = (n: number) => `${Math.round(n)}%`;
+/** A share of the company, 0–1, to one decimal place of a percent. */
+const stake = (share: number) => `${Math.round(share * 1000) / 10}%`;
+/** A share price, which can be under a penny with many shares. */
+const perShare = (n: number) => `£${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
 
 /** The tier that runs out first, and how full it is: 999 with demand and no capacity, as the classroom log does. */
 function tierUse(sim: Sim, state: GameState): { tier: string | null; use: number | null } {
@@ -187,11 +192,32 @@ export function renderStatus(sim: Sim, state: GameState): string {
 
   const loan = sim.loan(state);
   if (loan) lines.push(`loan: ${money(loan.remaining)} left, ${money(loan.dailyRepayment)}/day for ${loan.daysLeft} more days`);
+  const valuation = sim.valuation(state);
+  const table = sim.capTable(state);
+  lines.push(
+    `valuation ${money(valuation.valuation)} | share price ${perShare(valuation.sharePrice)} | ${table.rows.map((r) => `${r.name.toLowerCase()} ${stake(r.share)}`).join(", ")} of ${table.sharesInIssue.toLocaleString("en-GB")} shares`,
+  );
+  lines.push(`funding: ${fundingStatus(sim, state)}`);
   const migration = sim.migration(state);
   if (migration) lines.push(`migration: ${migration.from}→${migration.to}, ${migration.phase}, ${migration.daysLeft} days left`);
   for (const e of sim.events(state)) lines.push(`event today: ${e.name}. ${e.outcome}`);
   for (const g of sim.featureGaps(state)) lines.push(`feature gap: ${g.name}. ${g.detail}`);
   return lines.join("\n");
+}
+
+/** Friends and family and the grant in a line: each one's offer, or how it stands. */
+function fundingStatus(sim: Sim, state: GameState): string {
+  const f = sim.funding(state);
+  const ff = f.friendsAndFamilyOffer
+    ? `offer ${money(f.friendsAndFamilyOffer.amount)} for ${stake(f.friendsAndFamilyOffer.theirShare)}`
+    : f.friendsAndFamily!.status;
+  const g = f.grant;
+  const grant = f.grantOffer
+    ? `offer ${money(f.grantOffer.amount)} if uptime ≥ ${f.grantOffer.minUptime}% for ${f.grantOffer.days} days`
+    : g!.status === "accepted"
+      ? `${g!.hoursDown}h of ${g!.maxHoursDown}h down allowed used, ${g!.daysLeft} days left`
+      : g!.status;
+  return `friends and family ${ff} | grant ${grant}`;
 }
 
 /** Every command that does something right now, with the values it takes. */
@@ -240,6 +266,13 @@ export function renderCommands(sim: Sim, state: GameState): string {
   if (loanQuote) {
     lines.push(`  loan   (${money(loanQuote.amount)} now, ${money(loanQuote.dailyRepayment)}/day for ${loanQuote.days} days)`);
   }
+  lines.push(`  valuation   (what's pushing the valuation up or down, and who owns what; changes nothing)`);
+  const funding = sim.funding(state);
+  const open = [funding.friendsAndFamilyOffer && "ff", funding.grantOffer && "grant"].filter(Boolean).join("|");
+  if (open) {
+    lines.push(`  funding   (each open offer in full: what friends and family get, the grant's condition; changes nothing)`);
+    lines.push(`  accept <${open}> | decline <${open}>   (each can be answered once; ff = friends and family)`);
+  }
   lines.push(`  next [days]   (advance up to that many days, default 7; stops early when something needs you)`);
   return lines.join("\n");
 }
@@ -249,6 +282,8 @@ export type Command =
   | { kind: "action"; action: Action; times: number }
   | { kind: "preview"; price: number }
   | { kind: "quote"; model: string }
+  | { kind: "valuation" }
+  | { kind: "funding" }
   | { kind: "next"; days: number };
 
 function oneOf<T extends string>(word: string | undefined, values: readonly T[], what: string): T {
@@ -282,6 +317,11 @@ export function parseCommand(text: string): Command {
   const service = (w: string | undefined) => oneOf<ManagedService>(w, MANAGED_SERVICES, "a managed service");
   const pool = (w: string | undefined) => oneOf<StaffPool>(w, STAFF_POOLS, "a staff pool");
   const one = (action: Action): Command => ({ kind: "action", action, times: 1 });
+  const funder = (w: string | undefined): FunderId => {
+    if (w === "ff" || w === "friends" || w === "friendsandfamily") return "friendsAndFamily";
+    if (w === "grant") return "grant";
+    throw new SimError("bad_command", "Expected a funder: ff (friends and family) or grant.");
+  };
   switch (verb) {
     case "hire":
       return { kind: "action", action: { type: "hire", pool: pool(args[0]) }, times: count(args[1]) };
@@ -315,6 +355,14 @@ export function parseCommand(text: string): Command {
       return one({ type: "startMigration", model: oneOf<ModelId>(args[0], MODEL_IDS, "a model") });
     case "loan":
       return one({ type: "takeLoan" });
+    case "valuation":
+      return { kind: "valuation" };
+    case "funding":
+      return { kind: "funding" };
+    case "accept":
+      return one({ type: "acceptFunding", funder: funder(args[0]) });
+    case "decline":
+      return one({ type: "declineFunding", funder: funder(args[0]) });
     case "next":
       return { kind: "next", days: args[0] === undefined ? 7 : count(args[0]) };
     default:
@@ -362,6 +410,8 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
       ],
     };
   }
+  if (command.kind === "valuation") return { state, rows: [], lines: valuationLines(sim, state) };
+  if (command.kind === "funding") return { state, rows: [], lines: fundingLines(sim, state) };
   if (command.kind !== "action") throw new Error("Advance with advanceUntil.");
   let current = state;
   const rows: LogRow[] = [];
@@ -381,8 +431,47 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
   return { state: current, rows, lines: [`${command.action.type}${command.times > 1 ? ` ×${done}` : ""}: done`] };
 }
 
+/** The valuation's drivers, in pounds, and the cap table. */
+function valuationLines(sim: Sim, state: GameState): string[] {
+  const v = sim.valuation(state);
+  const table = sim.capTable(state);
+  const signed = (n: number) => `${n < 0 ? "−" : "+"}${money(Math.abs(n))}`;
+  return [
+    `valuation ${money(v.valuation)}: annual revenue ${money(v.annualRevenue)} × ${v.multiple}, plus paying users; share price ${perShare(v.sharePrice)}`,
+    ...v.drivers.map((d) => `  ${d.label}: ${signed(d.amount)} (${d.detail})`),
+    `cap table (${table.sharesInIssue.toLocaleString("en-GB")} shares):`,
+    ...table.rows.map((r) => `  ${r.name}: ${r.shares.toLocaleString("en-GB")} shares, ${stake(r.share)}, worth ${money(r.value)}`),
+  ];
+}
+
+/** Each funder's open offer in full, or how it was answered. */
+function fundingLines(sim: Sim, state: GameState): string[] {
+  const f = sim.funding(state);
+  const lines: string[] = [];
+  const ff = f.friendsAndFamilyOffer;
+  if (ff) {
+    lines.push(
+      `friends and family (accept ff): ${money(ff.amount)} for ${ff.newShares.toLocaleString("en-GB")} new shares at ${perShare(ff.sharePrice)} (valuation ${money(ff.valuation)}). ` +
+        `They'd own ${stake(ff.theirShare)}; you'd go from ${stake(ff.yourShareBefore)} to ${stake(ff.yourShareAfter)}. Paid now, no target.`,
+    );
+  } else {
+    const t = f.friendsAndFamily!;
+    lines.push(`friends and family: ${t.status} on day ${t.day}${t.status === "accepted" ? `, ${money(t.amount)} for ${t.shares.toLocaleString("en-GB")} shares` : ""}`);
+  }
+  const g = f.grantOffer;
+  if (g) lines.push(`grant (accept grant): ${money(g.amount)}, no shares. ${g.condition} ${g.ifMissed}`);
+  else {
+    const t = f.grant!;
+    lines.push(
+      `grant: ${t.status} on day ${t.day}` +
+        (t.status === "accepted" ? `; ${t.hoursDown}h down of ${t.maxHoursDown}h allowed, ${t.hoursLeft}h left, until day ${t.untilDay}` : ""),
+    );
+  }
+  return lines;
+}
+
 /** Log entry kinds worth showing every day they appear. Feature and migration entries show only on days they stop time. */
-const SHOWN_KINDS = new Set(["outage", "event", "bankrupt", "finished", "support", "price", "launch"]);
+const SHOWN_KINDS = new Set(["outage", "event", "bankrupt", "finished", "support", "price", "launch", "funding"]);
 
 const builtCount = (state: GameState) => Object.values(state.features).filter((f) => f.status !== "building").length;
 
@@ -415,6 +504,9 @@ function stopReasons(sim: Sim, before: GameState, after: GameState): string[] {
   const leftBefore = runway(sim, before);
   if (left !== null && left <= 7 && (leftBefore === null || leftBefore > 7)) reasons.push(`cash runs out in ${left} days`);
   if (sim.priceLockDaysLeft(before) > 0 && sim.priceLockDaysLeft(after) === 0) reasons.push("price can change again");
+  const grantBefore = before.funding.grant?.status;
+  const grantAfter = after.funding.grant?.status;
+  if (grantBefore === "accepted" && grantAfter !== "accepted") reasons.push(`grant ${grantAfter}`);
   return reasons;
 }
 
@@ -459,5 +551,7 @@ function dayLines(log: DayLog[], stopping: boolean): string[] {
 export function renderSummary(sim: Sim, state: GameState): string {
   // The day-by-day series are for charts; the player only needs the totals.
   const { days: _days, incomeVsCosts: _incomeVsCosts, ...summary } = sim.summarise(state);
-  return JSON.stringify(summary, null, 1);
+  const yours = sim.capTable(state).rows.find((r) => r.id === "student")!;
+  const valuation = { valuation: sim.valuation(state).valuation, yourShare: stake(yours.share), yourSharesWorth: yours.value };
+  return JSON.stringify({ ...summary, ...valuation }, null, 1);
 }

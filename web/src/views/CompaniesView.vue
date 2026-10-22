@@ -16,6 +16,8 @@ const name = ref("");
 const productType = ref("");
 const model = ref("");
 const takeLoan = ref(false);
+// Shares in issue at the start, all the student's. Set to the game's default once meta has loaded.
+const shares = ref<number>();
 const formError = ref("");
 const nameError = ref("");
 const busy = ref(false);
@@ -41,14 +43,20 @@ const startCash = computed(() => {
 });
 const chosenModel = computed(() => meta.value?.models.find((m) => m.id === model.value));
 const cantAfford = computed(() => !!chosenModel.value && chosenModel.value.upfrontCost > startCash.value);
+const sharesOk = computed(() => {
+  const m = meta.value;
+  const n = shares.value;
+  return !!m && typeof n === "number" && Number.isInteger(n) && n >= m.shares.min && n <= m.shares.max;
+});
 const canStart = computed(
-  () => name.value.trim() && productType.value && model.value && !cantAfford.value && !busy.value,
+  () => name.value.trim() && productType.value && model.value && sharesOk.value && !cantAfford.value && !busy.value,
 );
 
 onMounted(async () => {
   try {
     const [m, c] = await Promise.all([api.meta(), api.code(props.code)]);
     meta.value = m;
+    shares.value = m.shares.default;
     companies.value = c.companies;
   } catch (e) {
     loadError.value = (e as Error).message;
@@ -88,6 +96,7 @@ async function start() {
       productType: productType.value,
       model: model.value,
       takeLoan: takeLoan.value,
+      shares: shares.value,
     });
     await router.push(`/play/${props.code}/${company.id}`);
   } catch (e) {
@@ -223,6 +232,32 @@ async function start() {
               <span class="muted">{{ m.blurb }}</span>
             </label>
           </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Shares</legend>
+          <p class="muted">
+            How many shares your company has. You own all of them to start with. Friends and family and investors buy new
+            shares, so you own less of the company: a share of what it's worth is your score.
+          </p>
+          <label for="shares">Shares in issue</label>
+          <input
+            id="shares"
+            v-model.number="shares"
+            type="number"
+            :min="meta.shares.min"
+            :max="meta.shares.max"
+            step="1000"
+            inputmode="numeric"
+            data-testid="shares"
+          />
+          <small v-if="!sharesOk" class="error" role="alert" data-testid="shares-error">
+            Pick a whole number from {{ meta.shares.min.toLocaleString("en-GB") }} to
+            {{ meta.shares.max.toLocaleString("en-GB") }}.
+          </small>
+          <small v-else class="muted">
+            From {{ meta.shares.min.toLocaleString("en-GB") }} to {{ meta.shares.max.toLocaleString("en-GB") }}.
+          </small>
         </fieldset>
 
         <fieldset>

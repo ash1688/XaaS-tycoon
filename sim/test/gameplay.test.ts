@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { createSim, defaultConfig, MODEL_IDS, PRODUCT_TYPE_IDS, type DayLog, type GameState, type Sim } from "../src/index.ts";
+import { createSim, defaultConfig, FUNDER_IDS, MODEL_IDS, PRODUCT_TYPE_IDS, type DayLog, type GameState, type Sim } from "../src/index.ts";
 import { playDay, STRATEGIES } from "../scripts/harness.ts";
 
 // Gameplay fingerprints: every strategy plays every model × product for a full game on the default config, and the
@@ -35,6 +35,9 @@ function fingerprint(model: GameState["model"], productType: GameState["productT
   let state: GameState;
   try {
     state = sim.newGame({ companyName: "Fingerprint Ltd", productType, model, seed: 7, takeLoan });
+    if (strategy.funding) {
+      for (const funder of FUNDER_IDS) state = sim.applyAction(state, { type: "acceptFunding", funder });
+    }
   } catch (e) {
     return `cant-start: ${(e as Error).message}`;
   }
@@ -52,6 +55,9 @@ function fingerprint(model: GameState["model"], productType: GameState["productT
         sim.conversion(state),
         sim.events(state),
         sim.summarise(state),
+        sim.valuation(state),
+        sim.capTable(state),
+        sim.funding(state),
       );
     }
     const next = sim.advance(state);

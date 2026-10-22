@@ -1,6 +1,7 @@
 // Shapes the API sends and receives. Type-only, so the web client can import it.
 import type {
   Action,
+  CapTableView,
   ConfigErrors,
   ConfigField,
   ConfigOverrides,
@@ -9,6 +10,7 @@ import type {
   EventView,
   FeatureGapView,
   FeatureView,
+  FundingView,
   GameSummary,
   LaunchView,
   LoanQuote,
@@ -26,10 +28,12 @@ import type {
   RunwayView,
   ServerOption,
   ServerView,
+  SharesConfig,
   Spend,
   StackLayer,
   StaffPool,
   UnitsView,
+  ValuationView,
 } from "@xaas/sim";
 
 export interface ApiError {
@@ -100,6 +104,8 @@ export interface MetaView {
    * repaid, the daily repayment and the days to repay it.
    */
   startLoan: LoanQuote;
+  /** Shares in issue a new company can start with: the student picks from min to max; the form starts on default. */
+  shares: SharesConfig;
 }
 
 /**
@@ -246,6 +252,18 @@ export interface CompanyView {
    * when the company isn't losing money.
    */
   runway: RunwayView;
+  /**
+   * What the company is worth today: the valuation, shares in issue, share price, and the drivers pushing it up or
+   * down, in pounds, adding up to it.
+   */
+  valuation: ValuationView;
+  /** Who owns the company: each shareholder's shares, share and what they're worth, the student first. */
+  capTable: CapTableView;
+  /**
+   * Friends and family and the grant: each one's open offer, with what accepting it now would do, or how it was
+   * answered and, for an accepted grant, how its uptime condition stands.
+   */
+  funding: FundingView;
   /** The product's features, with each one's status (built, building or a SaaS add-on) and build progress. */
   features: FeatureView[];
   /**
@@ -300,6 +318,8 @@ export interface NewCompanyBody {
   model: string;
   /** Take the bank loan at the start, on the terms in MetaView.startLoan. */
   takeLoan?: boolean;
+  /** Shares in issue at the start, all the student's, in MetaView.shares' range. Its default if left out. */
+  shares?: number;
 }
 
 export type ActionBody = Action;
@@ -481,8 +501,8 @@ export interface UiEventParams {
   prices?: number[];
   /** pricePreview and quote: whether the student went on to confirm it. */
   confirmed?: boolean;
-  /** quote: a migration or loan quote. */
-  kind?: "migration" | "loan";
+  /** quote: a migration, loan, friends and family or grant quote. */
+  kind?: "migration" | "loan" | "friendsAndFamily" | "grant";
   /** quote: the model a migration quote was for. */
   target?: ModelId;
   /** control: which one, such as "servers-app" or "staff-hire-ops". */

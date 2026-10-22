@@ -25,6 +25,7 @@ import {
   configFields,
   createSim,
   diffFromDefaults,
+  FUNDER_IDS,
   GAME_STATE_VERSION,
   isCurrentState,
   MANAGED_SERVICES,
@@ -346,6 +347,9 @@ export async function buildApp(opts: AppOptions) {
       loan: sim.loan(state),
       loanQuote: sim.loanQuote(state),
       runway: sim.runway(state),
+      valuation: sim.valuation(state),
+      capTable: sim.capTable(state),
+      funding: sim.funding(state),
       features: sim.features(state),
       migration: sim.migration(state),
       migrations: state.migrations,
@@ -425,6 +429,7 @@ export async function buildApp(opts: AppOptions) {
       cacheableShare: config.servers.cacheableShare,
       migrationPhases: MIGRATION_PHASES.map((id) => ({ id, ...config.migration.phases[id] })),
       startLoan: sim.startLoanQuote(),
+      shares: { ...config.shares },
     };
   }
 
@@ -458,6 +463,8 @@ export async function buildApp(opts: AppOptions) {
             productType: { type: "string" },
             model: { type: "string" },
             takeLoan: { type: "boolean" },
+            // Shares in issue at the start. The sim checks it's in the game's range.
+            shares: { type: "integer" },
           },
           additionalProperties: false,
         },
@@ -466,7 +473,7 @@ export async function buildApp(opts: AppOptions) {
     async (req, reply) => {
       const code = await findCode(req.params.code);
       if (!code) return sendError(reply, 404, "unknown_code", "That code wasn't recognised. Check it with your teacher.");
-      const { name, productType, model, takeLoan = false } = req.body;
+      const { name, productType, model, takeLoan = false, shares } = req.body;
       // Locks the code so two creates at once can't both see room under the limit. Only games still being played
       // count: finished, bankrupt and retired ones are history. Archiving is only the teacher's view, so it doesn't
       // change what counts.
@@ -481,7 +488,7 @@ export async function buildApp(opts: AppOptions) {
         // changes later.
         const { preset, config } = await newGameSetup(tx);
         const sim = simFor(config);
-        const state = sim.newGame({ companyName: name, productType, model, seed: randomInt(2 ** 31), takeLoan });
+        const state = sim.newGame({ companyName: name, productType, model, seed: randomInt(2 ** 31), takeLoan, shares });
         const [inserted] = await tx
           .insert(companies)
           .values({
@@ -504,7 +511,8 @@ export async function buildApp(opts: AppOptions) {
         );
       }
       const company = view(row);
-      logGame(row, company.day, "start", { productType, model, takeLoan, preset: row.preset }, company);
+      const sharesInIssue = company.capTable.sharesInIssue;
+      logGame(row, company.day, "start", { productType, model, takeLoan, shares: sharesInIssue, preset: row.preset }, company);
       return reply.code(201).send(company);
     },
   );
@@ -600,6 +608,8 @@ export async function buildApp(opts: AppOptions) {
                 "setInstances",
                 "setManagedService",
                 "takeLoan",
+                "acceptFunding",
+                "declineFunding",
               ],
             },
             pool: { enum: [...STAFF_POOLS] },
@@ -623,6 +633,8 @@ export async function buildApp(opts: AppOptions) {
             count: { type: "integer", minimum: 1, maximum: 999 },
             // setManagedService: a managed service on PaaS and its size, or null to turn the cache off.
             service: { enum: [...MANAGED_SERVICES] },
+            // acceptFunding and declineFunding: friends and family or the grant.
+            funder: { enum: [...FUNDER_IDS] },
           },
           allOf: [
             { if: { properties: { type: { enum: ["hire", "letGo"] } } }, then: { required: ["pool"] } },
@@ -633,6 +645,7 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { enum: ["rentServer", "buyServer"] } } }, then: { required: ["server", "size"] } },
             { if: { properties: { type: { enum: ["cancelServer", "sellServer"] } } }, then: { required: ["id"] } },
             { if: { properties: { type: { const: "setInstances" } } }, then: { required: ["count"] } },
+            { if: { properties: { type: { enum: ["acceptFunding", "declineFunding"] } } }, then: { required: ["funder"] } },
             {
               if: { properties: { type: { const: "setManagedService" } } },
               then: { required: ["service", "size"] },
@@ -712,7 +725,7 @@ export async function buildApp(opts: AppOptions) {
                       ms: { type: "integer", minimum: 0 },
                       prices: { type: "array", maxItems: 20, items: { type: "number", minimum: 0 } },
                       confirmed: { type: "boolean" },
-                      kind: { enum: ["migration", "loan"] },
+                      kind: { enum: ["migration", "loan", "friendsAndFamily", "grant"] },
                       target: { enum: [...MODEL_IDS] },
                       control: { type: "string", pattern: "^[a-z][a-z0-9-]{0,47}$" },
                       value: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,23}$" },

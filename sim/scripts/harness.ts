@@ -2,6 +2,7 @@
 // and reports how each model and product did. A tool for tuning the defaults, not part of the game. See balance.ts.
 import {
   createSim,
+  FUNDER_IDS,
   profitCosts,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
@@ -43,6 +44,8 @@ export interface Strategy {
   loan: "onprem" | "always" | "late" | "never";
   /** Starts a migration on this day, once it can afford the quote, to the model `migrateTo` picks. */
   migrateDay?: number;
+  /** Accepts friends and family and the grant on day 1. */
+  funding?: boolean;
 }
 
 export const STRATEGIES: Strategy[] = [
@@ -76,6 +79,15 @@ export const STRATEGIES: Strategy[] = [
     loan: "late",
   },
   { id: "loan", description: "As sensible, and takes the bank loan at the start on every model.", priceFactor: 1, support: true, scaling: "ahead", loan: "always" },
+  {
+    id: "funded",
+    description: "As no-loan, but accepts friends and family and the grant on day 1 instead.",
+    priceFactor: 1,
+    support: true,
+    scaling: "ahead",
+    loan: "never",
+    funding: true,
+  },
   {
     id: "migrate",
     description: "As sensible, and migrates on day 60 (on-prem → IaaS → PaaS → SaaS → IaaS).",
@@ -358,6 +370,9 @@ export function playGame(sim: Sim, { model, productType, strategy, seed }: GameS
   let state: GameState;
   try {
     state = sim.newGame({ companyName: "Balance Ltd", productType, model, seed, takeLoan });
+    if (strategy.funding) {
+      for (const funder of FUNDER_IDS) state = sim.applyAction(state, { type: "acceptFunding", funder });
+    }
   } catch (e) {
     if (e instanceof SimError && e.code === "cant_afford") {
       return { ...emptyResult(model, productType, strategy.id, seed), outcome: "cant-start" };

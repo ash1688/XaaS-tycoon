@@ -1243,6 +1243,98 @@ describe("bank loan", () => {
   });
 });
 
+describe("shares and funding", () => {
+  async function setup(body: object = {}) {
+    const code = await newCode();
+    const created = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "iaas", ...body });
+    expect(created.statusCode).toBe(201);
+    const company = created.json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
+    return { code, company, url, act };
+  }
+
+  it("starts with the shares picked, all the student's, and offers the range in meta", async () => {
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.shares).toEqual({ min: 10_000, max: 100_000, default: 10_000 });
+    const { company } = await setup({ shares: 40_000 });
+    expect(company.capTable).toMatchObject({
+      sharesInIssue: 40_000,
+      rows: [{ id: "student", name: "You", shares: 40_000, share: 1 }],
+    });
+    expect(company.valuation.sharesInIssue).toBe(40_000);
+    expect(company.valuation.sharePrice).toBe(company.valuation.valuation / 40_000);
+    expect((await setup()).company.capTable.sharesInIssue).toBe(10_000);
+  });
+
+  it("refuses shares outside the range or not whole", async () => {
+    const code = await newCode();
+    for (const shares of [9_999, 100_001]) {
+      const res = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "iaas", shares });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ error: "bad_shares", message: expect.stringContaining("10,000 to 100,000") });
+    }
+    const half = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "iaas", shares: 12_000.5 });
+    expect(half.statusCode).toBe(400);
+  });
+
+  it("shows the valuation with its drivers adding up to it", async () => {
+    const { company } = await setup();
+    const { valuation, drivers } = company.valuation;
+    expect(valuation).toBeGreaterThanOrEqual(sim.config.valuation.minimum);
+    expect(drivers.map((d) => d.id)).toEqual(expect.arrayContaining(["revenue", "growth", "satisfaction", "uptime", "payingUsers"]));
+    expect(drivers.reduce((sum, d) => sum + d.amount, 0)).toBe(valuation);
+  });
+
+  it("accepts friends and family as previewed: new shares, the student diluted, cash at once, once", async () => {
+    const { company, act } = await setup();
+    const offer = company.funding.friendsAndFamilyOffer!;
+    expect(offer).toMatchObject({ amount: sim.config.funding.friendsAndFamily.amount, sharesInIssue: 10_000, yourShareBefore: 1 });
+    const res = await act({ type: "acceptFunding", funder: "friendsAndFamily" });
+    expect(res.statusCode).toBe(200);
+    const after = res.json<CompanyView>();
+    expect(after.cash).toBe(company.cash + offer.amount);
+    expect(after.capTable).toMatchObject({
+      sharesInIssue: offer.sharesAfter,
+      rows: [
+        { id: "student", shares: 10_000, share: offer.yourShareAfter },
+        { id: "friendsAndFamily", shares: offer.newShares, share: offer.theirShare },
+      ],
+    });
+    expect(after.funding).toMatchObject({ friendsAndFamilyOffer: null, friendsAndFamily: { status: "accepted", shares: offer.newShares } });
+    const again = await act({ type: "acceptFunding", funder: "friendsAndFamily" });
+    expect(again.statusCode).toBe(400);
+    expect(again.json()).toMatchObject({ error: "funding_answered" });
+  });
+
+  it("shows the grant's condition, and declining it is for good", async () => {
+    const { company, act } = await setup();
+    expect(company.funding.grantOffer).toMatchObject({
+      amount: sim.config.funding.grant.amount,
+      condition: expect.stringContaining("Keep uptime at 99% or more"),
+      ifMissed: expect.stringContaining("withdrawn"),
+    });
+    const declined = (await act({ type: "declineFunding", funder: "grant" })).json<CompanyView>();
+    expect(declined.cash).toBe(company.cash);
+    expect(declined.funding).toMatchObject({ grantOffer: null, grant: { status: "declined" } });
+    expect((await act({ type: "acceptFunding", funder: "grant" })).json()).toMatchObject({ error: "funding_answered" });
+  });
+
+  it("accepts the grant: cash and no shares, its condition running", async () => {
+    const { company, act } = await setup();
+    const after = (await act({ type: "acceptFunding", funder: "grant" })).json<CompanyView>();
+    expect(after.cash).toBe(company.cash + sim.config.funding.grant.amount);
+    expect(after.capTable.rows).toHaveLength(1);
+    expect(after.funding.grant).toMatchObject({ status: "accepted", day: 1, hoursDown: 0, daysLeft: sim.config.funding.grant.days });
+  });
+
+  it("validates the funder", async () => {
+    const { act } = await setup();
+    expect((await act({ type: "acceptFunding" })).statusCode).toBe(400);
+    expect((await act({ type: "acceptFunding", funder: "angel" })).statusCode).toBe(400);
+  });
+});
+
 describe("game end and summary", () => {
   // A 5-day game: continue plays days 2 to 5, then the game is over.
   const short = createSim({ ...sim.config, finalDay: 5 });

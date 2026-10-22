@@ -98,14 +98,14 @@ export interface GameSummary {
 export function createSummary(config: GameConfig, infra: Infrastructure) {
   function summarise(state: GameState): GameSummary {
     const total = (s: Spend) => SPEND_CATEGORIES.reduce((sum, c) => sum + s[c], 0);
-    // Only charges, income and borrowing move cash, so the cash after each day is today's cash plus everything spent
-    // since, less everything earned and borrowed since.
+    // Only charges, income, borrowing and funding move cash, so the cash after each day is today's cash plus
+    // everything spent since, less everything earned, borrowed and raised since.
     let cash = state.cash;
     const days: SummaryDay[] = [];
     for (let i = state.spendByDay.length - 1; i >= 0; i--) {
       const d = state.spendByDay[i]!;
       days.unshift({ ...d, cash });
-      cash += total(d) - d.income - d.borrowed;
+      cash += total(d) - d.income - d.borrowed - d.raised;
     }
     const { loan } = state;
     let totalIncome = 0;
