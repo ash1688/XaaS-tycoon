@@ -48,6 +48,7 @@ test("a student's play and UI use show in the teacher's timeline and export, und
   expect(player).toMatch(/^Player \d+$/);
   await row.getByTestId("live-timeline").click();
   await expect(teacher.getByRole("heading", { name: `Activity: ${player}` })).toBeVisible();
+  await expect(teacher.locator(".timeline-meta")).toContainText(/and its student Tester \d+/);
   const timeline = teacher.getByTestId("timeline");
   await expect(timeline.locator('[data-type="start"]')).toHaveCount(1);
   await expect(timeline.locator('[data-type="continue"]')).toHaveCount(3);
@@ -69,7 +70,7 @@ test("a student's play and UI use show in the teacher's timeline and export, und
   expect(download.suggestedFilename()).toMatch(/^playtest-log-\d{4}-\d{2}-\d{2}\.csv$/);
   const csv = await readFile(await download.path(), "utf8");
   const [header, ...lines] = csv.trim().split("\r\n");
-  expect(header).toContain("at,player,preset,productType,kind,type,ok,error,day,cash");
+  expect(header).toContain("at,tester,player,preset,productType,kind,type,ok,error,day,cash");
   expect(lines.length).toBeGreaterThanOrEqual(7);
   expect(lines.every((l) => l.includes(`,${player},`))).toBe(true);
   expect(lines.some((l) => l.includes(",ui,pricePreview,"))).toBe(true);

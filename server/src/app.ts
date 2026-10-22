@@ -48,7 +48,7 @@ import {
 } from "@xaas/sim";
 import type { Db } from "./db/client.ts";
 import { companies, configPresets, loginCodes, playEvents } from "./db/schema.ts";
-import { exportRow, PlayLog, pseudonym, snapshotOf, toCsv, type PlayEventRow } from "./playLog.ts";
+import { cleanSnapshot, exportRow, PlayLog, pseudonym, snapshotOf, testerId, toCsv, type PlayEventRow } from "./playLog.ts";
 import { FailureLimiter } from "./rateLimit.ts";
 import { endTeacherSession, isTeacher, passwordMatches, startTeacherSession } from "./teacherAuth.ts";
 import type {
@@ -1096,11 +1096,13 @@ export async function buildApp(opts: AppOptions) {
                 name: companies.name,
                 code: companies.loginCode,
                 player: companies.player,
+                tester: loginCodes.tester,
                 preset: companies.preset,
                 productType: companies.productType,
                 status: companies.status,
               })
               .from(companies)
+              .innerJoin(loginCodes, eq(loginCodes.code, companies.loginCode))
               .where(eq(companies.id, id))
           : [];
         if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
@@ -1115,6 +1117,7 @@ export async function buildApp(opts: AppOptions) {
         return {
           id: row.id,
           player: pseudonym(row.player),
+          tester: testerId(row.tester),
           name: row.name,
           code: row.code,
           preset: row.preset ?? DEFAULT_PRESET,
@@ -1134,7 +1137,7 @@ export async function buildApp(opts: AppOptions) {
                 ok: e.ok,
                 error: e.error,
                 params: e.params,
-                snapshot: e.snapshot as PlaySnapshot | null,
+                snapshot: cleanSnapshot(e.snapshot as PlaySnapshot | null),
               }),
             ),
         } satisfies TimelineView;
@@ -1175,10 +1178,16 @@ export async function buildApp(opts: AppOptions) {
         const rows = await db
           .select({
             event: playEvents,
-            company: { player: companies.player, preset: companies.preset, productType: companies.productType },
+            company: {
+              tester: loginCodes.tester,
+              player: companies.player,
+              preset: companies.preset,
+              productType: companies.productType,
+            },
           })
           .from(playEvents)
           .innerJoin(companies, eq(companies.id, playEvents.companyId))
+          .innerJoin(loginCodes, eq(loginCodes.code, companies.loginCode))
           .where(
             and(
               code ? eq(companies.loginCode, code) : undefined,
@@ -1191,17 +1200,53 @@ export async function buildApp(opts: AppOptions) {
           .orderBy(asc(playEvents.at), asc(playEvents.id));
         const out = rows.map(({ event: e, company: c }) =>
           exportRow(e, e.params, e.snapshot as Partial<PlaySnapshot> | null, {
+            tester: c.tester,
             player: c.player,
             preset: c.preset ?? DEFAULT_PRESET,
             productType: c.productType,
           }),
         );
+        if (kind !== "ui") out.push(...(await inferredEnds([...new Set(rows.map((r) => r.event.companyId))], to)));
+        // Stable, so an inferred end follows the game's last event even at the same instant.
+        out.sort((a, b) => a.at.localeCompare(b.at));
         const name = `playtest-log-${new Date().toISOString().slice(0, 10)}.${format}`;
         reply.header("content-disposition", `attachment; filename="${name}"`);
         if (format === "json") return reply.type("application/json; charset=utf-8").send(JSON.stringify(out));
         return reply.type("text/csv; charset=utf-8").send(toCsv(out));
       },
     );
+
+    /**
+     * An end row for each of these games that never logged one: mostly games the student just stopped playing without
+     * retiring, which are "abandoned". Worked out at export, not stored, since the game could still be picked up again.
+     * Each is at the game's last event, with its numbers as they are now, and is marked inferred. None after `to`.
+     */
+    async function inferredEnds(ids: string[], to: Date | undefined) {
+      if (!ids.length) return [];
+      const lastAt = sql<string>`(select max(${playEvents.at}) from ${playEvents} where ${playEvents.companyId} = ${companies.id})`;
+      const unended = await db
+        .select({ row: companies, tester: loginCodes.tester, lastAt })
+        .from(companies)
+        .innerJoin(loginCodes, eq(loginCodes.code, companies.loginCode))
+        .where(
+          and(
+            inArray(companies.id, ids),
+            sql`not exists (select 1 from ${playEvents} where ${playEvents.companyId} = ${companies.id} and ${playEvents.kind} = 'game' and ${playEvents.type} = 'end')`,
+          ),
+        );
+      return unended
+        .map(({ row, tester, lastAt }) => ({ row, tester, at: new Date(lastAt) }))
+        .filter(({ at }) => !to || at <= to)
+        .map(({ row, tester, at }) => {
+          const company = isCurrentState(row.state) ? viewOrNothing(row) : undefined;
+          return exportRow(
+            { at, kind: "game", type: "end", ok: true, error: null, day: row.day },
+            { status: row.status === "active" ? "abandoned" : row.status, inferred: true },
+            company ? snapshotOf(company) : null,
+            { tester, player: row.player, preset: row.preset ?? DEFAULT_PRESET, productType: row.productType },
+          );
+        });
+    }
 
     // How much there is, for the logs panel.
     teacher.get("/api/teacher/logs", async (): Promise<LogStatsView> => {

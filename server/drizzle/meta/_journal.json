@@ -43,6 +43,13 @@
       "when": 1792617853764,
       "tag": "0005_playtest_log",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792701888433,
+      "tag": "0006_tester_ids",
+      "breakpoints": true
     }
   ]
 }
