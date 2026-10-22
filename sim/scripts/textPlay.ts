@@ -119,9 +119,11 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const fair = sim.fairPrice(state);
   const lock = sim.priceLockDaysLeft(state);
   const left = runway(sim, state);
+  const daysToPlay = sim.config.finalDay - state.day;
+  const lasts = left === null ? "not losing money" : left > daysToPlay ? `lasts past day ${sim.config.finalDay}` : `${left} days`;
   lines.push(`== ${state.companyName} | ${state.productType} on ${state.model} | day ${state.day}/${sim.config.finalDay} | ${state.status.toUpperCase()}`);
   lines.push(
-    `cash ${money(state.cash)} | income ${money(sim.dailyIncome(state))}/day | costs ${money(dailyCosts(sim, state))}/day | runway ${left === null ? "not losing money" : `${left} days`}`,
+    `cash ${money(state.cash)} | income ${money(sim.dailyIncome(state))}/day | costs ${money(dailyCosts(sim, state))}/day | runway ${lasts}`,
   );
   lines.push(`price ${money(state.price)}/month (fair ${money(fair)}) | ${lock > 0 ? `locked ${lock} more days` : "can change"}`);
   const wave = sim.priceWave(state);
@@ -386,7 +388,10 @@ const builtCount = (state: GameState) => Object.values(state.features).filter((f
 /** Why the day just played needs a decision, if it does: compares the company before and after the day. */
 function stopReasons(sim: Sim, before: GameState, after: GameState): string[] {
   const reasons: string[] = [];
-  const events = sim.events(after);
+  // Only events that need the player stop time: ones that hurt or found the company short of ops. A provider patch
+  // with nothing to do is just shown. An event lasting several days stops on its first day only.
+  const yesterday = new Set(sim.events(before).map((e) => e.id));
+  const events = sim.events(after).filter((e) => (e.hit || e.shortOfOps) && !yesterday.has(e.id));
   if (events.length) reasons.push(`event: ${events.map((e) => e.name).join(", ")}`);
   if (after.outageDays > before.outageDays) reasons.push("outage");
   if (builtCount(after) > builtCount(before)) reasons.push("feature built");
@@ -451,6 +456,7 @@ function dayLines(log: DayLog[], stopping: boolean): string[] {
 
 /** The end-of-game summary as text: how it ended, final figures and where the money went. */
 export function renderSummary(sim: Sim, state: GameState): string {
-  const { days: _days, ...summary } = sim.summarise(state);
+  // The day-by-day series are for charts; the player only needs the totals.
+  const { days: _days, incomeVsCosts: _incomeVsCosts, ...summary } = sim.summarise(state);
   return JSON.stringify(summary, null, 1);
 }

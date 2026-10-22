@@ -18,9 +18,12 @@ npm run -s play -- summary <game>
 
 - `new` starts a game and shows the company and the commands. Leave out `--loan` to start without the bank loan.
 - `look` shows the company and every command that works right now, with prices and allowed values.
-- `do` runs commands separated by `;`. `next [days]` moves time on (7 days by default) and **stops early** when
-  something needs a decision: an event, an outage, a built feature, a server arriving, capacity running out,
-  satisfaction falling, cash about to run out, or the price lock ending. Any commands after a stop are skipped.
+- `do` runs game commands separated by `;`. Every game command goes inside `do`, including `preview` and `quote`:
+  `npm run -s play -- do <game> "preview 8; quote iaas"`.
+- `next [days]` (inside `do`) moves time on, 7 days by default, and **stops early** when something needs a
+  decision: an event that hurts, an outage, a built feature, a server arriving, capacity running out, satisfaction
+  falling, cash about to run out, or the price lock ending. Any commands after a stop are skipped. Events that need
+  nothing from you are shown but don't stop time.
 - `preview <price>` and `quote <model>` show what a price change or migration would do without doing it.
 - `summary` shows the final figures once the game is over.
 
@@ -32,7 +35,7 @@ Play the whole game in character as your playstyle:
 
 | Playstyle | How you play |
 |---|---|
-| `min-maxer` | Hunt for the most efficient route and any exploit. Read every number, test the edges: extreme prices, mass hiring, timing tricks. |
+| `min-maxer` | Your only goal is the highest final cash. Hunt for exploits and **actually try them**: a preview is a hint, not a test. When something looks too good (a huge projected income, a cost that seems free), commit to it, play some days, and judge by real cash. Test the edges: extreme prices (up to the maximum), price cuts and rises in sequence, mass hiring and letting go, timing tricks around the price lock. If a trick works, repeat it. |
 | `maxer` | Go for the biggest company: aggressive growth, take every risk that might pay off. |
 | `average-joe` | Play like a typical student: skim the output, mostly advance time, react to problems late, follow the obvious prompts. Don't calculate. |
 | `low-and-slow` | Cautious: avoid debt if you can, take few risks, grow steadily, keep a cash cushion. |

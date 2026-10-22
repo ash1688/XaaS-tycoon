@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createSim, defaultConfig, SimError, type GameState } from "../src/index.ts";
-import { advanceUntil, parseCommand, renderCommands, renderStatus, runCommand } from "../scripts/textPlay.ts";
+import { advanceUntil, parseCommand, renderCommands, renderStatus, renderSummary, runCommand } from "../scripts/textPlay.ts";
 
 const sim = createSim({ ...defaultConfig, finalDay: 40 });
 const who = { player: "test", playstyle: "average-joe" };
@@ -65,10 +65,29 @@ describe("advanceUntil", () => {
     expect(turn.rows.every((r) => r.type === "continue")).toBe(true);
   });
 
+  it("doesn't stop for an event that needs nothing from the player", () => {
+    let state = run(start(), "instances 3").state;
+    state = run(state, "managed database medium").state;
+    let quiet = 0;
+    for (let i = 0; i < 39 && state.status === "playing"; i++) {
+      const turn = run(state, "next 1");
+      state = turn.state;
+      const today = sim.events(state);
+      if (today.length && today.every((e) => !e.hit && !e.shortOfOps)) {
+        quiet++;
+        expect(turn.lines.at(-1)).not.toMatch(/event:/);
+      }
+    }
+    expect(quiet).toBeGreaterThan(0);
+  });
+
   it("plays to the end and logs the ending", () => {
     let last = run(start(), "next 1");
     for (let i = 0; i < 100 && last.state.status === "playing"; i++) last = run(last.state, "next 40");
     expect(last.rows.at(-1)).toMatchObject({ type: "end", params: { status: last.state.status } });
+    const summary = renderSummary(sim, last.state);
+    expect(summary).toMatch(/"ending"/);
+    expect(summary).not.toMatch(/incomeVsCosts|"days"/);
   });
 });
 
