@@ -213,9 +213,21 @@ test("a company that runs out of cash goes bankrupt and can't continue", async (
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
   await expect(student.getByTestId("cash")).toHaveText("£100");
+  // With days of cash left, every page warns, and Home shows the runway.
+  await expect(student.getByTestId("low-cash")).toContainText("Cash runs out");
+  await expect(student.getByTestId("low-cash")).toContainText("bank loan");
+  await expect(student.getByTestId("home-runway")).toContainText("Runway");
+  await expect(student.getByTestId("home-alerts")).toContainText("Cash runs out");
+  await goTo(student, "People");
+  await expect(student.getByTestId("low-cash")).toBeVisible();
+  await goTo(student, "Home");
   await student.getByRole("button", { name: "Continue" }).click();
 
   await expect(student.getByTestId("bankrupt-screen")).toContainText("Game over");
+  // It says why there's no loan now, and Finance offers none.
+  await expect(student.getByTestId("bankrupt-screen")).toContainText("too late for a bank loan");
+  await expect(student.getByTestId("low-cash")).toBeHidden();
+  await expect(student.getByTestId("home-loan")).toHaveText("No bank loan: banks don't lend once you've gone under.");
   await expect(student.getByTestId("home-day-log").getByTestId("bankrupt")).toContainText("Broke Ltd is bankrupt");
   // The game is over: Home shows the summary, Continue is off, and the pages are read-only.
   await expect(student.getByRole("button", { name: "Continue" })).toBeDisabled();
@@ -225,6 +237,9 @@ test("a company that runs out of cash goes bankrupt and can't continue", async (
   await goTo(student, "People");
   await expect(student.getByTestId("read-only")).toContainText("This game has ended");
   await expect(student.getByRole("button", { name: "Hire one developer" })).toBeDisabled();
+  await goTo(student, "Finance");
+  await expect(student.getByTestId("loan-bankrupt")).toContainText("banks don't lend");
+  await expect(student.getByTestId("loan-open")).toBeHidden();
   await goTo(student, "Home");
 
   // Still bankrupt after a reload, with its summary, and the API refuses to carry on.
@@ -805,6 +820,22 @@ test("a Home card opens an accessible modal with its controls, and Continue work
   await modal.getByRole("button", { name: "Hire one ops person" }).click();
   await expect(modal.getByTestId("ops-count")).toHaveText("2");
   await expect(student.getByTestId("home-staff")).toContainText("2 dev · 2 ops");
+  // Many at once: the number box hires or lets go that many in one go, on top of the 1 support person there.
+  await modal.getByTestId("support-amount").fill("25");
+  await expect(modal.getByTestId("support-bulk")).toContainText("a day for 25 support");
+  await modal.getByTestId("support-hire-many").click();
+  await expect(modal.getByTestId("support-count")).toHaveText("26");
+  await modal.getByTestId("support-amount").fill("10");
+  await modal.getByTestId("support-let-go-many").click();
+  await expect(modal.getByTestId("support-count")).toHaveText("16");
+  // Not more than the team has.
+  await modal.getByTestId("support-amount").fill("17");
+  await expect(modal.getByTestId("support-let-go-many")).toBeDisabled();
+  await expect(student.getByTestId("home-staff")).toContainText("16 support");
+  // Back to 1, so the day's pay below is as before.
+  await modal.getByTestId("support-amount").fill("15");
+  await modal.getByTestId("support-let-go-many").click();
+  await expect(modal.getByTestId("support-count")).toHaveText("1");
 
   // Focus is trapped: Tab from the last control goes round to the first, and Shift+Tab back again.
   const close = modal.getByRole("button", { name: "Close" });
@@ -930,12 +961,24 @@ test("a student previews prices live, raises the price, and sees the backlash an
   await expect(preview.getByTestId("preview-left")).toHaveText("90");
   await expect(preview.getByTestId("preview-to-free")).toHaveText("60");
   await expect(preview.getByTestId("preview-income")).toHaveText("£219");
+  // The effect in one sentence, against today's £200 a day.
+  await expect(preview.getByTestId("price-verdict")).toHaveText(
+    "At £6.25 you'd make £19 a day more than now (£219 a day) once the wave settles. 90 paying users leave and 60 drop to free.",
+  );
   await expect(preview.getByRole("img", { name: /The wave day by day/ })).toBeVisible();
   // A cut previews a positive wave instead, updating as the price changes.
   await input.fill("4");
   await expect(preview.getByTestId("preview-joined")).toBeVisible();
   await expect(preview.getByTestId("preview-upgraded")).toBeVisible();
   await expect(preview.getByTestId("preview-left")).toBeHidden();
+  // Each price tried is listed to compare, the best marked; a quick step tries another in one click.
+  const compare = dialog.getByTestId("price-compare");
+  await expect(compare.getByRole("row")).toHaveCount(3);
+  await expect(compare.getByRole("row", { name: /£6\.25/ })).toContainText("Most income");
+  await dialog.getByTestId("price-quick").getByRole("button", { name: /\+10%/ }).click();
+  await expect(input).toHaveValue("5.5");
+  await expect(preview.getByTestId("price-tiny-step")).toBeHidden();
+  await expect(compare.getByRole("row")).toHaveCount(4);
 
   await input.fill("6.25");
   await expect(preview.getByTestId("preview-left")).toHaveText("90");

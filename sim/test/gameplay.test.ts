@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { createSim, defaultConfig, MODEL_IDS, PRODUCT_TYPE_IDS, type DayLog, type GameState } from "../src/index.ts";
+import { createSim, defaultConfig, MODEL_IDS, PRODUCT_TYPE_IDS, type DayLog, type GameState, type Sim } from "../src/index.ts";
 import { playDay, STRATEGIES } from "../scripts/harness.ts";
 
 // Gameplay fingerprints: every strategy plays every model × product for a full game on the default config, and the
@@ -17,6 +17,16 @@ function quoteOrRefusal(state: GameState, target: string) {
   } catch (e) {
     return (e as Error).message;
   }
+}
+
+/**
+ * The units view without its look-ahead at servers still being set up, added for the page after these hashes were
+ * taken: it plays no part in the game, so the hashes stay those of the games themselves.
+ */
+function withoutLookahead(units: ReturnType<Sim["units"]>) {
+  if (!units) return units;
+  const { loadBalancerOnceReady: _, ...rest } = units;
+  return rest;
 }
 
 /** Plays one game to the end like the harness, keeping what a player would have seen on the way. */
@@ -38,7 +48,7 @@ function fingerprint(model: GameState["model"], productType: GameState["productT
         sim.pricePreview(state, Math.round(state.price * 1.25 * 100) / 100),
         quoteOrRefusal(state, state.model === "saas" ? "iaas" : "saas"),
         sim.loanQuote(state),
-        sim.units(state),
+        withoutLookahead(sim.units(state)),
         sim.conversion(state),
         sim.events(state),
         sim.summarise(state),

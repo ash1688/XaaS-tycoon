@@ -60,6 +60,7 @@ function schedulePreview(price: number | "") {
       const result = await api.pricePreview(game.code, game.id, price);
       if (seq !== previewSeq) return;
       if (price !== tried.at(-1) && (tried.length || price !== game.company?.price)) tried.push(price);
+      if (result.direction !== "none") compare(result);
       preview.value = result;
       previewError.value = "";
     } catch (e) {
@@ -78,9 +79,58 @@ onBeforeUnmount(() => window.clearTimeout(previewTimer));
 // The preview's change in income a day, once the wave settles.
 const incomeChange = computed(() => (preview.value ? preview.value.dailyIncome - preview.value.currentDailyIncome : 0));
 const signedCash = (n: number) => `${n < 0 ? "−" : "+"}${formatCash(Math.abs(n))}`;
+// The preview in one sentence: what the price does to income, and what it costs in users.
+const verdict = computed(() => {
+  const p = preview.value;
+  if (!p || p.direction === "none") return "";
+  const change = incomeChange.value;
+  const income =
+    Math.abs(change) < 1
+      ? `about the same income as now, ${formatCash(p.dailyIncome)} a day`
+      : `${formatCash(Math.abs(change))} a day ${change > 0 ? "more" : "less"} than now (${formatCash(p.dailyIncome)} a day)`;
+  const users =
+    p.direction === "rise"
+      ? `${formatCount(p.total.left)} paying users leave and ${formatCount(p.total.toFree)} drop to free.`
+      : `${formatCount(p.total.joined)} new users join and ${formatCount(p.total.upgraded)} free users start paying.`;
+  return `At ${formatPrice(p.price)} you'd make ${income} once the wave settles. ${users}`;
+});
+// A step too small to matter: the student is better off trying a bigger one.
+const tinyStep = computed(() => {
+  const p = preview.value;
+  return !!p && p.direction !== "none" && Math.abs(p.price - p.currentPrice) / p.currentPrice < 0.05;
+});
+
+// Every price previewed since the modal opened, by price, so they can be compared side by side without typing each
+// one again. The one bringing in the most once the wave settles is marked.
+const compared = ref<{ price: number; dailyIncome: number; change: number }[]>([]);
+function compare(p: PricePreviewView) {
+  const row = { price: p.price, dailyIncome: p.dailyIncome, change: p.dailyIncome - p.currentDailyIncome };
+  compared.value = [...compared.value.filter((r) => r.price !== p.price), row].toSorted((a, b) => a.price - b.price).slice(-8);
+}
+const bestPrice = computed(() =>
+  compared.value.length > 1 ? compared.value.reduce((best, r) => (r.dailyIncome > best.dailyIncome ? r : best)).price : undefined,
+);
+// Quick steps from the price now, so trying a price is one click.
+const quickPrices = computed(() => {
+  const c = game.company;
+  if (!c) return [];
+  const round = (n: number) => Math.max(0.01, Math.min(maxPrice.value, Math.round(n * 100) / 100));
+  return [
+    { label: "−25%", price: round(c.price * 0.75) },
+    { label: "−10%", price: round(c.price * 0.9) },
+    { label: "Fair price", price: round(c.fairPrice) },
+    { label: "+10%", price: round(c.price * 1.1) },
+    { label: "+25%", price: round(c.price * 1.25) },
+  ];
+});
+function tryPrice(price: number, label: string) {
+  game.track("control", { control: "price-quick", value: label });
+  draft.value = price;
+}
 
 function openModal() {
   draft.value = game.company?.price ?? "";
+  compared.value = [];
   formError.value = "";
   open.value = true;
   schedulePreview(draft.value);
@@ -170,6 +220,19 @@ async function save() {
         :aria-describedby="`${id}-hint`"
         data-testid="price-input"
       />
+      <div class="price-quick" role="group" aria-label="Try a price" data-testid="price-quick">
+        <span class="muted">Try:</span>
+        <button
+          v-for="q in quickPrices"
+          :key="q.label"
+          type="button"
+          class="ghost"
+          :aria-label="`Try ${formatPrice(q.price)} (${q.label})`"
+          @click="tryPrice(q.price, q.label)"
+        >
+          {{ q.label }} <small>{{ formatPrice(q.price) }}</small>
+        </button>
+      </div>
       <p :id="`${id}-hint`" class="muted price-hint" data-testid="fair-price-hint">
         Fair price for {{ game.productName(game.company!.productType).toLowerCase() }}:
         <strong>{{ formatPrice(game.company!.fairPrice) }}</strong> a month. You can charge up to
@@ -188,6 +251,11 @@ async function save() {
             If nothing else changes
             <span v-if="previewing" class="muted">· updating…</span>
           </h3>
+          <p :class="['price-verdict', incomeChange < 0 ? 'neg' : 'pos']" data-testid="price-verdict">{{ verdict }}</p>
+          <p v-if="tinyStep" class="muted" data-testid="price-tiny-step">
+            That's a small change from {{ formatPrice(preview.currentPrice) }}, so the effect is small too. Try a bigger
+            step to see the difference.
+          </p>
           <div class="preview-figures">
             <div class="preview-figure">
               <span class="label">Income a day after the wave</span>
@@ -236,6 +304,30 @@ async function save() {
         <p v-else-if="previewing" class="muted">Working out what that price would do…</p>
         <p v-else-if="previewError" class="error">{{ previewError }}</p>
       </div>
+      <table v-if="compared.length > 1" class="compare price-compare" data-testid="price-compare">
+        <caption class="muted">Prices you've tried: income a day once the wave settles</caption>
+        <thead>
+          <tr>
+            <th scope="col">Price</th>
+            <th scope="col">Income a day</th>
+            <th scope="col">On today's</th>
+            <th scope="col"><span class="visually-hidden">Use</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="r in compared" :key="r.price" :class="{ on: r.price === draft }">
+            <th scope="row">
+              {{ formatPrice(r.price) }}
+              <span v-if="r.price === bestPrice" class="badge best-badge">Most income</span>
+            </th>
+            <td>{{ formatCash(r.dailyIncome) }}</td>
+            <td :class="r.change < 0 ? 'neg' : 'pos'">{{ signedCash(r.change) }}</td>
+            <td>
+              <button v-if="r.price !== draft" type="button" class="ghost" @click="tryPrice(r.price, 'compared')">Use</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
       <p v-if="formError || game.error" class="error" role="alert">{{ formError || game.error }}</p>
       <p class="muted">The new price applies from the next day you play.</p>
       <div class="confirm-buttons">

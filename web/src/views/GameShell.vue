@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { provideGame } from "../game";
+import { formatCash } from "../api";
+import { days, provideGame } from "../game";
 
 // The game's frame on every page: the nav bar with the day and Continue, the company's name and the teaching line.
 // It loads the company once and shares it with the pages through provideGame, so switching page doesn't re-fetch.
@@ -20,6 +21,7 @@ const PAGES = [
   { path: "/finance", name: "Finance" },
 ];
 const onHome = computed(() => route.name === "game-home");
+const onFinance = computed(() => route.name === "game-finance");
 
 // Each page visit goes in the playtest log, by its route name: "game-finance" is "finance".
 watch(
@@ -112,6 +114,21 @@ async function closeMenu() {
         </p>
       </div>
       <p v-if="game.error" class="error game-error" role="alert">{{ game.error }}</p>
+      <div v-if="game.lowCash && game.runway" class="low-cash" role="status" data-testid="low-cash">
+        <span class="badge">Low cash</span>
+        <p>
+          <strong>
+            {{ game.runway.days ? `Cash runs out in about ${days(game.runway.days)}.` : "Cash runs out on the next day you play." }}
+          </strong>
+          You're losing {{ formatCash(-game.runway.dailyNet) }} a day and have {{ formatCash(game.company.cash) }}. Below £0
+          the game ends, and the bank won't lend once you've gone under.
+          <template v-if="game.company.loanQuote">
+            Take a {{ formatCash(game.company.loanQuote.amount) }} bank loan now, or cut costs: let staff go or drop servers.
+          </template>
+          <template v-else>Cut costs now: let staff go or drop servers.</template>
+          <RouterLink v-if="!onFinance" :to="`${game.base}/finance`">Open Finance</RouterLink>
+        </p>
+      </div>
       <p v-if="game.over && !onHome" class="readonly-note" data-testid="read-only">
         <span class="badge">Read only</span>
         This game has ended, so nothing here can change.

@@ -78,6 +78,12 @@ async function take() {
       </p>
     </template>
 
+    <p v-else-if="game.bankrupt" class="muted" data-testid="loan-bankrupt">
+      No loan now: banks don't lend to a company that has gone bankrupt. A loan has to be taken before cash runs out.
+    </p>
+
+    <p v-else-if="game.over" class="muted" data-testid="loan-over">This game has ended, so there's no loan to take.</p>
+
     <template v-else-if="quote">
       <p>
         You can borrow <strong>{{ formatCash(quote.amount) }}</strong> today, repaid at

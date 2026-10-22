@@ -123,6 +123,11 @@ export interface UnitsView {
   /** Users the ready servers can serve at the product's usual demand, before load variation and spikes. */
   usersSupported: number;
   loadBalancer: LoadBalancerView;
+  /**
+   * Load balancers against app servers once every server the company has is ready, those being set up or on order
+   * included: what loadBalancer will be, so a shortfall can be shown before it bites.
+   */
+  loadBalancerOnceReady: LoadBalancerView;
   /** Extra VMs an event rented met the day's demand: capacity shown includes them, for that day only. */
   burst: boolean;
 }
@@ -449,6 +454,9 @@ export function createServers(config: GameConfig, finance: Finance) {
   const opsNeeded = (state: GameState) =>
     opsFor(state.model, state.servers.filter((s) => inService(state.model, s, state.day)));
 
+  /** Ops the company will need once every server it has is in service: on-prem, kit on order included. */
+  const opsNeededOnceReady = (state: GameState) => opsFor(state.model, state.servers);
+
   /** Ops a model needs to start with: its fixed number, plus its starter setup's. */
   const modelOpsNeeded = (model: ModelId) => opsFor(model, starter(model, 0).servers);
 
@@ -769,6 +777,7 @@ export function createServers(config: GameConfig, finance: Finance) {
     serverEntries,
     monthlyServerCost,
     opsNeeded,
+    opsNeededOnceReady,
     modelOpsNeeded,
     rentServer,
     cancelServer,

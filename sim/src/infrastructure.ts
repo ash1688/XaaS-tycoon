@@ -183,6 +183,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
       binding: served.binding,
       usersSupported: Number.isFinite(users) ? Math.floor(users) : Number.MAX_SAFE_INTEGER,
       loadBalancer: cap.loadBalancer,
+      loadBalancerOnceReady: servers.capacityOn(state, Infinity, 1).loadBalancer,
       burst,
     };
   }

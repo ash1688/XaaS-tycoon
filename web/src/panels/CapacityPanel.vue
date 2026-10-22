@@ -43,6 +43,13 @@ const cachePercent = () => Math.round(100 * (game.meta?.cacheableShare ?? 0));
           <span :id="`tier-${t.id}-label`" class="label">
             {{ t.name }} ({{ t.unit }})
             <span v-if="t.binding" class="badge binding-badge">Sets your capacity</span>
+            <span
+              v-if="t.id !== 'ch' && t.capacity > 0 && t.level !== 'ok'"
+              class="badge nearly-full-badge"
+              :data-testid="`tier-${t.id}-nearly-full`"
+            >
+              {{ t.level === "over" ? "Over capacity" : "Nearly full" }}
+            </span>
           </span>
           <span class="figures" :data-testid="`tier-${t.id}-figures`">
             {{ formatCount(t.demand) }} / {{ formatCount(t.capacity) }} {{ t.unit }}
@@ -82,6 +89,10 @@ const cachePercent = () => Math.round(100 * (game.meta?.cacheableShare ?? 0));
             </template>
             <template v-if="t.level === 'over'"> Over capacity: expect outages.</template>
             <template v-else-if="t.level === 'high'"> Getting close: {{ game.tierFix(t.id) }} soon.</template>
+            <template v-if="t.id === 'cu' && !game.units.loadBalancer.uncovered && game.lbShortSoon">
+              Once your new servers are ready, {{ game.lbShortSoon }} app server{{ game.lbShortSoon === 1 ? "" : "s" }}
+              won't count without another load balancer.
+            </template>
             <template v-if="t.id === 'cu' && game.units.loadBalancer.uncovered">
               {{ game.units.loadBalancer.uncovered }} app server{{ game.units.loadBalancer.uncovered === 1 ? " isn't" : "s aren't" }}
               counted: no load balancer covers {{ game.units.loadBalancer.uncovered === 1 ? "it" : "them" }}.

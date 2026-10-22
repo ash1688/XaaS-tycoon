@@ -86,6 +86,19 @@ export {
   type WaveEffect,
 } from "./state.ts";
 
+/**
+ * What a usual day does to cash at today's users, price, staff, servers and loan, leaving out one-offs such as events
+ * and a migration's first-day charges: income, running costs and the difference. days is how many more days cash lasts
+ * at that rate before going below £0, or null when the company isn't losing money.
+ */
+export interface RunwayView {
+  dailyIncome: number;
+  dailyCosts: number;
+  /** dailyIncome − dailyCosts: below 0, the company is burning cash. */
+  dailyNet: number;
+  days: number | null;
+}
+
 export interface Sim {
   readonly config: GameConfig;
   newGame(params: NewGameParams): GameState;
@@ -119,6 +132,8 @@ export interface Sim {
    * Managed services need none.
    */
   opsNeededNow(state: GameState): number;
+  /** Ops staff the company will need once every server it has is in service: on-prem, kit on order included. */
+  opsNeededOnceReady(state: GameState): number;
   /** What the current headcount costs per day. */
   dailyStaffCost(state: GameState): number;
   /** What the current model costs per month at today's users. */
@@ -185,6 +200,8 @@ export interface Sim {
   loanQuote(state: GameState): LoanQuote | null;
   /** The terms a new game gets if it takes the loan at the start: the best there are. */
   startLoanQuote(): LoanQuote;
+  /** What a usual day does to cash at today's figures, and how many days of cash that leaves. */
+  runway(state: GameState): RunwayView;
   /**
    * Where the company is with its launch: waiting for capacity, its first users due, arriving over the ramp, or
    * launched; the day they started (or will start) arriving, and the launch total.
@@ -321,7 +338,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     switch (action.type) {
       case "hire":
       case "letGo":
-        return staff.changeStaff(state, action.type, action.pool);
+        return staff.changeStaff(state, action.type, action.pool, action.count);
       case "buildFeature":
         return features.startBuild(state, action.feature);
       case "buyAddon":
@@ -441,6 +458,22 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return { state: settled.state, log: [{ day, entries: settled.entries }] };
   }
 
+  function runway(state: GameState): RunwayView {
+    // Charged the same way a day played charges them, so the rounding matches.
+    const charges = [
+      ...infra.infrastructureEntries(state, state.model, state.users),
+      ...migration.newSetupEntries(state),
+      ...features.addonEntries(state),
+      ...staff.staffEntries(state),
+    ];
+    const repayment = state.loan ? Math.min(state.loan.dailyRepayment, state.loan.total - state.loan.repaid) : 0;
+    const dailyCosts = repayment - charges.reduce((sum, e) => sum + e.cashDelta, 0);
+    const dailyIncome = pricing.dailyIncome(state);
+    const dailyNet = dailyIncome - dailyCosts;
+    const days = dailyNet < 0 ? Math.max(0, Math.floor(state.cash / -dailyNet)) : null;
+    return { dailyIncome, dailyCosts, dailyNet, days };
+  }
+
   function advance(saved: GameState, days = 1): AdvanceResult {
     if (!Number.isInteger(days) || days < 1) {
       throw new SimError("bad_days", "Days to advance must be a whole number of at least 1.");
@@ -466,6 +499,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     upfrontCost: (model) => infra.upfrontCost(model),
     sizeSetupFor: infra.sizeSetupFor,
     opsNeededNow: (s) => infra.opsNeededNow(load(s)),
+    opsNeededOnceReady: (s) => servers.opsNeededOnceReady(load(s)),
     dailyStaffCost: (s) => staff.dailyStaffCost(load(s)),
     monthlyInfrastructureCost: (s) => infra.monthlyInfrastructureCost(load(s)),
     monthlyAddonCost: (s) => features.monthlyAddonCost(load(s)),
@@ -488,6 +522,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     loan: (s) => loan.loanView(load(s)),
     loanQuote: (s) => loan.loanQuote(load(s)),
     startLoanQuote: () => loan.termsOn(1),
+    runway: (s) => runway(load(s)),
     launch: (s) => launch.launchView(load(s)),
     migration: (s) => migration.migration(load(s)),
     migrationQuote: (s, target) => migration.migrationQuote(load(s), target),

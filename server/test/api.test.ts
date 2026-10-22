@@ -477,6 +477,27 @@ describe("staff actions", () => {
     expect(body.log[0]!.entries).toContainEqual({ text: "Developers pay (2)", cashDelta: -20, category: "staff" });
   });
 
+  it("hires and lets go several at once, within limits", async () => {
+    const { act } = await setup();
+    expect((await act({ type: "hire", pool: "support", count: 30 })).json<CompanyView>().support).toBe(30);
+    expect((await act({ type: "letGo", pool: "support", count: 12 })).json<CompanyView>().support).toBe(18);
+    const tooMany = await act({ type: "letGo", pool: "support", count: 19 });
+    expect(tooMany.statusCode).toBe(400);
+    expect(tooMany.json()).toMatchObject({ error: "no_staff" });
+    for (const count of [0, 1.5, 1000]) expect((await act({ type: "hire", pool: "ops", count })).statusCode).toBe(400);
+  });
+
+  it("shows the runway: a usual day's income and costs, and the days of cash they leave", async () => {
+    const { url, act } = await setup();
+    await act({ type: "hire", pool: "developers", count: 2 });
+    const company = (await app.inject({ method: "GET", url })).json<CompanyView>();
+    // £25 a day of IaaS and £20 of developers against £1,000: 22 days, as a day played costs.
+    expect(company.runway).toEqual({ dailyIncome: 0, dailyCosts: 45, dailyNet: -45, days: 22 });
+    expect(company.opsNeededOnceReady).toBe(company.opsNeeded);
+    const played = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    expect(played.company.cash).toBe(1000 - 45);
+  });
+
   it("rejects letting go below zero with 400 and changes nothing", async () => {
     const { url, act } = await setup();
     const res = await act({ type: "letGo", pool: "ops" });
@@ -889,9 +910,10 @@ describe("servers on-prem", () => {
     const bought = res.json<CompanyView>();
     expect(bought.cash).toBe(before.cash - onprem.purchase!.price.app.small);
     expect(bought.servers.at(-1)).toMatchObject({ id: 3, type: "app", size: "small", status: "pending", daysLeft: 10 });
-    // On order: no capacity and no ops needed until it arrives.
-    expect(bought.units).toEqual(before.units);
+    // On order: no capacity and no ops needed until it arrives (its share shows in opsNeededOnceReady).
+    expect({ ...bought.units, loadBalancerOnceReady: null }).toEqual({ ...before.units, loadBalancerOnceReady: null });
     expect(bought.opsNeeded).toBe(before.opsNeeded);
+    expect(bought.opsNeededOnceReady).toBeGreaterThanOrEqual(before.opsNeeded);
     expect((await get()).servers.at(-1)).toMatchObject({ status: "pending", daysLeft: 10 });
     const { company } = await next();
     expect(company.servers.at(-1)).toMatchObject({ status: "pending", daysLeft: 9 });
