@@ -12,7 +12,7 @@ Run every command from the `sim` folder. `<game>` is the path to your game file,
 ```bash
 npm run -s play -- new <game> --product social --model paas --loan --seed 1 --player "AI 1" --playstyle min-maxer
 npm run -s play -- look <game>
-npm run -s play -- do <game> "hire support 3; price 6; next 7"
+npm run -s play -- do <game> "hire support junior 3; price 6; next 7"
 npm run -s play -- summary <game>
 ```
 
@@ -21,9 +21,12 @@ npm run -s play -- summary <game>
 - `do` runs game commands separated by `;`. Every game command goes inside `do`, including `preview` and `quote`:
   `npm run -s play -- do <game> "preview 8; quote iaas"`.
 - `next [days]` (inside `do`) moves time on, 7 days by default, and **stops early** when something needs a
-  decision: an event that hurts, an outage, a built feature, a server arriving, capacity running out, satisfaction
+  decision: an event that hurts, an outage, a built feature, a server arriving, staff starting, capacity running out, satisfaction
   falling, cash about to run out, or the price lock ending. Any commands after a stop are skipped. Events that need
   nothing from you are shown but don't stop time.
+- Staff come in junior, mid and senior grades, each with its own pay and work a day, and each takes days to start
+  after hiring (shown under staff until they do). `hire <pool> [grade] [n]` and `letgo <pool> [grade] [n]` take a
+  grade; without one it's mids. Time also stops when hires start.
 - `preview <price>` and `quote <model>` show what a price change or migration would do without doing it.
 - `summary` shows the final figures once the game is over.
 

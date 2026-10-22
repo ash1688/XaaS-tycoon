@@ -32,7 +32,8 @@ test("play to the end, then see profit or loss and income against costs, and the
     await sql.end();
   }
   const act = (data: object) => request.post(`/api/codes/${code}/companies/${id}/actions`, { data });
-  expect((await act({ type: "hire", pool: "ops" })).status()).toBe(200);
+  // A developer moves into ops at once (a hire would take days to start).
+  expect((await act({ type: "moveStaff", to: "ops" })).status()).toBe(200);
   expect((await act({ type: "setPrice", price: fairPrice + 5 })).status()).toBe(200);
 
   const student = await (await browser.newContext()).newPage();

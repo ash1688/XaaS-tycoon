@@ -1,5 +1,6 @@
 import type { GameConfig } from "./config.ts";
 import { count } from "./finance.ts";
+import { staffOutput } from "./staff.ts";
 import type { GameState, LogEntry } from "./state.ts";
 
 /**
@@ -34,7 +35,7 @@ export function createSupport(config: GameConfig) {
   }
 
   /** Tickets the support staff can clear in a day. */
-  const dailyClearance = (state: GameState) => state.support * config.support.ticketsPerPerson;
+  const dailyClearance = (state: GameState) => staffOutput(config, state, "support") * config.support.ticketsPerPerson;
 
   /** Where satisfaction is heading: 100% with no backlog, down to 0% at backlogPerUserAtZero tickets per user. */
   function satisfactionTarget(backlog: number, users: number): number {

@@ -153,11 +153,12 @@ function stepNote(type: ServerType) {
   if (!o || !game.company) return "";
   const what = `${formatCount(o.units)} ${UNIT[type]}`;
   const ops = opsFor([...servers.value.map((s) => s.type), type]);
-  const short = ops - game.company.ops;
+  const have = formatCount(game.opsWork);
+  const short = game.midsShort(ops, game.opsWork);
   const opsText =
     short > 0
-      ? ` You'd need ${ops} ops in all and have ${game.company.ops}: hire ${short} more, or capacity is cut.`
-      : ` You'd need ${ops} ops in all; you have ${game.company.ops}.`;
+      ? ` You'd need ${ops} ops in all and yours do the work of ${have}: hire ${short} more mids, or capacity is cut.`
+      : ` You'd need ${ops} ops in all; yours do the work of ${have}.`;
   const appServers = servers.value.filter((s) => s.type === "app").length + 1;
   const lbHint =
     type === "app" && appServers >= (game.meta?.loadBalancerFrom ?? 2)
@@ -211,7 +212,7 @@ async function cancel() {
         <strong>Ops:</strong> {{ opsRule }} You need <strong>{{ game.company.opsNeeded }}</strong> now<template
           v-if="game.company.opsNeededOnceReady > game.company.opsNeeded"
           >, <strong>{{ game.company.opsNeededOnceReady }}</strong> once your kit on order arrives</template
-        >; you have {{ game.company.ops }}.
+        >; yours do the work of {{ formatCount(game.opsWork) }}.
       </li>
       <li>
         <strong>Load balancers:</strong> from {{ game.meta?.loadBalancerFrom ?? 2 }} app servers up, traffic only
@@ -318,11 +319,11 @@ async function cancel() {
     <p class="muted server-actions">
       <template v-if="buying">
         Paid for up front, then a small running cost once it arrives. Delivery takes {{ days(readyDays) }}. You need
-        <strong>{{ game.company.opsNeeded }}</strong> ops for the kit you have in place; you have {{ game.company.ops }}.
+        <strong>{{ game.company.opsNeeded }}</strong> ops for the kit you have in place; yours do the work of {{ formatCount(game.opsWork) }}.
       </template>
       <template v-else>
         Billed monthly, a day's share at a time. Ready the next day. You need
-        <strong>{{ game.company.opsNeeded }}</strong> ops for these servers; you have {{ game.company.ops }}.
+        <strong>{{ game.company.opsNeeded }}</strong> ops for these servers; yours do the work of {{ formatCount(game.opsWork) }}.
       </template>
     </p>
     <p v-if="game.error && !cancelling" class="error" role="alert">{{ game.error }}</p>

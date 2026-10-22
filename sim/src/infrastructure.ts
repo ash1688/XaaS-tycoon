@@ -4,6 +4,7 @@ import type { EventToday, Events } from "./events.ts";
 import { count, pounds, risen } from "./finance.ts";
 import { vary } from "./rng.ts";
 import type { Servers, UnitCapacity, UnitsView } from "./servers.ts";
+import { staffOutput } from "./staff.ts";
 import type { GameState, LogEntry, Server, UnitDemand } from "./state.ts";
 
 /** Demand rounded to the hundredth of a unit, so state stays tidy. */
@@ -115,7 +116,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
    */
   function capacityFactors(state: GameState): number[] {
     const needed = servers.opsNeeded(state);
-    const staffed = needed === 0 ? 1 : Math.min(state.ops, needed) / needed;
+    const staffed = needed === 0 ? 1 : Math.min(staffOutput(config, state, "ops"), needed) / needed;
     const { unstaffedShare } = config.capacity;
     return [unstaffedShare + (1 - unstaffedShare) * staffed];
   }

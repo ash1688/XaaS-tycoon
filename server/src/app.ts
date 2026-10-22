@@ -37,6 +37,7 @@ import {
   SERVER_TYPES,
   SimError,
   SPEND_CATEGORIES,
+  STAFF_GRADES,
   STAFF_POOLS,
   validateOverrides,
   type ConfigOverrides,
@@ -45,6 +46,7 @@ import {
   type Loan,
   type Sim,
   type Spend,
+  type StaffPool,
 } from "@xaas/sim";
 import type { Db } from "./db/client.ts";
 import { companies, configPresets, loginCodes, playEvents } from "./db/schema.ts";
@@ -297,6 +299,8 @@ export async function buildApp(opts: AppOptions) {
   /** What the student sees of a company. A caller that already has the row's sim passes it. */
   function view(row: CompanyRow, sim = simOf(row)): CompanyView {
     const state = sim.load(row.state);
+    const staff = sim.staff(state);
+    const headcounts = Object.fromEntries(staff.map((p) => [p.pool, p.headcount])) as Record<StaffPool, number>;
     return {
       id: row.id,
       name: row.name,
@@ -307,9 +311,8 @@ export async function buildApp(opts: AppOptions) {
       finalDay: sim.config.finalDay,
       cash: state.cash,
       status: (state.status === "playing" ? row.status : state.status) as CompanyStatus,
-      developers: state.developers,
-      ops: state.ops,
-      support: state.support,
+      ...headcounts,
+      staff,
       opsNeeded: sim.opsNeededNow(state),
       opsNeededOnceReady: sim.opsNeededOnceReady(state),
       dailyStaffCost: sim.dailyStaffCost(state),
@@ -413,6 +416,7 @@ export async function buildApp(opts: AppOptions) {
         const { name, personName, dayRate } = config.staff[id];
         return { id, name, personName, dayRate };
       }),
+      grades: STAFF_GRADES.map((id) => ({ id, ...config.staffGrades[id] })),
       minConfigDevelopers: config.addons.minConfigDevelopers,
       ticketsPerPerson: config.support.ticketsPerPerson,
       goodSatisfaction: config.support.goodSatisfaction,
@@ -603,6 +607,8 @@ export async function buildApp(opts: AppOptions) {
               ],
             },
             pool: { enum: [...STAFF_POOLS] },
+            // hire, letGo and moveStaff: the grade, mid if left out.
+            grade: { enum: [...STAFF_GRADES] },
             // Checked against the product's list by the sim.
             feature: { type: "string", maxLength: 64 },
             // moveStaff: the pool one person moves into, and optionally the one they leave.

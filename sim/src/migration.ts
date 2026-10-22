@@ -1,10 +1,11 @@
-import { MIGRATION_PHASES, STAFF_POOLS, type GameConfig, type MigrationPhase, type ModelId } from "./config.ts";
+import { MIGRATION_PHASES, type GameConfig, type MigrationPhase, type ModelId } from "./config.ts";
 import type { Events } from "./events.ts";
 import type { Features } from "./features.ts";
 import type { Infrastructure } from "./infrastructure.ts";
 import { pounds } from "./finance.ts";
 import { nextRandom } from "./rng.ts";
 import type { Servers, SetupItem } from "./servers.ts";
+import { dailyStaffCost } from "./staff.ts";
 import { isModelId, SimError, type GameState, type LogEntry, type Migration, type Server, type UnitDemand } from "./state.ts";
 
 /** Where a migration has got to, for the screen. */
@@ -188,7 +189,7 @@ export function createMigration(
     const lostAddons = features.addonsLeftBehind(state, to).map(({ id, name, devDays }) => ({ id, name, devDays }));
     const total = upfrontCost + doubleBilling + proRata + exitPenalty - sellBack;
     const cashLeft = state.cash - total;
-    const staffDaily = STAFF_POOLS.reduce((sum, p) => sum + state[p] * config.staff[p].dayRate, 0);
+    const staffDaily = dailyStaffCost(config, state);
     const running = staffDaily + infra.dailyInfrastructure(state, state.model, state.users) + features.dailyAddonCost(state);
     const lowCash = running * LOW_CASH_DAYS;
     const warning =

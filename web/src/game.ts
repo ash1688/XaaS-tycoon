@@ -1,7 +1,7 @@
 // The game being played: loaded once by the game shell and shared with its pages, cards and modals through
 // provide/inject, so switching page never re-fetches the company. Reactive, so templates read its refs unwrapped.
 import { computed, inject, onUnmounted, provide, reactive, ref, watch, type InjectionKey } from "vue";
-import type { DayLog, EventView, FeatureGapView, LayerId, ModelId, StaffPool, UnitTier } from "@xaas/sim";
+import type { DayLog, EventView, FeatureGapView, LayerId, ModelId, StaffGrade, StaffPool, UnitTier } from "@xaas/sim";
 import type { ActionBody, CompanyView, MetaView, SummaryView } from "@xaas/server/api-types";
 import { api } from "./api";
 import { createUiLog } from "./playLog";
@@ -73,10 +73,22 @@ export function createGame(code: string, id: string) {
   const over = computed(() => bankrupt.value || finished.value || retired.value);
   const summary = ref<SummaryView>();
 
-  const understaffed = computed(() => !!company.value && company.value.ops < company.value.opsNeeded);
+  // Staff by grade. Needs (ops needed, the configuration team, support to keep up) count work in mids, so a team of
+  // juniors covers less than its headcount and seniors more.
+  const staffPool = (pool: StaffPool) => company.value?.staff.find((p) => p.pool === pool);
+  const grade = (id: StaffGrade) => meta.value?.grades.find((g) => g.id === id);
+  const work = (pool: StaffPool) => staffPool(pool)?.output ?? 0;
+  // Work hired but not started yet: it counts once they start.
+  const workComing = (pool: StaffPool) =>
+    staffPool(pool)?.hiring.reduce((sum, h) => sum + h.count * (grade(h.grade)?.output ?? 1), 0) ?? 0;
+  // Mids it takes to make up a shortfall in work: 0.35 short is one more.
+  const midsShort = (needed: number, have: number) => Math.max(0, Math.ceil(Math.round((needed - have) * 100) / 100));
+  const opsWork = computed(() => work("ops"));
+  const understaffed = computed(() => !!company.value && opsWork.value < company.value.opsNeeded);
+  const opsShort = computed(() => (company.value ? midsShort(company.value.opsNeeded, opsWork.value) : 0));
   // Ops that kit on order will need once it arrives, beyond those on the team: a shortfall coming, not here yet.
   const opsShortSoon = computed(() =>
-    company.value && !understaffed.value ? Math.max(0, company.value.opsNeededOnceReady - company.value.ops) : 0,
+    company.value && !understaffed.value ? midsShort(company.value.opsNeededOnceReady, opsWork.value) : 0,
   );
 
   // Cash: what a usual day does to it, and how many days it lasts at that rate (null when not losing money).
@@ -130,14 +142,14 @@ export function createGame(code: string, id: string) {
   const building = computed(() => company.value?.features.find((f) => f.status === "building"));
   // SaaS still needs a few developers to configure add-ons; without them, add-ons can't be bought.
   const configTeamNeeded = computed(() => meta.value?.minConfigDevelopers ?? 0);
-  const configTeamShort = computed(() => (company.value ? Math.max(0, configTeamNeeded.value - company.value.developers) : 0));
+  const configTeamShort = computed(() => midsShort(configTeamNeeded.value, work("developers")));
   const migration = computed(() => company.value?.migration ?? null);
 
   // Customer care. Support staff needed to keep up with today's users' usual tickets, before any burst.
   const supportNeeded = computed(() =>
     company.value && meta.value ? Math.ceil(company.value.usualTickets / meta.value.ticketsPerPerson) : 0,
   );
-  const supportShort = computed(() => (company.value ? Math.max(0, supportNeeded.value - company.value.support) : 0));
+  const supportShort = computed(() => midsShort(supportNeeded.value, work("support")));
   // Good: no effect. Below good: growth slows and users leave. Below poor: angry customers.
   const satisfactionLevel = computed(() => {
     const c = company.value;
@@ -327,7 +339,14 @@ export function createGame(code: string, id: string) {
     retired,
     over,
     summary,
+    staffPool,
+    grade,
+    work,
+    workComing,
+    midsShort,
+    opsWork,
     understaffed,
+    opsShort,
     opsShortSoon,
     runway,
     lowCash,

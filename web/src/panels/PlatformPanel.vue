@@ -175,7 +175,7 @@ const remove = (service: ManagedService) => game.act({ type: "setManagedService"
     <p class="muted platform-note" data-testid="platform-note">
       Changes take effect at once, serving from the next day, and are billed monthly, a day's share at a time. The
       platform runs the servers, so you need just <strong>{{ game.company.opsNeeded }}</strong> ops to keep the service
-      running, however big it gets; you have {{ game.company.ops }}.
+      running, however big it gets; yours do the work of {{ formatCount(game.opsWork) }}.
     </p>
   </section>
 </template>

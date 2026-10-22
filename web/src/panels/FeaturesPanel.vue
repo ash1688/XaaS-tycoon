@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { formatCash, formatPrice } from "../api";
+import { formatCash, formatCount, formatPrice } from "../api";
 import { namesList, useGame } from "../game";
 
 // Features to build, one at a time, or on SaaS the add-on shop.
@@ -28,7 +28,8 @@ const activeCount = computed(
       <p :class="['ops-needed', 'config-team', { warn: game.configTeamShort }]" data-testid="config-team">
         <span>
           Add-ons still need a configuration team of at least <strong>{{ game.configTeamNeeded }}</strong>
-          developer{{ game.configTeamNeeded === 1 ? "" : "s" }}. You have {{ game.company.developers }}.
+          developer{{ game.configTeamNeeded === 1 ? "" : "s" }}, counted in mids. Yours do the work of
+          {{ formatCount(game.work("developers")) }}.
         </span>
         <span v-if="game.configTeamShort" class="badge">Hire {{ game.configTeamShort }} more to buy add-ons</span>
       </p>
@@ -109,7 +110,7 @@ const activeCount = computed(
             <div class="meter-fill building" :style="{ width: `${(100 * feature.progress) / feature.devDays}%` }"></div>
           </div>
           <p class="muted" :data-testid="`feature-progress-${feature.id}`">
-            {{ feature.progress }} of {{ feature.devDays }} developer-days.
+            {{ formatCount(feature.progress) }} of {{ feature.devDays }} developer-days.
             <template v-if="feature.daysLeft !== null">
               {{ feature.daysLeft }} day{{ feature.daysLeft === 1 ? "" : "s" }} left with {{ game.company.developers }}
               developer{{ game.company.developers === 1 ? "" : "s" }}.

@@ -130,7 +130,7 @@ const alerts = computed(() => {
   if (game.understaffed)
     list.push({
       id: "understaffed",
-      text: `Understaffed: ${c.opsNeeded - c.ops} ops short`,
+      text: `Understaffed: ${game.opsShort} ops short`,
       detail: game.provider
         ? `${game.modelName(c.model)} needs ${c.opsNeeded} ops staff to keep the service running.`
         : `${game.modelName(c.model)} needs ${c.opsNeeded} ops staff. Until you have them, capacity is cut.`,
@@ -581,7 +581,7 @@ const alerts = computed(() => {
         <p class="muted">
           {{ formatCash(game.company.dailyStaffCost) }} a day.
           <span v-if="game.understaffed" class="warn-text">
-            {{ game.company.opsNeeded - game.company.ops }} ops short.
+            {{ game.opsShort }} ops short.
           </span>
           <span v-else-if="game.opsShortSoon" class="warn-text">
             {{ game.opsShortSoon }} more ops needed once your kit arrives.
