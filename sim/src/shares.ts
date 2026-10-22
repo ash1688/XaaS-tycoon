@@ -1,7 +1,6 @@
 import type { GameConfig } from "./config.ts";
 import type { Conversion } from "./conversion.ts";
 import { count, pounds, type Finance } from "./finance.ts";
-import type { Pricing } from "./pricing.ts";
 import {
   isFunderId,
   SimError,
@@ -39,7 +38,7 @@ export interface ValuationView {
   sharesInIssue: number;
   /** valuation ÷ shares in issue, unrounded: with many shares it can be a fraction of a penny. */
   sharePrice: number;
-  /** Income a day at today's paying users and price, × 365. */
+  /** Income earned a day over the last revenueDays days since launch, averaged, × 365. */
   annualRevenue: number;
   /** What annual revenue is multiplied by, after growth, satisfaction and uptime; never below 0. */
   multiple: number;
@@ -129,7 +128,7 @@ const multipleText = (m: number) => `${m >= 0 ? "+" : "−"}${Math.abs(Math.roun
  * Shares, valuation, the cap table, and the funders on the Finance page from day 1: friends and family, who buy new
  * shares at the share price, and the grant, which gives cash with an uptime condition and takes no shares.
  */
-export function createShares(config: GameConfig, finance: Finance, pricing: Pricing, conversion: Conversion) {
+export function createShares(config: GameConfig, finance: Finance, conversion: Conversion) {
   const v = config.valuation;
   const f = config.funding;
 
@@ -162,8 +161,19 @@ export function createShares(config: GameConfig, finance: Finance, pricing: Pric
     return then?.paidUsers ?? state.paidUsers;
   }
 
+  /**
+   * Income actually earned a day, averaged over the last revenueDays days played since launch: not today's price, so
+   * a price change only moves the valuation as the income it brings comes in. 0 before any.
+   */
+  function averageIncome(state: GameState): number {
+    if (state.launchDay === null) return 0;
+    const from = Math.max(state.day - v.revenueDays + 1, state.launchDay + 1);
+    const days = state.spendByDay.filter((d) => d.day >= from);
+    return days.length ? days.reduce((sum, d) => sum + d.income, 0) / days.length : 0;
+  }
+
   function valuation(state: GameState): ValuationView {
-    const annualRevenue = Math.round(pricing.dailyIncome(state) * DAYS_PER_YEAR);
+    const annualRevenue = Math.round(averageIncome(state) * DAYS_PER_YEAR);
     const before = paidUsersBefore(state);
     const growth = (state.paidUsers - before) / Math.max(before, v.growthBaseUsers);
     const growthM = Math.min(v.maxGrowthMultiple, Math.max(-v.maxGrowthPenalty, v.growthMultiple * growth));
@@ -183,7 +193,7 @@ export function createShares(config: GameConfig, finance: Finance, pricing: Pric
         id: "revenue",
         label: "Revenue",
         amount: part(v.revenueMultiple),
-        detail: `${pounds(annualRevenue)} a year at today's paying users and price, × ${v.revenueMultiple}`,
+        detail: `${pounds(annualRevenue)} a year, from the income earned over the last ${v.revenueDays} days, × ${v.revenueMultiple}`,
       },
       {
         id: "growth",

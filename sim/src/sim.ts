@@ -268,7 +268,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   const summary = createSummary(config, infra);
   const loan = createLoan(config, finance);
   const launch = createLaunch(config, servers, pricing);
-  const shares = createShares(config, finance, pricing, conversion);
+  const shares = createShares(config, finance, conversion);
 
   function newGame({ companyName, productType, model, seed, takeLoan = false, shares: shareCount }: NewGameParams): GameState {
     const name = companyName.trim();

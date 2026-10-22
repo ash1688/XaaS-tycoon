@@ -77,12 +77,13 @@ function play(file: string, script: string) {
   const rows: LogRow[] = [];
   const out: string[] = [];
   for (const text of script.split(";").map((t) => t.trim()).filter(Boolean)) {
-    if (state.status !== "playing") {
-      out.push(`> ${text}: the game is over`);
-      break;
-    }
     try {
       const command = parseCommand(text);
+      // Once the game is over, only what changes nothing still works: the valuation and who owns the company.
+      if (state.status !== "playing" && command.kind !== "valuation" && command.kind !== "funding") {
+        out.push(`> ${text}: the game is over`);
+        break;
+      }
       const turn = command.kind === "next" ? advanceUntil(sim, state, command.days, game) : runCommand(sim, state, command, game);
       state = turn.state;
       rows.push(...turn.rows);

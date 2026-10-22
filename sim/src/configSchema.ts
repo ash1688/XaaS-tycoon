@@ -91,6 +91,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("loan.ratePerDay", "Money", "Bank loan", "Extra interest per day later", "Added to the interest rate for each day later the loan is taken (0.002 = 0.2 percentage points a day).", range(0, 0.1, 0.0005));
   add("loan.minDays", "Money", "Bank loan", "Fewest repayment days", "The bank won't lend with fewer days than this left to repay it.", range(1, 365, 1));
   add("valuation.minimum", "Money", "Valuation", "Lowest valuation", "A company is never valued below this, even with no revenue.", POUNDS);
+  add("valuation.revenueDays", "Money", "Valuation", "Revenue averaged over", "Days of income earned that annual revenue is averaged from, so a price change can't move the valuation at once.", GAME_DAY);
   add("valuation.revenueMultiple", "Money", "Valuation", "Revenue multiple", "Annual revenue counts this many times over in the valuation, before growth, satisfaction and uptime move it.", MULTIPLIER);
   add("valuation.valuePerPayingUser", "Money", "Valuation", "Value per paying user", "Each paying user adds this to the valuation, so it can't be inflated by price alone.", range(0, 1_000, 1));
   add("valuation.growthDays", "Money", "Valuation", "Growth measured over", "Days back to compare paying users with, for growth.", GAME_DAY);

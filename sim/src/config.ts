@@ -651,7 +651,8 @@ export interface SharesConfig {
  * What the company is worth: the formula valuation. Revenue counts at a multiple that growth, satisfaction and uptime
  * move; paying users count at a value each, so price-gouging can't inflate it. Never below the minimum.
  *
- *   annual revenue = income a day at today's paying users and price × 365
+ *   annual revenue = income earned a day, averaged over the last revenueDays days played since launch, × 365
+ *                    (income earned, not today's price: a price change can't move it until the income comes in)
  *   growth = (paying users now − paying users growthDays ago) ÷ max(those then, growthBaseUsers)
  *   multiple = revenueMultiple
  *            + growthMultiple × growth, between −maxGrowthPenalty and +maxGrowthMultiple
@@ -662,6 +663,7 @@ export interface SharesConfig {
  * Recent uptime is over ConversionConfig's uptimeDays. Share price = valuation ÷ shares in issue.
  */
 export interface ValuationConfig {
+  revenueDays: number;
   revenueMultiple: number;
   growthDays: number;
   growthBaseUsers: number;
@@ -1037,6 +1039,7 @@ export const defaultConfig: GameConfig = {
   // about 23% of it; a company making £500 a day with 2,000 paying users is worth about £590k, and the same £15k buys
   // under 3%. Selling early costs far more of the company.
   valuation: {
+    revenueDays: 30,
     revenueMultiple: 3,
     growthDays: 30,
     growthBaseUsers: 100,

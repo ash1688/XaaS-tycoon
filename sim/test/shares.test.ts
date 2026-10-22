@@ -29,15 +29,22 @@ const refusal = (fn: () => unknown) => {
   return null;
 };
 
-/** A company with these paying users at this price and satisfaction, for valuation, as if they'd always had them. */
-const trading = (state: GameState, paidUsers: number, price: number, satisfaction = 100): GameState => ({
-  ...state,
-  users: paidUsers * 2,
-  paidUsers,
-  price,
-  satisfaction,
-  spendByDay: state.spendByDay.map((d) => ({ ...d, paidUsers })),
-});
+/**
+ * A company with these paying users at this price and satisfaction, for valuation, as if they'd always had them and
+ * paid it: launched and ten days in, every day's income what they pay.
+ */
+const trading = (state: GameState, paidUsers: number, price: number, satisfaction = 100): GameState => {
+  const played = state.day < 10 ? sim.advance(state, 10 - state.day).state : state;
+  const income = (paidUsers * price) / quiet.billing.daysPerMonth;
+  return {
+    ...played,
+    users: paidUsers * 2,
+    paidUsers,
+    price,
+    satisfaction,
+    spendByDay: played.spendByDay.map((d) => ({ ...d, paidUsers, income })),
+  };
+};
 
 describe("shares in issue", () => {
   it("defaults to the configured count, all the student's", () => {
@@ -86,12 +93,25 @@ describe("valuation", () => {
   it("comes from annual revenue × the multiple plus paying users × their value, the drivers adding up to it", () => {
     const state = trading(begin(), 2_000, 10);
     const v = sim.valuation(state);
-    const annual = Math.round(sim.dailyIncome(state) * 365);
+    // The income every day of the last 30 earned: 2,000 payers × £10 a month ÷ 30 days.
+    const annual = Math.round(((2_000 * 10) / 30) * 365);
     expect(v.annualRevenue).toBe(annual);
     expect(v.multiple).toBe(quiet.valuation.revenueMultiple);
     expect(v.valuation).toBe(annual * quiet.valuation.revenueMultiple + 2_000 * quiet.valuation.valuePerPayingUser);
     expect(v.drivers.map((d) => d.id)).toEqual(["revenue", "growth", "satisfaction", "uptime", "payingUsers"]);
     expect(total(v)).toBe(v.valuation);
+  });
+
+  it("counts income earned, so a price change doesn't move it until the income comes in", () => {
+    const state = trading(begin(), 2_000, 10);
+    const before = sim.valuation(state);
+    const spiked = sim.applyAction(sim.load({ ...state, priceLockedUntil: 0 }), { type: "setPrice", price: 1_000 });
+    expect(sim.valuation(spiked).valuation).toBe(before.valuation);
+    expect(sim.funding(spiked).friendsAndFamilyOffer!.newShares).toBe(sim.funding(state).friendsAndFamilyOffer!.newShares);
+  });
+
+  it("has no revenue before income has come in since launch", () => {
+    expect(sim.valuation(begin()).annualRevenue).toBe(0);
   });
 
   it("is pushed down by poor satisfaction and up by growth", () => {
