@@ -125,7 +125,8 @@ export function createApi(
     }
     if (served < reachable) {
       const apiu = Math.round((capacity.apiu ?? 0) * 10) / 10;
-      const text = `${product.name}: ${count.format(reachable - served)} calls dropped, and their income. Your ${apiu} APIU serve ${count.format(capacity.calls)} calls a day: add API servers or switch app servers to APIU.`;
+      const fix = config.models[state.model].servers?.managed ? "add API instances" : "add API servers or switch app servers to APIU";
+      const text = `${product.name}: ${count.format(reachable - served)} calls dropped, and their income. Your ${apiu} APIU serve ${count.format(capacity.calls)} calls a day: ${fix}.`;
       entries.push({ text, cashDelta: 0, kind: "api" });
     }
 
