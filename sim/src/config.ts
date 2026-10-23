@@ -14,6 +14,16 @@ export type StaffPool = (typeof STAFF_POOLS)[number];
 export const MIGRATION_PHASES = ["planning", "testing", "moving"] as const;
 export type MigrationPhase = (typeof MIGRATION_PHASES)[number];
 
+/**
+ * How long a game runs before it ends, if the company doesn't go bankrupt first. The student picks one of the lengths
+ * the preset allows when starting a company. Saved in game state, so don't rename. (Until IPO comes with the IPO.)
+ */
+export const GAME_LENGTH_IDS = ["180-days", "1-year", "career"] as const;
+export type GameLengthId = (typeof GAME_LENGTH_IDS)[number];
+
+/** A career runs from founding the company at 18 to retiring at 65. */
+export const CAREER_YEARS = 65 - 18;
+
 /** Every charge is tagged with one of these, so students can see where their money goes. */
 export const SPEND_CATEGORIES = ["staff", "infrastructure", "addons", "debt"] as const;
 export type SpendCategory = (typeof SPEND_CATEGORIES)[number];
@@ -639,8 +649,16 @@ export interface LoanConfig {
 
 export interface GameConfig {
   startingCash: number;
-  /** The last day played. The game ends once it has been played, so day finalDay is played in full. */
+  /**
+   * The last day played in a 180-day game: the game ends once it has been played, so day finalDay is played in full.
+   * Longer lengths have fixed days (see gameLengthDays). The bank loan is repaid by this day whatever the length.
+   */
   finalDay: number;
+  /**
+   * Which game lengths students can pick from when starting a company: 1 if allowed, 0 if not. At least one must be.
+   * Numbers rather than flags so the config page can store them like every other setting.
+   */
+  allowedGameLengths: Record<GameLengthId, number>;
   maxCompanyNameLength: number;
   launch: LaunchConfig;
   models: Record<ModelId, ModelConfig>;
@@ -665,6 +683,9 @@ export const defaultConfig: GameConfig = {
   // costs. On-prem's server room and first kit leave too little to buy more kit for weeks without the bank loan.
   startingCash: 15_000,
   finalDay: 180,
+  // A normal lesson plays 180 days. The longer lengths could take hours, so the teacher turns them on for clubs,
+  // homework or extension work.
+  allowedGameLengths: { "180-days": 1, "1-year": 0, career: 0 },
   maxCompanyNameLength: 40,
   // Users trickle in over 3 days, building up. SaaS starts on day 1; a platform set up or VMs rented on day 1 start on
   // day 2; on-prem kit bought on day 1 arrives on day 8, so it starts nearly a week after the cloud models.
@@ -1183,3 +1204,22 @@ export const defaultConfig: GameConfig = {
     },
   ],
 };
+
+/** The last day played in a game of a length: day finalDay, 365 or a career's 47 years of 365 days. */
+export function gameLengthDays(config: GameConfig, length: GameLengthId): number {
+  if (length === "1-year") return 365;
+  if (length === "career") return CAREER_YEARS * 365;
+  return config.finalDay;
+}
+
+/** The game lengths a config lets students pick, shortest first. */
+export function allowedGameLengths(config: GameConfig): GameLengthId[] {
+  return GAME_LENGTH_IDS.filter((id) => config.allowedGameLengths[id] === 1);
+}
+
+/** A game length's name for the screens: "180 days" (or however many the config's shortest game has). */
+export function gameLengthName(config: GameConfig, length: GameLengthId): string {
+  if (length === "1-year") return "1 year";
+  if (length === "career") return `Career (${CAREER_YEARS} years, age 18 to 65)`;
+  return `${config.finalDay} days`;
+}

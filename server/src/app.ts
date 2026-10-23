@@ -21,11 +21,14 @@ import {
   type SQL,
 } from "drizzle-orm";
 import {
+  allowedGameLengths,
   applyOverrides,
   configFields,
   createSim,
   diffFromDefaults,
   GAME_STATE_VERSION,
+  gameLengthDays,
+  gameLengthName,
   isCurrentState,
   MANAGED_SERVICES,
   MIGRATION_PHASES,
@@ -58,6 +61,7 @@ import type {
   CompanyStatus,
   ConfigErrorView,
   CompanyView,
+  EndGamesResult,
   ContinueResult,
   LogDeleteResult,
   LogStatsView,
@@ -303,8 +307,11 @@ export async function buildApp(opts: AppOptions) {
       preset: row.preset ?? DEFAULT_PRESET,
       productType: state.productType,
       model: state.model,
+      gameLength: state.gameLength,
+      gameLengthName: gameLengthName(sim.config, state.gameLength),
       day: state.day,
-      finalDay: sim.config.finalDay,
+      finalDay: state.finalDay,
+      endedByTeacher: state.endedByTeacher,
       cash: state.cash,
       status: (state.status === "playing" ? row.status : state.status) as CompanyStatus,
       developers: state.developers,
@@ -389,6 +396,11 @@ export async function buildApp(opts: AppOptions) {
     return {
       startingCash: config.startingCash,
       finalDay: config.finalDay,
+      gameLengths: allowedGameLengths(config).map((id) => ({
+        id,
+        name: gameLengthName(config, id),
+        finalDay: gameLengthDays(config, id),
+      })),
       maxCompanyNameLength: config.maxCompanyNameLength,
       maxActiveCompanies,
       timedFlow,
@@ -458,6 +470,7 @@ export async function buildApp(opts: AppOptions) {
             productType: { type: "string" },
             model: { type: "string" },
             takeLoan: { type: "boolean" },
+            gameLength: { type: "string" },
           },
           additionalProperties: false,
         },
@@ -466,7 +479,7 @@ export async function buildApp(opts: AppOptions) {
     async (req, reply) => {
       const code = await findCode(req.params.code);
       if (!code) return sendError(reply, 404, "unknown_code", "That code wasn't recognised. Check it with your teacher.");
-      const { name, productType, model, takeLoan = false } = req.body;
+      const { name, productType, model, takeLoan = false, gameLength } = req.body;
       // Locks the code so two creates at once can't both see room under the limit. Only games still being played
       // count: finished, bankrupt and retired ones are history. Archiving is only the teacher's view, so it doesn't
       // change what counts.
@@ -481,7 +494,7 @@ export async function buildApp(opts: AppOptions) {
         // changes later.
         const { preset, config } = await newGameSetup(tx);
         const sim = simFor(config);
-        const state = sim.newGame({ companyName: name, productType, model, seed: randomInt(2 ** 31), takeLoan });
+        const state = sim.newGame({ companyName: name, productType, model, seed: randomInt(2 ** 31), takeLoan, gameLength });
         const [inserted] = await tx
           .insert(companies)
           .values({
@@ -504,7 +517,8 @@ export async function buildApp(opts: AppOptions) {
         );
       }
       const company = view(row);
-      logGame(row, company.day, "start", { productType, model, takeLoan, preset: row.preset }, company);
+      const started = { productType, model, takeLoan, gameLength: company.gameLength, preset: row.preset };
+      logGame(row, company.day, "start", started, company);
       return reply.code(201).send(company);
     },
   );
@@ -967,8 +981,10 @@ export async function buildApp(opts: AppOptions) {
               status: companies.status,
               updatedAt: companies.updatedAt,
               archivedAt: companies.archivedAt,
-              // From the game's own config, so a game keeps the length it started with.
-              finalDay: sql<number | null>`(${companies.config}->>'finalDay')::int`,
+              // The game's own, so a game keeps the length it started with. A game from before game lengths has its
+              // config's.
+              finalDay: sql<number | null>`coalesce(${companies.state}->>'finalDay', ${companies.config}->>'finalDay')::int`,
+              endedByTeacher: sql<boolean | null>`(${companies.state}->>'endedByTeacher')::boolean`,
               preset: companies.preset,
               player: companies.player,
             },
@@ -1000,6 +1016,7 @@ export async function buildApp(opts: AppOptions) {
             migratingTo: g.migratingTo as TeacherGameView["migratingTo"],
             status: g.status as CompanyStatus,
             finalDay: g.finalDay ?? base.finalDay,
+            endedByTeacher: g.endedByTeacher ?? false,
             updatedAt: g.updatedAt.toISOString(),
             archivedAt: g.archivedAt?.toISOString() ?? null,
             preset: g.preset ?? DEFAULT_PRESET,
@@ -1067,6 +1084,24 @@ export async function buildApp(opts: AppOptions) {
         : [];
       if (!row) return sendError(reply, 404, "unknown_code", "That code wasn't found.");
       return { ok: true };
+    });
+
+    // Ends a game still being played, scored as it stands: it shows its summary from then on, to the student too.
+    teacher.post<{ Params: { id: string } }>("/api/teacher/companies/:id/end", async (req, reply) => {
+      const { id } = req.params;
+      const [row] = UUID_PATTERN.test(id) ? await db.select({ id: companies.id }).from(companies).where(eq(companies.id, id)) : [];
+      if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      return { ended: await endGames(eq(companies.id, id)) } satisfies EndGamesResult;
+    });
+
+    // Ends every game still being played under a code, such as at the end of a unit or before showing the leaderboard.
+    teacher.post<{ Params: { code: string } }>("/api/teacher/codes/:code/end", async (req, reply) => {
+      const { code } = req.params;
+      const [row] = CODE_PATTERN.test(code)
+        ? await db.select({ code: loginCodes.code }).from(loginCodes).where(eq(loginCodes.code, code))
+        : [];
+      if (!row) return sendError(reply, 404, "unknown_code", "That code wasn't found.");
+      return { ended: await endGames(eq(companies.loginCode, code)) } satisfies EndGamesResult;
     });
 
     // Any company's summary. The teacher picks it from the dashboard, so it goes by id alone.
@@ -1500,6 +1535,33 @@ export async function buildApp(opts: AppOptions) {
 
   /** Only the numbers that differ from the defaults. */
   const cleaned = (overrides: ConfigOverrides) => diffFromDefaults(applyOverrides(usable(overrides), base), base);
+
+  /**
+   * The teacher ends the games still being played among those matching: each finishes as it stands. Locks the rows so
+   * a Continue can't play a day while they're ended. Returns how many it ended.
+   */
+  async function endGames(which: SQL) {
+    const ended = await db.transaction(async (tx) => {
+      const rows = await tx
+        .select()
+        .from(companies)
+        .where(and(which, eq(companies.status, "active"), currentVersion))
+        .for("update");
+      const out: CompanyRow[] = [];
+      for (const row of rows) {
+        const sim = simOf(row);
+        const columns = { ...columnsFor(sim, sim.endGame(row.state)), updatedAt: new Date() };
+        await tx.update(companies).set(columns).where(eq(companies.id, row.id));
+        out.push({ ...row, ...columns });
+      }
+      return out;
+    });
+    for (const row of ended) {
+      const company = view(row);
+      logGame(row, company.day, "end", { status: company.status, endedBy: "teacher" }, company);
+    }
+    return ended.length;
+  }
 
   /** Archives or unarchives one game in the teacher's view. False if there's no such game. */
   async function setGameArchived(id: string, archived: boolean) {

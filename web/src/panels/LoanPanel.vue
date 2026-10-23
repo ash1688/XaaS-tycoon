@@ -53,7 +53,7 @@ async function take() {
         <div class="stat">
           <span class="label">Repaid a day</span>
           <span class="value neg" data-testid="loan-daily-repayment">{{ formatCash(loan.dailyRepayment) }}</span>
-          <small>Debt, every day until day {{ game.company.finalDay }}</small>
+          <small>Debt, every day until day {{ game.meta?.finalDay }}</small>
         </div>
         <div class="stat">
           <span class="label">Left to repay</span>

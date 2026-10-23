@@ -1,4 +1,12 @@
-import { defaultConfig, type GameConfig, type ModelId, type ServerCount } from "./config.ts";
+import {
+  allowedGameLengths,
+  defaultConfig,
+  gameLengthDays,
+  gameLengthName,
+  type GameConfig,
+  type ModelId,
+  type ServerCount,
+} from "./config.ts";
 import { createConversion, type ConversionView } from "./conversion.ts";
 import { createCustomers } from "./customers.ts";
 import { createEvents, type EventView, type FeatureGapView } from "./events.ts";
@@ -16,6 +24,7 @@ import { createStaff } from "./staff.ts";
 import {
   GAME_STATE_VERSION,
   isCurrentState,
+  isGameLengthId,
   isModelId,
   isProductTypeId,
   SimError,
@@ -56,6 +65,7 @@ export { interestIn, profitCosts } from "./finance.ts";
 export {
   GAME_STATE_VERSION,
   isCurrentState,
+  isGameLengthId,
   isManagedService,
   isModelId,
   isProductTypeId,
@@ -111,6 +121,11 @@ export interface Sim {
   applyAction(state: GameState, action: Action): GameState;
   /** The only way time moves. Continue calls it with 1. */
   advance(state: GameState, days?: number): AdvanceResult;
+  /**
+   * The teacher ends a game still being played: it finishes where it stands, before its final day, and its summary
+   * is how it did. A game that has already ended is returned as it is.
+   */
+  endGame(state: GameState): GameState;
   /**
    * Ops staff a new company on a model needs: its fixed number (the few on PaaS and SaaS), plus the shares of any
    * servers a config starts it with. The servers a company sets up for itself need theirs on top.
@@ -238,7 +253,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   const loan = createLoan(config, finance);
   const launch = createLaunch(config, servers, pricing);
 
-  function newGame({ companyName, productType, model, seed, takeLoan = false }: NewGameParams): GameState {
+  function newGame({ companyName, productType, model, seed, takeLoan = false, gameLength }: NewGameParams): GameState {
     const name = companyName.trim();
     if (!name) throw new SimError("name_required", "Enter a company name.");
     if (name.length > config.maxCompanyNameLength) {
@@ -249,6 +264,12 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     }
     if (!isProductTypeId(productType)) throw new SimError("unknown_product_type", "Pick a product type from the list.");
     if (!isModelId(model)) throw new SimError("unknown_model", "Pick a deployment model from the list.");
+    const allowed = allowedGameLengths(config);
+    const length = gameLength ?? allowed[0];
+    if (!length || !isGameLengthId(length) || !allowed.includes(length)) {
+      const names = allowed.map((l) => gameLengthName(config, l)).join(", ");
+      throw new SimError("game_length_not_allowed", `Pick a game length your teacher allows: ${names}.`);
+    }
     const [schedule, rng] = events.rollSchedule(seedRng(seed), 1);
     // A new company has no servers, unless a config starts it with some, ready for the first day played.
     const setup = servers.starter(model, 1);
@@ -258,6 +279,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       companyName: name,
       productType,
       model,
+      gameLength: length,
+      finalDay: gameLengthDays(config, length),
+      endedByTeacher: false,
       day: 1,
       cash: config.startingCash,
       rng,
@@ -307,7 +331,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return finance.settle(started, 1, [...borrowed.entries, ...upfront, ...launched.entries]).state;
   }
 
-  /** Refuses a game from an older version, then ends one played under a config with more days than this one has. */
+  /** Refuses a game from an older version, then ends one that has played its final day. */
   function load(saved: unknown): GameState {
     if (!isCurrentState(saved)) {
       throw new SimError(
@@ -315,7 +339,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         "This game is from an older version of XaaS Tycoon, so it can't be played any more. Start a new company to play again.",
       );
     }
-    return saved.status === "playing" && saved.day >= config.finalDay ? { ...saved, status: "finished" } : saved;
+    return saved.status === "playing" && saved.day >= saved.finalDay ? { ...saved, status: "finished" } : saved;
   }
 
   /** Loads saved state and checks the game is still going. */
@@ -325,10 +349,10 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       throw new SimError("bankrupt", `${state.companyName} is bankrupt, so this game is over. Start a new company to play again.`);
     }
     if (state.status === "finished") {
-      throw new SimError(
-        "finished",
-        `${state.companyName} has played all ${config.finalDay} days, so this game is over. Start a new company to play again.`,
-      );
+      const why = state.endedByTeacher
+        ? `Your teacher ended ${state.companyName} early`
+        : `${state.companyName} has played all ${state.finalDay} days`;
+      throw new SimError("finished", `${why}, so this game is over. Start a new company to play again.`);
     }
     return state;
   }
@@ -491,12 +515,18 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return { state: current, log };
   }
 
+  function endGame(saved: GameState): GameState {
+    const state = load(saved);
+    return state.status === "playing" ? { ...state, status: "finished", endedByTeacher: true } : state;
+  }
+
   return {
     config,
     newGame,
     load,
     applyAction,
     advance,
+    endGame,
     opsNeeded: infra.opsNeeded,
     upfrontCost: (model) => infra.upfrontCost(model),
     sizeSetupFor: infra.sizeSetupFor,
