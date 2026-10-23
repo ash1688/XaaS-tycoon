@@ -452,8 +452,7 @@ export interface PricingConfig {
   riseStrength: number;
   /**
    * How much a price above the fair price puts customers off, as (new price ÷ fair price) to this power when that's
-   * above 1. 0 for no effect. A rise's share is multiplied by it, so small rises don't add up for free; a cut's new
-   * users and upgrades are divided by it, so a cut that leaves the price dear brings few.
+   * above 1. 0 for no effect. A rise's share is multiplied by it, so the dearer the new price, the more it loses.
    */
   dearness: number;
   /**
@@ -478,8 +477,10 @@ export interface PricingConfig {
   /** The most of the free users one cut can turn into payers. */
   maxCutUpgrade: number;
   /**
-   * Days customers remember a lower price. A cut only counts for how far it goes below the lowest price in that time,
-   * so undoing a rise, or cycling up and back down, brings no new wave.
+   * Days customers remember a lower price. A rise is measured from the lowest price in that time, less what the rises
+   * since have lost, so a run of small rises loses as many payers as one rise to the same price. A cut only counts for
+   * how far it goes below both that price and the fair price, so undoing a rise, cycling up and back down, or coming
+   * back to the fair price after any time above it brings no new wave.
    */
   priceMemoryDays: number;
   /**
@@ -1358,7 +1359,7 @@ export const defaultConfig: GameConfig = {
     maxCutGain: 0.5,
     cutUpgradeStrength: 0.5,
     maxCutUpgrade: 0.5,
-    // Customers remember the lowest price for two months, and at twice the fair price 0.5% of payers stop paying each
+    // Customers remember the lowest price for two months (a rise counts from it), and at twice the fair price 0.5% of payers stop paying each
     // day: at four times it 4.5%, and from 11 times half of them.
     priceMemoryDays: 60,
     priceChurn: 0.005,
