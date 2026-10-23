@@ -34,7 +34,8 @@ npm run -s play -- summary <game>
   alert (capacity over 100%, satisfaction falling below the poor mark, the grant withdrawn, paid API calls starting
   to be dropped), a new offer, cash about to run out, or something finished (a feature
   built, the launch over, servers ready, a migration step, the grant's condition met). The text interface also
-  stops for a new risk on the danger meter, staff starting, satisfaction falling hard and the price lock ending.
+  stops for a new risk on the danger meter, staff starting, satisfaction falling hard, reports going unhandled and the price lock
+  ending.
   Any commands after a stop are not run, and each says so ("not run: time stopped"). Events that need nothing from
   you are shown but don't stop time. Each advance ends with how the users changed, and each day shows paying users
   lost to a dear price, poor support or downtime.
@@ -47,6 +48,10 @@ npm run -s play -- summary <game>
   the next day, cost 1.25× and do half the work of permanent staff of the same grade, and go with no severance. They're
   listed apart from permanent staff. Letting go **permanent staff** pays their severance at once (shown per grade under
   staff, and on the `letgo` line); it's refused if you haven't the cash. `move` only moves permanent staff.
+- On a social network or video platform, users post content and report some of it. **Moderators** are a fourth
+  staff pool there (not on an e-commerce shop): `hire moderators [grade] [n]`. The status shows the reports a day,
+  what your moderators handle and what's left unhandled. Unhandled reports pull satisfaction down and raise the odds
+  of a lawsuit (shown as a multiplier).
 - Random events come from an encounter system. The **danger meter** in `look` rises every day after launch and goes
   back to 0 when a random event fires. It creeps on a well-run day and climbs faster with risky play: servers going
   unpatched (fewer ops than your setup needs, on on-prem or IaaS), capacity overloaded, or unhappy customers. Which

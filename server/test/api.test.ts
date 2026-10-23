@@ -111,6 +111,7 @@ const sim = createSim({
     developers: { ...defaultConfig.staff.developers, dayRate: 10, startingCount: 0 },
     ops: { ...defaultConfig.staff.ops, dayRate: 4, startingCount: 0 },
     support: { ...defaultConfig.staff.support, dayRate: 3, startingCount: 0 },
+    moderators: { ...defaultConfig.staff.moderators, dayRate: 2, startingCount: 0 },
   },
   // Mids (the default hire) and seniors start at once, so tests needn't wait; juniors wait 3 days, to test lead times.
   staffGrades: {
@@ -534,6 +535,30 @@ describe("staff actions", () => {
     expect(company.opsNeededOnceReady).toBe(company.opsNeeded);
     const played = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
     expect(played.company.cash).toBe(1000 - 45);
+  });
+
+  it("hires moderators only on a product with user content, and shows its reports", async () => {
+    const { code, act } = await setup();
+    const refused = await act({ type: "hire", pool: "moderators" });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toMatchObject({ error: "no_content" });
+    const shop = (await act({ type: "hire", pool: "support" })).json<CompanyView>();
+    expect(shop).toMatchObject({ moderators: 0, moderation: null });
+    expect(shop.staff.map((p) => p.pool)).not.toContain("moderators");
+
+    const social = (await newCompany(code, { name: "Chatter", productType: "social", model: "saas" })).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${social.id}`;
+    expect(social.staff.map((p) => p.pool)).toContain("moderators");
+    expect(social.moderation).toMatchObject({ backlog: 0, dailyClearance: 0, lawsuitOdds: 1 });
+    // With no moderators, the reports the users raise go unhandled, and the lawsuit odds rise.
+    const played = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>().company;
+    expect(played.moderation!.reportsToday).toBeGreaterThan(0);
+    expect(played.moderation!.backlog).toBe(played.moderation!.reportsToday);
+    expect(played.moderation!.lawsuitOdds).toBeGreaterThan(1);
+    const hired = await app.inject({ method: "POST", url: `${url}/actions`, payload: { type: "hire", pool: "moderators", count: 2 } });
+    expect(hired.json<CompanyView>()).toMatchObject({ moderators: 2, moderation: { dailyClearance: 2 * defaultConfig.moderation.reportsPerPerson } });
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.reportsPerPerson).toBe(defaultConfig.moderation.reportsPerPerson);
   });
 
   it("rejects letting go below zero with 400 and changes nothing", async () => {
@@ -3071,6 +3096,7 @@ describe("meta", () => {
       ["developers", 10],
       ["ops", 4],
       ["support", 3],
+      ["moderators", 2],
     ]);
     // On-prem's and IaaS's from their starter servers; PaaS's and SaaS's a small fixed number.
     expect(meta.models.map((m) => m.opsNeeded)).toEqual([2, 1, 1, 1]);

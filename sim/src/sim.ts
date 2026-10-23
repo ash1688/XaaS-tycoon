@@ -53,6 +53,7 @@ import {
   type UnitDemand,
 } from "./state.ts";
 import { createSummary, type GameSummary } from "./summary.ts";
+import { createModeration, type ModerationView } from "./moderation.ts";
 import { createSupport } from "./support.ts";
 
 // The sim's one public interface is createSim. Its modules are internal; only the types and helpers the server and
@@ -100,6 +101,8 @@ export type {
   ValuationView,
 } from "./shares.ts";
 export type { GradeView, HireView, StaffPoolView } from "./staff.ts";
+export type { ModerationView } from "./moderation.ts";
+export { hasContent, lawsuitOdds } from "./moderation.ts";
 export type { GameSummary, IncomeCostDay, LoanSummary, PeakUsers, SummaryDay } from "./summary.ts";
 export { interestIn, profitCosts } from "./finance.ts";
 export {
@@ -277,6 +280,11 @@ export interface Sim {
   /** Tickets today's users would raise in a day before any burst: paid and free users × their rates. */
   usualTickets(state: GameState): number;
   /**
+   * On a product where users post content: the reports they raise, what the moderators handle, what's left, and what
+   * that does to satisfaction and the odds of a lawsuit. Null on a product without user content.
+   */
+  moderation(state: GameState): ModerationView | null;
+  /**
    * Free-to-paid conversion: free users who started paying on the day just played and in all, and the daily rate
    * that applies from the next day, with what's helping or hurting it.
    */
@@ -403,6 +411,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const features = createFeatures(config, finance);
   const pricing = createPricing(config);
   const support = createSupport(config);
+  const moderation = createModeration(config);
   const customers = createCustomers(config, features, events, pricing, support, calendar);
   const conversion = createConversion(config, features, pricing);
   const racks = createRacks(config, finance);
@@ -485,9 +494,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       day: 1,
       cash: config.startingCash,
       rng: seedRng(seed),
-      ...staff.startingStaff(),
+      ...staff.startingStaff({ productType }),
       ...customers.startingCustomers(productType, seed),
       ...support.startingSupport(),
+      ...moderation.startingModeration(),
       ...conversion.startingConversion(),
       spend: noSpend(),
       spendByDay: [],
@@ -668,9 +678,11 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const calls = api.apiDay(state, day, served.hoursDown, paidUsers, live);
 
     // Support answers what it can of today's tickets: the users' usual ones plus every burst, from downtime and from
-    // a price rise's backlash. Satisfaction moves after, and sets tomorrow's growth and churn.
+    // a price rise's backlash. Moderators handle what they can of the reports on user content first, and what they
+    // leave pulls satisfaction down too. Satisfaction moves after, and sets tomorrow's growth and churn.
+    const moderated = moderation.moderationDay(state);
     const bursts = [...support.outageBursts(state, served.hoursDown), ...wave.bursts];
-    const care = support.supportDay(state, bursts);
+    const care = support.supportDay(state, bursts, moderated.satisfactionFactor);
 
     // Developers work on the current build. A feature finished today helps growth from tomorrow.
     const build = features.buildDay(state);
@@ -696,6 +708,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       ...(served.outage ? [served.outage] : []),
       ...wave.entries,
       ...converted.entries,
+      ...moderated.entries,
       ...care.entries,
       ...build.entries,
       ...pricing.incomeEntries(state, wave.refused + (ramping ? 0 : organic.pricedOut)),
@@ -731,6 +744,9 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       clearedToday: care.clearedToday,
       backlog: care.backlog,
       satisfaction: care.satisfaction,
+      reportsToday: moderated.reportsToday,
+      reportsHandled: moderated.reportsHandled,
+      reportBacklog: moderated.reportBacklog,
       recentHoursDown: conversion.recentHoursDownAfter(state, served.hoursDown),
       conversionsToday: converted.conversionsToday,
       conversions: state.conversions + converted.conversionsToday,
@@ -832,6 +848,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     provider: (s) => infra.provider(load(s)),
     dailyClearance: (s) => support.dailyClearance(load(s)),
     usualTickets: (s) => support.usualTickets(load(s)),
+    moderation: (s) => moderation.moderationView(load(s)),
     conversion: (s) => conversion.conversion(load(s)),
     uptime: (s) => infra.uptime(load(s)),
     features: (s) => features.features(load(s)),

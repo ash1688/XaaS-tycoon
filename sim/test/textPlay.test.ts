@@ -206,7 +206,12 @@ describe("advanceUntil", () => {
   });
 
   it("plays a week a tick in a career, logging one Continue a week, and stops mid-week on the day something needs you", () => {
-    const careers = createSim({ ...defaultConfig, allowedGameLengths: { "180-days": 0, "until-ipo": 0, "1-year": 0, career: 1 } });
+    // No moderation, as on main before moderators: this is about something else.
+    const careers = createSim({
+      ...defaultConfig,
+      allowedGameLengths: { "180-days": 0, "until-ipo": 0, "1-year": 0, career: 1 },
+      productTypes: { ...defaultConfig.productTypes, social: { ...defaultConfig.productTypes.social, moderation: undefined } },
+    });
     const career = careers.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3, gameLength: "career" });
     expect(renderCommands(careers, career)).toMatch(/next \[days\]\s+\(play ticks of a week \(this is a career\)/);
     // The launch is over on day 3, two days into the first week: time stops there.
@@ -539,6 +544,8 @@ describe("the IPO checklist over time", () => {
   it("stops time when the company is no longer ready", () => {
     const s = createSim({
       ...defaultConfig,
+      // No moderation, as on main before moderators: this is about something else.
+      productTypes: { ...defaultConfig.productTypes, social: { ...defaultConfig.productTypes.social, moderation: undefined } },
       // A provider outage on day 30 is the only event: it breaks the uptime record.
       events: [
         {
@@ -652,5 +659,40 @@ describe("the calendar", () => {
     expect(started.state.day).toBe(27);
     expect(started.lines.at(-1)).toContain("Holiday started: Black Friday, for 4 days");
     expect(renderStatus(full, started.state)).toContain("Black Friday on now to day 30 (load ×2.2, growth ×2.5)");
+  });
+});
+
+describe("moderators", () => {
+  const shop = () => sim.newGame({ companyName: "Test Co", productType: "ecommerce", model: "paas", seed: 3 });
+  const launchedSocial = () => {
+    let state = run(start(), "instances 2").state;
+    state = run(state, "managed database small").state;
+    while (sim.launch(state).status !== "launched") state = run(state, "next 1").state;
+    return state;
+  };
+
+  it("shows reports and hires moderators on a content product, and neither on a shop", () => {
+    const state = launchedSocial();
+    const status = renderStatus(sim, state);
+    expect(status).toMatch(/reports \d+\/day \| moderators can handle 0\/day \(a mid 60\), handled 0 yesterday \| unhandled \d+ \| satisfaction target ×[\d.]+ \| lawsuit odds ×[\d.]+/);
+    expect(renderCommands(sim, state)).toContain("hire <developers|ops|support|moderators>");
+    const hired = run(state, "hire moderators junior 2");
+    expect(hired.rows[0]).toMatchObject({ ok: true, params: { pool: "moderators", grade: "junior", count: 2 } });
+    expect(renderStatus(sim, hired.state)).toMatch(/moderators 0 .*hired, not started: 2 junior/);
+
+    expect(renderStatus(sim, shop())).not.toMatch(/reports|moderators/);
+    expect(renderCommands(sim, shop())).toContain("hire <developers|ops|support>");
+    const refused = run(shop(), "hire moderators");
+    expect(refused.lines[0]).toMatch(/refused: .*no user content to moderate/);
+    expect(refused.rows[0]).toMatchObject({ ok: false, error: "no_content", moderators: 0 });
+  });
+
+  it("stops time when reports go unhandled, and logs moderators in each row", () => {
+    let turn = run(launchedSocial(), "next 30");
+    while (!/reports unhandled/.test(turn.lines.at(-1)!) && turn.state.day < 30) turn = run(turn.state, "next 30");
+    expect(turn.lines.at(-1)).toMatch(/^stopped on day \d+: .*reports unhandled \(\d+\)/);
+    expect(turn.lines.some((l) => /reports on user content are waiting for a moderator/.test(l))).toBe(true);
+    const staffed = run(turn.state, "move moderators developers");
+    expect(staffed.rows[0]).toMatchObject({ ok: true, moderators: 1 });
   });
 });

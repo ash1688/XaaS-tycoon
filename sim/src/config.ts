@@ -11,7 +11,8 @@ export type ProductTypeId = (typeof PRODUCT_TYPE_IDS)[number];
 export const CUSTOMER_TYPE_IDS = ["casual", "enthusiasts", "professionals", "businesses"] as const;
 export type CustomerTypeId = (typeof CUSTOMER_TYPE_IDS)[number];
 
-export const STAFF_POOLS = ["developers", "ops", "support"] as const;
+/** Moderators are only hired on a product with user content (see ProductModeration). */
+export const STAFF_POOLS = ["developers", "ops", "support", "moderators"] as const;
 export type StaffPool = (typeof STAFF_POOLS)[number];
 export const STAFF_GRADES = ["junior", "mid", "senior"] as const;
 export type StaffGrade = (typeof STAFF_GRADES)[number];
@@ -429,6 +430,14 @@ export interface ProductSupport {
 }
 
 /**
+ * User content on a product where users post it: some of it is reported, and moderators handle the reports. A product
+ * without this setting has no user content, so no reports and no moderators to hire.
+ */
+export interface ProductModeration {
+  /** Reports each user raises per day, paying or free (0.002 = two reports per 1,000 users a day). */
+  reportsPerUser: number;
+}
+/**
  * The units each user needs from the servers, on models with servers. Every user counts, paying or free, and the
  * day's load variation and any holiday apply to both.
  */
@@ -451,6 +460,8 @@ export interface ProductTypeConfig {
   features: FeatureConfig[];
   /** The paid API other businesses build on, for a product that would have one. Left out, the product has none. */
   api?: ProductApiConfig;
+  /** Reports on user content, for a product where users post it (social, video). Left out, it has no moderators. */
+  moderation?: ProductModeration;
 }
 
 /**
@@ -618,6 +629,25 @@ export interface SupportConfig {
    * to none at goodSatisfaction. Unhappy customers stop paying first.
    */
   paidChurnAtZero: number;
+}
+
+/**
+ * Moderation, on a product where users post content (see ProductModeration). Each day users report some of it;
+ * moderators handle what they can and the rest waits. Unhandled reports pull satisfaction down, on top of support's
+ * backlog, and raise the odds of a lawsuit over content left up.
+ */
+export interface ModerationConfig {
+  /** Reports one moderator handles a day. */
+  reportsPerPerson: number;
+  /**
+   * Unhandled reports per user at which they pull the satisfaction target to 0% (0.05 = one per 20 users). Below
+   * it they take a straight-line share off it: the support target is multiplied by what's left.
+   */
+  backlogPerUserAtZero: number;
+  /** Lawsuit odds are multiplied by this with that many unhandled reports, rising in a straight line from 1 at none. */
+  lawsuitOddsAtZero: number;
+  /** Unhandled reports are logged once they take at least this share off the satisfaction target (0.1 = 10%). */
+  warnShare: number;
 }
 
 /**
@@ -1156,6 +1186,7 @@ export interface GameConfig {
   rescue: RescueConfig;
   pricing: PricingConfig;
   support: SupportConfig;
+  moderation: ModerationConfig;
   conversion: ConversionConfig;
   addons: AddonConfig;
   api: ApiConfig;
@@ -1403,6 +1434,8 @@ export const defaultConfig: GameConfig = {
       },
       // Few tickets per user, but a lot of users.
       support: { ticketsPerPaidUser: 0.006, ticketsPerFreeUser: 0.0015 },
+      // Posts, comments and photos: a few get reported every day. Fewer per user than video, but a lot of users.
+      moderation: { reportsPerUser: 0.0015 },
       features: [
         {
           id: "messaging",
@@ -1460,6 +1493,8 @@ export const defaultConfig: GameConfig = {
         customerMix: { casual: 0.55, enthusiasts: 0.3, professionals: 0.12, businesses: 0.03 },
       },
       support: { ticketsPerPaidUser: 0.01, ticketsPerFreeUser: 0.003 },
+      // Uploads and comments: fewer users than a social network, so fewer reports.
+      moderation: { reportsPerUser: 0.002 },
       features: [
         {
           id: "hd",
@@ -1508,6 +1543,8 @@ export const defaultConfig: GameConfig = {
     ops: { name: "Ops staff", personName: "ops person", dayRate: 120, startingCount: 1 },
     // One to start, enough for the first few weeks: more are needed as users grow.
     support: { name: "Support staff", personName: "support person", dayRate: 100, startingCount: 1 },
+    // None to start: only content products need them, and not until the users are posting.
+    moderators: { name: "Moderators", personName: "moderator", dayRate: 60, startingCount: 0 },
   },
   // A senior does about twice a junior's work for about 1.7× the pay: cheaper per unit of work, dearer up front, and
   // slowest to arrive. Placeholders from the beta design.
@@ -1671,6 +1708,15 @@ export const defaultConfig: GameConfig = {
     growthAtZero: 0.3,
     churnAtZero: 0.02,
     paidChurnAtZero: 0.02,
+  },
+  // A mid moderator handles 60 reports a day: one covers a full social network or video platform. Ignored for a few
+  // weeks, unhandled reports cost a good share of satisfaction; at one per 20 users the odds of a lawsuit are four
+  // times what they'd be.
+  moderation: {
+    reportsPerPerson: 60,
+    backlogPerUserAtZero: 0.05,
+    lawsuitOddsAtZero: 4,
+    warnShare: 0.1,
   },
   // At the fair price with nothing helping or hurting, a shop converts 0.12% of its free users a day. Features, uptime
   // and satisfaction can more than double that, so free users are worth having, but most stay free, still adding load

@@ -557,8 +557,17 @@ export interface GameState {
   clearedToday: number;
   /** Tickets still unanswered at the end of the day just played. They carry over. */
   backlog: number;
-  /** Customer satisfaction, 0–100. Moves a share of the way each day towards a target set by the backlog. */
+  /**
+   * Customer satisfaction, 0–100. Moves a share of the way each day towards a target set by the backlog, and on a
+   * product with user content, the reports left unhandled.
+   */
   satisfaction: number;
+  /** Reports on user content raised on the day just played. Always 0 on a product without user content. */
+  reportsToday: number;
+  /** Reports moderators handled on the day just played, from the backlog and today's. */
+  reportsHandled: number;
+  /** Reports still unhandled at the end of the day just played. They carry over. */
+  reportBacklog: number;
   /** Hours down on each of the last days played, oldest first, up to conversion.uptimeDays: recent uptime. */
   recentHoursDown: number[];
   /** Free users who started paying on the day just played (not counting a price wave's upgrades). */

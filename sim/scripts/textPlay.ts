@@ -58,6 +58,8 @@ export interface LogRow {
   developers: number;
   ops: number;
   support: number;
+  /** Moderators: 0 on a product without user content. */
+  moderators: number;
   loan: string;
   loanRemaining: number | null;
   params: Record<string, unknown>;
@@ -130,7 +132,7 @@ export function runway(sim: Sim, state: GameState): number | null {
 export function logRow(sim: Sim, state: GameState, who: Player, type: string, params: Record<string, unknown>, error: string | null = null): LogRow {
   const { tier, use } = tierUse(sim, state);
   const loan = sim.loan(state);
-  const heads = (pool: StaffPool) => sim.staff(state).find((p) => p.pool === pool)!.headcount;
+  const heads = (pool: StaffPool) => sim.staff(state).find((p) => p.pool === pool)?.headcount ?? 0;
   return {
     at: new Date().toISOString(),
     player: who.player,
@@ -153,6 +155,7 @@ export function logRow(sim: Sim, state: GameState, who: Player, type: string, pa
     developers: heads("developers"),
     ops: heads("ops"),
     support: heads("support"),
+    moderators: heads("moderators"),
     loan: !loan ? "none" : loan.remaining > 0 ? "repaying" : "repaid",
     loanRemaining: loan ? Math.round(loan.remaining) : null,
     params,
@@ -199,6 +202,13 @@ export function renderStatus(sim: Sim, state: GameState): string {
   lines.push(
     `satisfaction ${pct(state.satisfaction)} | uptime ${sim.uptime(state).toFixed(1)}% | tickets ${Math.round(sim.usualTickets(state))}/day vs ${Math.round(sim.dailyClearance(state))} cleared, backlog ${Math.round(state.backlog)}`,
   );
+  const moderation = sim.moderation(state);
+  if (moderation) {
+    lines.push(
+      `reports ${moderation.usualReports}/day | moderators can handle ${Math.round(moderation.dailyClearance)}/day (a mid ${sim.config.moderation.reportsPerPerson}), handled ${moderation.handledToday} yesterday | unhandled ${moderation.backlog}` +
+        ` | satisfaction target ×${moderation.satisfactionFactor.toFixed(2)} | lawsuit odds ×${moderation.lawsuitOdds.toFixed(2)}`,
+    );
+  }
   lines.push(`power and cooling ${money(sim.powerAndCooling(state.model))}/day`);
   lines.push(...staffLines(sim, state));
 
@@ -477,7 +487,8 @@ function staffLines(sim: Sim, state: GameState): string[] {
 /** Every command that does something right now, with the values it takes. */
 export function renderCommands(sim: Sim, state: GameState): string {
   const lines = ["commands (join several with ';'):"];
-  const pools = STAFF_POOLS.join("|");
+  // Moderators only on a product with user content.
+  const pools = sim.staff(state).map((p) => p.pool).join("|");
   const grades = STAFF_GRADES.join("|");
   lines.push(
     `  hire <${pools}> [agency] [${grades}] [n] | letgo <${pools}> [agency] [${grades}] [n] | move <to> [from] [${grades}]   ` +
@@ -982,6 +993,10 @@ function extraStops(sim: Sim, before: GameState, after: GameState, pauses: Pause
   if (after.hiring.length < before.hiring.length) reasons.push("staff started");
   const fell = after.satisfaction <= before.satisfaction - 15 || (after.satisfaction < 50 && before.satisfaction >= 50);
   if (fell && !pauses.some((p) => p.id === "satisfaction")) reasons.push(`satisfaction fell to ${pct(after.satisfaction)}`);
+  // Reports left unhandled long enough to cost satisfaction: the same point the game logs its warning.
+  const warnAt = 1 - sim.config.moderation.warnShare;
+  const factor = (st: GameState) => sim.moderation(st)?.satisfactionFactor ?? 1;
+  if (factor(after) < warnAt && factor(before) >= warnAt) reasons.push(`reports unhandled (${after.reportBacklog})`);
   if (sim.priceLockDaysLeft(before) > 0 && sim.priceLockDaysLeft(after) === 0) reasons.push("price can change again");
   return reasons;
 }
@@ -990,8 +1005,8 @@ function extraStops(sim: Sim, before: GameState, after: GameState, pauses: Pause
  * Plays ticks until at least `days` days have gone by: a tick is a day, or a week in a career, as Continue plays on
  * the game page. Stops early when the sim pauses itself (an event that hurts, an alert, an offer, low cash or something
  * finished), on the day it does, and also when a new risk climbs the danger meter, staff start, satisfaction falls
- * hard or the price unlocks. Logs one Continue a tick, as the classroom server does. Returns the notable lines of each
- * day played and why it stopped.
+ * hard, reports go unhandled or the price unlocks. Logs one Continue a tick, as the classroom server does. Returns the
+ * notable lines of each day played and why it stopped.
  */
 export function advanceUntil(sim: Sim, state: GameState, days: number, who: Player): Turn {
   let current = state;
