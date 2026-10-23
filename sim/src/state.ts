@@ -27,7 +27,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 29;
+export const GAME_STATE_VERSION = 30;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -153,16 +153,17 @@ export interface FriendsAndFamilyFunding {
 }
 
 /**
- * The grant once answered. Accepted, its uptime condition runs over the days played after `day` up to `untilDay`: the
- * hours down then must stay at most maxHoursDown. It's then "met", or "withdrawn" the day they go over, when the
- * whole amount is paid back.
+ * The grant once answered. Accepted, its uptime condition runs over `days` days played, from the first one after both
+ * `day` and the launch ramp, so a launch still settling can't break it: the hours down then must stay at most
+ * maxHoursDown. It's then "met", or "withdrawn" the day they go over, when the whole amount is paid back.
  */
 export interface GrantFunding {
   status: "accepted" | "declined" | "met" | "withdrawn";
   day: number;
   amount: number;
-  untilDay: number;
-  /** Uptime % the condition asks for, and the hours down that allows over its days. */
+  /** Days played the condition covers. */
+  days: number;
+  /** Uptime % the condition asks for on the model it was answered on, and the hours down that allows over its days. */
   minUptime: number;
   maxHoursDown: number;
   /** Hours down so far on the condition's days. */

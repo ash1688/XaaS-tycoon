@@ -319,7 +319,7 @@ describe("shares and funding", () => {
     expect(valuation.state).toBe(state);
     expect(valuation.lines.join("\n")).toMatch(/Revenue: .*\n.*Growth: .*\n.*Satisfaction: .*\n.*Uptime: /);
     expect(valuation.lines.join("\n")).toMatch(/You: 10,000 shares, 100%/);
-    expect(run(state, "funding").lines.join("\n")).toMatch(/Keep uptime at 99% or more for the 60 days/);
+    expect(run(state, "funding").lines.join("\n")).toMatch(/Keep uptime at 98.5% or more for the 60 days once your launch is over/);
   });
 
   it("accepts friends and family, diluting the student as the offer said, and logs it", () => {
@@ -334,15 +334,16 @@ describe("shares and funding", () => {
   });
 
   it("stops time when the grant's condition ends", () => {
-    const short = createSim({ ...defaultConfig, finalDay: 40, funding: { ...defaultConfig.funding, grant: { amount: 10_000, days: 5, minUptime: 99 } } });
+    const short = createSim({ ...defaultConfig, finalDay: 40, funding: { ...defaultConfig.funding, grant: { ...defaultConfig.funding.grant, days: 5 } } });
     const state = short.applyAction(
       short.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 }),
       { type: "acceptFunding", funder: "grant" },
     );
     let turn = advanceUntil(short, state, 20, who);
     while (turn.state.funding.grant?.status === "accepted") turn = advanceUntil(short, turn.state, 20, who);
-    expect(turn.state.day).toBe(6);
-    expect(turn.lines.at(-1)).toMatch(/^stopped on day 6: .*grant (met|withdrawn)/);
-    expect(turn.lines.join("\n")).toMatch(/day 6: Grant (condition met|withdrawn)/);
+    // Launched on day 1, so the condition runs from the end of the ramp: days 4 to 8.
+    expect(turn.state.day).toBe(8);
+    expect(turn.lines.at(-1)).toMatch(/^stopped on day 8: .*grant (met|withdrawn)/);
+    expect(turn.lines.join("\n")).toMatch(/day 8: Grant (condition met|withdrawn)/);
   });
 });
