@@ -1,6 +1,6 @@
 import type { EventConfig, EventEffect, EventOutcome, GameConfig, ModelId, ProductTypeId } from "./config.ts";
 import { layerOwner, layerResponsibility, type LayerId, type Owner } from "./responsibility.ts";
-import { count } from "./finance.ts";
+import { count, pounds } from "./finance.ts";
 import { staffOutput } from "./staff.ts";
 import type { EventRecord, FeatureGap, GameState, LogEntry, ScheduledEvent } from "./state.ts";
 
@@ -165,7 +165,9 @@ export function createEvents(config: GameConfig) {
     const result = outcomeFor(event, model, shortOfOps, unpatched);
     const wave = result.freeUsers ? `${count.format(newUsers)} new free users signed up. ` : "";
     const detail = wave + lastingNote(result, productType) + result.detail;
-    const outcome = shortOfOps ? `${detail} You needed ${needed} ops staff.` : detail;
+    // What it cost, so it's clear from the explanation alone, not only from the bill.
+    const cost = result.cost ? ` It cost ${pounds(result.cost.amount)}: ${result.cost.text[0]!.toLowerCase()}${result.cost.text.slice(1)}.` : "";
+    const outcome = (shortOfOps ? `${detail} You needed ${needed} ops staff.` : detail) + cost;
     const owner = layerOwner(model, layer);
     const responsibility = layerResponsibility(model, layer);
     return { id, name, description, model, layer, owner, responsibility, outcome, shortOfOps, unpatched, hit, newUsers };

@@ -5050,12 +5050,12 @@ describe("events that are worse unpatched, and bring free users", () => {
       return { view: s.events(state)[0]!, event, cost: entries.find((e) => e.cashDelta < 0 && e.text.startsWith("Breach: "))! };
     };
     const patched = play();
-    expect(patched.view).toMatchObject({ unpatched: false, hit: true, outcome: "Contained." });
+    expect(patched.view).toMatchObject({ unpatched: false, hit: true, outcome: "Contained. It cost £1,000: investigating." });
     expect(patched.cost).toMatchObject({ text: "Breach: Investigating", cashDelta: -1_000 });
     // No ops on IaaS: the servers went unpatched on day 4.
     const unpatched = play(0);
-    expect(unpatched.view).toMatchObject({ unpatched: true, hit: true, outcome: "Ransomware." });
-    expect(unpatched.event).toBe("Breach: Data and users is your job on IaaS. Ransomware.");
+    expect(unpatched.view).toMatchObject({ unpatched: true, hit: true, outcome: "Ransomware. It cost £9,000: ransom." });
+    expect(unpatched.event).toBe("Breach: Data and users is your job on IaaS. Ransomware. It cost £9,000: ransom.");
     expect(unpatched.cost).toMatchObject({ text: "Breach: Ransom", cashDelta: -9_000 });
   });
 
