@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import postgres from "postgres";
 import { E2E_DATABASE_URL, E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { createCode, launch } from "./staff.ts";
+import { createCode, launch, withOnlyEncounter } from "./staff.ts";
 
 // The game's pages are reached through its nav bar.
 const goTo = (page: Page, name: string) =>
@@ -487,7 +487,7 @@ test("leaving SaaS warns that add-ons will be lost, then leaves them behind", as
   await expect(student.getByRole("button", { name: "Build Direct messages" })).toBeEnabled();
 });
 
-test("a scripted event shows a card that names the layer and highlights it in the stack", async ({ browser, request }) => {
+test("a random event shows a card that names the layer and highlights it in the stack", async ({ browser, request }) => {
   const teacher = await (await browser.newContext()).newPage();
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
@@ -501,25 +501,33 @@ test("a scripted event shows a card that names the layer and highlights it in th
     for (const data of actions) expect((await request.post(`/api/codes/${code}/companies/${id}/actions`, { data })).ok()).toBe(true);
     return id;
   };
-  // An IaaS company that lets its one ops person go: nobody is left to patch.
-  const iaas = await company("Patchy Ltd", "iaas", [
-    { type: "rentServer", server: "app", size: "medium" },
-    { type: "rentServer", server: "database", size: "medium" },
-    { type: "letGo", pool: "ops" },
-  ]);
-  const paas = await company("Platform Ltd", "paas", [
-    { type: "setInstances", count: 1 },
-    { type: "setManagedService", service: "database", size: "small" },
+  // Games started with only the OS patch as a random event, at a threshold of 2 on the danger meter. Each launches on
+  // day 2, so the meter reaches 2 by the end of day 3 and the patch comes on day 4.
+  const [iaas, paas] = await withOnlyEncounter(request, "osPatch", 2, async () => [
+    // An IaaS company that lets its one ops person go: nobody is left to patch.
+    await company("Patchy Ltd", "iaas", [
+      { type: "rentServer", server: "app", size: "medium" },
+      { type: "rentServer", server: "database", size: "medium" },
+      { type: "letGo", pool: "ops" },
+    ]),
+    await company("Platform Ltd", "paas", [
+      { type: "setInstances", count: 1 },
+      { type: "setManagedService", service: "database", size: "small" },
+    ]),
   ]);
 
-  // The default config patches the OS on day 3, launch day. IaaS needs 1 ops to patch, and this company has none.
+  // IaaS needs 1 ops to patch, and this company has none. Home shows the danger meter climbing before it fires.
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${iaas}`);
+  for (let day = 2; day <= 3; day++) {
+    await student.getByRole("button", { name: "Continue" }).click();
+    await expect(student.getByTestId("day")).toContainText(`${day} of ${E2E_FINAL_DAY}`);
+    await expect(student.getByTestId("event-card")).toHaveCount(0);
+  }
+  await expect(student.getByTestId("danger-rise")).toContainText("+1.5");
+  await expect(student.getByTestId("danger-text")).toContainText("Climbing fast: servers going unpatched");
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
-  await expect(student.getByTestId("event-card")).toHaveCount(0);
-  await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`3 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("day")).toContainText(`4 of ${E2E_FINAL_DAY}`);
 
   // The event card is on Home.
   const card = student.getByTestId("event-card");
@@ -545,16 +553,17 @@ test("a scripted event shows a card that names the layer and highlights it in th
 
   // Gone the next day.
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`4 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("day")).toContainText(`5 of ${E2E_FINAL_DAY}`);
   await expect(os).not.toHaveAttribute("data-event", "osPatch");
   await goTo(student, "Home");
   await expect(student.getByTestId("event-card")).toHaveCount(0);
 
   // On PaaS the same day's patch is the provider's job: nothing to do.
   await student.goto(`/play/${code}/${paas}`);
-  await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
-  await student.getByRole("button", { name: "Continue" }).click();
+  for (let day = 2; day <= 4; day++) {
+    await student.getByRole("button", { name: "Continue" }).click();
+    await expect(student.getByTestId("day")).toContainText(`${day} of ${E2E_FINAL_DAY}`);
+  }
   await expect(card).toBeVisible();
   await expect(card.getByTestId("event-responsibility")).toHaveText("OS and patching is the provider's job on PaaS.");
   await expect(card.getByTestId("event-tone")).toHaveText("Not your problem");
@@ -568,12 +577,13 @@ test("on SaaS, a feature the platform can't provide shows a card, then stays on 
   await teacher.getByRole("button", { name: "Sign in" }).click();
   const code = await createCode(teacher);
 
-  const created = await request.post(`/api/codes/${code}/companies`, {
-    data: { name: "Walled Garden Ltd", productType: "social", model: "saas" },
-  });
+  // Started with only the feature gap as a random event, at a threshold of 4. SaaS launches as the game starts, so the
+  // danger meter reaches 4 at the end of day 5 and the gap opens on day 6.
+  const created = await withOnlyEncounter(request, "saasFeatureGap", 4, () =>
+    request.post(`/api/codes/${code}/companies`, { data: { name: "Walled Garden Ltd", productType: "social", model: "saas" } }),
+  );
   const { id } = await created.json();
 
-  // The default config opens the SaaS feature gap on day 6.
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
   for (let day = 2; day <= 6; day++) {

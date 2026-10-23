@@ -28,6 +28,8 @@ const activeFeatures = computed(
   () => game.company?.features.filter((f) => f.status === "built" || f.status === "addon").length ?? 0,
 );
 const phaseName = (id: string) => game.meta?.migrationPhases.find((p) => p.id === id)?.name ?? id;
+// The danger meter: shown as how far it has risen towards the top of its scale, never the hidden thresholds.
+const danger = computed(() => game.company?.danger);
 // Earlier days played this session, newest first, under the latest one in the full log.
 const earlierDays = computed(() => game.dayLogs.slice(0, -1).toReversed());
 
@@ -578,6 +580,45 @@ const alerts = computed(() => {
             <RouterLink :to="page('customers')">Open Customers</RouterLink> ·
             <RouterLink :to="page('people')">Open People</RouterLink>
           </p>
+        </template>
+      </OverviewCard>
+
+      <OverviewCard v-if="!game.over" title="Danger meter" :tone="danger?.risks.length ? 'warn' : undefined">
+        <div v-if="danger" data-testid="danger-card">
+          <p class="overview-value" data-testid="danger-rise">
+            +{{ danger.rise }} <small>on day {{ game.company.day }}</small>
+          </p>
+          <div class="meter" aria-hidden="true">
+            <div
+              :class="['meter-fill', danger.risks.length ? 'over' : 'ok']"
+              :style="{ width: `${Math.min(100, (100 * danger.meter) / danger.max)}%` }"
+            ></div>
+          </div>
+          <p class="muted" data-testid="danger-text">
+            <template v-if="danger.risks.length">
+              Climbing fast: {{ danger.risks.map((r) => r.label.toLowerCase()).join(", ") }}.
+            </template>
+            <template v-else-if="danger.rise">Creeping: a well-run day.</template>
+            <template v-else>Still until launch: nothing can go wrong yet.</template>
+          </p>
+        </div>
+        <template #detail>
+          <p>
+            Trouble builds up. The danger meter rises every day after launch, and when it reaches a hidden threshold a
+            random event happens: a traffic spike, an OS patch, a provider outage or price rise, or a feature your
+            platform can't provide. Then it drops back to 0 and starts again. You won't know which event is next, or
+            when, but how you run the company decides how fast it comes, and makes some events more likely.
+          </p>
+          <p v-if="danger" data-testid="danger-detail">
+            A well-run day adds {{ danger.dailyRise }}.<template v-if="danger.risks.length">
+              On day {{ game.company.day }} it rose {{ danger.rise }}, because:</template
+            >
+          </p>
+          <ul v-if="danger?.risks.length" class="danger-risks">
+            <li v-for="r in danger.risks" :key="r.id" :data-risk="r.id">
+              <strong>{{ r.label }} (+{{ r.rise }}).</strong> {{ r.detail }}
+            </li>
+          </ul>
         </template>
       </OverviewCard>
 

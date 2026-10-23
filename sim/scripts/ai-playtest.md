@@ -24,12 +24,17 @@ npm run -s play -- summary <game>
 - `do` runs game commands separated by `;`. Every game command goes inside `do`, including `preview` and `quote`:
   `npm run -s play -- do <game> "preview 8; quote iaas"`.
 - `next [days]` (inside `do`) moves time on, 7 days by default, and **stops early** when something needs a
-  decision: an event that hurts, an outage, a built feature, a server arriving, staff starting, capacity running out, satisfaction
-  falling, cash about to run out, the price lock ending, or paid API calls starting to be dropped. Any commands after a stop are skipped. Events that need
-  nothing from you are shown but don't stop time.
+  decision: an event that hurts, an outage, a new risk on the danger meter, a built feature, a server arriving,
+  staff starting, capacity running out, satisfaction falling, cash about to run out, the price lock ending, or paid
+  API calls starting to be dropped. Any commands after a stop are skipped. Events that need nothing from you are
+  shown but don't stop time.
 - Staff come in junior, mid and senior grades, each with its own pay and work a day, and each takes days to start
   after hiring (shown under staff until they do). `hire <pool> [grade] [n]` and `letgo <pool> [grade] [n]` take a
   grade; without one it's mids. Time also stops when hires start.
+- Random events come from an encounter system. The **danger meter** in `look` rises every day after launch and goes
+  back to 0 when a random event fires. It creeps on a well-run day and climbs faster with risky play: servers going
+  unpatched (fewer ops than your setup needs, on on-prem or IaaS), capacity overloaded, or unhappy customers. Which
+  event comes next, and when, is hidden; your situation also changes which events are likely.
 - `preview <price>` and `quote <model>` show what a price change or migration would do without doing it.
 - `valuation` shows what your company is worth, what's pushing it up or down, and who owns it. `funding` shows the
   friends and family and grant offers in full; `accept ff`, `accept grant`, `decline ff` and `decline grant` answer
@@ -65,7 +70,7 @@ When the game is over, reply with a **game summary** of no more than about 300 w
 2. **Ending:** finished or bankrupt, on which day, final cash, paying and free users, satisfaction and uptime (from `summary`),
    and your valuation and the share of the company you still own (from `valuation`).
 3. **Key moments:** first profit, price changes, migrations, funding taken or declined, events and how you handled
-   them, any crisis.
+   them (and what the danger meter was doing), any crisis.
 4. **What you tried** and whether it worked.
 5. **Anything that felt broken, unfair, confusing or exploitable**, with the day and the commands that caused it.
 6. **One change you'd make** to the game.

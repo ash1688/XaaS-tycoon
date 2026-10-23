@@ -234,6 +234,13 @@ const config: GameConfig = {
     // Never overruns unless a test says so.
     overrun: { chance: 0, minDays: 2, maxDays: 4 },
   },
+  // The default danger meter, though with no events there's nothing for it to fire.
+  encounters: {
+    dailyRise: 1,
+    riskRise: { unpatched: 0.5, overloaded: 0.5, lowSatisfaction: 0.5 },
+    thresholdMin: 24,
+    thresholdMax: 64,
+  },
   // No scripted events unless a test adds some.
   events: [],
 };
@@ -3204,9 +3211,9 @@ describe("default config", () => {
     for (const p of ["ecommerce", "social", "video"]) {
       const state = runStaffed(p, "iaas");
       // The provider outage is the one an IaaS company can't staff its way out of. A traffic spike triples demand, and
-      // the extra VMs are only ready the next day, so its first day can be down too: the spike fires twice.
-      expect(state.outageDays).toBeGreaterThanOrEqual(1);
-      expect(state.outageDays).toBeLessThanOrEqual(3);
+      // the extra VMs are only ready the next day, so its first day can be down too.
+      const fired = (id: string) => state.schedule.filter((e) => e.event === id).length;
+      expect(state.outageDays).toBeLessThanOrEqual(fired("providerOutage") + fired("trafficSpike"));
       expect(state.users).toBeGreaterThan(defaultConfig.productTypes[p as "social"].growth.launchUsersMin * 5);
     }
   });
@@ -3220,7 +3227,10 @@ describe("default config", () => {
       for (const p of ["ecommerce", "social", "video"]) {
         const state = runStaffed(p, model);
         expect(state).toMatchObject({ day: defaultConfig.finalDay, status: "finished" });
-        expect(state.satisfaction).toBeGreaterThan(defaultConfig.support.goodSatisfaction);
+        // A random event late on can leave customers unhappy at the end (a spike melts on-prem kit), but on average
+        // over the game they're happy.
+        const average = state.spendByDay.reduce((sum, d) => sum + d.satisfaction, 0) / state.spendByDay.length;
+        expect(average).toBeGreaterThan(defaultConfig.support.goodSatisfaction);
       }
     }
   });
@@ -4297,21 +4307,8 @@ describe("scripted events", () => {
       expect(s.events(state).map((e) => e.id)).toEqual(["patch", "spike"]);
     });
 
-    it("picks seeded days with the game's RNG: different days in range, the same for the same seed", () => {
-      const s = withEvents({ ...patch, schedule: { type: "seeded", count: 3, fromDay: 5, toDay: 40 } });
-      const daysFor = (seed: number) => eventDays(s.advance(begin(s, "paas", 0, seed), 45).log);
-      for (const seed of [1, 2, 3, 42]) {
-        const days = daysFor(seed);
-        expect(days).toHaveLength(3);
-        for (const day of days) expect(day).toBeGreaterThanOrEqual(5);
-        for (const day of days) expect(day).toBeLessThanOrEqual(40);
-        expect(daysFor(seed)).toEqual(days);
-      }
-      expect(new Set([1, 2, 3, 4, 5, 6].map((seed) => daysFor(seed).join())).size).toBeGreaterThan(1);
-    });
-
     it("is deterministic for the same seed and config", () => {
-      const s = withEvents(patch, { ...spike, schedule: { type: "seeded", count: 2, fromDay: 5, toDay: 25 } });
+      const s = withEvents(patch, spike);
       expect(play(s, "iaas", 30, 1)).toEqual(play(s, "iaas", 30, 1));
     });
   });
@@ -4695,9 +4692,227 @@ describe("provider events and the SaaS feature gap", () => {
   });
 
   it("is deterministic for the same seed and config", () => {
-    const seeded = (e: EventConfig, fromDay: number) => ({ ...e, schedule: { type: "seeded" as const, count: 1, fromDay, toDay: 20 } });
-    const s = withEvents(seeded(priceRise, 2), seeded(outage, 2), seeded(gap, 2));
-    for (const model of MODEL_IDS) expect(play(s, model, 25)).toEqual(play(s, model, 25));
+    const random = (e: EventConfig) => ({ ...e, schedule: undefined, encounter: { chance: 0.7 } });
+    const s = withEvents(random(priceRise), random(outage), random(gap));
+    for (const model of MODEL_IDS) expect(play(s, model, 90)).toEqual(play(s, model, 90));
+  });
+});
+
+describe("encounters", () => {
+  // A patch that needs 1 ops on IaaS and does nothing much, and an outage the provider deals with.
+  const patch: EventConfig = {
+    id: "patch",
+    name: "OS security patch",
+    description: "A hole in the OS.",
+    layer: "os",
+    encounter: { chance: 1 },
+    days: 1,
+    effects: {
+      onprem: { opsNeeded: 2, detail: "Patched." },
+      iaas: { opsNeeded: 1, detail: "Patched." },
+      paas: { detail: "The provider patched it." },
+      saas: { detail: "The provider patched it." },
+    },
+  };
+  const down = { downtimeHours: 2, detail: "You waited for the provider." };
+  const outage: EventConfig = {
+    id: "outage",
+    name: "Provider outage",
+    description: "The provider went down.",
+    layer: "facilities",
+    encounter: { chance: 1 },
+    days: 1,
+    effects: { onprem: { detail: "Your own building." }, iaas: down, paas: down, saas: down },
+  };
+  const withEncounters = (encounters: Partial<GameConfig["encounters"]>, ...events: EventConfig[]) =>
+    createSim({ ...config, encounters: { ...config.encounters, ...encounters }, events });
+  const begin = (s: Sim, model: string, seed = 42, ops?: number) => {
+    const state = s.newGame({ companyName: "Acme", productType: "social", model, seed });
+    return withStaff(state, { ops: ops ?? s.opsNeededNow(state) });
+  };
+  const eventDays = (log: DayLog[]) => log.filter((d) => d.entries.some((e) => e.kind === "event")).map((d) => d.day);
+  const gaps = (days: number[]) => days.slice(1).map((d, i) => d - days[i]!);
+
+  it("starts each game with the meter at 0 and an encounter list rolled from the seed", () => {
+    const s = withEncounters({}, patch, outage);
+    const state = begin(s, "paas");
+    expect(state.dangerMeter).toBe(0);
+    expect(state.encounterList.map((e) => e.event).sort()).toEqual(["outage", "patch"]);
+    for (const { threshold } of state.encounterList) {
+      expect(threshold).toBeGreaterThanOrEqual(24);
+      expect(threshold).toBeLessThanOrEqual(64);
+    }
+    expect(begin(s, "paas").encounterList).toEqual(state.encounterList);
+    expect(s.danger(state)).toEqual({ meter: 0, max: 64, rise: 0, dailyRise: 1, risks: [] });
+  });
+
+  it("creeps on a well-run day and rises faster with risky play: unpatched servers, overload, low satisfaction", () => {
+    const s = withEncounters({ thresholdMin: 300, thresholdMax: 300 }, patch);
+    const meterAfter = (state: GameState, days: number) => s.advance(state, days).state.dangerMeter;
+    // Launched on day 1, so the meter rises from day 2: 10 well-run days add 10.
+    const careful = begin(s, "iaas");
+    expect(meterAfter(careful, 10)).toBe(10);
+    // Fewer ops than the IaaS setup needs: patches fall behind, so it rises half as fast again.
+    const unpatched = begin(s, "iaas", 42, 0);
+    expect(meterAfter(unpatched, 10)).toBe(15);
+    expect(s.danger(s.advance(unpatched, 1).state)).toMatchObject({
+      meter: 1.5,
+      rise: 1.5,
+      risks: [{ id: "unpatched", label: "Servers going unpatched", rise: 0.5 }],
+    });
+    // On PaaS the provider patches, so having no ops isn't that risk there.
+    expect(meterAfter(begin(s, "paas", 42, 0), 10)).toBe(10);
+    // Overloaded: on-prem kit that can't carry the load.
+    const cramped = createSim({ ...config, models: { ...config.models, onprem: { ...config.models.onprem, capacity: 1 } }, events: [patch] });
+    const overloaded = cramped.advance(begin(cramped, "onprem"), 1).state;
+    expect(cramped.danger(overloaded).risks.map((r) => r.id)).toEqual(["overloaded"]);
+    // Unhappy customers.
+    const unhappy = { ...careful, satisfaction: 10 };
+    expect(s.danger(s.advance(unhappy, 1).state).risks.map((r) => r.id)).toContain("lowSatisfaction");
+  });
+
+  it("counts ops still waiting to start after hiring as not patching yet", () => {
+    const s = createSim({
+      ...config,
+      staffGrades: { ...config.staffGrades, mid: { ...config.staffGrades.mid, leadDays: 3 } },
+      encounters: { ...config.encounters, thresholdMin: 300, thresholdMax: 300 },
+      events: [patch],
+    });
+    const hired = s.applyAction(begin(s, "iaas", 42, 0), { type: "hire", pool: "ops", count: 2 });
+    const risks = (days: number) => s.danger(s.advance(hired, days).state).risks.map((r) => r.id);
+    // Hired on day 1, they start on day 4: until then the servers go unpatched.
+    expect(risks(2)).toEqual(["unpatched"]);
+    expect(risks(3)).toEqual([]);
+  });
+
+  it("doesn't rise before launch, when nothing is running", () => {
+    const s = createSim({ ...roomyDefaults, events: [patch] });
+    const state = s.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 42 });
+    // No servers rented, so no launch: the meter stays at 0.
+    expect(s.advance(state, 5).state.dangerMeter).toBe(0);
+  });
+
+  it("fires the next event when the meter reaches its threshold, then resets the meter and rolls a new list", () => {
+    const s = withEncounters({ thresholdMin: 5, thresholdMax: 5 }, patch);
+    const start = begin(s, "paas");
+    expect(start.encounterList).toEqual([{ event: "patch", threshold: 5 }]);
+    // The meter reaches 5 at the end of day 6, so the patch fires on day 7, and every 5 days after.
+    const { state, log } = s.advance(start, 16);
+    expect(eventDays(log)).toEqual([7, 12, 17]);
+    expect(state.schedule.map((e) => e.day)).toEqual([7, 12, 17]);
+    const fired = s.advance(start, 6).state;
+    expect(fired.dangerMeter).toBe(1);
+    expect(s.events(fired).map((e) => e.id)).toEqual(["patch"]);
+    expect(fired.encounterList).toEqual([{ event: "patch", threshold: 5 }]);
+  });
+
+  it("fires the lowest threshold first, then rolls a new list", () => {
+    const s = withEncounters({}, patch, outage);
+    const state = begin(s, "paas");
+    const [first, second] = state.encounterList;
+    expect(first!.threshold).toBeLessThanOrEqual(second!.threshold);
+    // The meter reaches the first threshold at the end of day threshold + 1: it fires the day after.
+    const { log, state: after } = s.advance(state, first!.threshold + 1);
+    expect(eventDays(log)).toEqual([first!.threshold + 2]);
+    expect(after.schedule).toEqual([{ event: first!.event, day: first!.threshold + 2 }]);
+    expect(after.dangerMeter).toBe(1);
+    expect(after.encounterList).not.toEqual(state.encounterList);
+  });
+
+  it("lets the situation set the odds: an event that needs a risk goes on the list after a day with it", () => {
+    const breach: EventConfig = { ...outage, id: "breach", name: "Breach", encounter: { chance: 0.02, risks: { unpatched: 50 } } };
+    const s = withEncounters({ thresholdMin: 5, thresholdMax: 5 }, patch, breach);
+    // The first list is rolled with no risks; the one on day 7, after a day with or without one.
+    const seeds = [1, 2, 3, 4, 5, 6, 7, 8];
+    const breaches = (ops?: number) =>
+      seeds.filter((seed) => s.advance(begin(s, "iaas", seed, ops), 6).state.encounterList.some((e) => e.event === "breach")).length;
+    expect(breaches(0)).toBe(seeds.length);
+    expect(breaches()).toBeLessThan(2);
+  });
+
+  it("stops an event going on the list once it has fired its most, and before its earliest day", () => {
+    const once = withEncounters({ thresholdMin: 5, thresholdMax: 5 }, { ...outage, encounter: { chance: 1, maxTimes: 1 } });
+    expect(eventDays(once.advance(begin(once, "paas"), 40).log)).toEqual([7]);
+    const late = withEncounters({ thresholdMin: 5, thresholdMax: 5 }, { ...outage, encounter: { chance: 1, fromDay: 10 } });
+    // Not on the first list, nor the one rolled when the meter tops out on day 7: the one rolled on day 12 has it.
+    expect(begin(late, "paas").encounterList).toEqual([]);
+    expect(eventDays(late.advance(begin(late, "paas"), 30).log)[0]).toBe(17);
+  });
+
+  it("leaves the meter to top out on an empty list, then resets it quietly with a new roll", () => {
+    const s = withEncounters({ thresholdMin: 5, thresholdMax: 8 }, { ...patch, encounter: { chance: 0 } });
+    const start = begin(s, "paas");
+    expect(start.encounterList).toEqual([]);
+    // 8 by the end of day 9, reset on day 10 with nothing firing.
+    expect(s.advance(start, 8).state.dangerMeter).toBe(8);
+    const { state, log } = s.advance(start, 9);
+    expect(state.dangerMeter).toBe(1);
+    expect(eventDays(log)).toEqual([]);
+    expect(log.at(-1)!.entries[0]).toEqual({
+      text: "Danger meter: it reached the top and nothing went wrong this time. It starts again from 0.",
+      cashDelta: 0,
+      kind: "danger",
+    });
+    expect(log.slice(0, -1).flatMap((d) => d.entries).filter((e) => e.kind === "danger")).toEqual([]);
+  });
+
+  it("only lists events that hit the company's model, and drops one that no longer does", () => {
+    const saasOnly: EventConfig = { ...outage, id: "saasOnly", effects: { saas: down } };
+    const s = withEncounters({}, saasOnly);
+    const state = begin(s, "saas");
+    expect(state.encounterList.map((e) => e.event)).toEqual(["saasOnly"]);
+    expect(begin(s, "paas").encounterList).toEqual([]);
+    // Moved onto PaaS with it still on the list, it never fires.
+    const moved = withStaff({ ...state, model: "paas" as const }, { ops: 1 });
+    expect(eventDays(s.advance(moved, 70).log)).toEqual([]);
+  });
+
+  // Default games on PaaS with a first setup that's never grown: they get overloaded as users grow.
+  const defaults = createSim(roomyDefaults);
+  const defaultGame = (seed: number) => {
+    const state = setUp(defaults, defaults.newGame({ companyName: "Acme", productType: "social", model: "paas", seed }));
+    return defaults.advance(withStaff(state, { ops: 1 }), 179).state.schedule;
+  };
+
+  it("gives every game a different number and mix of events, the same for the same seed", () => {
+    const games = Array.from({ length: 12 }, (_, i) => defaultGame(i + 1).map((e) => e.event));
+    expect(new Set(games.map((g) => g.length)).size).toBeGreaterThan(1);
+    expect(new Set(games.map((g) => [...g].sort().join())).size).toBeGreaterThan(6);
+    expect(defaultGame(3).map((e) => e.event)).toEqual(games[2]);
+  });
+
+  it("keeps random events rarely closer than about 14 days apart, and never on well-run days", () => {
+    // The default events and meter, with the events made harmless so they leave no risk behind.
+    const harmless = defaultConfig.events.map((e) => ({
+      ...e,
+      load: undefined,
+      effects: Object.fromEntries(Object.keys(e.effects).map((m) => [m, { detail: "Nothing happened." }])),
+    }));
+    const s = createSim({ ...config, startingCash: 1_000_000, encounters: defaultConfig.encounters, events: harmless });
+    // 150 days: after that the test config's users outgrow its servers.
+    const allGaps = (ops?: number) =>
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].flatMap((seed) =>
+        gaps(s.advance(begin(s, "iaas", seed, ops), 149).state.schedule.map((e) => e.day)),
+      );
+    // Well run, the meter creeps 1 a day from the day an event fires, so the next is at least 20 days later.
+    const careful = allGaps();
+    expect(careful.length).toBeGreaterThan(20);
+    expect(Math.min(...careful)).toBeGreaterThanOrEqual(defaultConfig.encounters.thresholdMin);
+    // Short of ops all game, so patches are always behind, and here customers end up unhappy too: events come
+    // faster, but even with every risk at once the meter takes 8 days to reach the lowest threshold.
+    const risky = allGaps(0);
+    expect(risky.length).toBeGreaterThan(careful.length);
+    expect(Math.min(...risky)).toBeGreaterThanOrEqual(8);
+    // Real default games that outgrow their setup and leave customers unhappy: rarely within 14 days.
+    const real = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].flatMap((seed) => gaps(defaultGame(seed).map((e) => e.day)));
+    expect(real.filter((g) => g < 14).length / real.length).toBeLessThan(0.1);
+  });
+
+  it("carries on the same from a saved game", () => {
+    const s = withEncounters({}, patch, outage);
+    const run = () => s.advance(begin(s, "iaas", 7, 0), 120);
+    const half = s.advance(begin(s, "iaas", 7, 0), 50).state;
+    expect(s.advance(JSON.parse(JSON.stringify(half)) as GameState, 70).state).toEqual(run().state);
   });
 });
 
@@ -4723,11 +4938,12 @@ describe("default events", () => {
     expect(effects.saas).toEqual({ detail: expect.any(String) });
   });
 
-  it("fire an OS patch on day 3, so a company set up on day 1 meets an event as its first users arrive", () => {
-    const s = createSim(smallestLaunch(defaultConfig));
-    const state = s.advance(setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: "paas", seed: 7 })), 2).state;
-    expect(state).toMatchObject({ day: 3, launchDay: 2 });
-    expect(s.events(state).map((e) => e.id)).toEqual(["osPatch"]);
+  it("are all random events on the encounter list, with no fixed days", () => {
+    for (const e of defaultConfig.events) {
+      expect(e.schedule).toBeUndefined();
+      expect(e.encounter!.chance).toBeGreaterThan(0);
+    }
+    expect(event("osPatch").encounter!.risks!.unpatched).toBeGreaterThan(1);
   });
 
   it("hit only the models that depend on a provider with a price rise or outage", () => {
@@ -4763,7 +4979,7 @@ describe("default events", () => {
     // By day 30 a social network has grown into its first kit enough that tripled demand is too much for it. PaaS
     // runs plenty of instances and the biggest database, so only the spike could take it over. One ops person runs
     // either.
-    const s = createSim({ ...roomyDefaults, events: [{ ...event("trafficSpike"), schedule: { type: "fixed", days: [30] } }] });
+    const s = createSim({ ...roomyDefaults, events: [{ ...event("trafficSpike"), encounter: undefined, schedule: { type: "fixed", days: [30] } }] });
     const run = (model: (typeof MODEL_IDS)[number]) => {
       let start = setUp(s, s.newGame({ companyName: "Acme", productType: "social", model, seed: 7 }));
       if (model === "paas") {

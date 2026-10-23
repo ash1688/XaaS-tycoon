@@ -1,6 +1,7 @@
 import {
   GAME_LENGTH_IDS,
   MANAGED_SERVICES,
+  type DangerRisk,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
   RACK_SIZES,
@@ -25,7 +26,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 27;
+export const GAME_STATE_VERSION = 28;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -173,11 +174,18 @@ export interface Funding {
   grant: GrantFunding | null;
 }
 
-/** A day a scripted event fires on, fixed when the game starts. */
+/** A day an event fires on: a fixed day from config, or the day a random event came up on the encounter list. */
 export interface ScheduledEvent {
   /** The event's id in config. */
   event: string;
   day: number;
+}
+
+/** A random event on the encounter list, waiting for the danger meter to reach its threshold. */
+export interface Encounter {
+  /** The event's id in config. */
+  event: string;
+  threshold: number;
 }
 
 /** A scripted event that was on during the day just played, and how it played out. */
@@ -391,8 +399,19 @@ export interface GameState {
   pastLoans: Loan[];
   /** The interest in every loan repayment so far: of the debt spend, the part that counts against profit. */
   interestPaid: number;
-  /** When each scripted event fires, in day order. Rolled when the game starts. */
+  /**
+   * When each event fires, in day order: the fixed days from config, set when the game starts, and each random event
+   * added on the day it fires.
+   */
   schedule: ScheduledEvent[];
+  /** The danger meter: 0 after each random event, rising every day played after launch. See EncounterConfig. */
+  dangerMeter: number;
+  /** The random events that could fire next, lowest threshold first. Kept from the student. */
+  encounterList: Encounter[];
+  /** The risks that made the meter climb faster on the day just played. */
+  dangerRisks: DangerRisk[];
+  /** Its own seeded RNG, so rolling encounters doesn't change the day-to-day randomness of load and growth. */
+  encounterRng: number;
   /** Scripted events that were on during the day just played. */
   events: EventRecord[];
   /**
@@ -540,7 +559,8 @@ export interface LogEntry {
     | "funding"
     | "launch"
     | "staff"
-    | "api";
+    | "api"
+    | "danger";
 }
 
 export interface DayLog {

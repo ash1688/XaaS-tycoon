@@ -93,6 +93,19 @@ describe("advanceUntil", () => {
     expect(quiet).toBeGreaterThan(0);
   });
 
+  it("shows the danger meter, and stops when a new risk makes it climb faster", () => {
+    let state = run(start(), "instances 2").state;
+    state = run(state, "managed database small").state;
+    state = run(state, "next 3").state;
+    expect(renderStatus(sim, state)).toMatch(/danger meter: \d+(\.\d+)? \(no event waits past 56\) \| rose 1 today \(well-run day \+1\)/);
+    // Customers turn unhappy: the meter climbs faster, which stops time and says why.
+    const turn = run({ ...state, satisfaction: 10 }, "next 5");
+    expect(turn.state.day).toBe(state.day + 1);
+    expect(turn.lines.at(-1)).toMatch(/danger meter climbing faster: customers unhappy/);
+    expect(renderStatus(sim, turn.state)).toMatch(/rose 1\.5 today \(well-run day \+1, customers unhappy \+0\.5\)/);
+    expect(renderStatus(sim, turn.state)).toMatch(/Customers unhappy: Satisfaction is below 40%/);
+  });
+
   it("plays to the end and logs the ending", () => {
     let last = run(start(), "next 1");
     for (let i = 0; i < 100 && last.state.status === "playing"; i++) last = run(last.state, "next 40");

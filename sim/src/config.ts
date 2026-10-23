@@ -634,12 +634,61 @@ export interface EventEffect extends EventOutcome {
   shortOfOps?: EventOutcome;
 }
 
-/** When an event fires. */
-export type EventSchedule =
-  /** On these days in every game. */
-  | { type: "fixed"; days: number[] }
-  /** On `count` different days from fromDay to toDay, picked with the game's seeded RNG when it starts. */
-  | { type: "seeded"; count: number; fromDay: number; toDay: number };
+/**
+ * Fixed days an event fires on in every game, outside the encounter system: they don't need the danger meter and don't
+ * reset it. None of the built-in random events use it; a config can, to put an event on a day it can be seen coming.
+ */
+export interface EventSchedule {
+  type: "fixed";
+  days: number[];
+}
+
+/** What makes the danger meter climb faster on a day, and the situations that change an event's odds. */
+export const DANGER_RISKS = ["unpatched", "overloaded", "lowSatisfaction"] as const;
+export type DangerRisk = (typeof DANGER_RISKS)[number];
+
+/**
+ * How likely an event is to go on the encounter list each time one is rolled, and what the company's situation does
+ * to that. See EncounterConfig.
+ */
+export interface EncounterOdds {
+  /** The chance it goes on the list, 0–1, on a roll with none of `risks` present. */
+  chance: number;
+  /** The chance is multiplied by this for each of these risks the company had on the day the list is rolled. */
+  risks?: Partial<Record<DangerRisk, number>>;
+  /** The most times it fires in a game: after that it no longer goes on the list. Left out, no limit. */
+  maxTimes?: number;
+  /** It can't go on a list rolled before this day. Left out, from the start. */
+  fromDay?: number;
+}
+
+/**
+ * Random events work like random battles in the original Final Fantasy VII. Each event type with encounter odds rolls
+ * its chance, and those that come up form the encounter list, each with a threshold: the likelier one is, the lower
+ * its threshold tends to be. The danger meter starts at 0 and rises by dailyRise each day played after launch, plus
+ * riskRise for each risk on that day. The next day, if it has reached the lowest threshold on the list, that event
+ * fires; the list is then re-rolled and the meter goes back to 0. A roll that comes up empty is a quiet spell: once
+ * the meter reaches thresholdMax, nothing happens, and the meter resets with a new list.
+ *
+ * Only events that hit the company's model go on the list, and one that no longer does by the time it would fire
+ * (after a migration) is dropped from it. The threshold for an event with chance p is
+ *
+ *   thresholdMin + (thresholdMax − thresholdMin) × u × (1 − p ÷ 2), with u random from 0 to 1
+ *
+ * Because the meter climbs from 0 after each event, thresholdMin over the most a day can rise is the shortest gap
+ * between events: with the defaults, 20 days on a well-run day and 8 with every risk at once.
+ */
+export interface EncounterConfig {
+  /** How much the meter rises on a well-run day. */
+  dailyRise: number;
+  /**
+   * Added to the day's rise for each risk on it. Unpatched: on a model where the OS is yours (on-prem, IaaS), fewer
+   * ops staff than the setup needs. Overloaded: load over capacity. Low satisfaction: below support.poorSatisfaction.
+   */
+  riskRise: Record<DangerRisk, number>;
+  thresholdMin: number;
+  thresholdMax: number;
+}
 
 /**
  * A scripted event. Each one shows a model handling the same situation its own way, so its effects are set per model,
@@ -653,7 +702,10 @@ export interface EventConfig {
   description: string;
   /** The layer whose owner deals with it: the explanation names who that is on the student's model. */
   layer: LayerId;
-  schedule: EventSchedule;
+  /** How it comes up on the encounter list, as a random event. Left out, it's never a random event. */
+  encounter?: EncounterOdds;
+  /** Fixed days it fires on as well, outside the encounter system. */
+  schedule?: EventSchedule;
   /** Days it lasts, from the day it fires. */
   days: number;
   /**
@@ -839,6 +891,8 @@ export interface GameConfig {
   addons: AddonConfig;
   api: ApiConfig;
   migration: MigrationConfig;
+  /** The danger meter and encounter list, which decide when random events fire. */
+  encounters: EncounterConfig;
   /** Scripted events, in the order they're logged on a day when more than one is on. */
   events: EventConfig[];
 }
@@ -1303,14 +1357,22 @@ export const defaultConfig: GameConfig = {
     setupHeadroom: 0.25,
     overrun: { chance: 0.3, minDays: 2, maxDays: 5 },
   },
+  // On a well-run day the meter creeps, so the next event comes 20 days or more after the last: six or seven in a
+  // 180-day game. One risk takes the shortest gap to 14 days; every risk at once, to 8.
+  encounters: {
+    dailyRise: 1,
+    riskRise: { unpatched: 0.5, overloaded: 0.5, lowSatisfaction: 0.5 },
+    thresholdMin: 20,
+    thresholdMax: 56,
+  },
   events: [
     {
       id: "trafficSpike",
       name: "Traffic spike",
       description: "Your product went viral: a flood of visitors on top of your usual users.",
       layer: "runtime",
-      // Somewhere in the game, never in the first weeks.
-      schedule: { type: "seeded", count: 2, fromDay: 20, toDay: 170 },
+      // The commonest random event.
+      encounter: { chance: 0.6 },
       days: 2,
       // Triple the CU and DBU demand: more than a sensible setup carries, so only a model that scales stays up.
       load: { multiplier: 2, extra: 80_000, unitMultiplier: 3 },
@@ -1345,8 +1407,8 @@ export const defaultConfig: GameConfig = {
       name: "OS security patch",
       description: "A serious security hole was found in the operating system. Servers need patching today.",
       layer: "os",
-      // Early, so students meet an event in their first lesson, then again later.
-      schedule: { type: "fixed", days: [3, 75, 140] },
+      // Likelier when servers are going unpatched already.
+      encounter: { chance: 0.5, risks: { unpatched: 1.6 } },
       days: 1,
       effects: {
         onprem: {
@@ -1376,8 +1438,8 @@ export const defaultConfig: GameConfig = {
       name: "Provider price rise",
       description: "Your provider announced new prices, starting today. Every customer pays them, you included.",
       layer: "hardware",
-      // Once, after students have settled on a model, with time left to react by migrating.
-      schedule: { type: "seeded", count: 1, fromDay: 30, toDay: 130 },
+      // Once at most, after students have settled on a model.
+      encounter: { chance: 0.3, maxTimes: 1, fromDay: 30 },
       days: 1,
       effects: {
         onprem: { detail: "You own your servers, so there's no provider to put prices up. Your costs stay the same." },
@@ -1403,7 +1465,7 @@ export const defaultConfig: GameConfig = {
       name: "Provider outage",
       description: "Your provider's data centre lost power, taking everything running there down with it.",
       layer: "facilities",
-      schedule: { type: "seeded", count: 1, fromDay: 30, toDay: 160 },
+      encounter: { chance: 0.3, maxTimes: 2 },
       days: 1,
       effects: {
         onprem: { detail: "Your servers are in your own building, so the provider's outage didn't touch you." },
@@ -1426,8 +1488,8 @@ export const defaultConfig: GameConfig = {
       name: "A feature SaaS can't provide",
       description: "Your customers keep asking for something the SaaS platform doesn't do.",
       layer: "application",
-      // Early, so a SaaS company has time to weigh up migrating away.
-      schedule: { type: "fixed", days: [6] },
+      // Likely, so a SaaS company usually meets it early, with time to weigh up migrating away. Once at most.
+      encounter: { chance: 0.8, maxTimes: 1 },
       days: 1,
       // Only SaaS: on the other models your developers build whatever the product needs.
       effects: {
