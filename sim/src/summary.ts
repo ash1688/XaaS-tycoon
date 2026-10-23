@@ -1,4 +1,4 @@
-import { SPEND_CATEGORIES, type GameConfig, type GameLengthId, type ModelId, type ProductTypeId } from "./config.ts";
+import { SPEND_CATEGORIES, type DifficultyId, type GameConfig, type GameLengthId, type ModelId, type ProductTypeId } from "./config.ts";
 import { profitCosts } from "./finance.ts";
 import { isOpen } from "./loan.ts";
 import type { Infrastructure } from "./infrastructure.ts";
@@ -67,6 +67,7 @@ export interface GameSummary {
   /** The last day played. */
   day: number;
   gameLength: GameLengthId;
+  difficulty: DifficultyId;
   /** The game length's last day. */
   finalDay: number;
   cash: number;
@@ -147,6 +148,7 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
       ending,
       day: state.day,
       gameLength: state.gameLength,
+      difficulty: state.difficulty,
       finalDay: state.finalDay,
       cash: state.cash,
       users: state.users,

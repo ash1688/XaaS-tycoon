@@ -14,6 +14,7 @@ import type {
   FeatureGapView,
   FeatureView,
   FundingView,
+  DifficultyId,
   GameLengthId,
   GameSummary,
   LaunchView,
@@ -65,12 +66,25 @@ export interface GameLengthView {
   finalDay: number;
 }
 
+/** A difficulty a student can pick when starting a company. */
+export interface DifficultyView {
+  id: DifficultyId;
+  /** "Easy", "Normal" or "Hard". */
+  name: string;
+  /** One line on what it changes. */
+  blurb: string;
+  /** The cash a company starts with on it, before any loan. */
+  startingCash: number;
+}
+
 export interface MetaView {
   startingCash: number;
   /** The last day of the shortest game length, 180 by default: the bank loan is repaid by it. */
   finalDay: number;
   /** The game lengths the preset allows, shortest first: the first is picked unless the student chooses another. */
   gameLengths: GameLengthView[];
+  /** The difficulties the preset allows, easiest first. Normal is picked if allowed, otherwise the first. */
+  difficulties: DifficultyView[];
   maxCompanyNameLength: number;
   /** Companies still being played (status "active") that one login code can have at once. */
   maxActiveCompanies: number;
@@ -152,6 +166,9 @@ export interface CompanyView {
   /** The game length picked when the company started. */
   gameLength: GameLengthId;
   gameLengthName: string;
+  /** The difficulty picked when the company started. */
+  difficulty: DifficultyId;
+  difficultyName: string;
   day: number;
   /** The game length's last day. */
   finalDay: number;
@@ -388,6 +405,8 @@ export interface NewCompanyBody {
   shares?: number;
   /** One of MetaView.gameLengths. Left out, the first of them. */
   gameLength?: string;
+  /** One of MetaView.difficulties. Left out, Normal if allowed, otherwise the first of them. */
+  difficulty?: string;
 }
 
 /** How many games a teacher's end request ended: those still being played. */

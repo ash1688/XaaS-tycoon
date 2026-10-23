@@ -715,6 +715,51 @@ describe("games from an older version", () => {
   });
 });
 
+describe("difficulty", () => {
+  it("offers only Normal by default, and refuses a difficulty the preset doesn't allow", async () => {
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.difficulties).toEqual([
+      { id: "normal", name: "Normal", blurb: expect.any(String), startingCash: meta.startingCash },
+    ]);
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    expect(company).toMatchObject({ difficulty: "normal", difficultyName: "Normal" });
+    const refused = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "iaas", difficulty: "easy" });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toMatchObject({ error: "difficulty_not_allowed", message: expect.stringContaining("Normal") });
+  });
+
+  it("starts a game on a difficulty the preset allows, with its numbers, and records it", async () => {
+    await useOverrides({ "allowedDifficulties.easy": 1, "allowedDifficulties.hard": 1 });
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.difficulties.map((d) => d.id)).toEqual(["easy", "normal", "hard"]);
+    const [easy, normal, hard] = meta.difficulties.map((d) => d.startingCash);
+    expect(easy).toBeGreaterThan(normal!);
+    expect(hard).toBeLessThan(normal!);
+    const code = await newCode();
+    const games: Record<string, CompanyView> = {};
+    for (const difficulty of ["easy", "normal", "hard"]) {
+      const created = await newCompany(code, { name: difficulty, productType: "social", model: "saas", difficulty });
+      expect(created.statusCode).toBe(201);
+      games[difficulty] = created.json<CompanyView>();
+    }
+    expect(games.hard).toMatchObject({ difficulty: "hard", difficultyName: "Hard" });
+    // SaaS has nothing to pay up front, so each game's cash follows its starting cash.
+    expect(games.easy!.cash - games.normal!.cash).toBe(easy! - normal!);
+    expect(games.normal!.cash - games.hard!.cash).toBe(normal! - hard!);
+    // Left out, Normal.
+    const plain = await newCompany(await newCode(), { name: "Plain", productType: "social", model: "saas" });
+    expect(plain.json<CompanyView>().difficulty).toBe("normal");
+
+    // The game keeps its difficulty after the preset stops allowing it.
+    await useOverrides({}, "Normal only");
+    const url = `/api/codes/${code}/companies/${games.hard!.id}`;
+    expect((await app.inject({ method: "POST", url: `${url}/continue` })).statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({ difficulty: "hard", day: 2 });
+    expect((await app.inject({ method: "GET", url: `${url}/summary` })).json<SummaryView>()).toMatchObject({ difficulty: "hard" });
+  });
+});
+
 describe("game lengths", () => {
   const ALL_LENGTHS = { "allowedGameLengths.1-year": 1, "allowedGameLengths.career": 1 };
 

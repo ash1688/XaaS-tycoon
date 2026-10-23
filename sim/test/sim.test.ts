@@ -130,6 +130,7 @@ const config: GameConfig = {
   startingCash: 1000,
   finalDay: 180,
   allowedGameLengths: { "180-days": 1, "1-year": 0, career: 0 },
+  allowedDifficulties: { easy: 0, normal: 1, hard: 0 },
   maxCompanyNameLength: 20,
   // Launches in full on day 1, as the game starts, with the starter setups below in place: the launch tests set their own.
   launch: { rampShares: [1] },
@@ -2746,6 +2747,78 @@ describe("bank loan", () => {
         expect.objectContaining({ code: "not_enough_cash", details: { cost: 13_425, cash: 13_424 } }),
       );
     });
+  });
+});
+
+describe("difficulty", () => {
+  const every = { easy: 1, normal: 1, hard: 1 };
+  const allowing = (difficulties: Partial<GameConfig["allowedDifficulties"]>) =>
+    createSim({ ...defaultConfig, allowedDifficulties: { easy: 0, normal: 0, hard: 0, ...difficulties } });
+  const newGame = (s: Sim, difficulty?: string) =>
+    s.newGame({ companyName: "Acme", productType: "ecommerce", model: "saas", seed: 1, difficulty });
+
+  it("allows only Normal by default, and Normal is the preset's own numbers", () => {
+    const s = createSim();
+    expect(s.config.allowedDifficulties).toEqual({ easy: 0, normal: 1, hard: 0 });
+    expect(s.config).toBe(defaultConfig);
+    const game = newGame(s);
+    expect(game.difficulty).toBe("normal");
+    expect(s.summarise(game).difficulty).toBe("normal");
+    for (const difficulty of ["easy", "hard", "nightmare"]) {
+      expect(() => newGame(s, difficulty)).toThrow(expect.objectContaining({ code: "difficulty_not_allowed" }));
+    }
+    expect(() => newGame(s, "hard")).toThrow(/difficulty your teacher allows: Normal\./);
+  });
+
+  it("starts on Normal when allowed and none is picked, otherwise the easiest allowed", () => {
+    expect(newGame(allowing(every)).difficulty).toBe("normal");
+    expect(newGame(allowing({ easy: 1, hard: 1 })).difficulty).toBe("easy");
+    expect(newGame(allowing({ hard: 1 })).difficulty).toBe("hard");
+  });
+
+  it("changes the starting cash, how fast the danger meter climbs and the customers' price thresholds", () => {
+    const s = allowing(every);
+    const [easy, normal, hard] = (["easy", "normal", "hard"] as const).map((d) => newGame(s, d));
+    // SaaS has nothing to pay up front, so the cash left after day 1 follows the starting cash.
+    const spentOnDay1 = defaultConfig.startingCash - normal!.cash;
+    expect(easy!.cash).toBe(defaultConfig.startingCash * 1.5 - spentOnDay1);
+    expect(hard!.cash).toBe(defaultConfig.startingCash * 0.8 - spentOnDay1);
+
+    expect(s.danger(normal!).dailyRise).toBe(defaultConfig.encounters.dailyRise);
+    expect(s.danger(easy!).dailyRise).toBeLessThan(s.danger(normal!).dailyRise);
+    expect(s.danger(hard!).dailyRise).toBeGreaterThan(s.danger(normal!).dailyRise);
+
+    const thresholds = (g: GameState) => s.customerMix(g).types.map((t) => t.threshold);
+    const fair = s.fairPrice(normal!);
+    expect(thresholds(normal!)).toEqual(
+      Object.values(defaultConfig.customerTypes).map((t) => Math.round(fair * t.thresholdMultiple * 100) / 100),
+    );
+    thresholds(easy!).forEach((t, i) => expect(t).toBeGreaterThan(thresholds(normal!)[i]!));
+    thresholds(hard!).forEach((t, i) => expect(t).toBeLessThan(thresholds(normal!)[i]!));
+    // The same price loses more payers on Hard.
+    const rise = (g: GameState) => s.pricePreview(g, fair * 1.5).reaction;
+    expect(rise(hard!)).toBeGreaterThan(rise(normal!));
+    expect(rise(easy!)).toBeLessThan(rise(normal!));
+  });
+
+  it("never changes which systems a game has", () => {
+    const s = allowing(every);
+    const shape = (g: GameState) => Object.keys(g).toSorted();
+    const [easy, normal, hard] = (["easy", "normal", "hard"] as const).map((d) => newGame(s, d));
+    expect(shape(easy!)).toEqual(shape(normal!));
+    expect(shape(hard!)).toEqual(shape(normal!));
+    expect(s.events(hard!).map((e) => e.id)).toEqual(s.events(normal!).map((e) => e.id));
+  });
+
+  it("keeps playing a game on its own difficulty once the preset stops allowing it", () => {
+    const easy = newGame(allowing({ easy: 1 }), "easy");
+    const s = createSim();
+    const { state } = s.advance(easy, 20);
+    expect(state).toMatchObject({ difficulty: "easy", day: 21 });
+    expect(s.summarise(state).difficulty).toBe("easy");
+    // On Normal's numbers from the same start, the danger meter climbs faster.
+    const sameStart = { ...easy, difficulty: "normal" } as GameState;
+    expect(s.danger(s.advance(sameStart, 10).state).meter).toBeGreaterThan(s.danger(s.advance(easy, 10).state).meter);
   });
 });
 

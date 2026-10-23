@@ -21,16 +21,19 @@ import {
   type SQL,
 } from "drizzle-orm";
 import {
+  allowedDifficulties,
   allowedGameLengths,
   applyOverrides,
   configFields,
   createSim,
   diffFromDefaults,
+  DIFFICULTIES,
   FUNDER_IDS,
   GAME_STATE_VERSION,
   gameLengthDays,
   gameLengthName,
   interestIn,
+  withDifficulty,
   isCurrentState,
   MANAGED_SERVICES,
   MIGRATION_PHASES,
@@ -315,6 +318,8 @@ export async function buildApp(opts: AppOptions) {
       model: state.model,
       gameLength: state.gameLength,
       gameLengthName: gameLengthName(sim.config, state.gameLength),
+      difficulty: state.difficulty,
+      difficultyName: DIFFICULTIES[state.difficulty].name,
       day: state.day,
       finalDay: state.finalDay,
       endedByTeacher: state.endedByTeacher,
@@ -415,6 +420,12 @@ export async function buildApp(opts: AppOptions) {
         name: gameLengthName(config, id),
         finalDay: gameLengthDays(config, id),
       })),
+      difficulties: allowedDifficulties(config).map((id) => ({
+        id,
+        name: DIFFICULTIES[id].name,
+        blurb: DIFFICULTIES[id].blurb,
+        startingCash: withDifficulty(config, id).startingCash,
+      })),
       maxCompanyNameLength: config.maxCompanyNameLength,
       maxActiveCompanies,
       timedFlow,
@@ -489,6 +500,7 @@ export async function buildApp(opts: AppOptions) {
             // Shares in issue at the start. The sim checks it's in the game's range.
             shares: { type: "integer" },
             gameLength: { type: "string" },
+            difficulty: { type: "string" },
           },
           additionalProperties: false,
         },
@@ -497,7 +509,7 @@ export async function buildApp(opts: AppOptions) {
     async (req, reply) => {
       const code = await findCode(req.params.code);
       if (!code) return sendError(reply, 404, "unknown_code", "That code wasn't recognised. Check it with your teacher.");
-      const { name, productType, model, takeLoan = false, gameLength, shares } = req.body;
+      const { name, productType, model, takeLoan = false, gameLength, difficulty, shares } = req.body;
       // Locks the code so two creates at once can't both see room under the limit. Only games still being played
       // count: finished, bankrupt and retired ones are history. Archiving is only the teacher's view, so it doesn't
       // change what counts.
@@ -512,7 +524,16 @@ export async function buildApp(opts: AppOptions) {
         // changes later.
         const { preset, config } = await newGameSetup(tx);
         const sim = simFor(config);
-        const state = sim.newGame({ companyName: name, productType, model, seed: randomInt(2 ** 31), takeLoan, gameLength, shares });
+        const state = sim.newGame({
+          companyName: name,
+          productType,
+          model,
+          seed: randomInt(2 ** 31),
+          takeLoan,
+          gameLength,
+          difficulty,
+          shares,
+        });
         const [inserted] = await tx
           .insert(companies)
           .values({
@@ -535,7 +556,15 @@ export async function buildApp(opts: AppOptions) {
         );
       }
       const company = view(row);
-      const started = { productType, model, takeLoan, gameLength: company.gameLength, shares: company.capTable.sharesInIssue, preset: row.preset };
+      const started = {
+        productType,
+        model,
+        takeLoan,
+        gameLength: company.gameLength,
+        difficulty: company.difficulty,
+        shares: company.capTable.sharesInIssue,
+        preset: row.preset,
+      };
       logGame(row, company.day, "start", started, company);
       return reply.code(201).send(company);
     },
