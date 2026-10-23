@@ -5,14 +5,16 @@ import { formatCash, formatCount } from "../api";
 import GradeCounter from "../components/GradeCounter.vue";
 import { useGame } from "../game";
 
-// Developers, ops and support, each in junior, mid and senior grades: hire, let go, and retrain someone into another
-// team. Pick a grade, then − and + move one person; the number box hires or lets go that many of the grade at once, so
+// Developers, ops, support and (on a product with user content) moderators, each in junior, mid and senior grades:
+// hire, let go, and retrain someone into another team. Pick a grade, then − and + move one person; the number box hires or lets go that many of the grade at once, so
 // a big team doesn't take hundreds of clicks. Hires start after their grade's lead time.
 const game = useGame();
 const id = useId();
 const MAX_AT_ONCE = 999;
-const amounts = reactive<Record<StaffPool, number | "">>({ developers: 10, ops: 10, support: 10 });
-const grades = reactive<Record<StaffPool, StaffGrade>>({ developers: "mid", ops: "mid", support: "mid" });
+const amounts = reactive<Record<StaffPool, number | "">>({ developers: 10, ops: 10, support: 10, moderators: 10 });
+const grades = reactive<Record<StaffPool, StaffGrade>>({ developers: "mid", ops: "mid", support: "mid", moderators: "mid" });
+// The pools this company can staff: no moderators without user content.
+const pools = computed(() => (game.meta?.staff ?? []).filter((s) => game.company?.staff.some((p) => p.pool === s.id)));
 // The number in the box, or 0 when it isn't a whole number from 1 to the most at once.
 const amountOf = (pool: StaffPool) => {
   const n = amounts[pool];
@@ -28,20 +30,26 @@ function change(type: "hire" | "letGo", pool: StaffPool, count: number) {
   if (count < 1) return;
   game.actFrom(`staff-${type === "hire" ? "hire" : "let-go"}-many-${pool}`, { type, pool, grade: grades[pool], count });
 }
-// Short of ops or support, in mids' work, counting hires on the way: how many of the picked grade cover it.
+// Short of ops, support or moderators, in mids' work, counting hires on the way: how many of the picked grade cover it.
 const need = (pool: StaffPool) =>
-  pool === "ops" ? (game.company?.opsNeeded ?? 0) : pool === "support" ? game.supportNeeded : 0;
+  pool === "ops"
+    ? (game.company?.opsNeeded ?? 0)
+    : pool === "support"
+      ? game.supportNeeded
+      : pool === "moderators"
+        ? game.moderatorsNeeded
+        : 0;
 const shortAfterHires = (pool: StaffPool) => game.midsShort(need(pool), game.work(pool) + game.workComing(pool));
 const toCover = (pool: StaffPool) => {
   const output = gradeOf(pool)?.output ?? 1;
   return output > 0 ? Math.ceil(Math.round((shortAfterHires(pool) / output) * 100) / 100) : 0;
 };
 // Every move from one team to another, developers and ops first as they're the usual swap.
-const moves = computed(() => {
-  const pools = game.meta?.staff ?? [];
-  return pools.flatMap((to) => pools.filter((from) => from.id !== to.id).map((from) => ({ from, to })));
-});
-const moveOrder = (from: StaffPool, to: StaffPool) => (from === "support" || to === "support" ? 1 : 0);
+const moves = computed(() =>
+  pools.value.flatMap((to) => pools.value.filter((from) => from.id !== to.id).map((from) => ({ from, to }))),
+);
+const rank = (pool: StaffPool) => (pool === "moderators" ? 2 : pool === "support" ? 1 : 0);
+const moveOrder = (from: StaffPool, to: StaffPool) => Math.max(rank(from), rank(to));
 const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.from.id, a.to.id) - moveOrder(b.from.id, b.to.id)));
 </script>
 
@@ -58,7 +66,7 @@ const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.fr
       start. Work is counted in mids: what's measured against ops needed, a build's developer-days and tickets cleared.
     </p>
     <ul class="staff">
-      <li v-for="pool in game.meta.staff" :key="pool.id" :data-pool="pool.id">
+      <li v-for="pool in pools" :key="pool.id" :data-pool="pool.id">
         <div class="staff-info">
           <strong>{{ pool.name }}</strong>
           <span class="muted" :data-testid="`${pool.id}-work`">
@@ -68,6 +76,11 @@ const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.fr
             A mid clears {{ formatCount(game.meta.ticketsPerPerson) }} tickets a day. Your users raise about
             {{ formatCount(game.company.usualTickets) }} a day, so you need the work of
             {{ game.supportNeeded }}<template v-if="game.company.backlog">, plus more to clear the backlog</template>.
+          </span>
+          <span v-if="pool.id === 'moderators' && game.moderation" class="muted" data-testid="moderators-hint">
+            A mid handles {{ formatCount(game.meta.reportsPerPerson) }} reports a day. Your users report about
+            {{ formatCount(game.moderation.usualReports) }} posts a day, so you need the work of
+            {{ game.moderatorsNeeded }}<template v-if="game.moderation.backlog">, plus more to clear the unhandled ones</template>.
           </span>
         </div>
         <GradeCounter v-model:grade="grades[pool.id]" :pool="pool.id" source="staff" />

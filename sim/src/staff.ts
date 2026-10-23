@@ -1,6 +1,10 @@
 import { STAFF_GRADES, STAFF_POOLS, type GameConfig, type StaffGrade, type StaffPool } from "./config.ts";
 import { isStaffGrade, isStaffPool, SimError, type GameState, type GradeCounts, type LogEntry } from "./state.ts";
 
+/** Pools a company can staff: every pool, except moderators on a product without user content. */
+export const poolsFor = (config: GameConfig, state: Pick<GameState, "productType">): StaffPool[] =>
+  STAFF_POOLS.filter((pool) => pool !== "moderators" || config.productTypes[state.productType].moderation !== undefined);
+
 /** One grade in a pool: how many are on the team, what each costs and does, and how long a new one takes to start. */
 export interface GradeView {
   grade: StaffGrade;
@@ -68,17 +72,32 @@ export function createStaff(config: GameConfig) {
   const people = (n: number, pool: StaffPool, grade: StaffGrade) =>
     `${n} ${config.staffGrades[grade].name.toLowerCase()} ${plural(n, config.staff[pool].personName, poolName(pool))}`;
 
-  /** The company's opening team: each pool's starting count, all mids, on the team from day 1. */
-  function startingStaff(): Pick<GameState, "staff" | "hiring"> {
+  /**
+   * The company's opening team: each pool's starting count, all mids, on the team from day 1. No moderators on a
+   * product without user content, whatever the config says.
+   */
+  function startingStaff(product: Pick<GameState, "productType">): Pick<GameState, "staff" | "hiring"> {
+    const pools = poolsFor(config, product);
     const staff = Object.fromEntries(
-      STAFF_POOLS.map((pool) => [pool, { ...noStaff(), mid: config.staff[pool].startingCount }]),
+      STAFF_POOLS.map((pool) => [pool, { ...noStaff(), mid: pools.includes(pool) ? config.staff[pool].startingCount : 0 }]),
     ) as Record<StaffPool, GradeCounts>;
     return { staff, hiring: [] };
   }
 
-  function checkPoolAndGrade(pool: StaffPool, grade: StaffGrade) {
-    if (!isStaffPool(pool)) throw new SimError("unknown_pool", "Pick developers, ops or support.");
+  const PICK_POOL = "Pick developers, ops, support or moderators.";
+
+  /** Moderators handle reports on user content, so a product without any has none to hire or move. */
+  function checkContent(state: GameState, pool: StaffPool) {
+    if (!poolsFor(config, state).includes(pool)) {
+      const product = config.productTypes[state.productType].name;
+      throw new SimError("no_content", `A ${product.toLowerCase()} has no user content to moderate, so it has no moderators.`);
+    }
+  }
+
+  function checkPoolAndGrade(state: GameState, pool: StaffPool, grade: StaffGrade) {
+    if (!isStaffPool(pool)) throw new SimError("unknown_pool", PICK_POOL);
     if (!isStaffGrade(grade)) throw new SimError("unknown_grade", "Pick junior, mid or senior.");
+    checkContent(state, pool);
   }
 
   /**
@@ -86,7 +105,7 @@ export function createStaff(config: GameConfig) {
    * time. Letting go is of those on the team, at once; more than the grade has is refused.
    */
   function changeStaff(state: GameState, type: "hire" | "letGo", pool: StaffPool, grade: StaffGrade = "mid", count = 1): GameState {
-    checkPoolAndGrade(pool, grade);
+    checkPoolAndGrade(state, pool, grade);
     if (!Number.isInteger(count) || count < 1) throw new SimError("bad_count", "Pick a whole number of people, at least 1.");
     if (type === "hire") {
       const { leadDays } = config.staffGrades[grade];
@@ -114,8 +133,10 @@ export function createStaff(config: GameConfig) {
     from: StaffPool = to === "developers" ? "ops" : "developers",
     grade?: StaffGrade,
   ): GameState {
-    if (!isStaffPool(to) || !isStaffPool(from)) throw new SimError("unknown_pool", "Pick developers, ops or support.");
+    if (!isStaffPool(to) || !isStaffPool(from)) throw new SimError("unknown_pool", PICK_POOL);
     if (grade !== undefined && !isStaffGrade(grade)) throw new SimError("unknown_grade", "Pick junior, mid or senior.");
+    checkContent(state, to);
+    checkContent(state, from);
     if (from === to) throw new SimError("same_pool", "Pick two different teams to move someone between.");
     const moving = grade ?? (["mid", "junior", "senior"] as const).find((g) => state.staff[from][g] > 0);
     if (!moving || state.staff[from][moving] < 1) {
@@ -151,8 +172,9 @@ export function createStaff(config: GameConfig) {
     );
   }
 
+  /** Pools the company can staff: no moderators on a product without user content. */
   function staffView(state: GameState): StaffPoolView[] {
-    return STAFF_POOLS.map((pool) => ({
+    return poolsFor(config, state).map((pool) => ({
       pool,
       name: config.staff[pool].name,
       headcount: headcount(state, pool),

@@ -124,6 +124,14 @@ _Avoid_: Request, hit
 API units: the capacity for API calls, from API servers or app servers converted from CU.
 _Avoid_: API capacity units, API CU
 
+**Content product**:
+A product whose users post content: the social network, the video platform and the games network. Only these have reports and moderators.
+_Avoid_: UGC product, community product
+
+**Report**:
+A user flagging another user's post on a content product, for a moderator to handle. Reports nobody handles pull satisfaction down and raise the odds of a lawsuit.
+_Avoid_: Flag, complaint, ticket (tickets go to support)
+
 ### Events
 
 **Encounter list**:

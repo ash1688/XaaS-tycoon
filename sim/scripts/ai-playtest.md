@@ -25,7 +25,7 @@ npm run -s play -- summary <game>
   `npm run -s play -- do <game> "preview 8; quote iaas"`.
 - `next [days]` (inside `do`) moves time on, 7 days by default, and **stops early** when something needs a
   decision: an event that hurts, an outage, a new risk on the danger meter, a built feature, a server arriving,
-  staff starting, capacity running out, satisfaction falling, cash about to run out, the price lock ending, or paid
+  staff starting, capacity running out, satisfaction falling, reports going unhandled, cash about to run out, the price lock ending, or paid
   API calls starting to be dropped. Any commands after a stop are not run, and each says so ("not run: time
   stopped"). Events that need nothing from you are shown but don't stop time. Each advance ends with how the users
   changed, and each day shows paying users lost to a dear price, poor support or downtime.
@@ -34,6 +34,10 @@ npm run -s play -- summary <game>
 - Staff come in junior, mid and senior grades, each with its own pay and work a day, and each takes days to start
   after hiring (shown under staff until they do). `hire <pool> [grade] [n]` and `letgo <pool> [grade] [n]` take a
   grade; without one it's mids. Time also stops when hires start.
+- On a social network or video platform, users post content and report some of it. **Moderators** are a fourth
+  staff pool there (not on an e-commerce shop): `hire moderators [grade] [n]`. The status shows the reports a day,
+  what your moderators handle and what's left unhandled. Unhandled reports pull satisfaction down and raise the odds
+  of a lawsuit (shown as a multiplier).
 - Random events come from an encounter system. The **danger meter** in `look` rises every day after launch and goes
   back to 0 when a random event fires. It creeps on a well-run day and climbs faster with risky play: servers going
   unpatched (fewer ops than your setup needs, on on-prem or IaaS), capacity overloaded, or unhappy customers. Which

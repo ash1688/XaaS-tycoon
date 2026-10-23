@@ -293,6 +293,17 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("support.churnAtZero", "Customers", "Support", "Churn at 0% satisfaction", "Share of users who leave each day at 0% satisfaction, falling to none at good satisfaction.", range(0, 0.5, 0.001));
   add("support.paidChurnAtZero", "Customers", "Support", "Payers lost at 0% satisfaction", "On top, the share of paying users who stop paying each day at 0% satisfaction, falling to none at good satisfaction.", range(0, 0.5, 0.001));
 
+  // Customers: reports on user content and moderators, on products with user content
+  for (const p of PRODUCT_TYPE_IDS) {
+    const product = base.productTypes[p];
+    if (!product?.moderation) continue;
+    add(`productTypes.${p}.moderation.reportsPerUser`, "Customers", product.name, "Reports per user", "Reports on user content each user raises a day, paying or free (0.002 = 2 per 1,000 users).", TICKET_RATE);
+  }
+  add("moderation.reportsPerPerson", "Customers", "Moderation", "Reports per moderator", "Reports one mid moderator handles a day.", range(1, 10_000, 1));
+  add("moderation.backlogPerUserAtZero", "Customers", "Moderation", "Unhandled reports per user for 0% satisfaction", "Unhandled reports pull the satisfaction target down in a straight line, to 0% at this many per user (0.05 = 1 per 20).", range(0.001, 1, 0.001));
+  add("moderation.lawsuitOddsAtZero", "Customers", "Moderation", "Lawsuit odds at the worst", "Lawsuit odds are multiplied by this at that many unhandled reports per user, rising from 1 at none.", range(1, 20, 0.1));
+  add("moderation.warnShare", "Customers", "Moderation", "Unhandled reports worth logging", "Unhandled reports are logged once they take this share off the satisfaction target.", SHARE);
+
   // Infrastructure
   for (const p of PRODUCT_TYPE_IDS) {
     const product = base.productTypes[p];

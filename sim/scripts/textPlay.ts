@@ -49,6 +49,8 @@ export interface LogRow {
   developers: number;
   ops: number;
   support: number;
+  /** Moderators: 0 on a product without user content. */
+  moderators: number;
   loan: string;
   loanRemaining: number | null;
   params: Record<string, unknown>;
@@ -109,7 +111,7 @@ export function runway(sim: Sim, state: GameState): number | null {
 export function logRow(sim: Sim, state: GameState, who: Player, type: string, params: Record<string, unknown>, error: string | null = null): LogRow {
   const { tier, use } = tierUse(sim, state);
   const loan = sim.loan(state);
-  const heads = (pool: StaffPool) => sim.staff(state).find((p) => p.pool === pool)!.headcount;
+  const heads = (pool: StaffPool) => sim.staff(state).find((p) => p.pool === pool)?.headcount ?? 0;
   return {
     at: new Date().toISOString(),
     player: who.player,
@@ -132,6 +134,7 @@ export function logRow(sim: Sim, state: GameState, who: Player, type: string, pa
     developers: heads("developers"),
     ops: heads("ops"),
     support: heads("support"),
+    moderators: heads("moderators"),
     loan: !loan ? "none" : loan.remaining > 0 ? "repaying" : "repaid",
     loanRemaining: loan ? Math.round(loan.remaining) : null,
     params,
@@ -177,6 +180,13 @@ export function renderStatus(sim: Sim, state: GameState): string {
   lines.push(
     `satisfaction ${pct(state.satisfaction)} | uptime ${sim.uptime(state).toFixed(1)}% | tickets ${Math.round(sim.usualTickets(state))}/day vs ${Math.round(sim.dailyClearance(state))} cleared, backlog ${Math.round(state.backlog)}`,
   );
+  const moderation = sim.moderation(state);
+  if (moderation) {
+    lines.push(
+      `reports ${moderation.usualReports}/day | moderators can handle ${Math.round(moderation.dailyClearance)}/day (a mid ${sim.config.moderation.reportsPerPerson}), handled ${moderation.handledToday} yesterday | unhandled ${moderation.backlog}` +
+        ` | satisfaction target ×${moderation.satisfactionFactor.toFixed(2)} | lawsuit odds ×${moderation.lawsuitOdds.toFixed(2)}`,
+    );
+  }
   lines.push(`power and cooling ${money(sim.powerAndCooling(state.model))}/day`);
   lines.push(...staffLines(sim, state));
 
@@ -312,7 +322,8 @@ function staffLines(sim: Sim, state: GameState): string[] {
 /** Every command that does something right now, with the values it takes. */
 export function renderCommands(sim: Sim, state: GameState): string {
   const lines = ["commands (join several with ';'):"];
-  const pools = STAFF_POOLS.join("|");
+  // Moderators only on a product with user content.
+  const pools = sim.staff(state).map((p) => p.pool).join("|");
   const grades = STAFF_GRADES.join("|");
   lines.push(`  hire <${pools}> [${grades}] [n] | letgo <${pools}> [${grades}] [n] | move <to> [from] [${grades}]   (grade defaults to mid)`);
   if (sim.priceLockDaysLeft(state) === 0) lines.push(`  price <0.01–${sim.config.pricing.maxPrice}>`);
@@ -719,6 +730,10 @@ function stopReasons(sim: Sim, before: GameState, after: GameState): string[] {
   if (after.satisfaction <= before.satisfaction - 15 || (after.satisfaction < 50 && before.satisfaction >= 50)) {
     reasons.push(`satisfaction fell to ${pct(after.satisfaction)}`);
   }
+  // Reports left unhandled long enough to cost satisfaction: the same point the game logs its warning.
+  const warnAt = 1 - sim.config.moderation.warnShare;
+  const factor = (st: GameState) => sim.moderation(st)?.satisfactionFactor ?? 1;
+  if (factor(after) < warnAt && factor(before) >= warnAt) reasons.push(`reports unhandled (${after.reportBacklog})`);
   const left = runway(sim, after);
   const leftBefore = runway(sim, before);
   if (left !== null && left <= 7 && (leftBefore === null || leftBefore > 7)) reasons.push(`cash runs out in ${left} days`);
@@ -734,8 +749,8 @@ function stopReasons(sim: Sim, before: GameState, after: GameState): string[] {
 /**
  * Plays up to `days` days, one at a time, and stops early when something needs a decision: an event, outage, a new
  * risk on the danger meter, built feature, migration step, the launch, a server arriving, staff starting, capacity
- * running out, satisfaction falling hard, cash about to run out, the price unlocking, or API calls starting to be
- * dropped. Returns the notable lines of each day played and why it stopped.
+ * running out, satisfaction falling hard, reports going unhandled, cash about to run out, the price unlocking, or API
+ * calls starting to be dropped. Returns the notable lines of each day played and why it stopped.
  */
 export function advanceUntil(sim: Sim, state: GameState, days: number, who: Player): Turn {
   let current = state;

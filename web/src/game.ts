@@ -150,6 +150,11 @@ export function createGame(code: string, id: string) {
     company.value && meta.value ? Math.ceil(company.value.usualTickets / meta.value.ticketsPerPerson) : 0,
   );
   const supportShort = computed(() => midsShort(supportNeeded.value, work("support")));
+  // On a product with user content: moderators needed to keep up with today's users' usual reports.
+  const moderation = computed(() => company.value?.moderation ?? null);
+  const moderatorsNeeded = computed(() =>
+    moderation.value && meta.value ? Math.ceil(moderation.value.usualReports / meta.value.reportsPerPerson) : 0,
+  );
   // Good: no effect. Below good: growth slows and users leave. Below poor: angry customers.
   const satisfactionLevel = computed(() => {
     const c = company.value;
@@ -378,6 +383,8 @@ export function createGame(code: string, id: string) {
     migration,
     supportNeeded,
     supportShort,
+    moderation,
+    moderatorsNeeded,
     satisfactionLevel,
     events,
     eventsByLayer,

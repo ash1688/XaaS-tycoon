@@ -3,6 +3,7 @@ import {
   createSim,
   defaultConfig,
   GAME_STATE_VERSION,
+  lawsuitOdds,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
   responsibilityStack,
@@ -178,6 +179,7 @@ const config: GameConfig = {
     developers: { name: "Developers", personName: "developer", dayRate: 7, startingCount: 0 },
     ops: { name: "Ops", personName: "ops person", dayRate: 3, startingCount: 0 },
     support: { name: "Support", personName: "support person", dayRate: 2, startingCount: 0 },
+    moderators: { name: "Moderators", personName: "moderator", dayRate: 2, startingCount: 0 },
   },
   // No lead times, so a hire joins at once unless a test sets one; mids at the pool's rate and output.
   staffGrades: {
@@ -225,6 +227,8 @@ const config: GameConfig = {
     churnAtZero: 0.02,
     paidChurnAtZero: 0,
   },
+  // At its defaults, but no product here has user content unless a test gives it some.
+  moderation: { ...defaultConfig.moderation },
   // Conversion at its default strengths, but every product's base rate is 0 unless a test sets one.
   conversion: { ...defaultConfig.conversion },
   addons: { minConfigDevelopers: 1, setupFeePerDevDay: 0 },
@@ -660,6 +664,7 @@ describe("staff", () => {
         developers: { ...config.staff.developers, startingCount: 2 },
         ops: { ...config.staff.ops, startingCount: 1 },
         support: { ...config.staff.support, startingCount: 3 },
+        moderators: { ...config.staff.moderators, startingCount: 0 },
       },
     });
     const state = staffed.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1 });
@@ -3199,14 +3204,21 @@ describe("default config", () => {
     return state;
   };
   // Plays to the end with a first setup, the ops the model needs, hiring support each day to keep up with the usual
-  // tickets, and on servers renting ahead of demand.
+  // tickets, moderators to keep up with the usual reports on a product with user content, and on servers renting
+  // ahead of demand.
   // Without hireSupport, it keeps its starting support staff. onDay sees each day played.
   const runStaffed = (productType: string, model: string, hireSupport = true, onDay?: (state: GameState) => void) => {
     let state = setUp(sim180, sim180.newGame({ companyName: "Acme", productType, model, seed: 7 }));
     while (state.status === "playing") {
       state = rentAhead(state);
       const needed = hireSupport ? Math.ceil((sim180.usualTickets(state) * 1.2) / defaultConfig.support.ticketsPerPerson) : 0;
-      state = withStaff(state, { ops: Math.max(team(state, "ops"), sim180.opsNeededNow(state)), support: Math.max(team(state, "support"), needed) });
+      const reports = sim180.moderation(state)?.usualReports ?? 0;
+      const moderators = Math.ceil((reports * 1.2) / defaultConfig.moderation.reportsPerPerson);
+      state = withStaff(state, {
+        ops: Math.max(team(state, "ops"), sim180.opsNeededNow(state)),
+        support: Math.max(team(state, "support"), needed),
+        moderators: Math.max(team(state, "moderators"), moderators),
+      });
       state = sim180.advance(state).state;
       onDay?.(state);
     }
@@ -3251,10 +3263,13 @@ describe("default config", () => {
     }
   });
 
-  it("is happy at the start: one support person keeps up with every product's first tickets", () => {
+  it("is happy at the start: one support person keeps up with every product's first tickets, one moderator its reports", () => {
     for (const p of PRODUCT_TYPE_IDS) {
-      const state = launched(sim180, sim180.newGame({ companyName: "Acme", productType: p, model: "iaas", seed: 7 }));
+      const begun = sim180.newGame({ companyName: "Acme", productType: p, model: "iaas", seed: 7 });
+      const state = launched(sim180, sim180.moderation(begun) ? withStaff(begun, { moderators: 1 }) : begun);
       expect(sim180.usualTickets(state)).toBeLessThanOrEqual(sim180.dailyClearance(state));
+      const moderation = sim180.moderation(state);
+      if (moderation) expect(moderation.usualReports).toBeLessThanOrEqual(moderation.dailyClearance);
       expect(sim180.advance(state, 7).state).toMatchObject({ backlog: 0, satisfaction: 100 });
     }
   });
@@ -5425,6 +5440,101 @@ describe("support, tickets and satisfaction", () => {
     const copy = structuredClone(before);
     s.advance(before, 5);
     expect(before).toEqual(copy);
+  });
+});
+
+describe("moderators and reports on user content", () => {
+  // 1,000 social users, no growth, each raising 0.02 reports a day: 20 a day. A moderator handles 10. Support keeps up
+  // with the tickets throughout, so only the reports move satisfaction.
+  const moderated = createSim({
+    ...config,
+    productTypes: {
+      ...config.productTypes,
+      social: {
+        ...config.productTypes.social,
+        growth: { ...growth, dailyGrowth: 0 },
+        pricing: { fairPrice: 30, freeShare: 0.5, conversionRate: 0, customerMix: allCasual },
+        moderation: { reportsPerUser: 0.02 },
+      },
+    },
+    moderation: { reportsPerPerson: 10, backlogPerUserAtZero: 0.05, lawsuitOddsAtZero: 4, warnShare: 0.1 },
+  });
+  const s = moderated;
+  const begin = (moderators = 0, productType = "social") =>
+    withStaff(s.newGame({ companyName: "Acme", productType, model: "iaas", seed: 42 }), { ops: s.opsNeeded("iaas"), support: 50, moderators });
+  const supportLog = (log: DayLog[]) => log.flatMap((d) => d.entries.filter((e) => e.kind === "support").map((e) => e.text));
+
+  it("can be hired only on a product with user content", () => {
+    const shop = begin(0, "ecommerce");
+    for (const action of [
+      { type: "hire", pool: "moderators" },
+      { type: "moveStaff", to: "moderators", from: "support" },
+    ] as Action[]) {
+      expect(() => s.applyAction(shop, action)).toThrow(expect.objectContaining({ code: "no_content" }));
+    }
+    expect(s.staff(shop).map((p) => p.pool)).toEqual(["developers", "ops", "support"]);
+    expect(s.moderation(shop)).toBeNull();
+    // On the social network they're the fourth pool, hired, moved and let go like any other.
+    const social = s.applyAction(begin(), { type: "hire", pool: "moderators", grade: "senior", count: 2 });
+    expect(s.staff(social).map((p) => p.pool)).toEqual(["developers", "ops", "support", "moderators"]);
+    expect(team(social, "moderators")).toBe(2);
+    expect(team(s.applyAction(social, { type: "moveStaff", to: "moderators", from: "support" }), "moderators")).toBe(3);
+    expect(team(s.applyAction(social, { type: "letGo", pool: "moderators", grade: "senior" }), "moderators")).toBe(1);
+  });
+
+  it("makes social and video content products in the default config, and e-commerce not", () => {
+    expect(defaultConfig.productTypes.social.moderation).toBeDefined();
+    expect(defaultConfig.productTypes.video.moderation).toBeDefined();
+    expect(defaultConfig.productTypes.ecommerce.moderation).toBeUndefined();
+    // A starting moderator a config sets only joins a company with content to moderate.
+    const starting = createSim({ ...s.config, staff: { ...s.config.staff, moderators: { ...s.config.staff.moderators, startingCount: 1 } } });
+    const newGame = (productType: string) => starting.newGame({ companyName: "Acme", productType, model: "iaas", seed: 1 });
+    expect(team(newGame("social"), "moderators")).toBe(1);
+    expect(team(newGame("ecommerce"), "moderators")).toBe(0);
+  });
+
+  it("raises reports from every user, which moderators handle up to their output, the rest carrying over", () => {
+    expect(s.moderation(begin(2))).toMatchObject({ usualReports: 20, dailyClearance: 20, backlog: 0, lawsuitOdds: 1, satisfactionFactor: 1 });
+    expect(s.advance(begin(2)).state).toMatchObject({ reportsToday: 20, reportsHandled: 20, reportBacklog: 0 });
+    // One moderator handles half; the rest waits, and is handled first once there are more.
+    const short = s.advance(begin(1), 3).state;
+    expect(short).toMatchObject({ reportsToday: 20, reportsHandled: 10, reportBacklog: 30 });
+    const caughtUp = s.advance(withStaff(short, { moderators: 5 })).state;
+    expect(caughtUp).toMatchObject({ reportsHandled: 50, reportBacklog: 0 });
+    // A junior handles a junior's share.
+    expect(s.moderation({ ...begin(), staff: { ...begin().staff, moderators: { junior: 2, mid: 0, senior: 0 } } })!.dailyClearance).toBe(10);
+  });
+
+  it("lowers satisfaction while reports go unhandled, and says so", () => {
+    const covered = s.advance(begin(2), 20).state;
+    const { state: neglected, log } = s.advance(begin(0), 20);
+    expect(covered.satisfaction).toBe(100);
+    // Hundreds of unhandled reports on under 1,000 users, far past 0.05 per user: the target is 0%, and users leave.
+    expect(neglected.reportBacklog).toBeGreaterThan(300);
+    expect(neglected.users).toBeLessThan(covered.users);
+    expect(s.moderation(neglected)!.satisfactionFactor).toBe(0);
+    expect(neglected.satisfaction).toBeLessThan(70);
+    expect(neglected.backlog).toBe(0);
+    const lines = supportLog(log);
+    expect(lines[0]).toMatch(/reports on user content are waiting for a moderator.*Hire moderators\./);
+    expect(lines).toContainEqual(expect.stringContaining("Customer satisfaction fell below 70%: reports on user content are waiting too long."));
+    // Catching up is logged too, and satisfaction recovers.
+    const { state: recovered, log: after } = s.advance(withStaff(neglected, { moderators: 60 }), 15);
+    expect(supportLog(after)).toContain("Moderators have caught up with the reports on user content.");
+    expect(recovered.satisfaction).toBeGreaterThan(neglected.satisfaction);
+  });
+
+  it("raises the lawsuit odds with the unhandled reports, up to the configured most", () => {
+    const odds = (state: GameState) => s.moderation(state)!.lawsuitOdds;
+    expect(odds(s.advance(begin(2), 10).state)).toBe(1);
+    const day1 = s.advance(begin(0)).state;
+    // 20 on 1,000 users: 0.4 of the way to the worst, so 1 + 3 × 0.4.
+    expect(odds(day1)).toBeCloseTo(2.2, 6);
+    expect(lawsuitOdds(s.config, day1)).toBe(odds(day1));
+    // After 10 days, about 200 unhandled on 1,000 users: far past 0.05 per user, so the most.
+    expect(odds(s.advance(begin(0), 10).state)).toBe(4);
+    // Always 1 on a product without user content.
+    expect(lawsuitOdds(s.config, begin(0, "ecommerce"))).toBe(1);
   });
 });
 

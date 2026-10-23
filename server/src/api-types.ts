@@ -24,6 +24,7 @@ import type {
   MigrationPhase,
   MigrationQuote,
   MigrationView,
+  ModerationView,
   ModelComparison,
   PricePreview,
   PriceWaveView,
@@ -110,6 +111,8 @@ export interface MetaView {
   minConfigDevelopers: number;
   /** Tickets one support person clears a day. */
   ticketsPerPerson: number;
+  /** Reports on user content one mid moderator handles a day. */
+  reportsPerPerson: number;
   /** At or above this satisfaction %, customers are happy: no slower growth or extra churn. */
   goodSatisfaction: number;
   /** Below this satisfaction %, customers are angry. */
@@ -168,6 +171,8 @@ export interface CompanyView {
   ops: number;
   /** Support staff: they answer customers' tickets, on every model. */
   support: number;
+  /** Moderators: they handle reports on user content. Always 0 on a product without user content. */
+  moderators: number;
   /**
    * Each pool by grade: who's on the team, their work a day in mids (what's measured against ops needed, a build's
    * developer-days and tickets cleared), and hires still to start.
@@ -237,6 +242,11 @@ export interface CompanyView {
   usualTickets: number;
   /** Tickets the support staff can clear in a day. */
   dailyClearance: number;
+  /**
+   * On a product with user content: reports a day against what the moderators handle, those left unhandled, and what
+   * they do to satisfaction and the odds of a lawsuit. Null on a product without user content (no moderators either).
+   */
+  moderation: ModerationView | null;
   /** Load on the day just played. */
   load: number;
   /**
@@ -554,6 +564,8 @@ export interface PlaySnapshot {
   developers: number;
   ops: number;
   support: number;
+  /** Missing from snapshots logged before moderators. */
+  moderators?: number;
   loan: "none" | "repaying" | "repaid";
   loanRemaining: number | null;
 }

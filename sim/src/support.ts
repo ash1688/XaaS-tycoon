@@ -57,21 +57,32 @@ export function createSupport(config: GameConfig) {
   /** Share of paying users who stop paying each day because of low satisfaction, on top: paidChurnAtZero at 0%. */
   const satisfactionPaidChurn = (state: GameState) => config.support.paidChurnAtZero * shortfall(state);
 
-  /** A log line for each threshold satisfaction crossed today, either way. */
-  function thresholdEntries(before: number, after: number): LogEntry[] {
+  /**
+   * A log line for each threshold satisfaction crossed today, either way. Falling, it names what's waiting: tickets,
+   * reports on user content (when `reportsWaiting`), or both.
+   */
+  function thresholdEntries(before: number, after: number, ticketsWaiting: boolean, reportsWaiting: boolean): LogEntry[] {
     const { goodSatisfaction: good, poorSatisfaction: poor } = config.support;
     const entries: LogEntry[] = [];
+    const onlyReports = reportsWaiting && !ticketsWaiting;
+    const waiting = onlyReports ? "reports on user content are" : reportsWaiting ? "tickets and reports are" : "tickets are";
+    const unanswered = onlyReports ? "unhandled reports" : reportsWaiting ? "unanswered tickets and reports" : "unanswered tickets";
+    const hire = onlyReports
+      ? "Hire moderators to handle the reports."
+      : reportsWaiting
+        ? "Hire support and moderators to clear the backlogs."
+        : "Hire support to clear the backlog.";
     const crossed = (t: number) => (before >= t && after < t ? "down" : before < t && after >= t ? "up" : null);
     if (crossed(good) === "down") {
       entries.push({
-        text: `Customer satisfaction fell below ${good}%: tickets are waiting too long. Growth slows and more users leave.`,
+        text: `Customer satisfaction fell below ${good}%: ${waiting} waiting too long. Growth slows and more users leave.`,
         cashDelta: 0,
         kind: "support",
       });
     }
     if (crossed(poor) === "down") {
       entries.push({
-        text: `Customer satisfaction fell below ${poor}%: customers are angry about unanswered tickets. Hire support to clear the backlog.`,
+        text: `Customer satisfaction fell below ${poor}%: customers are angry about ${unanswered}. ${hire}`,
         cashDelta: 0,
         kind: "support",
       });
@@ -92,16 +103,17 @@ export function createSupport(config: GameConfig) {
   /**
    * A day of support. Tickets come from the users at the start of the day plus any bursts; support clears what it
    * can, oldest first, and the rest is the backlog. Satisfaction then moves part of the way towards its target, so it
-   * falls while the backlog grows and recovers once it's cleared.
+   * falls while the backlog grows and recovers once it's cleared. The target is multiplied by `contentFactor`: below 1
+   * when reports on user content are left unhandled (see moderation).
    */
-  function supportDay(state: GameState, bursts: TicketBurst[]) {
+  function supportDay(state: GameState, bursts: TicketBurst[], contentFactor = 1) {
     const usual = usualTickets(state);
     const burstTickets = bursts.reduce((sum, b) => sum + b.tickets, 0);
     const ticketsToday = usual + burstTickets;
     const open = state.backlog + ticketsToday;
     const clearedToday = Math.min(open, dailyClearance(state));
     const backlog = open - clearedToday;
-    const target = satisfactionTarget(backlog, state.users);
+    const target = satisfactionTarget(backlog, state.users) * contentFactor;
     const satisfaction = state.satisfaction + (target - state.satisfaction) * config.support.satisfactionSpeed;
 
     const entries: LogEntry[] = [];
@@ -114,7 +126,7 @@ export function createSupport(config: GameConfig) {
         });
       }
     }
-    entries.push(...thresholdEntries(state.satisfaction, satisfaction));
+    entries.push(...thresholdEntries(state.satisfaction, satisfaction, backlog > 0, contentFactor < 1));
     return { ticketsToday, burstTickets, clearedToday, backlog, satisfaction, entries };
   }
 

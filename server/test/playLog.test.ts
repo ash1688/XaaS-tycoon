@@ -136,6 +136,7 @@ describe("game events", () => {
       developers: after.developers,
       ops: after.ops,
       support: after.support,
+      moderators: 0,
       loan: "none",
       loanRemaining: null,
     });
