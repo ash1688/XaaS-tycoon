@@ -239,7 +239,7 @@ async function start() {
 
         <fieldset data-testid="game-lengths">
           <legend>How long will you play?</legend>
-          <p class="muted">The game ends on its last day, or sooner if your teacher ends it.</p>
+          <p class="muted">The game ends on its last day, or sooner if it goes into liquidation or your teacher ends it.</p>
           <div class="choices">
             <label v-for="l in meta.gameLengths" :key="l.id" class="choice" :class="{ on: gameLength === l.id }">
               <input type="radio" name="gameLength" :value="l.id" v-model="gameLength" />
