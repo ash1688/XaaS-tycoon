@@ -1029,7 +1029,7 @@ describe("servers on-prem", () => {
         price: onprem.purchase!.price.cache.small,
         monthlyCost: onprem.monthlyCost.cache!.small,
         sellBackShare: 0.4,
-        readyDays: 7,
+        readyDays: 4,
       }),
     );
     const meta = (await ownApp.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
@@ -1042,14 +1042,14 @@ describe("servers on-prem", () => {
     expect(res.statusCode).toBe(200);
     const bought = res.json<CompanyView>();
     expect(bought.cash).toBe(before.cash - onprem.purchase!.price.app.small - onprem.purchase!.cablingCost);
-    expect(bought.servers.at(-1)).toMatchObject({ id: 3, type: "app", size: "small", status: "pending", daysLeft: 7 });
+    expect(bought.servers.at(-1)).toMatchObject({ id: 3, type: "app", size: "small", status: "pending", daysLeft: 4 });
     // On order: no capacity and no ops needed until it arrives (its share shows in opsNeededOnceReady).
     expect({ ...bought.units, loadBalancerOnceReady: null }).toEqual({ ...before.units, loadBalancerOnceReady: null });
     expect(bought.opsNeeded).toBe(before.opsNeeded);
     expect(bought.opsNeededOnceReady).toBeGreaterThanOrEqual(before.opsNeeded);
-    expect((await get()).servers.at(-1)).toMatchObject({ status: "pending", daysLeft: 7 });
+    expect((await get()).servers.at(-1)).toMatchObject({ status: "pending", daysLeft: 4 });
     const { company } = await next();
-    expect(company.servers.at(-1)).toMatchObject({ status: "pending", daysLeft: 6 });
+    expect(company.servers.at(-1)).toMatchObject({ status: "pending", daysLeft: 3 });
   });
 
   it("sells kit back for its share, but not kit still on order", async () => {
@@ -2308,10 +2308,10 @@ describe("migration quote", () => {
     const { price } = defaultConfig.models.onprem.servers!.purchase!;
     const upkeep = defaultConfig.models.onprem.servers!.monthlyCost;
     expect(onprem.setup).toEqual([
-      { type: "app", size: "small", name: "App server", count: 1, units: 10, upfront: price.app.small, monthly: upkeep.app!.small!, daysLeft: 7 },
-      { type: "database", size: "small", name: "Database", count: 1, units: 10, upfront: price.database.small, monthly: upkeep.database!.small!, daysLeft: 7 },
+      { type: "app", size: "small", name: "App server", count: 1, units: 10, upfront: price.app.small, monthly: upkeep.app!.small!, daysLeft: 4 },
+      { type: "database", size: "small", name: "Database", count: 1, units: 10, upfront: price.database.small, monthly: upkeep.database!.small!, daysLeft: 4 },
     ]);
-    expect(onprem).toMatchObject({ setupUpfront: price.app.small + price.database.small, deliveryDays: 7 });
+    expect(onprem).toMatchObject({ setupUpfront: price.app.small + price.database.small, deliveryDays: 4 });
     // With the server room's medium rack, and cabling for it and the 2 servers.
     expect(onprem).toMatchObject({ racks: [{ size: "medium", count: 1, upfront: 500 }], cabling: 150 });
     expect(onprem.upfrontCost).toBe(defaultConfig.models.onprem.upfrontCost + onprem.setupUpfront + 500 + 150);

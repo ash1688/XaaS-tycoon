@@ -157,7 +157,7 @@ describe("racks, cabling, power and cooling", () => {
     expect(commands).toMatch(/rack space: small 1U, medium 2U, large 4U, massive 8U; most free in one rack 24U; £50 cabling on each/);
     expect(commands).toMatch(/^ {2}rack <small\|medium\|large> {3}small 12U £300 \+ £50 cabling/m);
     for (let i = 0; i < 3; i++) state = run(state, "buy app massive").state;
-    expect(renderStatus(sim, state)).toMatch(/#1 massive app \d+ CU in rack #1 \(arrives in 7d\)/);
+    expect(renderStatus(sim, state)).toMatch(/#1 massive app \d+ CU in rack #1 \(arrives in 4d\)/);
     const full = run(state, "buy database small");
     expect(full.lines[0]).toMatch(/refused.*Buy a rack/);
     expect(full.rows[0]).toMatchObject({ ok: false, type: "buyServer", error: "no_rack_space" });

@@ -198,7 +198,7 @@ function staffTo(sim: Sim, state: GameState, pool: "ops" | "support", now: numbe
 /**
  * How far ahead of demand the bot keeps capacity: the growth it has seen over the last week since the launch ramp
  * (before it has seen any, the product's daily growth), compounded over the days until a server added today would
- * serve (7 days for on-prem kit, the next day on IaaS, at once on PaaS), with a margin for the product's day-to-day
+ * serve (4 days for on-prem kit, the next day on IaaS, at once on PaaS), with a margin for the product's day-to-day
  * ups and downs in load.
  */
 function ahead(sim: Sim, state: GameState): number {
@@ -284,11 +284,12 @@ function scaleServers(sim: Sim, state: GameState, strategy: Strategy): GameState
   if (dbuGap > 0 && !pending("database") && !pending("cache")) {
     // A cache is the cheap way to take load off the database, while there's cacheable demand it isn't taking; but
     // the first is always a database, since a cache can't serve without one.
+    // A cache that can't take the whole gap comes with a database for the rest, ordered the same day: on-prem kit
+    // takes days to arrive, so waiting for the cache before ordering the database leaves the database short.
     const cacheRoom = units.ch.demand - units.ch.capacity;
-    s =
-      cacheRoom > 0 && ofType("database").length > 0
-        ? addServer(sim, s, { type: add, server: "cache", size: sizeFor(sim, s, "cache", Math.min(dbuGap, cacheRoom), units.ch.capacity) })
-        : addServer(sim, s, { type: add, server: "database", size: sizeFor(sim, s, "database", dbuGap, units.dbu.capacity) });
+    const cached = cacheRoom > 0 && ofType("database").length > 0 ? Math.min(dbuGap, cacheRoom) : 0;
+    if (cached > 0) s = addServer(sim, s, { type: add, server: "cache", size: sizeFor(sim, s, "cache", cached, units.ch.capacity) });
+    if (dbuGap > cached) s = addServer(sim, s, { type: add, server: "database", size: sizeFor(sim, s, "database", dbuGap - cached, units.dbu.capacity) });
   }
 
   // Load balancers for every app server, ready or not: one that covers them all.
@@ -379,8 +380,10 @@ export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameSta
   }
   // The ops its servers need, and enough for any event on its model that costs money without them (a security patch).
   const eventOps = Math.max(0, ...sim.config.events.map((e) => (e.effects[s.model]?.shortOfOps?.cost ? (e.effects[s.model]?.opsNeeded ?? 0) : 0)));
-  // Ops for kit on order too, so they've started by the time it arrives.
-  s = staffTo(sim, s, "ops", Math.max(sim.opsNeededNow(s), eventOps), Math.max(sim.opsNeededOnceReady(s), eventOps));
+  // Ops for kit on order too, so they've started by the time it arrives. Events only come after the launch, so until
+  // then the event ops are next week's need: mids, who arrive in time, not juniors hired at once.
+  const eventOpsNow = s.launchDay === null ? 0 : eventOps;
+  s = staffTo(sim, s, "ops", Math.max(sim.opsNeededNow(s), eventOpsNow), Math.max(sim.opsNeededOnceReady(s), eventOps));
   if (strategy.support) {
     // Enough to clear today's tickets with a little to spare, and a fifth of the backlog; and next week's at this growth.
     const perPerson = sim.config.support.ticketsPerPerson;

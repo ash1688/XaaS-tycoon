@@ -953,7 +953,7 @@ export const defaultConfig: GameConfig = {
   allowedGameLengths: { "180-days": 1, "1-year": 0, career: 0 },
   maxCompanyNameLength: 40,
   // Users trickle in over 3 days, building up. SaaS starts on day 1; a platform set up or VMs rented on day 1 start on
-  // day 2; on-prem kit bought on day 1 arrives on day 8, so it starts nearly a week after the cloud models.
+  // day 2; on-prem kit bought on day 1 arrives on day 5, so it starts a few days after the cloud models.
   launch: { rampShares: [0.2, 0.3, 0.5] },
   models: {
     onprem: {
@@ -972,7 +972,7 @@ export const defaultConfig: GameConfig = {
       exitPenalty: 0,
       // A server costs about five weeks' rent of the same VM and a tenth of that rent a month to run, so it pays for
       // itself in under two months. That makes on-prem the cheapest at scale for a product with steady, heavy load
-      // (video). But you buy for your peak, a week ahead: a spiky shop or a fast-growing social network pays for kit
+      // (video). But you buy for your peak, days ahead: a spiky shop or a fast-growing social network pays for kit
       // that sits idle, and a traffic spike melts it. Selling one back gets 40% of what you paid. Kit you rack, power
       // and patch yourself needs a little more ops than a VM, and patching it takes two people.
       servers: {
@@ -1002,7 +1002,7 @@ export const defaultConfig: GameConfig = {
           loadBalancer: { small: 20, medium: 30, large: 45, massive: 60 },
           api: { small: 30, medium: 45, large: 80, massive: 110 },
         },
-        readyDays: 7,
+        readyDays: 4,
         opsPerServer: { app: 0.25, database: 0.25, cache: 0.1, loadBalancer: 0.1, api: 0.25 },
       },
     },
@@ -1164,11 +1164,12 @@ export const defaultConfig: GameConfig = {
       },
       // Feeds and friends lists: light on both, but there are a lot of users.
       demand: { cuPerUser: 0.0015, dbuPerUser: 0.0015 },
-      // Mostly free, like most social networks: a few pay for extras.
+      // Mostly free, like most social networks: a few pay for extras. A third pay at the start, so the slow ramp to the
+      // market pays its way on any model, own kit included.
       // Mostly casual users, as in the design's worked example.
       pricing: {
         fairPrice: 5,
-        freeShare: 0.7,
+        freeShare: 0.65,
         conversionRate: 0.0008,
         customerMix: { casual: 0.7, enthusiasts: 0.2, professionals: 0.08, businesses: 0.02 },
       },
