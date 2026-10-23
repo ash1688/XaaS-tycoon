@@ -14,10 +14,13 @@ import {
   STAFF_GRADES,
   STAFF_POOLS,
   type Action,
+  type CounterOdds,
   type DayLog,
   type FunderId,
   type GameDate,
   type GameState,
+  type NegotiationRound,
+  type NegotiationView,
   type HolidayView,
   type ManagedService,
   type ModelId,
@@ -28,6 +31,7 @@ import {
   type Sim,
   type StaffGrade,
   type StaffPool,
+  type Terms,
 } from "../src/index.ts";
 
 /** One row of the playtest log, as the staff dashboard exports it, so the classroom analysis runs on AI games too. */
@@ -75,6 +79,18 @@ const pct = (n: number) => `${Math.round(n)}%`;
 const stake = (share: number) => `${Math.round(share * 1000) / 10}%`;
 /** A share price, which can be under a penny with many shares. */
 const perShare = (n: number) => `£${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
+
+/** An offer's terms in words: friends and family's cash for their share, the grant's cash for its condition's days. */
+const termsText = (funder: FunderId, t: Terms) =>
+  funder === "friendsAndFamily" ? `${money(t.amount!)} for ${stake(t.share!)}` : `${money(t.amount!)} for ${t.days} days of uptime`;
+
+/** A roll in words: "rolled 15 −6 for asking 20% = 9: middle, they moved 50% of the way". */
+const rollText = (r: NegotiationRound) =>
+  `rolled ${r.die}${r.penalty ? ` −${r.penalty} for asking ${pct(r.ask * 100)}` : ""}${r.bonus ? ` +${r.bonus} bonus` : ""} = ${r.total < 0 ? `−${-r.total}` : r.total}: ${r.result}, they moved ${pct(r.move * 100)} of the way`;
+
+/** Where a negotiation stands: offer 2 of 3, with a counter left, or the final offer. */
+const standing = (n: NegotiationView) =>
+  n.final ? "final offer" : `offer ${n.offers.length} of 3, ${n.countersLeft} counter${n.countersLeft === 1 ? "" : "s"} left`;
 
 /** The tier that runs out first, and how full it is: 999 with demand and no capacity, as the classroom log does. */
 function tierUse(sim: Sim, state: GameState): { tier: string | null; use: number | null } {
@@ -312,12 +328,13 @@ function calendarLines(sim: Sim, state: GameState): string[] {
 /** Friends and family and the grant in a line: each one's offer, or how it stands. */
 function fundingStatus(sim: Sim, state: GameState): string {
   const f = sim.funding(state);
+  const n = f.negotiations;
   const ff = f.friendsAndFamilyOffer
-    ? `offer ${money(f.friendsAndFamilyOffer.amount)} for ${stake(f.friendsAndFamilyOffer.theirShare)}`
+    ? `${standing(n.friendsAndFamily!)} ${money(f.friendsAndFamilyOffer.amount)} for ${stake(f.friendsAndFamilyOffer.theirShare)}`
     : f.friendsAndFamily!.status;
   const g = f.grant;
   const grant = f.grantOffer
-    ? `offer ${money(f.grantOffer.amount)} if uptime ≥ ${f.grantOffer.minUptime}% for ${f.grantOffer.days} days`
+    ? `${standing(n.grant!)} ${money(f.grantOffer.amount)} if uptime ≥ ${f.grantOffer.minUptime}% for ${f.grantOffer.days} days`
     : g!.status === "accepted"
       ? g!.untilDay === null
         ? `${g!.maxHoursDown}h down allowed over ${g!.days} days, starting once the launch is over`
@@ -456,6 +473,14 @@ export function renderCommands(sim: Sim, state: GameState): string {
   if (open) {
     lines.push(`  funding   (each open offer in full: what friends and family get, the grant's condition; changes nothing)`);
     lines.push(`  accept <${open}> | decline <${open}>   (each can be answered once; ff = friends and family)`);
+    const countering = [funding.negotiations.friendsAndFamily?.countersLeft && "ff", funding.negotiations.grant?.countersLeft && "grant"];
+    const max = pct(sim.config.negotiation.maxAsk * 100);
+    if (countering[0]) {
+      lines.push(`  counter ff [amount <£>] [share <%>]   (ask for more cash and/or a smaller share for them; up to ${max} better in all; a dice roll sets their next offer, the third is final)`);
+    }
+    if (countering[1]) lines.push(`  counter grant [amount <£>] [days <n>]   (ask for more cash and/or fewer days of the uptime condition, the same way)`);
+    const odds = countering.filter(Boolean).join("|");
+    if (odds) lines.push(`  odds <${odds}> ...   (the same terms as counter: the odds on the roll and each offer it could bring; changes nothing)`);
   }
   const rescue = sim.rescue(state);
   if (rescue) lines.push(`  rescue   (the rescue buyout in full: cash, share taken, cuts, the buy-back price; changes nothing)`);
@@ -480,6 +505,7 @@ export type Command =
   | { kind: "quote"; model: string }
   | { kind: "valuation" }
   | { kind: "funding" }
+  | { kind: "odds"; funder: FunderId; terms: Partial<Terms> }
   | { kind: "rescue" }
   | { kind: "calendar" }
   | { kind: "next"; days: number }
@@ -526,6 +552,16 @@ export function parseCommand(text: string): Command {
     if (w === "ff" || w === "friends" || w === "friendsandfamily") return "friendsAndFamily";
     if (w === "grant") return "grant";
     throw new SimError("bad_command", "Expected a funder: ff (friends and family) or grant.");
+  };
+  // "amount 18000 share 18", in any order: a share is a percent; days are whole days.
+  const terms = (rest: string[]): Partial<Terms> => {
+    const out: Partial<Terms> = {};
+    for (let i = 0; i < rest.length; i += 2) {
+      const key = oneOf(rest[i], ["amount", "share", "days"] as const, "a term");
+      const value = number(rest[i + 1]?.replace(/[£%,]/g, ""), `the ${key}`);
+      out[key] = key === "share" ? value / 100 : value;
+    }
+    return out;
   };
   switch (verb) {
     case "hire":
@@ -582,6 +618,10 @@ export function parseCommand(text: string): Command {
       return one({ type: "acceptFunding", funder: funder(args[0]) });
     case "decline":
       return one({ type: "declineFunding", funder: funder(args[0]) });
+    case "counter":
+      return one({ type: "counterFunding", funder: funder(args[0]), terms: terms(args.slice(1)) });
+    case "odds":
+      return { kind: "odds", funder: funder(args[0]), terms: terms(args.slice(1)) };
     case "buyapi":
       return one({ type: "buyApi" });
     case "switch":
@@ -649,6 +689,7 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
   }
   if (command.kind === "valuation") return { state, rows: [], lines: valuationLines(sim, state) };
   if (command.kind === "funding") return { state, rows: [], lines: fundingLines(sim, state) };
+  if (command.kind === "odds") return { state, rows: [], lines: oddsLines(command.funder, sim.counterOdds(state, command.funder, command.terms)) };
   if (command.kind === "rescue") return { state, rows: [], lines: rescueLines(sim, state) };
   if (command.kind === "calendar") return { state, rows: [], lines: calendarLines(sim, state) };
   if (command.kind === "end") {
@@ -673,7 +714,35 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
       return { state: current, rows, lines: [what + err.message + teamNow(sim, current, command.action, err)] };
     }
   }
+  if (command.action.type === "counterFunding") return { state: current, rows, lines: [counterLine(sim, current, command.action.funder)] };
   return { state: current, rows, lines: [`${command.action.type}${command.times > 1 ? ` ×${done}` : ""}: done`] };
+}
+
+/** What a counter's roll did, and the offer that stands now. */
+function counterLine(sim: Sim, state: GameState, funder: FunderId): string {
+  const n = sim.funding(state).negotiations[funder]!;
+  const round = n.rounds.at(-1)!;
+  return `counter ${termsText(funder, round.counter)}: ${rollText(round)}. Offer ${n.offers.length}: ${termsText(funder, n.offers.at(-1)!)}${n.final ? " (final: accept or decline)" : ` (${n.countersLeft} counter left)`}`;
+}
+
+/** A counter's odds, before it's made. */
+function oddsLines(funder: FunderId, o: CounterOdds): string[] {
+  const chance = (x: number) => pct(x * 100);
+  return [
+    `counter ${termsText(funder, o.counter)} asks ${pct(o.ask * 100)} better (most ${pct(o.maxAsk * 100)}): −${o.penalty} on the roll${o.bonus ? `, +${o.bonus} bonus` : ""}`,
+    `  high ${chance(o.chances.high)} → ${termsText(funder, o.outcomes.high)}`,
+    `  middle ${chance(o.chances.middle)} → ${termsText(funder, o.outcomes.middle)}`,
+    `  low ${chance(o.chances.low)} → ${termsText(funder, o.outcomes.low)}`,
+  ];
+}
+
+/** A negotiation so far, if the student has countered: each offer and the roll that came after it. */
+function negotiationLines(funder: FunderId, n: NegotiationView | null): string[] {
+  if (!n?.rounds.length) return [];
+  return n.rounds.map(
+    (r, i) =>
+      `  offer ${i + 1} ${termsText(funder, n.offers[i]!)}; you asked ${termsText(funder, r.counter)}, ${rollText(r)} → offer ${i + 2} ${termsText(funder, n.offers[i + 1]!)}`,
+  );
 }
 
 /** After a refused letgo or move for want of staff, who the team has now, so the player can pick a grade they have. */
@@ -741,15 +810,22 @@ function fundingLines(sim: Sim, state: GameState): string[] {
   const ff = f.friendsAndFamilyOffer;
   if (ff) {
     lines.push(
-      `friends and family (accept ff): ${money(ff.amount)} for ${ff.newShares.toLocaleString("en-GB")} new shares at ${perShare(ff.sharePrice)} (valuation ${money(ff.valuation)}). ` +
-        `They'd own ${stake(ff.theirShare)}; you'd go from ${stake(ff.yourShareBefore)} to ${stake(ff.yourShareAfter)}. Paid now, no target.`,
+      `friends and family (accept ff): ${money(ff.amount)} for ${ff.newShares.toLocaleString("en-GB")} new shares at ${perShare(ff.sharePrice)} (${f.negotiations.friendsAndFamily?.rounds.length ? "the price they're paying values the company at" : "valuation"} ${money(ff.valuation)}). ` +
+        `They'd own ${stake(ff.theirShare)}; you'd go from ${stake(ff.yourShareBefore)} to ${stake(ff.yourShareAfter)}. Paid now, no target. ` +
+        `Negotiation: ${standing(f.negotiations.friendsAndFamily!)}.`,
+      ...negotiationLines("friendsAndFamily", f.negotiations.friendsAndFamily),
     );
   } else {
     const t = f.friendsAndFamily!;
     lines.push(`friends and family: ${t.status} on day ${t.day}${t.status === "accepted" ? `, ${money(t.amount)} for ${t.shares.toLocaleString("en-GB")} shares` : ""}`);
   }
   const g = f.grantOffer;
-  if (g) lines.push(`grant (accept grant): ${money(g.amount)}, no shares. ${g.condition} ${g.ifMissed}`);
+  if (g) {
+    lines.push(
+      `grant (accept grant): ${money(g.amount)}, no shares. ${g.condition} ${g.ifMissed} Negotiation: ${standing(f.negotiations.grant!)}.`,
+      ...negotiationLines("grant", f.negotiations.grant),
+    );
+  }
   else {
     const t = f.grant!;
     lines.push(

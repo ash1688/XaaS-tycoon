@@ -963,6 +963,32 @@ export interface FundingConfig {
 }
 
 /**
+ * Negotiating an offer, for any offer: friends and family and grants now, and later investors, deals and renewals. The
+ * other side opens with offer 1; the student can counter twice, and each counter is answered by a roll of a
+ * dieSides-sided die that sets the next offer. Offer 3 is final.
+ *
+ * - How far a counter asks is its distance: each term's change in the student's favour as a share of the offer's,
+ *   added up (asking 20% more cash and a quarter less share is 0.45). A counter must ask for something, and at most
+ *   maxAsk.
+ * - The roll is the die, less greedPenalty × the distance (rounded to a whole pip), plus any bonus (a CFO, later).
+ *   From highFrom the other side moves moves.high of the way to the counter; from middleFrom, moves.middle; below it,
+ *   moves.low. So the further a counter asks, the worse its odds, and asking a lot pays less on average than asking a
+ *   little more than nothing.
+ * - The other side never walks away: its latest offer stands until the student accepts or declines it.
+ */
+export interface NegotiationConfig {
+  dieSides: number;
+  highFrom: number;
+  middleFrom: number;
+  /** Pips off the roll per 100% asked for: 30 is 3 pips per 10%. */
+  greedPenalty: number;
+  /** The most a counter can ask, in all, as a share of the offer (0.5 = 50%). */
+  maxAsk: number;
+  /** Share of the way from the offer to the counter the next offer moves, on each kind of roll. */
+  moves: { high: number; middle: number; low: number };
+}
+
+/**
  * The rescue buyout: the first time cash runs out, a vulture VC rescues the company instead of the game ending. The
  * second time is liquidation, and the game ends.
  *
@@ -1050,6 +1076,7 @@ export interface GameConfig {
   shares: SharesConfig;
   valuation: ValuationConfig;
   funding: FundingConfig;
+  negotiation: NegotiationConfig;
   rescue: RescueConfig;
   pricing: PricingConfig;
   support: SupportConfig;
@@ -1484,6 +1511,16 @@ export const defaultConfig: GameConfig = {
   funding: {
     friendsAndFamily: { amount: 15_000 },
     grant: { amount: 10_000, days: 60, minUptime: { onprem: 98, iaas: 98.5, paas: 98.5, saas: 99 } },
+  },
+  // A d20: 14 or more (35% with nothing off) moves 80% of the way, 7 or more halfway, and anything lower a tenth. 3 pips
+  // off per 10% asked makes a counter of about 30% pay best on average; asking 50% leaves only the low roll.
+  negotiation: {
+    dieSides: 20,
+    highFrom: 14,
+    middleFrom: 7,
+    greedPenalty: 30,
+    maxAsk: 0.5,
+    moves: { high: 0.8, middle: 0.5, low: 0.1 },
   },
   // Placeholders from the design: about 30 days of breathing space for about 75% of the company. Buying it back costs
   // at least twice what the vulture VC put in.

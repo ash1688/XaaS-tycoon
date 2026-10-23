@@ -26,6 +26,7 @@ import type {
   RescueView,
   MigrationPhase,
   MigrationQuote,
+  CounterOdds,
   MigrationView,
   ModelComparison,
   PauseReason,
@@ -413,6 +414,13 @@ export type MigrationQuoteView = MigrationQuote;
  * Changes nothing.
  */
 export type PricePreviewView = PricePreview;
+
+/**
+ * GET .../counter-odds?funder=&amount=&share=&days=: what countering a funder's open offer with those terms would do,
+ * before it's made: how far it asks, the odds of a high, middle or low roll, and the next offer each would bring.
+ * Changes nothing. Refused as the counter would be.
+ */
+export type CounterOddsView = CounterOdds;
 
 /**
  * GET .../summary: how the company did. Final cash, users and uptime, spend by category, migrations, and spend and

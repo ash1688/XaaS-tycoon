@@ -351,7 +351,7 @@ describe("shares and funding", () => {
   it("shows the valuation, cap table and open offers, and the commands to answer them", () => {
     const state = start();
     expect(renderStatus(sim, state)).toMatch(/valuation £[\d,]+ \| share price £[\d.]+ \| you 100% of 10,000 shares/);
-    expect(renderStatus(sim, state)).toMatch(/funding: friends and family offer £15,000 for [\d.]+% \| grant offer £10,000/);
+    expect(renderStatus(sim, state)).toMatch(/funding: friends and family offer 1 of 3, 2 counters left £15,000 for [\d.]+% \| grant offer 1 of 3, 2 counters left £10,000/);
     expect(renderCommands(sim, state)).toMatch(/accept <ff\|grant> \| decline <ff\|grant>/);
     const valuation = run(state, "valuation");
     expect(valuation.state).toBe(state);
@@ -369,6 +369,39 @@ describe("shares and funding", () => {
     expect(renderCommands(sim, turn.state)).toMatch(/accept <grant> \| decline <grant>/);
     const again = run(turn.state, "accept ff");
     expect(again.lines[0]).toMatch(/refused: .*only be taken once/);
+  });
+
+  it("reads counters and odds: a share as a percent, terms in any order", () => {
+    expect(parseCommand("counter ff amount 18000 share 18")).toEqual({
+      kind: "action",
+      action: { type: "counterFunding", funder: "friendsAndFamily", terms: { amount: 18_000, share: 0.18 } },
+      times: 1,
+    });
+    expect(parseCommand("counter grant days 45 amount £11,000")).toMatchObject({
+      action: { type: "counterFunding", funder: "grant", terms: { days: 45, amount: 11_000 } },
+    });
+    expect(parseCommand("odds ff share 20%")).toEqual({ kind: "odds", funder: "friendsAndFamily", terms: { share: 0.2 } });
+    expect(() => parseCommand("counter ff price 5")).toThrow(/Expected a term/);
+    expect(() => parseCommand("counter ff amount")).toThrow(/the amount as a number/);
+  });
+
+  it("negotiates: shows the odds, then each roll and the offer that stands, to the final offer", () => {
+    const state = start();
+    expect(renderCommands(sim, state)).toMatch(/counter ff \[amount <£>\] \[share <%>\]/);
+    const odds = run(state, "odds ff amount 18000");
+    expect(odds.state).toBe(state);
+    expect(odds.lines.join("\n")).toMatch(/asks 20% better \(most 50%\): −6 on the roll\n  high 5% → £17,400 .*\n  middle 35% → £16,500 .*\n  low 60% → £15,300/);
+    let turn = run(state, "counter ff amount 18000");
+    expect(turn.rows[0]).toMatchObject({ type: "counterFunding", ok: true, params: { funder: "friendsAndFamily", terms: { amount: 18_000 } } });
+    expect(turn.lines[0]).toMatch(/^counter £18,000 for [\d.]+%: rolled \d+ −6 for asking 20% = −?\d+: (high|middle|low), they moved \d+% of the way\. Offer 2: .*\(1 counter left\)/);
+    expect(renderStatus(sim, turn.state)).toMatch(/friends and family offer 2 of 3, 1 counter left/);
+    expect(run(turn.state, "funding").lines.join("\n")).toMatch(/offer 1 £15,000 .*; you asked £18,000 .*, rolled .* → offer 2 /);
+    turn = run(turn.state, "counter ff share 20");
+    expect(turn.lines[0]).toMatch(/Offer 3: .* \(final: accept or decline\)/);
+    expect(renderStatus(sim, turn.state)).toMatch(/friends and family final offer/);
+    expect(renderCommands(sim, turn.state)).not.toMatch(/counter ff/);
+    expect(renderCommands(sim, turn.state)).toMatch(/odds <grant>/);
+    expect(run(turn.state, "counter ff amount 20000").lines[0]).toMatch(/refused: This is the final offer/);
   });
 
   it("stops time when the grant's condition ends", () => {

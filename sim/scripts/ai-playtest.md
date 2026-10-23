@@ -56,7 +56,12 @@ npm run -s play -- summary <game>
   customer mix, each type's price threshold, and `!` where your price is over it.
 - `valuation` shows what your company is worth, what's pushing it up or down, and who owns it. `funding` shows the
   friends and family and grant offers in full; `accept ff`, `accept grant`, `decline ff` and `decline grant` answer
-  them, once each.
+  them, once each. Either can be negotiated first: `counter ff amount 18000 share 18` asks friends and family for more
+  cash and/or a smaller share (a percent), and `counter grant amount 11000 days 45` asks the grant for more cash and/or
+  fewer days of its condition. A dice roll sets their next offer: a high roll moves most of the way to your counter, a
+  middle one halfway, a low one barely. You can counter twice; the third offer is final. The more you ask, the worse
+  the odds, and a counter can ask at most 50% better terms in all. They never walk away: the latest offer stands until
+  you accept or decline it. `odds ff ...` (same terms as `counter`) shows the odds and what each roll would bring.
 - The first time cash runs out, a **vulture VC rescues** the company: it puts in cash for the losses plus about 30
   days, takes most of the company in new shares, and forces cost cuts (staff let go, hires cancelled). Time stops
   when it happens. `rescue` shows the terms in full; `buyback` buys all its shares back from company cash, at the

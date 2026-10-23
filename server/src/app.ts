@@ -53,6 +53,7 @@ import {
   type GameState,
   type Loan,
   type Sim,
+  type FunderId,
   type Spend,
   type StaffPool,
 } from "@xaas/sim";
@@ -63,6 +64,7 @@ import { FailureLimiter } from "./rateLimit.ts";
 import { endTeacherSession, isTeacher, passwordMatches, startTeacherSession } from "./teacherAuth.ts";
 import type {
   ActionBody,
+  CounterOddsView,
   ApiError,
   CodeView,
   CompanyStatus,
@@ -180,6 +182,13 @@ export function timedFlowView({ enabled, seconds }: TimedFlowOptions, presetAllo
 }
 
 const CODE_PATTERN = /^\d{8}$/;
+
+/** A counter's terms: cash, a share of the company (0 to 1) and a condition's days. Which a funder has is the sim's. */
+const COUNTER_TERMS = {
+  amount: { type: "number", minimum: 0 },
+  share: { type: "number", exclusiveMinimum: 0, exclusiveMaximum: 1 },
+  days: { type: "integer", minimum: 1 },
+} as const;
 
 /** The built-in preset: the base config. Read-only, and not a row, so it always exists. */
 export const DEFAULT_PRESET = "Default";
@@ -662,6 +671,31 @@ export async function buildApp(opts: AppOptions) {
     },
   );
 
+  // What a counter to a funder's offer would do, for the negotiation modal's live odds. Changes nothing.
+  app.get<{
+    Params: { code: string; id: string };
+    Querystring: { funder: FunderId; amount?: number; share?: number; days?: number };
+  }>(
+    "/api/codes/:code/companies/:id/counter-odds",
+    {
+      schema: {
+        querystring: {
+          type: "object",
+          required: ["funder"],
+          // The sim checks the terms are the funder's, and how far they ask.
+          properties: { funder: { enum: [...FUNDER_IDS] }, ...COUNTER_TERMS },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (req, reply) => {
+      const row = await findCompany(req.params.code, req.params.id);
+      if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      const { funder, ...terms } = req.query;
+      return simOf(row).counterOdds(row.state, funder, terms) satisfies CounterOddsView;
+    },
+  );
+
   // How the company did: shown when the game ends, and available any time as a summary so far.
   app.get<{ Params: { code: string; id: string } }>("/api/codes/:code/companies/:id/summary", async (req, reply) => {
     const row = await findCompany(req.params.code, req.params.id);
@@ -705,6 +739,7 @@ export async function buildApp(opts: AppOptions) {
                 "takeLoan",
                 "acceptFunding",
                 "declineFunding",
+                "counterFunding",
                 "buyBack",
                 "buyApi",
                 "switchServer",
@@ -742,8 +777,10 @@ export async function buildApp(opts: AppOptions) {
             count: { type: "integer", minimum: 0, maximum: 999 },
             // setManagedService: a managed service on PaaS and its size, or null to turn the cache off.
             service: { enum: [...MANAGED_SERVICES] },
-            // acceptFunding and declineFunding: friends and family or the grant.
+            // acceptFunding, declineFunding and counterFunding: friends and family or the grant.
             funder: { enum: [...FUNDER_IDS] },
+            // counterFunding: the terms asked for. The sim checks they're the funder's and how far they ask.
+            terms: { type: "object", properties: COUNTER_TERMS, additionalProperties: false },
           },
           allOf: [
             { if: { properties: { type: { enum: ["hire", "letGo"] } } }, then: { required: ["pool"] } },
@@ -756,6 +793,7 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { const: "buyRack" } } }, then: { required: ["size"] } },
             { if: { properties: { type: { const: "setInstances" } } }, then: { required: ["count"] } },
             { if: { properties: { type: { enum: ["acceptFunding", "declineFunding"] } } }, then: { required: ["funder"] } },
+            { if: { properties: { type: { const: "counterFunding" } } }, then: { required: ["funder", "terms"] } },
             { if: { properties: { type: { enum: ["hire", "letGo", "setInstances"] } } }, then: { properties: { count: { type: "integer", minimum: 1 } } } },
             { if: { properties: { type: { const: "setApiInstances" } } }, then: { required: ["count"] } },
             { if: { properties: { type: { const: "switchServer" } } }, then: { required: ["id", "gives"] } },

@@ -1,3 +1,4 @@
+import type { Negotiation, Terms } from "./negotiation.ts";
 import {
   DIFFICULTY_IDS,
   GAME_LENGTH_IDS,
@@ -29,7 +30,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 33;
+export const GAME_STATE_VERSION = 34;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -176,6 +177,11 @@ export interface GrantFunding {
 export interface Funding {
   friendsAndFamily: FriendsAndFamilyFunding | null;
   grant: GrantFunding | null;
+  /**
+   * Each funder's offer once the student has countered it: its offers so far and the rolls between them. Null until
+   * then, while the offer is the fixed one, and again once it's answered.
+   */
+  negotiating: Record<FunderId, Negotiation | null>;
 }
 
 /** People of one grade let go from one team in a rescue buyout's cost cuts. */
@@ -463,6 +469,8 @@ export interface GameState {
   dangerRisks: DangerRisk[];
   /** Its own seeded RNG, so rolling encounters doesn't change the day-to-day randomness of load and growth. */
   encounterRng: number;
+  /** The same for negotiation rolls: one a counter. */
+  negotiationRng: number;
   /** Scripted events that were on during the day just played. */
   events: EventRecord[];
   /**
@@ -556,6 +564,11 @@ export type Action =
   | { type: "declineFunding"; funder: FunderId }
   /** Buys all the vulture VC's shares back after a rescue buyout, at its price, at once. Refused without the cash. */
   | { type: "buyBack" }
+  /**
+   * Counters a funder's offer: friends and family's on `amount` and `share` (theirs after, 0–1), the grant's on
+   * `amount` and `days`. A term left out stays as offered. A roll sets the next offer; the third is final.
+   */
+  | { type: "counterFunding"; funder: FunderId; terms: Partial<Terms> }
   /**
    * Pays off the loan being repaid, at once, with what's left of the money borrowed: the interest still to come is
    * saved. Refused without enough cash.

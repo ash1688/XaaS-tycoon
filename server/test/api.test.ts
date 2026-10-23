@@ -7,6 +7,7 @@ import type {
   ActionBody,
   CompanyView,
   ConfigErrorView,
+  CounterOddsView,
   ContinueResult,
   MetaView,
   MigrationQuoteView,
@@ -1632,6 +1633,54 @@ describe("shares and funding", () => {
     expect(after.cash).toBe(company.cash + sim.config.funding.grant.amount);
     expect(after.capTable.rows).toHaveLength(1);
     expect(after.funding.grant).toMatchObject({ status: "accepted", day: 1, hoursDown: 0, daysLeft: sim.config.funding.grant.days });
+  });
+
+  it("negotiates an offer: odds first, then counters, the offer that stands accepted", async () => {
+    const { company, act, url } = await setup();
+    const opening = company.funding.negotiations.friendsAndFamily!;
+    expect(opening).toMatchObject({ countersLeft: 2, final: false, rounds: [] });
+    const amount = opening.offers[0]!.amount! * 1.2;
+    const odds = await app.inject({ method: "GET", url: `${url}/counter-odds?funder=friendsAndFamily&amount=${amount}` });
+    expect(odds.statusCode).toBe(200);
+    expect(odds.json<CounterOddsView>()).toMatchObject({ ask: expect.closeTo(0.2), penalty: 6, chances: { high: expect.closeTo(0.05) } });
+    const greedy = await app.inject({ method: "GET", url: `${url}/counter-odds?funder=friendsAndFamily&amount=${amount * 2}` });
+    expect(greedy.json()).toMatchObject({ error: "counter_too_far" });
+
+    const first = (await act({ type: "counterFunding", funder: "friendsAndFamily", terms: { amount } })).json<CompanyView>();
+    const talks = first.funding.negotiations.friendsAndFamily!;
+    expect(talks.offers).toHaveLength(2);
+    expect(talks.rounds[0]).toMatchObject({ ask: expect.closeTo(0.2), penalty: 6 });
+    expect(first.funding.friendsAndFamilyOffer!.amount).toBe(talks.offers[1]!.amount);
+    // The game's own randomness is untouched, so the cash and the day are as they were.
+    expect(first.cash).toBe(company.cash);
+
+    const share = talks.offers[1]!.share! * 0.9;
+    const second = (await act({ type: "counterFunding", funder: "friendsAndFamily", terms: { share } })).json<CompanyView>();
+    expect(second.funding.negotiations.friendsAndFamily).toMatchObject({ final: true, countersLeft: 0 });
+    const third = await act({ type: "counterFunding", funder: "friendsAndFamily", terms: { share: share * 0.9 } });
+    expect(third.statusCode).toBe(400);
+    expect(third.json()).toMatchObject({ error: "final_offer" });
+
+    const standing = second.funding.friendsAndFamilyOffer!;
+    const accepted = (await act({ type: "acceptFunding", funder: "friendsAndFamily" })).json<CompanyView>();
+    expect(accepted.cash).toBe(company.cash + standing.amount);
+    expect(accepted.capTable.rows[1]).toMatchObject({ id: "friendsAndFamily", shares: standing.newShares });
+    expect(accepted.funding.negotiations.friendsAndFamily).toBeNull();
+  });
+
+  it("negotiates the grant on its cash and days, and validates counters", async () => {
+    const { act } = await setup();
+    const res = await act({ type: "counterFunding", funder: "grant", terms: { days: 45 } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json<CompanyView>().funding.grantOffer!.days).toBeLessThan(sim.config.funding.grant.days);
+    expect((await act({ type: "counterFunding", funder: "grant" })).statusCode).toBe(400);
+    expect((await act({ type: "counterFunding", funder: "grant", terms: { price: 5 } })).statusCode).toBe(400);
+    expect((await act({ type: "counterFunding", funder: "grant", terms: { days: 2.5 } })).statusCode).toBe(400);
+    const wrong = await act({ type: "counterFunding", funder: "grant", terms: { share: 0.1 } });
+    expect(wrong.statusCode).toBe(400);
+    expect(wrong.json()).toMatchObject({ error: "bad_counter" });
+    const worse = await act({ type: "counterFunding", funder: "grant", terms: { days: 90 } });
+    expect(worse.json()).toMatchObject({ error: "worse_counter" });
   });
 
   it("validates the funder", async () => {

@@ -3,6 +3,14 @@ import type { Conversion } from "./conversion.ts";
 import { count, pounds, type Finance } from "./finance.ts";
 import { loanOwed } from "./loan.ts";
 import {
+  createNegotiation,
+  type CounterOdds,
+  type Negotiation,
+  type NegotiationRound,
+  type TermSpec,
+  type Terms,
+} from "./negotiation.ts";
+import {
   isFunderId,
   SimError,
   type FriendsAndFamilyFunding,
@@ -75,9 +83,13 @@ export interface CapTableView {
   rows: CapTableRow[];
 }
 
-/** What accepting friends and family's offer now would do: worked out at today's share price. */
+/**
+ * What accepting friends and family's offer now would do: worked out at today's share price, or once it's been
+ * countered, at the price the offer that stands puts on a share.
+ */
 export interface FriendsAndFamilyOffer {
   amount: number;
+  /** The valuation the shares are priced at: today's, or what the negotiated cash and share make it. */
   valuation: number;
   sharePrice: number;
   /** New shares they'd get: amount ÷ share price, to the whole share. */
@@ -121,6 +133,23 @@ export interface GrantView extends GrantFunding {
   hoursLeft: number;
 }
 
+/**
+ * An open offer's negotiation: the offers so far (just the opening one, today's fixed offer, until the student
+ * counters), the rolls between them, and how many counters are left. The last offer stands until it's answered.
+ */
+export interface NegotiationView {
+  offers: Terms[];
+  rounds: NegotiationRound[];
+  countersLeft: number;
+  /** Offer 3 is final: take it or leave it. */
+  final: boolean;
+  /** The terms it's negotiated on, and the most a counter can ask in all (0.5 = 50%). */
+  terms: TermSpec[];
+  maxAsk: number;
+  /** Pips the roll gets on top, from a CFO and the like: 0 for now. */
+  bonus: number;
+}
+
 /** Friends and family and the grant: each one's open offer, or how it was answered. */
 export interface FundingView {
   /** Friends and family's offer, while it's open; null once answered. */
@@ -129,7 +158,21 @@ export interface FundingView {
   /** The grant's offer, while it's open; null once answered. */
   grantOffer: GrantOffer | null;
   grant: GrantView | null;
+  /** Each open offer's negotiation; null once it's answered. */
+  negotiations: Record<FunderId, NegotiationView | null>;
 }
+
+/** What friends and family's offer is negotiated on: their cash, and their share of the company after (0–1). */
+const FF_TERMS: TermSpec[] = [
+  { key: "amount", label: "the cash", better: "higher", step: 100 },
+  { key: "share", label: "their share", better: "lower", step: 0.001, min: 0.001 },
+];
+/** And the grant's: its cash, and the days its uptime condition runs. */
+const GRANT_TERMS: TermSpec[] = [
+  { key: "amount", label: "the cash", better: "higher", step: 100 },
+  { key: "days", label: "the condition's days", better: "lower", step: 1, min: 1 },
+];
+const TERMS: Record<FunderId, TermSpec[]> = { friendsAndFamily: FF_TERMS, grant: GRANT_TERMS };
 
 const DAYS_PER_YEAR = 365;
 const HOURS_PER_DAY = 24;
@@ -151,6 +194,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
   const v = config.valuation;
   const f = config.funding;
   const uptimeDays = Math.max(1, config.conversion.uptimeDays);
+  const negotiator = createNegotiation(config.negotiation);
 
   /** A new company's cap table: every share the student's. Refuses a count outside the configured range. */
   function startingShares(shares = config.shares.default): { shareholders: Shareholder[]; funding: Funding } {
@@ -162,7 +206,10 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
         { min, max },
       );
     }
-    return { shareholders: [{ id: "student", shares, day: 1 }], funding: { friendsAndFamily: null, grant: null } };
+    return {
+      shareholders: [{ id: "student", shares, day: 1 }],
+      funding: { friendsAndFamily: null, grant: null, negotiating: { friendsAndFamily: null, grant: null } },
+    };
   }
 
   const sharesInIssue = (state: GameState) => state.shareholders.reduce((sum, h) => sum + h.shares, 0);
@@ -347,10 +394,22 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
 
   function friendsAndFamilyOffer(state: GameState): FriendsAndFamilyOffer | null {
     if (state.funding.friendsAndFamily) return null;
-    const { valuation: value, sharesInIssue: shares, sharePrice } = valuation(state);
-    const amount = f.friendsAndFamily.amount;
-    // New shares at the share price: their share of the company after is amount ÷ (valuation + amount).
-    const newShares = Math.round((amount * shares) / value);
+    const shares = sharesInIssue(state);
+    const negotiating = state.funding.negotiating.friendsAndFamily;
+    let amount: number, newShares: number, value: number, sharePrice: number;
+    if (negotiating) {
+      // The share they'd own after is what's been negotiated, so the new shares are share ÷ (1 − share) of those now.
+      const terms = negotiator.latest(negotiating);
+      amount = terms.amount!;
+      newShares = Math.max(1, Math.round((terms.share! * shares) / (1 - terms.share!)));
+      sharePrice = amount / newShares;
+      value = Math.round(sharePrice * shares);
+    } else {
+      ({ valuation: value, sharePrice } = valuation(state));
+      amount = f.friendsAndFamily.amount;
+      // New shares at the share price: their share of the company after is amount ÷ (valuation + amount).
+      newShares = Math.round((amount * shares) / value);
+    }
     const sharesAfter = shares + newShares;
     const yours = state.shareholders.find((h) => h.id === "student")?.shares ?? 0;
     return {
@@ -378,7 +437,8 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
 
   function grantOffer(state: GameState): GrantOffer | null {
     if (state.funding.grant) return null;
-    const { amount, days } = f.grant;
+    const negotiating = state.funding.negotiating.grant;
+    const { amount, days } = negotiating ? (negotiator.latest(negotiating) as { amount: number; days: number }) : f.grant;
     const minUptime = f.grant.minUptime[state.model];
     const maxHoursDown = round1(((100 - minUptime) / 100) * HOURS_PER_DAY * days);
     const window = grantDays(state, state.day, days);
@@ -411,14 +471,87 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
     };
   }
 
+  /** The terms an open offer stands at, as negotiation sees them. */
+  function openTerms(state: GameState, funder: FunderId): Terms {
+    if (funder === "friendsAndFamily") {
+      const offer = friendsAndFamilyOffer(state)!;
+      return { amount: offer.amount, share: offer.theirShare };
+    }
+    const offer = grantOffer(state)!;
+    return { amount: offer.amount, days: offer.days };
+  }
+
+  /** The negotiation an open offer is in: its rounds so far, or just the opening offer if it hasn't been countered. */
+  const negotiationOf = (state: GameState, funder: FunderId): Negotiation =>
+    state.funding.negotiating[funder] ?? negotiator.open(openTerms(state, funder));
+
+  /** Pips on top of every negotiation roll. None yet: a CFO will add some. */
+  const rollBonus = (_state: GameState) => 0;
+
+  function negotiationView(state: GameState, funder: FunderId): NegotiationView | null {
+    if (state.funding[funder]) return null;
+    const n = negotiationOf(state, funder);
+    return {
+      offers: n.offers,
+      rounds: n.rounds,
+      countersLeft: negotiator.countersLeft(n),
+      final: negotiator.isFinal(n),
+      terms: TERMS[funder],
+      maxAsk: config.negotiation.maxAsk,
+      bonus: rollBonus(state),
+    };
+  }
+
   function funding(state: GameState): FundingView {
     return {
       friendsAndFamilyOffer: friendsAndFamilyOffer(state),
       friendsAndFamily: state.funding.friendsAndFamily,
       grantOffer: grantOffer(state),
       grant: grantView(state),
+      negotiations: {
+        friendsAndFamily: negotiationView(state, "friendsAndFamily"),
+        grant: negotiationView(state, "grant"),
+      },
     };
   }
+
+  /** Only the funder's own terms can be countered: friends and family's cash and share, the grant's cash and days. */
+  function checkTerms(funder: FunderId, terms: Partial<Terms>) {
+    const known = TERMS[funder].map((t) => t.key);
+    if (typeof terms !== "object" || terms === null || Object.keys(terms).some((k) => !known.includes(k))) {
+      throw new SimError("bad_counter", `${FUNDER_NAMES[funder]}'s offer is negotiated on ${known.join(" and ")}.`);
+    }
+  }
+
+  /** What countering a funder's offer with `terms` would do: the odds on the roll, and the offer each roll brings. */
+  function counterOdds(state: GameState, funder: string, terms: Partial<Terms>): CounterOdds {
+    checkOpen(state, funder);
+    checkTerms(funder, terms);
+    return negotiator.odds(negotiationOf(state, funder), terms, TERMS[funder], rollBonus(state));
+  }
+
+  /**
+   * Counters a funder's open offer between days: a roll on the negotiation RNG sets their next offer, which stands
+   * until it's answered. Two counters at most; the third offer is final.
+   */
+  function counterFunding(state: GameState, funder: string, terms: Partial<Terms>): GameState {
+    checkOpen(state, funder);
+    checkTerms(funder, terms);
+    const n = negotiationOf(state, funder);
+    const done = negotiator.counter(n, terms, TERMS[funder], state.negotiationRng, rollBonus(state));
+    return {
+      ...state,
+      negotiationRng: done.rng,
+      funding: { ...state.funding, negotiating: { ...state.funding.negotiating, [funder]: done.negotiation } },
+    };
+  }
+
+  /** The funding once a funder is answered: its negotiation is over. */
+  const answered = (state: GameState, funder: FunderId, funding: Partial<Funding>): Funding => ({
+    ...state.funding,
+    ...funding,
+    negotiating: { ...state.funding.negotiating, [funder]: null },
+  });
 
   function checkOpen(state: GameState, funder: string): asserts funder is FunderId {
     if (!isFunderId(funder)) throw new SimError("unknown_funder", "Pick friends and family or the grant.");
@@ -444,8 +577,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
       return {
         ...finance.chargeNow(state, [entry]),
         shareholders: [...state.shareholders, { id: "friendsAndFamily", shares: offer.newShares, day: state.day }],
-        funding: {
-          ...state.funding,
+        funding: answered(state, funder, {
           friendsAndFamily: {
             status: "accepted",
             day: state.day,
@@ -453,7 +585,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
             shares: offer.newShares,
             valuation: offer.valuation,
           },
-        },
+        }),
       };
     }
     const offer = grantOffer(state)!;
@@ -464,8 +596,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
     };
     return {
       ...finance.chargeNow(state, [entry]),
-      funding: {
-        ...state.funding,
+      funding: answered(state, funder, {
         grant: {
           status: "accepted",
           day: state.day,
@@ -475,7 +606,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
           maxHoursDown: offer.maxHoursDown,
           hoursDown: 0,
         },
-      },
+      }),
     };
   }
 
@@ -490,7 +621,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
             const { amount, days, minUptime, maxHoursDown } = offer;
             return { status: "declined" as const, day: state.day, amount, days, minUptime, maxHoursDown, hoursDown: 0 };
           })();
-    return { ...state, funding: { ...state.funding, [funder]: declined } };
+    return { ...state, funding: answered(state, funder, { [funder]: declined }) };
   }
 
   /**
@@ -539,6 +670,8 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
     funding,
     acceptFunding,
     declineFunding,
+    counterFunding,
+    counterOdds,
     grantDay,
   };
 }
