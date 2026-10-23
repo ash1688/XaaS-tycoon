@@ -21,6 +21,7 @@ import type {
   LoanView,
   ManagedView,
   RacksView,
+  RescueView,
   MigrationPhase,
   MigrationQuote,
   MigrationView,
@@ -137,10 +138,11 @@ export interface MetaView {
 
 /**
  * Where a game is. Only "active" games are still being played and count towards the code's limit; the others are its
- * history. "retired" is a game the student stopped playing, "bankrupt" one that ran out of cash, and "finished" one
+ * history. "retired" is a game the student stopped playing, "liquidated" one that ran out of cash a second time, after
+ * a rescue buyout, and "finished" one
  * that played the final day. All of them can still be viewed, with their summary.
  */
-export type CompanyStatus = "active" | "retired" | "bankrupt" | "finished";
+export type CompanyStatus = "active" | "retired" | "liquidated" | "finished";
 
 export interface CompanyView {
   id: string;
@@ -159,8 +161,8 @@ export interface CompanyView {
   endedByTeacher: boolean;
   cash: number;
   /**
-   * "active" while playing. Once the game is over it rejects Continue and actions, and shows its summary: "bankrupt"
-   * if cash went below zero, "finished" if it played the final day, or "retired" if the student retired it.
+   * "active" while playing. Once the game is over it rejects Continue and actions, and shows its summary:
+   * "liquidated" if cash went below zero a second time, after a rescue buyout, "finished" if it played the final day, or "retired" if the student retired it.
    */
   status: CompanyStatus;
   /** People on each team, every grade. Hires still to start aren't counted. */
@@ -318,6 +320,11 @@ export interface CompanyView {
    * answered and, for an accepted grant, how its uptime condition stands.
    */
   funding: FundingView;
+  /**
+   * The rescue buyout once cash has run out once: what the vulture VC put in, the shares it took and the forced cost
+   * cuts, with its stake now and its price to sell it back. Null before.
+   */
+  rescue: RescueView | null;
   /** The product's features, with each one's status (built, building or a SaaS add-on) and build progress. */
   features: FeatureView[];
   /**
@@ -369,7 +376,8 @@ export type PricePreviewView = PricePreview;
 
 /**
  * GET .../summary: how the company did. Final cash, users and uptime, spend by category, migrations, and spend and
- * cash for each day played. ending is "completed" or "bankrupt", or null for a game still being played.
+ * cash for each day played. ending is "completed", "liquidation" or "ended", or null for a game still being played. rescue is the
+ * rescue buyout, if there was one.
  */
 export type SummaryView = GameSummary;
 

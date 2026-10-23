@@ -130,6 +130,13 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   for (const m of MODEL_IDS) {
     add(`funding.grant.minUptime.${m}`, "Money", "Grant", `Uptime needed (${MODEL_LABELS[m]})`, "Uptime % a company on this model must keep over those days, or the grant is withdrawn and paid back.", range(0, 100, 0.1));
   }
+  add("rescue.breathingDays", "Money", "Rescue buyout", "Breathing space", "Days of losses the vulture VC's cash covers after the cost cuts, on top of what took cash below £0.", GAME_DAY);
+  add("rescue.minCover", "Money", "Rescue buyout", "Least cover a day", "The breathing space counts at least this share of a day's running costs, even if the company is losing less.", SHARE);
+  add("rescue.share", "Money", "Rescue buyout", "Share taken", "The vulture VC's share of the company once its new shares are issued (0.75 = 75%).", range(0.01, 0.99, 0.01));
+  add("rescue.staffCut", "Money", "Rescue buyout", "Staff cut", "Share of each team let go in the forced cost cuts, rounded up, the dearest grades first. Ops are kept to what the servers need.", SHARE);
+  add("rescue.buyBackPremium", "Money", "Rescue buyout", "Buy-back premium", "To sell its shares back, the vulture VC asks this many times its share of today's valuation, leaving out the company's cash.", MULTIPLIER);
+  add("rescue.minReturn", "Money", "Rescue buyout", "Least buy-back price", "The vulture VC never sells its shares back for less than this many times the cash it put in.", MULTIPLIER);
+
   add("billing.daysPerMonth", "Money", "", "Days in a billing month", "Monthly costs are charged a day at a time: the monthly cost ÷ this.", range(28, 31, 1));
   for (const m of MODEL_IDS) {
     const s = MODEL_LABELS[m];

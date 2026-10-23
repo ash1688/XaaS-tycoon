@@ -258,6 +258,8 @@ export function renderStatus(sim: Sim, state: GameState): string {
     `valuation ${money(valuation.valuation)} | share price ${perShare(valuation.sharePrice)} | ${table.rows.map((r) => `${r.name.toLowerCase()} ${stake(r.share)}`).join(", ")} of ${table.sharesInIssue.toLocaleString("en-GB")} shares`,
   );
   lines.push(`funding: ${fundingStatus(sim, state)}`);
+  const rescue = rescueStatus(sim, state);
+  if (rescue) lines.push(`rescue: ${rescue}`);
   const migration = sim.migration(state);
   if (migration) lines.push(`migration: ${migration.from}→${migration.to}, ${migration.phase}, ${migration.daysLeft} days left`);
   const danger = sim.danger(state);
@@ -286,6 +288,35 @@ function fundingStatus(sim: Sim, state: GameState): string {
         : `${g!.hoursDown}h of ${g!.maxHoursDown}h down allowed used, ${state.day < g!.fromDay! ? `starting day ${g!.fromDay}, ` : ""}${g!.daysLeft} days left`
       : g!.status;
   return `friends and family ${ff} | grant ${grant}`;
+}
+
+/** The rescue buyout in a line, once it has happened: what the vulture VC put in and took, and its buy-back price. */
+function rescueStatus(sim: Sim, state: GameState): string | null {
+  const r = sim.rescue(state);
+  if (!r) return null;
+  const terms = `day ${r.day}, a vulture VC put in ${money(r.amount)} for ${stake(r.share)}`;
+  if (r.boughtBack) return `${terms}; you bought it back on day ${r.boughtBack.day} for ${money(r.boughtBack.price)}`;
+  if (r.buyBackPrice === null) return `${terms}; it owns ${stake(r.vultureShare)}`;
+  return `${terms}; it owns ${stake(r.vultureShare)} and sells it back for ${money(r.buyBackPrice)}${r.canBuyBack ? "" : " (more than your cash)"}. Run out of cash again and it's liquidation`;
+}
+
+/** The rescue buyout in full: the cash, the share taken, the cuts, and the buy-back. */
+function rescueLines(sim: Sim, state: GameState): string[] {
+  const r = sim.rescue(state);
+  if (!r) return ["no rescue yet: the first time cash runs out, a vulture VC rescues the company; the second time is liquidation"];
+  const cuts = [
+    ...r.cuts.map((c) => `${c.count} ${c.grade} ${c.pool}`),
+    ...(r.hiresCancelled ? [`${r.hiresCancelled} hires cancelled`] : []),
+  ];
+  return [
+    `rescue on day ${r.day}: a vulture VC put in ${money(r.amount)} (${money(r.losses)} of losses, the rest breathing space) for ${r.shares.toLocaleString("en-GB")} new shares, ${stake(r.share)} of the company`,
+    `forced cuts: ${cuts.length ? cuts.join(", ") : "none"}${r.savedPerDay ? `, saving ${money(r.savedPerDay)}/day` : ""}`,
+    r.boughtBack
+      ? `bought back on day ${r.boughtBack.day} for ${money(r.boughtBack.price)}`
+      : r.buyBackPrice === null
+        ? `the vulture VC owns ${stake(r.vultureShare)}`
+        : `buy-back (buyback): ${money(r.buyBackPrice)} for its ${r.vultureShares.toLocaleString("en-GB")} shares (${stake(r.vultureShare)}), paid from company cash: ${r.priceDetail}. ${r.canBuyBack ? "You can afford it." : `You have ${money(state.cash)}.`}`,
+  ];
 }
 
 /**
@@ -390,6 +421,11 @@ export function renderCommands(sim: Sim, state: GameState): string {
     lines.push(`  funding   (each open offer in full: what friends and family get, the grant's condition; changes nothing)`);
     lines.push(`  accept <${open}> | decline <${open}>   (each can be answered once; ff = friends and family)`);
   }
+  const rescue = sim.rescue(state);
+  if (rescue) lines.push(`  rescue   (the rescue buyout in full: cash, share taken, cuts, the buy-back price; changes nothing)`);
+  if (rescue?.buyBackPrice) {
+    lines.push(`  buyback   (buy all the vulture VC's shares back from company cash: ${money(rescue.buyBackPrice)}${rescue.canBuyBack ? "" : ", more than your cash"})`);
+  }
   const loan = sim.loan(state);
   if (loan?.remaining) lines.push(`  repayloan   (pay off the loan now: ${money(loan.payoff)}, saving ${money(loan.interestSaved)} interest)`);
   lines.push(`  next [days]   (advance up to that many days, default 7; stops early when something needs you)`);
@@ -404,6 +440,7 @@ export type Command =
   | { kind: "quote"; model: string }
   | { kind: "valuation" }
   | { kind: "funding" }
+  | { kind: "rescue" }
   | { kind: "next"; days: number }
   /** The teacher ends the game, as from the staff panel. */
   | { kind: "end" };
@@ -510,6 +547,10 @@ export function parseCommand(text: string): Command {
       return one({ type: "setApiInstances", count: number(args[0], "an API instance count") });
     case "repayloan":
       return one({ type: "repayLoan" });
+    case "rescue":
+      return { kind: "rescue" };
+    case "buyback":
+      return one({ type: "buyBack" });
     case "next":
       return { kind: "next", days: args[0] === undefined ? 7 : count(args[0]) };
     case "end":
@@ -565,6 +606,7 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
   }
   if (command.kind === "valuation") return { state, rows: [], lines: valuationLines(sim, state) };
   if (command.kind === "funding") return { state, rows: [], lines: fundingLines(sim, state) };
+  if (command.kind === "rescue") return { state, rows: [], lines: rescueLines(sim, state) };
   if (command.kind === "end") {
     const ended = sim.endGame(state);
     // Logged as the classroom server logs a game the teacher ends.
@@ -615,7 +657,7 @@ export function runScript(sim: Sim, state: GameState, script: string, who: Playe
     try {
       const command = parseCommand(text);
       // Once the game is over, only what changes nothing still works: the valuation and who owns the company.
-      if (current.status !== "playing" && command.kind !== "valuation" && command.kind !== "funding") {
+      if (current.status !== "playing" && !["valuation", "funding", "rescue"].includes(command.kind)) {
         skipped = "the game is over";
         lines.push(`> ${text}`, `not run: ${skipped}`);
         continue;
@@ -684,7 +726,7 @@ function fundingLines(sim: Sim, state: GameState): string[] {
  * Log entry kinds worth showing every day they appear. Feature, migration and API entries show only on days they stop
  * time.
  */
-const SHOWN_KINDS = new Set(["outage", "event", "bankrupt", "finished", "support", "price", "launch", "staff", "funding", "danger"]);
+const SHOWN_KINDS = new Set(["outage", "event", "rescue", "liquidation", "finished", "support", "price", "launch", "staff", "funding", "danger"]);
 const STOPPING_KINDS = new Set(["feature", "migration", "api"]);
 
 const builtCount = (state: GameState) => Object.values(state.features).filter((f) => f.status !== "building").length;
@@ -692,6 +734,7 @@ const builtCount = (state: GameState) => Object.values(state.features).filter((f
 /** Why the day just played needs a decision, if it does: compares the company before and after the day. */
 function stopReasons(sim: Sim, before: GameState, after: GameState): string[] {
   const reasons: string[] = [];
+  if (after.rescue && !before.rescue) reasons.push("cash ran out: rescued by a vulture VC");
   // Only events that need the player stop time: ones that hurt or found the company short of ops. A provider patch
   // with nothing to do is just shown. An event lasting several days stops on its first day only.
   const yesterday = new Set(sim.events(before).map((e) => e.id));

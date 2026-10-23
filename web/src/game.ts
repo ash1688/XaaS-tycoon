@@ -66,11 +66,11 @@ export function createGame(code: string, id: string) {
   // The add-ons left behind by a migration that completed today, shown with the features until the next day.
   const leftBehind = ref<string[]>([]);
 
-  const bankrupt = computed(() => company.value?.status === "bankrupt");
+  const liquidated = computed(() => company.value?.status === "liquidated");
   const finished = computed(() => company.value?.status === "finished");
   const retired = computed(() => company.value?.status === "retired");
-  // Once the game is over, bankrupt, played to the end or retired, it's read-only and Home shows its summary.
-  const over = computed(() => bankrupt.value || finished.value || retired.value);
+  // Once the game is over, liquidated, played to the end or retired, it's read-only and Home shows its summary.
+  const over = computed(() => liquidated.value || finished.value || retired.value);
   const summary = ref<SummaryView>();
 
   // Staff by grade. Needs (ops needed, the configuration team, support to keep up) count work in mids, so a team of
@@ -343,7 +343,7 @@ export function createGame(code: string, id: string) {
     currentModel,
     previousModel,
     leftBehind,
-    bankrupt,
+    liquidated,
     finished,
     retired,
     over,

@@ -175,7 +175,7 @@ const MAX_CACHED_SIMS = 20;
  * SimError codes that are a 409: a game that has ended or that the student retired, or a price still locked after the
  * last change. The request was fine, but the game can't take it now.
  */
-const CONFLICT = new Set(["bankrupt", "finished", "retired", "price_locked"]);
+const CONFLICT = new Set(["liquidated", "finished", "retired", "price_locked"]);
 
 /** The SimError code for a game saved by an older version of the sim, which can't be loaded any more. */
 const OLD_VERSION = "old_version";
@@ -240,7 +240,7 @@ export async function buildApp(opts: AppOptions) {
   }
 
   app.setErrorHandler((err, _req, reply) => {
-    // A bankrupt or finished game is over: the request was fine, but the game can't take it any more. A game from an
+    // A liquidated or finished game is over: the request was fine, but the game can't take it any more. A game from an
     // older version is gone for good: it can't be loaded, so it can't be shown or played.
     if (err instanceof SimError) {
       const status = CONFLICT.has(err.code) ? 409 : err.code === OLD_VERSION ? 410 : 400;
@@ -365,6 +365,7 @@ export async function buildApp(opts: AppOptions) {
       valuation: sim.valuation(state),
       capTable: sim.capTable(state),
       funding: sim.funding(state),
+      rescue: sim.rescue(state),
       features: sim.features(state),
       migration: sim.migration(state),
       migrations: state.migrations,
@@ -382,7 +383,7 @@ export async function buildApp(opts: AppOptions) {
     users: state.users,
     uptime: sim.uptime(state),
     migratingTo: state.migration?.to ?? null,
-    // Denormalised for the dashboard, like cash: "bankrupt" or "finished" once the game is over.
+    // Denormalised for the dashboard, like cash: "liquidated" or "finished" once the game is over.
     ...(state.status !== "playing" && { status: state.status }),
     state,
   });
@@ -499,7 +500,7 @@ export async function buildApp(opts: AppOptions) {
       if (!code) return sendError(reply, 404, "unknown_code", "That code wasn't recognised. Check it with your teacher.");
       const { name, productType, model, takeLoan = false, gameLength, shares } = req.body;
       // Locks the code so two creates at once can't both see room under the limit. Only games still being played
-      // count: finished, bankrupt and retired ones are history. Archiving is only the teacher's view, so it doesn't
+      // count: finished, liquidated and retired ones are history. Archiving is only the teacher's view, so it doesn't
       // change what counts.
       const row = await db.transaction(async (tx) => {
         await tx.select().from(loginCodes).where(eq(loginCodes.code, code.code)).for("update");
@@ -636,6 +637,7 @@ export async function buildApp(opts: AppOptions) {
                 "takeLoan",
                 "acceptFunding",
                 "declineFunding",
+                "buyBack",
                 "buyApi",
                 "switchServer",
                 "setApiInstances",

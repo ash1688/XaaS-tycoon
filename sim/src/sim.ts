@@ -21,6 +21,7 @@ import { createMigration, type MigrationQuote, type MigrationView } from "./migr
 import { isNameAllowed } from "./nameFilter.ts";
 import { createPricing, type CustomerMixView, type PricePreview, type PriceWaveView } from "./pricing.ts";
 import { createRacks, type RacksView } from "./racks.ts";
+import { createRescue, type RescueView } from "./rescue.ts";
 import { seedRng } from "./rng.ts";
 import { createShares, type CapTableView, type FundingView, type ValuationView } from "./shares.ts";
 import { createServers, type ManagedView, type ServerOption, type ServerView, type UnitsView } from "./servers.ts";
@@ -55,6 +56,7 @@ export type { LaunchView } from "./launch.ts";
 export type { LoanQuote, LoanView } from "./loan.ts";
 export type { LostAddon, MigrationQuote, MigrationView, SetupRack } from "./migration.ts";
 export type { RackOption, RackView, RacksView } from "./racks.ts";
+export type { RescueView } from "./rescue.ts";
 export type { CustomerMixView, CustomerTypeView, PricePreview, PriceWaveView, TypeReaction } from "./pricing.ts";
 export { weightedReaction } from "./pricing.ts";
 export type {
@@ -119,10 +121,12 @@ export {
   type PriceChange,
   type PriceWave,
   type Rack,
+  type Rescue,
   type ScheduledEvent,
   type Server,
   type Shareholder,
   type Spend,
+  type StaffCut,
   type UnitDemand,
   type WaveEffect,
 } from "./state.ts";
@@ -278,6 +282,11 @@ export interface Sim {
    */
   funding(state: GameState): FundingView;
   /**
+   * The rescue buyout once cash has run out once: the cash the vulture VC put in, its shares and the cost cuts, with
+   * its stake now and its price to sell it back. Null before.
+   */
+  rescue(state: GameState): RescueView | null;
+  /**
    * Where the company is with its launch: waiting for capacity, its first users due, arriving over the ramp, or
    * launched; the day they started (or will start) arriving, and the launch total.
    */
@@ -324,6 +333,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   const shares = createShares(config, finance, conversion);
   const api = createApi(config, features, finance, infra.apiuOn);
   const encounters = createEncounters(config, servers);
+  const rescue = createRescue(config, finance, shares, (s) => runway(s), (s) => infra.opsNeededNow(s));
 
   function newGame({
     companyName,
@@ -383,6 +393,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       migrations: 0,
       loan: null,
       ...owned,
+      rescue: null,
       pastLoans: [],
       interestPaid: 0,
       schedule,
@@ -393,8 +404,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       featureGaps: [],
       api: null,
     };
-    // The loan arrives with the upfront bill. A model that costs more up front than the company has would bankrupt it
-    // on day 1, so it's refused instead: on-prem needs the loan.
+    // The loan arrives with the upfront bill. A model that costs more up front than the company has would run it out
+    // of cash on day 1, so it's refused instead: on-prem needs the loan.
     const borrowed = takeLoan ? loan.startLoan(state) : { state, entries: [] };
     const upfront = infra.upfrontEntries(model);
     const cost = -upfront.reduce((sum, e) => sum + e.cashDelta, 0);
@@ -433,8 +444,11 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   /** Loads saved state and checks the game is still going. */
   function loadPlaying(saved: GameState): GameState {
     const state = load(saved);
-    if (state.status === "bankrupt") {
-      throw new SimError("bankrupt", `${state.companyName} is bankrupt, so this game is over. Start a new company to play again.`);
+    if (state.status === "liquidated") {
+      throw new SimError(
+        "liquidated",
+        `${state.companyName} has gone into liquidation, so this game is over. Start a new company to play again.`,
+      );
     }
     if (state.status === "finished") {
       const why = state.endedByTeacher
@@ -483,6 +497,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         return shares.acceptFunding(state, action.funder);
       case "declineFunding":
         return shares.declineFunding(state, action.funder);
+      case "buyBack":
+        return rescue.buyBack(state);
       case "buyApi":
         return api.buyApi(state);
       case "switchServer":
@@ -603,7 +619,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     // The migration moves on after the day is played and billed, so a model switch takes effect from tomorrow.
     const migrated = migration.migrationDay(risen);
     entries.push(...migrated.entries);
-    const settled = finance.settle(migrated.state, day, entries);
+    // The first time cash runs out a vulture VC rescues the company; the second time is liquidation.
+    const settled = finance.settle(migrated.state, day, entries, rescue.rescue);
     return { state: settled.state, log: [{ day, entries: settled.entries }] };
   }
 
@@ -630,7 +647,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     }
     let current = loadPlaying(saved);
     const log: DayLog[] = [];
-    // Stops early if the game ends part-way through: bankrupt, or the final day played.
+    // Stops early if the game ends part-way through: liquidation, or the final day played.
     for (let i = 0; i < days && current.status === "playing"; i++) {
       const result = advanceOneDay(current);
       current = result.state;
@@ -686,6 +703,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     valuation: (s) => shares.valuation(load(s)),
     capTable: (s) => shares.capTable(load(s)),
     funding: (s) => shares.funding(load(s)),
+    rescue: (s) => rescue.rescueView(load(s)),
     launch: (s) => launch.launchView(load(s)),
     migration: (s) => migration.migration(load(s)),
     migrationQuote: (s, target) => migration.migrationQuote(load(s), target),

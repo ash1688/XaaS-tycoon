@@ -347,3 +347,52 @@ describe("shares and funding", () => {
     expect(turn.lines.join("\n")).toMatch(/day 8: Grant (condition met|withdrawn)/);
   });
 });
+
+describe("rescue buyout and liquidation", () => {
+  // Far more developers than the company can pay for: cash runs out within the 40 days.
+  const broke = (): GameState => sim.applyAction(start(), { type: "hire", pool: "developers", grade: "senior", count: 40 });
+
+  it("reads the rescue commands", () => {
+    expect(parseCommand("rescue")).toEqual({ kind: "rescue" });
+    expect(parseCommand("buyback")).toEqual({ kind: "action", action: { type: "buyBack" }, times: 1 });
+  });
+
+  it("stops time on the rescue, shows the cash, share taken and cuts, and offers the buy-back at its price", () => {
+    expect(run(start(), "rescue").lines[0]).toMatch(/no rescue yet/);
+    let turn = advanceUntil(sim, broke(), 40, who);
+    while (!turn.state.rescue) turn = advanceUntil(sim, turn.state, 40, who);
+    const { rescue } = turn.state;
+    expect(turn.lines.at(-1)).toMatch(new RegExp(`^stopped on day ${rescue.day}: cash ran out: rescued by a vulture VC`));
+    expect(turn.lines.join("\n")).toMatch(/vulture VC rescued Test Co: it put in £[\d,]+ .* 75% of the company/);
+    expect(turn.lines.join("\n")).toMatch(/Forced cost cuts: the vulture VC let go 11 senior developers/);
+    const view = sim.rescue(turn.state)!;
+    expect(renderStatus(sim, turn.state)).toMatch(/rescue: day \d+, a vulture VC put in £[\d,]+ for 75%; it owns 75% and sells it back for £[\d,]+/);
+    expect(renderStatus(sim, turn.state)).toMatch(/you 25%, vulture vc 75%/);
+    expect(renderCommands(sim, turn.state)).toContain(`buyback   (buy all the vulture VC's shares back from company cash: £${view.buyBackPrice!.toLocaleString("en-GB")}`);
+    const terms = run(turn.state, "rescue").lines.join("\n");
+    expect(terms).toMatch(/forced cuts: 11 senior developers/);
+    expect(terms).toMatch(/buy-back \(buyback\): £[\d,]+ for its 30,000 shares \(75%\)/);
+    const refused = run(turn.state, "buyback");
+    expect(refused.lines[0]).toMatch(/buyBack refused: The vulture VC wants £[\d,]+ for its shares/);
+    expect(refused.rows[0]).toMatchObject({ type: "buyBack", ok: false, error: "cant_afford" });
+    const rich = { ...turn.state, cash: view.buyBackPrice! };
+    const bought = run(rich, "buyback");
+    expect(bought.rows[0]).toMatchObject({ type: "buyBack", ok: true });
+    expect(renderStatus(sim, bought.state)).toMatch(/you bought it back on day \d+ for £/);
+  });
+
+  it("ends in liquidation the second time, and still shows the rescue after", () => {
+    const long = createSim({ ...defaultConfig, finalDay: 120 });
+    const begun = long.newGame({ companyName: "Test Co", productType: "social", model: "paas", seed: 3, takeLoan: true });
+    let turn = advanceUntil(long, long.applyAction(begun, { type: "hire", pool: "developers", grade: "senior", count: 40 }), 120, who);
+    while (turn.state.status === "playing") turn = advanceUntil(long, turn.state, 120, who);
+    expect(turn.state.status).toBe("liquidated");
+    expect(turn.lines.join("\n")).toMatch(/Cash ran out again, after the rescue buyout on day \d+: Test Co goes into liquidation/);
+    expect(turn.lines.at(-1)).toMatch(/^GAME OVER: liquidated on day \d+/);
+    expect(turn.rows.at(-1)).toMatchObject({ type: "end", params: { status: "liquidated" } });
+    const after = runScript(long, turn.state, "rescue; buyback", who).lines;
+    expect(after[1]).toMatch(/^rescue on day/);
+    expect(after.at(-1)).toBe("not run: the game is over");
+    expect(JSON.parse(renderSummary(long, turn.state))).toMatchObject({ ending: "liquidation", valuation: 0, rescue: { share: 0.75 } });
+  });
+});

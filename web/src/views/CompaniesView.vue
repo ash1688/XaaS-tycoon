@@ -23,12 +23,12 @@ const formError = ref("");
 const nameError = ref("");
 const busy = ref(false);
 
-// Only games still being played count towards the limit; finished, bankrupt and retired ones are history.
+// Only games still being played count towards the limit; finished, liquidated and retired ones are history.
 const active = computed(() => companies.value.filter((c) => c.status === "active"));
 const history = computed(() => companies.value.filter((c) => c.status !== "active"));
 const atLimit = computed(() => !!meta.value && active.value.length >= meta.value.maxActiveCompanies);
-const STATUS_LABELS = { active: "Active", retired: "Retired", bankrupt: "Bankrupt", finished: "Finished" } as const;
-const STATUS_BADGES = { active: "", retired: "retired-badge", bankrupt: "warn-badge", finished: "done-badge" } as const;
+const STATUS_LABELS = { active: "Active", retired: "Retired", liquidated: "Liquidated", finished: "Finished" } as const;
+const STATUS_BADGES = { active: "", retired: "retired-badge", liquidated: "warn-badge", finished: "done-badge" } as const;
 
 // Retiring asks first, on the company's own row.
 const confirmingRetire = ref<string>();
