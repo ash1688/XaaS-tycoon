@@ -114,7 +114,16 @@ const alerts = computed(() => {
     list.push({
       id: "low-cash",
       text: game.runway.days ? `Cash runs out in about ${days(game.runway.days)}` : "Cash runs out tomorrow",
-      detail: `You're losing ${formatCash(-game.runway.dailyNet)} a day. ${c.loanQuote ? "Take a bank loan or cut costs" : "Cut costs"} before you go below £0: once you're bankrupt, the bank won't lend.`,
+      detail: `You're losing ${formatCash(-game.runway.dailyNet)} a day. ${c.loanQuote ? "Take a bank loan or cut costs" : "Cut costs"} before you go below £0: ${c.rescue ? "there's no second rescue, so it's liquidation." : "a vulture VC would rescue you, but take most of the company."}`,
+      page: "finance",
+      pageName: "Finance",
+    });
+  // A rescue changes who owns the company: shown until the vulture VC's shares are bought back.
+  if (c.rescue && c.rescue.buyBackPrice !== null)
+    list.push({
+      id: "rescue",
+      text: `A vulture VC owns ${Math.round(c.rescue.vultureShare * 100)}% of the company`,
+      detail: `It rescued you on day ${c.rescue.day} with ${formatCash(c.rescue.amount)} and forced cost cuts. It sells its shares back for ${formatCash(c.rescue.buyBackPrice)}, and there's no second rescue: run out of cash again and it's liquidation.`,
       page: "finance",
       pageName: "Finance",
     });
@@ -232,13 +241,13 @@ const alerts = computed(() => {
 
 <template>
   <template v-if="game.company">
-    <div v-if="game.bankrupt" class="bankrupt" role="alert" data-testid="bankrupt-screen">
-      <span class="badge">Bankrupt</span>
-      <h2>Game over: you ran out of cash</h2>
+    <div v-if="game.liquidated" class="bankrupt" role="alert" data-testid="liquidation-screen">
+      <span class="badge">Liquidation</span>
+      <h2>Game over: you ran out of cash again</h2>
       <p>
-        {{ game.company.name }} went below £0 on day {{ game.company.day }}, so the game has ended. You can't continue
-        or change anything, and it's too late for a bank loan: banks don't lend once you've gone under. Look at where
-        your money went below, then
+        {{ game.company.name }} went below £0 on day {{ game.company.day }}, after the vulture VC's rescue on day
+        {{ game.company.rescue?.day }}. There's no second rescue, so the company has gone into liquidation and the game
+        has ended. You can't continue or change anything. Look at where your money went below, then
         <RouterLink :to="`/play/${game.code}`">start a new company</RouterLink> and try a different plan.
       </p>
     </div>
@@ -352,7 +361,7 @@ const alerts = computed(() => {
             {{ game.company.loan.lastDay }}, {{ formatCash(game.company.loan.remaining) }} left.
           </template>
           <template v-else-if="game.company.loan">Bank loan repaid in full.</template>
-          <template v-else-if="game.bankrupt">No bank loan: banks don't lend once you've gone under.</template>
+          <template v-else-if="game.liquidated">No bank loan: banks don't lend to a company in liquidation.</template>
           <template v-else-if="game.company.loanQuote && !game.over">
             No bank loan. You can borrow {{ formatCash(game.company.loanQuote.amount) }} on Finance.
           </template>
@@ -364,7 +373,7 @@ const alerts = computed(() => {
             {{ formatCash(game.company.runway.dailyCosts) }}<template v-if="game.company.runway.days === null">, so
               cash is growing.</template
             ><template v-else>: at that rate your {{ formatCash(game.company.cash) }} lasts about
-              {{ days(game.company.runway.days) }}. Below £0 the game ends.</template
+              {{ days(game.company.runway.days) }}. {{ game.company.rescue ? "Below £0 again is liquidation." : "Below £0 brings a vulture VC's rescue, for most of the company." }}</template
             >
           </p>
           <SpendPanel />

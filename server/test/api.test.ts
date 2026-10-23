@@ -350,12 +350,12 @@ describe("active company limit and retiring", () => {
     expect((await newCompany(code)).statusCode).toBe(409);
   });
 
-  it("doesn't count finished or bankrupt games", async () => {
+  it("doesn't count finished or liquidated games", async () => {
     const code = await newCode();
     const ids = [];
     for (let i = 0; i < 3; i++) ids.push((await newCompany(code)).json<CompanyView>().id);
     await setStatus(ids[0]!, "finished");
-    await setStatus(ids[1]!, "bankrupt");
+    await setStatus(ids[1]!, "liquidated");
     expect((await newCompany(code)).statusCode).toBe(201);
     expect((await newCompany(code)).statusCode).toBe(201);
     expect((await newCompany(code)).statusCode).toBe(409);
@@ -387,17 +387,17 @@ describe("active company limit and retiring", () => {
     expect(summary.json<SummaryView>()).toMatchObject({ companyName: "Acme", day: 2 });
   });
 
-  it("retiring twice is fine, but a finished or bankrupt game can't be retired", async () => {
+  it("retiring twice is fine, but a finished or liquidated game can't be retired", async () => {
     const code = await newCode();
     const a = (await newCompany(code)).json<CompanyView>().id;
     const b = (await newCompany(code)).json<CompanyView>().id;
     await retire(code, a);
     expect((await retire(code, a)).json<CompanyView>().status).toBe("retired");
-    await setStatus(b, "bankrupt");
+    await setStatus(b, "liquidated");
     const res = await retire(code, b);
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ error: "not_active" });
-    expect(await statuses(code)).toEqual(["bankrupt", "retired"]);
+    expect(await statuses(code)).toEqual(["liquidated", "retired"]);
   });
 
   it("returns 404 when retiring another code's company, or a malformed id", async () => {
@@ -1302,7 +1302,7 @@ describe("PaaS managed services and SaaS with no servers", () => {
   });
 });
 
-describe("ledger and bankruptcy", () => {
+describe("ledger, rescue buyout and liquidation", () => {
   async function setup() {
     const code = await newCode();
     const company = (await newCompany(code)).json<CompanyView>();
@@ -1351,14 +1351,45 @@ describe("ledger and bankruptcy", () => {
     expect((await app.inject({ method: "GET", url })).json<CompanyView>().spend).toEqual(spend);
   });
 
-  it("goes bankrupt when cash drops below zero, then rejects continue and actions with 409", async () => {
+  it("has a vulture VC rescue the company the first time cash drops below zero", async () => {
     const { company, url } = await setup();
     await setCash(company.id, 10);
     const res = await app.inject({ method: "POST", url: `${url}/continue` });
     expect(res.statusCode).toBe(200);
     const body = res.json<ContinueResult>();
-    expect(body.company).toMatchObject({ day: 2, cash: -15, status: "bankrupt" });
-    expect(body.log[0]!.entries.at(-1)).toMatchObject({ kind: "bankrupt" });
+    // £15 of losses and 30 days at £25 a day, to the £100 above: £800.
+    expect(body.company).toMatchObject({ day: 2, cash: 785, status: "active" });
+    expect(body.company.rescue).toMatchObject({ day: 2, amount: 800, losses: 15, shares: 30_000, share: 0.75, buyBackPrice: 1_600 });
+    expect(body.company.capTable.rows.map((r) => r.id)).toEqual(["student", "vulture"]);
+    const rescue = body.log[0]!.entries.filter((e) => e.kind === "rescue");
+    expect(rescue.map((e) => e.text)).toEqual([expect.stringMatching(/vulture VC rescued Acme: it put in £800/), expect.stringMatching(/^Forced cost cuts/)]);
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>().rescue).toMatchObject({ day: 2, amount: 800 });
+  });
+
+  it("buys the vulture VC's shares back at its price", async () => {
+    const { company, url } = await setup();
+    await setCash(company.id, 10);
+    await app.inject({ method: "POST", url: `${url}/continue` });
+    const refused = await app.inject({ method: "POST", url: `${url}/actions`, payload: { type: "buyBack" } });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toMatchObject({ error: "cant_afford", cost: 1_600, cash: 785 });
+    await setCash(company.id, 2_000);
+    const bought = (await app.inject({ method: "POST", url: `${url}/actions`, payload: { type: "buyBack" } })).json<CompanyView>();
+    expect(bought).toMatchObject({ cash: 400, rescue: { boughtBack: { day: 2, price: 1_600 }, buyBackPrice: null } });
+    expect(bought.capTable.rows.map((r) => [r.id, r.share])).toEqual([["student", 1]]);
+  });
+
+  it("goes into liquidation when cash drops below zero again, then rejects continue and actions with 409", async () => {
+    const { company, url } = await setup();
+    await setCash(company.id, 10);
+    await app.inject({ method: "POST", url: `${url}/continue` });
+    await setCash(company.id, 10);
+    const res = await app.inject({ method: "POST", url: `${url}/continue` });
+    expect(res.statusCode).toBe(200);
+    const body = res.json<ContinueResult>();
+    expect(body.company).toMatchObject({ day: 3, cash: -15, status: "liquidated" });
+    expect(body.log[0]!.entries.at(-1)).toMatchObject({ kind: "liquidation" });
+    expect(body.company.valuation.valuation).toBe(0);
 
     for (const attempt of [
       app.inject({ method: "POST", url: `${url}/continue` }),
@@ -1366,18 +1397,18 @@ describe("ledger and bankruptcy", () => {
     ]) {
       const rejected = await attempt;
       expect(rejected.statusCode).toBe(409);
-      expect(rejected.json()).toMatchObject({ error: "bankrupt", message: expect.stringContaining("bankrupt") });
+      expect(rejected.json()).toMatchObject({ error: "liquidated", message: expect.stringContaining("liquidation") });
     }
 
-    // Nothing changed, and the game still shows as bankrupt after a reload.
+    // Nothing changed, and the game still shows as liquidated after a reload.
     expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({
-      day: 2,
+      day: 3,
       cash: -15,
       ops: 0,
-      status: "bankrupt",
+      status: "liquidated",
     });
     const [row] = await testDb.db.select().from(companies).where(eq(companies.id, company.id));
-    expect(row!.status).toBe("bankrupt");
+    expect(row!.status).toBe("liquidated");
   });
 
   it("keeps going at exactly zero cash", async () => {
@@ -1701,12 +1732,14 @@ describe("game end and summary", () => {
     ]);
   });
 
-  it("summarises a bankrupt game", async () => {
+  it("summarises a liquidated game, with its rescue", async () => {
     const { id, url } = await setup();
-    await testDb.db.execute(sql`update companies set state = jsonb_set(state, '{cash}', '10'::jsonb) where id = ${id}`);
-    await shortApp.inject({ method: "POST", url: `${url}/continue` });
+    for (let i = 0; i < 2; i++) {
+      await testDb.db.execute(sql`update companies set state = jsonb_set(state, '{cash}', '10'::jsonb) where id = ${id}`);
+      await shortApp.inject({ method: "POST", url: `${url}/continue` });
+    }
     const summary = (await shortApp.inject({ method: "GET", url: `${url}/summary` })).json<SummaryView>();
-    expect(summary).toMatchObject({ ending: "bankrupt", day: 2, cash: -15 });
+    expect(summary).toMatchObject({ ending: "liquidation", day: 3, cash: -15, rescue: { day: 2 } });
   });
 
   it("gives a summary so far for a game still being played", async () => {

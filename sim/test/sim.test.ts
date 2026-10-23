@@ -203,6 +203,7 @@ const config: GameConfig = {
   shares: { min: 10_000, max: 100_000, default: 10_000 },
   valuation: defaultConfig.valuation,
   funding: defaultConfig.funding,
+  rescue: defaultConfig.rescue,
   // No price waves unless a test says otherwise, so a price change only has its ongoing effect on growth and payers.
   pricing: {
     maxPrice: 1_000,
@@ -2339,44 +2340,149 @@ describe("ledger", () => {
   });
 });
 
-describe("bankruptcy", () => {
+describe("rescue buyout and liquidation", () => {
   // 1000 cash at 20 a day on IaaS: day 51 leaves exactly 0, day 52 goes below.
   const broke = () => sim.advance(start(), 50);
+  // The vulture VC puts in the £20 of losses and 30 days at £20 a day, to the £100 above: £700, leaving £680. That
+  // lasts 34 days, so cash runs out again on day 87.
+  const rescued = () => sim.advance(start(), 51).state;
 
-  it("does not end the game at exactly zero cash", () => {
+  it("does not rescue the company at exactly zero cash", () => {
     const { state } = broke();
-    expect(state).toMatchObject({ day: 51, cash: 0, status: "playing" });
+    expect(state).toMatchObject({ day: 51, cash: 0, status: "playing", rescue: null });
+    expect(sim.rescue(state)).toBeNull();
   });
 
-  it("ends the game the day cash goes below zero, and says so in the log", () => {
+  it("rescues the company the first time cash goes below zero: cash, the share taken and the cuts, in the log", () => {
     const { state, log } = sim.advance(broke().state);
-    expect(state).toMatchObject({ day: 52, cash: -20, status: "bankrupt" });
-    expect(log[0]!.entries.at(-1)).toMatchObject({ kind: "bankrupt", cashDelta: 0 });
-    expect(log[0]!.entries.at(-1)!.text).toMatch(/bankrupt/);
+    expect(state).toMatchObject({ day: 52, cash: 680, status: "playing" });
+    expect(state.rescue).toEqual({
+      day: 52,
+      amount: 700,
+      losses: 20,
+      shares: 30_000,
+      share: 0.75,
+      cuts: [],
+      hiresCancelled: 0,
+      savedPerDay: 0,
+      boughtBack: null,
+    });
+    const rescue = log[0]!.entries.filter((e) => e.kind === "rescue");
+    expect(rescue).toHaveLength(2);
+    expect(rescue[0]).toMatchObject({ cashDelta: 700 });
+    expect(rescue[0]!.text).toMatch(/vulture VC rescued Acme: it put in £700 \(£20 to cover the losses.*30,000 new shares, 75% of the company\. You now own 25%/);
+    expect(rescue[1]!.text).toMatch(/Forced cost cuts/);
+    expect(sim.capTable(state).rows.map((r) => [r.id, r.name, r.share])).toEqual([
+      ["student", "You", 0.25],
+      ["vulture", "Vulture VC", 0.75],
+    ]);
+    // The rescue is money raised, not income, so the cash chart still adds up.
+    expect(state.spendByDay.at(-1)).toMatchObject({ day: 52, raised: 700, income: 0 });
+    expect(sim.summarise(state).days.at(-1)!.cash).toBe(680);
   });
 
-  it("stops a multi-day advance on the day of bankruptcy", () => {
-    const { state, log } = sim.advance(start(), 100);
-    expect(state).toMatchObject({ day: 52, status: "bankrupt" });
-    expect(log.at(-1)!.day).toBe(52);
+  it("forces cost cuts: the dearest grades first, ops kept to what the servers need, and hires cancelled", () => {
+    const base = start();
+    const need = sim.opsNeededNow(base);
+    const staffed: GameState = {
+      ...base,
+      staff: {
+        developers: { junior: 1, mid: 2, senior: 1 },
+        ops: { junior: 0, mid: need, senior: 0 },
+        support: { junior: 4, mid: 0, senior: 0 },
+      },
+      hiring: [{ pool: "developers", grade: "mid", count: 2, arrivesOn: 999 }],
+    };
+    const { state, log } = sim.advance(staffed, 200);
+    const rescue = state.rescue!;
+    expect(rescue.cuts).toEqual([
+      { pool: "developers", grade: "senior", count: 1 },
+      { pool: "support", grade: "junior", count: 1 },
+    ]);
+    expect(rescue.hiresCancelled).toBe(2);
+    // A senior developer at £14 a day and a junior support person at £1.
+    expect(rescue.savedPerDay).toBe(15);
+    const after = sim.advance(staffed, rescue.day - 1).state;
+    expect(after.hiring).toEqual([]);
+    expect(after.staff.developers).toEqual({ junior: 1, mid: 2, senior: 0 });
+    expect(after.staff.ops.mid).toBe(need);
+    const text = log.flatMap((d) => d.entries).find((e) => e.text.startsWith("Forced cost cuts"))!.text;
+    expect(text).toMatch(/let go 1 senior developer, let go 1 junior support person, cancelled 2 hires still to start, saving £15 a day/);
+  });
+
+  it("goes into liquidation the second time cash goes below zero, and says so in the log", () => {
+    const { state, log } = sim.advance(rescued(), 100);
+    expect(state).toMatchObject({ day: 87, cash: -20, status: "liquidated" });
+    expect(log.at(-1)!.day).toBe(87);
+    expect(log.at(-1)!.entries.at(-1)).toMatchObject({ kind: "liquidation", cashDelta: 0 });
+    expect(log.at(-1)!.entries.at(-1)!.text).toMatch(/after the rescue buyout on day 52: Acme goes into liquidation/);
+    expect(sim.summarise(state)).toMatchObject({ ending: "liquidation", day: 87, rescue: { day: 52, amount: 700 } });
+    expect(sim.valuation(state).valuation).toBe(0);
+  });
+
+  it("stops a multi-day advance on the day of liquidation, carrying on through the rescue", () => {
+    const { state, log } = sim.advance(start(), 200);
+    expect(state).toMatchObject({ day: 87, status: "liquidated" });
+    expect(log.at(-1)!.day).toBe(87);
   });
 
   it("rejects advances and actions afterwards", () => {
-    const { state } = sim.advance(start(), 100);
+    const { state } = sim.advance(start(), 200);
     for (const attempt of [
       () => sim.advance(state),
       () => sim.applyAction(state, { type: "hire", pool: "ops" }),
-      () => sim.applyAction(state, { type: "letGo", pool: "ops" }),
+      () => sim.applyAction(state, { type: "buyBack" }),
     ]) {
       expect(attempt).toThrow(SimError);
-      expect(attempt).toThrow(expect.objectContaining({ code: "bankrupt" }));
+      expect(attempt).toThrow(expect.objectContaining({ code: "liquidated" }));
     }
+    expect(sim.rescue(state)).toMatchObject({ buyBackPrice: null, canBuyBack: false });
   });
 
-  it("goes bankrupt sooner with more staff", () => {
-    const hired = sim.applyAction(start(), { type: "hire", pool: "developers" });
-    expect(sim.advance(hired, 100).state.day).toBeLessThan(sim.advance(start(), 100).state.day);
+  it("offers the vulture VC's shares back at its price, and sells them for it", () => {
+    const state = rescued();
+    const view = sim.rescue(state)!;
+    // No paying users or revenue, so the business is worth nothing without its cash: the price is twice the £700.
+    expect(view).toMatchObject({ vultureShares: 30_000, vultureShare: 0.75, buyBackPrice: 1_400, canBuyBack: false });
+    expect(view.priceDetail).toMatch(/2× the £700 it put in: it never sells back for less/);
+    expect(() => sim.applyAction(state, { type: "buyBack" })).toThrow(
+      expect.objectContaining({ code: "cant_afford", details: { cost: 1_400, cash: 680 } }),
+    );
+    // More cash doesn't move the price: the company pays with it.
+    const rich = { ...state, cash: 2_000 };
+    expect(sim.rescue(rich)).toMatchObject({ buyBackPrice: 1_400, canBuyBack: true });
+    const bought = sim.applyAction(rich, { type: "buyBack" });
+    expect(bought.cash).toBe(600);
+    expect(bought.rescue!.boughtBack).toEqual({ day: 52, price: 1_400 });
+    expect(sim.capTable(bought).rows.map((r) => [r.id, r.share])).toEqual([["student", 1]]);
+    expect(sim.rescue(bought)).toMatchObject({ vultureShares: 0, buyBackPrice: null, canBuyBack: false });
+    expect(bought.spendByDay.at(-1)!.raised).toBe(700 - 1_400);
+    expect(() => sim.applyAction(bought, { type: "buyBack" })).toThrow(expect.objectContaining({ code: "bought_back" }));
   });
+
+  it("prices a trading business at the premium on its share of the valuation, leaving out the cash", () => {
+    const real = createSim(defaultConfig);
+    const begun = real.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 3 });
+    let state = withStaff(real.advance(begun, 40).state, { developers: 30 });
+    while (!state.rescue) state = real.advance(state).state;
+    const { valuation, sharesInIssue, drivers } = real.valuation(state);
+    const netCash = drivers.find((d) => d.id === "netCash")!.amount;
+    const business = Math.max(0, valuation - netCash) - (drivers.find((d) => d.id === "minimum")?.amount ?? 0);
+    expect(business).toBeGreaterThan(0);
+    const premium = Math.ceil((1.5 * business * state.rescue.shares) / sharesInIssue / 100) * 100;
+    const price = Math.max(premium, 2 * state.rescue.amount);
+    expect(real.rescue(state)!.buyBackPrice).toBe(price);
+  });
+
+  it("refuses a buy-back before any rescue", () => {
+    expect(() => sim.applyAction(start(), { type: "buyBack" })).toThrow(expect.objectContaining({ code: "no_rescue" }));
+  });
+
+  it("is rescued sooner with more staff", () => {
+    const hired = sim.applyAction(start(), { type: "hire", pool: "developers" });
+    expect(sim.advance(hired, 100).state.rescue!.day).toBeLessThan(sim.advance(start(), 100).state.rescue!.day);
+  });
+
 
   it("is deterministic", () => {
     expect(sim.advance(start(), 100)).toEqual(sim.advance(start(), 100));
@@ -2587,18 +2693,17 @@ describe("bank loan", () => {
     expect(profit).toBeCloseTo(state.income - costs + principal, 6);
   });
 
-  it("charges repayments whatever happens, so they can bankrupt a company", () => {
+  it("charges repayments whatever happens, so they can run a company out of cash", () => {
     // SaaS at £5 a day: £1,000 lasts to day 180 alone, but £110 a day of repayments on top of the £17,900 runs out.
     const play = (takeLoan: boolean) =>
       sim.advance(sim.newGame({ companyName: "Acme", productType: "ecommerce", model: "saas", seed: 1, takeLoan }), 200);
     expect(play(false).state).toMatchObject({ day: 180, status: "finished" });
     const { state, log } = play(true);
-    expect(state.status).toBe("bankrupt");
-    expect(state.day).toBeLessThan(180);
-    const last = log.at(-1)!.entries;
-    expect(last.some((e) => e.category === "debt")).toBe(true);
-    expect(last.at(-1)).toMatchObject({ kind: "bankrupt" });
-    expect(sim.summarise(state).loan).toMatchObject({ day: 1, amount: 17_900, fullyRepaid: false });
+    expect(state.rescue!.day).toBeLessThan(180);
+    const rescueDay = log.find((d) => d.day === state.rescue!.day)!.entries;
+    expect(rescueDay.some((e) => e.category === "debt")).toBe(true);
+    expect(rescueDay.some((e) => e.kind === "rescue")).toBe(true);
+    expect(sim.summarise(state).loan).toMatchObject({ day: 1, amount: 17_900 });
   });
 
   it("is deterministic", () => {
@@ -2870,8 +2975,8 @@ describe("game lengths", () => {
     expect(() => s.applyAction(ended, { type: "hire", pool: "ops" })).toThrow(expect.objectContaining({ code: "finished" }));
     // Ending a game that is already over leaves it as it was.
     expect(s.endGame(ended)).toEqual(ended);
-    const bankrupt = { ...state, status: "bankrupt" } as GameState;
-    expect(s.endGame(bankrupt)).toEqual(bankrupt);
+    const liquidated = { ...state, status: "liquidated" } as GameState;
+    expect(s.endGame(liquidated)).toEqual(liquidated);
   });
 });
 
@@ -2935,12 +3040,15 @@ describe("game end and summary", () => {
     expect(s.summarise(saved).ending).toBe("completed");
   });
 
-  it("counts going bankrupt on the final day as bankrupt", () => {
-    // 1000 cash at 20 a day on IaaS goes below zero on day 52.
-    const tight = createSim({ ...config, finalDay: 52 });
-    const { state } = tight.advance(tight.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1 }), 100);
-    expect(state).toMatchObject({ day: 52, status: "bankrupt" });
-    expect(tight.summarise(state).ending).toBe("bankrupt");
+  it("counts liquidation on the final day as liquidation, and a rescue on it as finishing", () => {
+    // 1000 cash at 20 a day on IaaS goes below zero on day 52, and again on day 87 after the rescue.
+    const play = (finalDay: number) => {
+      const tight = createSim({ ...config, finalDay });
+      const { state } = tight.advance(tight.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1 }), 200);
+      return { state, ending: tight.summarise(state).ending };
+    };
+    expect(play(87)).toMatchObject({ state: { day: 87, status: "liquidated" }, ending: "liquidation" });
+    expect(play(52)).toMatchObject({ state: { day: 52, status: "finished", rescue: { day: 52 } }, ending: "completed" });
   });
 
   it("summarises a completed game: final figures, and spend totals equal to the sum of daily charges", () => {
@@ -3035,18 +3143,18 @@ describe("game end and summary", () => {
     expect(day11(migrated, pricier) - day11(state, s)).toBe(5000);
   });
 
-  it("summarises a bankrupt game", () => {
-    const { state, log } = sim.advance(start(), 100);
+  it("summarises a liquidated game", () => {
+    const { state, log } = sim.advance(start(), 200);
     const summary = sim.summarise(state);
-    expect(summary).toMatchObject({ ending: "bankrupt", day: 52, cash: -20, finalDay: 180 });
-    expect(summary.days).toHaveLength(52);
+    expect(summary).toMatchObject({ ending: "liquidation", day: 87, cash: -20, finalDay: 180 });
+    expect(summary.days).toHaveLength(87);
     expect(summary.days.at(-1)!.cash).toBe(-20);
     expect(summary.spend.infrastructure).toBe(charges(log, "infrastructure"));
-    expect(summary.totalSpend).toBe(1020);
+    expect(summary.totalSpend).toBe(1720);
     // Everyone free, so no income: all loss.
-    expect(summary).toMatchObject({ income: 0, profit: -1020, priceChanges: 0, loan: null, satisfaction: 100 });
-    expect(summary.incomeVsCosts).toHaveLength(52);
-    expect(summary.incomeVsCosts.at(-1)).toMatchObject({ day: 52, totalIncome: 0, totalCosts: 1020 });
+    expect(summary).toMatchObject({ income: 0, profit: -1720, priceChanges: 0, loan: null, satisfaction: 100 });
+    expect(summary.incomeVsCosts).toHaveLength(87);
+    expect(summary.incomeVsCosts.at(-1)).toMatchObject({ day: 87, totalIncome: 0, totalCosts: 1720 });
     expect(summary.peak.users).toBe(Math.max(...summary.days.map((d) => d.users)));
   });
 
@@ -3326,10 +3434,10 @@ describe("default config", () => {
     }
   });
 
-  it("bankrupts a company that hires far more than it needs", () => {
+  it("liquidates a company that hires far more than it needs", () => {
     const start = sim180.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 7 });
     const state = sim180.advance(withStaff(start, { developers: 12, ops: 2 }), defaultConfig.finalDay - 1).state;
-    expect(state.status).toBe("bankrupt");
+    expect(state.status).toBe("liquidated");
     expect(state.day).toBeLessThan(defaultConfig.finalDay);
   });
 

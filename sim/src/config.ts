@@ -21,7 +21,7 @@ export const MIGRATION_PHASES = ["planning", "testing", "moving"] as const;
 export type MigrationPhase = (typeof MIGRATION_PHASES)[number];
 
 /**
- * How long a game runs before it ends, if the company doesn't go bankrupt first. The student picks one of the lengths
+ * How long a game runs before it ends, if the company isn't liquidated first. The student picks one of the lengths
  * the preset allows when starting a company. Saved in game state, so don't rename. (Until IPO comes with the IPO.)
  */
 export const GAME_LENGTH_IDS = ["180-days", "1-year", "career"] as const;
@@ -908,7 +908,7 @@ export interface SharesConfig {
  *   valuation = max(minimum, annual revenue × max(minMultiple, multiple) + paying users × valuePerPayingUser
  *                            + cash − the loan's money borrowed still to pay back)
  *
- * A bankrupt company is worth nothing, whatever the minimum. Recent uptime is over ConversionConfig's uptimeDays.
+ * A liquidated company is worth nothing, whatever the minimum. Recent uptime is over ConversionConfig's uptimeDays.
  * Share price = valuation ÷ shares in issue.
  */
 export interface ValuationConfig {
@@ -943,6 +943,28 @@ export interface ValuationConfig {
 export interface FundingConfig {
   friendsAndFamily: { amount: number };
   grant: { amount: number; days: number; minUptime: Record<ModelId, number> };
+}
+
+/**
+ * The rescue buyout: the first time cash runs out, a vulture VC rescues the company instead of the game ending. The
+ * second time is liquidation, and the game ends.
+ *
+ * - Cost cuts first: hires still to start are cancelled, and staffCut of each team is let go (rounded up), the dearest
+ *   grades first. Ops are only cut as far as the servers' ops needed allows.
+ * - Cash: the losses (what took cash below £0), plus breathingDays of what the company is losing a day after the
+ *   cuts, counting at least minCover of its running costs a day.
+ * - Shares: enough new shares for the vulture VC to own `share` of the company.
+ * - Buy-back: the student can buy all its shares back with the company's cash, at its price: its share of today's
+ *   valuation less net cash (the business without the cash that pays for them) × buyBackPremium, but never less than
+ *   minReturn × the cash it put in.
+ */
+export interface RescueConfig {
+  breathingDays: number;
+  minCover: number;
+  share: number;
+  staffCut: number;
+  buyBackPremium: number;
+  minReturn: number;
 }
 
 /**
@@ -1011,6 +1033,7 @@ export interface GameConfig {
   shares: SharesConfig;
   valuation: ValuationConfig;
   funding: FundingConfig;
+  rescue: RescueConfig;
   pricing: PricingConfig;
   support: SupportConfig;
   conversion: ConversionConfig;
@@ -1445,6 +1468,9 @@ export const defaultConfig: GameConfig = {
     friendsAndFamily: { amount: 15_000 },
     grant: { amount: 10_000, days: 60, minUptime: { onprem: 98, iaas: 98.5, paas: 98.5, saas: 99 } },
   },
+  // Placeholders from the design: about 30 days of breathing space for about 75% of the company. Buying it back costs
+  // at least twice what the vulture VC put in.
+  rescue: { breathingDays: 30, minCover: 0.25, share: 0.75, staffCut: 0.25, buyBackPremium: 1.5, minReturn: 2 },
   pricing: {
     maxPrice: 1_000,
     growthSensitivity: 1,

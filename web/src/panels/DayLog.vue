@@ -3,14 +3,15 @@ import { computed } from "vue";
 import { SPEND_CATEGORIES, type DayLog } from "@xaas/sim";
 import { CATEGORY_LABELS, formatCash } from "../api";
 
-// One day's log: its events (outage, bankruptcy and the like) first, then its income, then its charges grouped by
+// One day's log: its events (outage, a rescue buyout, liquidation and the like) first, then its income, then its charges grouped by
 // category.
 // brief: each category's total without its lines, for the Home card.
 const props = defineProps<{ log: DayLog; brief?: boolean }>();
 
 const EVENT_LABELS = {
   outage: "Outage",
-  bankrupt: "Bankrupt",
+  rescue: "Rescue",
+  liquidation: "Liquidation",
   finished: "The end",
   feature: "Feature",
   migration: "Migration",

@@ -2,7 +2,7 @@
 
 You're playtesting **XaaS Tycoon**, a classroom business game. You run a company with one product (social network,
 video platform or e-commerce shop) on one deployment model (on-prem, IaaS, PaaS or SaaS), and try to reach day 180
-without going bankrupt. Play it as a player would: through the commands below only. Don't read the game's source
+without going into liquidation. Play it as a player would: through the commands below only. Don't read the game's source
 code or config. Everything a student can see is in the game's own output.
 
 ## How to play
@@ -57,13 +57,17 @@ npm run -s play -- summary <game>
 - `valuation` shows what your company is worth, what's pushing it up or down, and who owns it. `funding` shows the
   friends and family and grant offers in full; `accept ff`, `accept grant`, `decline ff` and `decline grant` answer
   them, once each.
+- The first time cash runs out, a **vulture VC rescues** the company: it puts in cash for the losses plus about 30
+  days, takes most of the company in new shares, and forces cost cuts (staff let go, hires cancelled). Time stops
+  when it happens. `rescue` shows the terms in full; `buyback` buys all its shares back from company cash, at the
+  price it sets (shown in `look`). Running out of cash a second time is **liquidation**, and the game ends.
 - `loan` takes a bank loan, repaid daily over a fixed term; `repayloan` pays it off early to save interest. One loan
   at a time: once it's repaid, `loan` is offered again.
 - `summary` shows the final figures once the game is over.
 - `end` (inside `do`) ends the game as the teacher would from the staff panel, scored as it stands. Only use it if
   your brief asks you to test it.
 
-Run `look` whenever you're unsure what you can do. Keep going until the game ends: its final day (day 180 by default), or bankruptcy.
+Run `look` whenever you're unsure what you can do. Keep going until the game ends: its final day (day 180 by default), or liquidation.
 
 ## Your playstyle
 
@@ -85,9 +89,9 @@ Play the whole game in character as your playstyle:
 When the game is over, reply with a **game summary** of no more than about 300 words:
 
 1. **Setup:** playstyle, product, model, loan or not, seed.
-2. **Ending:** finished or bankrupt, on which day, final cash, paying and free users, satisfaction and uptime (from `summary`),
+2. **Ending:** finished or liquidated (and whether you were rescued, and when), on which day, final cash, paying and free users, satisfaction and uptime (from `summary`),
    and your valuation and the share of the company you still own (from `valuation`).
-3. **Key moments:** first profit, price changes, migrations, funding taken or declined, events and how you handled
+3. **Key moments:** first profit, price changes, migrations, funding taken or declined, any rescue or buy-back, events and how you handled
    them (and what the danger meter was doing), any crisis.
 4. **What you tried** and whether it worked.
 5. **Anything that felt broken, unfair, confusing or exploitable**, with the day and the commands that caused it.
