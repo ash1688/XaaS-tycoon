@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import postgres from "postgres";
 import { E2E_DATABASE_URL, E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { createCode, launch, withOnlyEncounter } from "./staff.ts";
+import { createCode, launch, pinLaunchUsers, withOnlyEncounter } from "./staff.ts";
 
 // The game's pages are reached through its nav bar.
 const goTo = (page: Page, name: string) =>
@@ -494,10 +494,13 @@ test("a random event shows a card that names the layer and highlights it in the 
   await teacher.getByRole("button", { name: "Sign in" }).click();
   const code = await createCode(teacher);
 
-  // Each sets up its first servers on day 1, so it launches on day 3.
+  // Each sets up its first servers on day 1, so it launches on day 3. Its launch total is pinned to round two's 4,000:
+  // a drawn one can be big enough to overload the medium servers on day 4, and the overload outage would mask the
+  // patch's.
   const company = async (name: string, model: string, actions: object[]) => {
     const created = await request.post(`/api/codes/${code}/companies`, { data: { name, productType: "social", model } });
     const id = (await created.json()).id as string;
+    await pinLaunchUsers(id, 4_000);
     for (const data of actions) expect((await request.post(`/api/codes/${code}/companies/${id}/actions`, { data })).ok()).toBe(true);
     return id;
   };
