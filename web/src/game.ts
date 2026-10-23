@@ -10,6 +10,9 @@ import { createUiLog } from "./playLog";
 const SPEED_KEY = "xaas-timed-speed";
 
 export const days = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
+
+/** "day 40 of 180", or "day 40" in a game with no last day (until IPO). */
+export const dayOf = (day: number, finalDay: number | null) => (finalDay === null ? `day ${day}` : `day ${day} of ${finalDay}`);
 export const namesList = (names: string[]) =>
   names.length < 2 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 
@@ -72,7 +75,10 @@ export function createGame(code: string, id: string) {
   const liquidated = computed(() => company.value?.status === "liquidated");
   const finished = computed(() => company.value?.status === "finished");
   const retired = computed(() => company.value?.status === "retired");
-  // Once the game is over, liquidated, played to the end or retired, it's read-only and Home shows its summary.
+  // The IPO: approved, the game holds until the opening bell is rung; floated, the game is over.
+  const ipoApproved = computed(() => company.value?.ipo.status === "approved");
+  const floated = computed(() => company.value?.ipo.status === "floated");
+  // Once the game is over, liquidated, played to the end, floated or retired, it's read-only and Home shows its summary.
   const over = computed(() => liquidated.value || finished.value || retired.value);
   const summary = ref<SummaryView>();
 
@@ -235,7 +241,7 @@ export function createGame(code: string, id: string) {
 
   /** Plays one tick: a day, or a week in a career, which stops early on the day something needs the student. */
   async function continueDay() {
-    if (over.value) return;
+    if (over.value || ipoApproved.value) return;
     busy.value = true;
     error.value = "";
     pauses.value = [];
@@ -334,7 +340,7 @@ export function createGame(code: string, id: string) {
   }
 
   function play() {
-    if (!timedFlow.value || over.value) return;
+    if (!timedFlow.value || over.value || ipoApproved.value) return;
     playing.value = true;
     pauses.value = [];
     if (!timer && !ticking) schedule();
@@ -356,6 +362,7 @@ export function createGame(code: string, id: string) {
   }
 
   watch(over, (isOver) => isOver && pause());
+  watch(ipoApproved, (approved) => approved && pause());
   document.addEventListener("visibilitychange", onVisibilityChange);
   onUnmounted(() => {
     pause();
@@ -388,6 +395,8 @@ export function createGame(code: string, id: string) {
     liquidated,
     finished,
     retired,
+    ipoApproved,
+    floated,
     over,
     summary,
     staffPool,
@@ -428,6 +437,7 @@ export function createGame(code: string, id: string) {
     gapsByLayer,
     load,
     ensureSummary,
+    loadSummary,
     act,
     actFrom,
     continueDay,

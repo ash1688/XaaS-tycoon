@@ -189,7 +189,7 @@ export function createCalendar(config: GameConfig) {
     return holidays
       .flatMap((h) => {
         const next = [year, year + 1].map((y) => view(state, h, y)).find((v) => v.startDay > day);
-        return next && next.startDay <= state.finalDay ? [next] : [];
+        return next && next.startDay <= (state.finalDay ?? Infinity) ? [next] : [];
       })
       .sort((a, b) => a.startDay - b.startDay);
   }

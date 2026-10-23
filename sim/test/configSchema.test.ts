@@ -130,6 +130,7 @@ describe("validateOverrides", () => {
     const toggles = fields.filter((f) => f.kind === "toggle");
     expect(toggles.map((f) => [f.path, f.default])).toEqual([
       ["allowedGameLengths.180-days", 1],
+      ["allowedGameLengths.until-ipo", 0],
       ["allowedGameLengths.1-year", 0],
       ["allowedGameLengths.career", 0],
       ["timedFlow", 1],

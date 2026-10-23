@@ -30,7 +30,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 34;
+export const GAME_STATE_VERSION = 35;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -67,6 +67,8 @@ export interface DaySpend extends Spend {
   paidUsers: number;
   /** Customer satisfaction at the end of the day, 0–100, for the summary's average. */
   satisfaction: number;
+  /** Hours the service was down on the day, for the IPO's uptime record. */
+  hoursDown: number;
 }
 
 /**
@@ -137,8 +139,11 @@ export type FunderId = (typeof FUNDER_IDS)[number];
 
 /** Someone who owns shares in the company. */
 export interface Shareholder {
-  /** "student" for the student, who owns every share at the start; otherwise the funder who bought them. */
-  id: "student" | "friendsAndFamily" | "vulture";
+  /**
+   * "student" for the student, who owns every share at the start; otherwise the funder who bought them, "vulture" for
+   * a rescue buyout, or "public" for the float's new shares, sold at the IPO.
+   */
+  id: "student" | "friendsAndFamily" | "vulture" | "public";
   shares: number;
   /** The day they got their shares: 1 for the student. */
   day: number;
@@ -354,8 +359,57 @@ export interface PriceChange {
  */
 export type GameStatus = "playing" | "liquidated" | "finished";
 
-/** How a game ended, for the summary: "ended" when the teacher ended it before its final day. */
-export type GameEnding = "completed" | "liquidation" | "ended";
+/**
+ * How a game ended, for the summary: "ended" when the teacher ended it before its final day, "ipo" when the company
+ * floated.
+ */
+export type GameEnding = "completed" | "liquidation" | "ended" | "ipo";
+
+/** One application to float: a cold market postponed it, or it was approved. */
+export interface IpoApplication {
+  day: number;
+  cold: boolean;
+}
+
+/** The float and the first day of trading, once the opening bell has been rung. */
+export interface IpoResult {
+  /** The day the bell was rung: the game's last. */
+  day: number;
+  /** The float: the new shares' share of the company after the IPO, 0–1. */
+  float: number;
+  newShares: number;
+  sharesBefore: number;
+  sharesAfter: number;
+  /** The valuation the shares were offered at, before the cash raised. */
+  valuation: number;
+  /** Valuation ÷ shares in issue before the float. */
+  offerPrice: number;
+  /** New shares × the offer price: paid to the company. */
+  cashRaised: number;
+  /** The share price at the open (the offer price) and after each tick of the first day, the close last. */
+  prices: number[];
+  closePrice: number;
+  /** Close price × shares in issue: what the company is worth on the market, the cash raised included. */
+  marketValue: number;
+  /** The student's shares and share of the company after the float, and what they're worth at the close. */
+  studentShares: number;
+  studentShare: number;
+  studentValue: number;
+  /** How ready the company was, 0–1, which set the first day's drift. */
+  comfort: number;
+  /** Why the price moved as it did, in words. */
+  reasons: string[];
+}
+
+/** The IPO: applications so far, whether one is approved, and once floated, how it went. */
+export interface IpoState {
+  applications: IpoApplication[];
+  /** The day the IPO was approved: the bell can be rung, and no day can be played until it is. Null until then. */
+  approvedDay: number | null;
+  /** After a cold market, the first day the company can apply again. 0 before any. */
+  retryDay: number;
+  result: IpoResult | null;
+}
 
 /** Plain, JSON-serialisable game state. The server stores it as-is. */
 export interface GameState {
@@ -368,8 +422,11 @@ export interface GameState {
   gameLength: GameLengthId;
   /** The difficulty the student picked when starting the company. The game plays on that difficulty's numbers. */
   difficulty: DifficultyId;
-  /** The last day played: the game finishes once it has been played. Set from the game length at the start. */
-  finalDay: number;
+  /**
+   * The last day played: the game finishes once it has been played. Set from the game length at the start. Null until
+   * IPO: it has no last day.
+   */
+  finalDay: number | null;
   /** True once the teacher has ended the game, scored as it stood. */
   endedByTeacher: boolean;
   /**
@@ -452,6 +509,8 @@ export interface GameState {
   funding: Funding;
   /** The rescue buyout, once cash has run out once; null before. */
   rescue: Rescue | null;
+  /** Applications to float, and the IPO once the bell has been rung. */
+  ipo: IpoState;
   /** Loans repaid before the latest was taken, oldest first, for the summary. */
   pastLoans: Loan[];
   /** The interest in every loan repayment so far: of the debt spend, the part that counts against profit. */
@@ -574,6 +633,16 @@ export type Action =
    * saved. Refused without enough cash.
    */
   | { type: "repayLoan" }
+  /**
+   * Applies to float, once every readiness condition is met: a hidden roll decides between a cold market, which
+   * postpones it, and approval. Not again while one is approved or postponed.
+   */
+  | { type: "applyForIpo" }
+  /**
+   * Floats `float` of the company (its share after the IPO, from the configured least to most) in new shares at the
+   * offer price, once approved, and rings the opening bell: the first day of trading is played and the game ends.
+   */
+  | { type: "ringBell"; float: number }
   /** Buys the product's paid API, charged at once. Calls start arriving from the next day played. */
   | { type: "buyApi" }
   /**
@@ -634,7 +703,8 @@ export interface LogEntry {
     | "staff"
     | "api"
     | "danger"
-    | "calendar";
+    | "calendar"
+    | "ipo";
 }
 
 export interface DayLog {

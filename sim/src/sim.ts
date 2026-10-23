@@ -22,6 +22,7 @@ import { createEvents, type EventView, type FeatureGapView } from "./events.ts";
 import { createFeatures, type FeatureView } from "./features.ts";
 import { createFinance, noSpend, pounds } from "./finance.ts";
 import { createInfrastructure, type ProviderView } from "./infrastructure.ts";
+import { createIpo, type IpoView } from "./ipo.ts";
 import { createLaunch, type LaunchView } from "./launch.ts";
 import { createLoan, type LoanQuote, type LoanView } from "./loan.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
@@ -64,6 +65,7 @@ export type { DangerRiskView, DangerView } from "./encounters.ts";
 export type { EventView, FeatureGapView } from "./events.ts";
 export type { FeatureStatus, FeatureView } from "./features.ts";
 export type { ProviderView } from "./infrastructure.ts";
+export type { FloatPreview, IpoCondition, IpoConditionId, IpoOffer, IpoStatus, IpoView } from "./ipo.ts";
 export type { LaunchView } from "./launch.ts";
 export type { LoanQuote, LoanView } from "./loan.ts";
 export type { LostAddon, MigrationQuote, MigrationView, SetupRack } from "./migration.ts";
@@ -131,6 +133,9 @@ export {
   type GameState,
   type GameStatus,
   type GrantFunding,
+  type IpoApplication,
+  type IpoResult,
+  type IpoState,
   type Loan,
   type LogEntry,
   type Migration,
@@ -307,6 +312,12 @@ export interface Sim {
    */
   funding(state: GameState): FundingView;
   /**
+   * The IPO: the readiness checklist, condition by condition, whether the company can apply to float and why not, a
+   * cold market's wait, once approved the offer with what each float would do, and once floated the first day of
+   * trading.
+   */
+  ipo(state: GameState): IpoView;
+  /**
    * What countering a funder's open offer with `terms` would do, before it's made: how far it asks, the odds of a
    * high, middle or low roll, and the next offer each would bring. Refused as counterFunding would refuse it.
    */
@@ -405,6 +416,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const shares = createShares(config, finance, conversion);
   const api = createApi(config, features, finance, infra.apiuOn);
   const encounters = createEncounters(config, servers);
+  const ipo = createIpo(config, finance, shares, servers, (s) => runway(s).dailyNet);
   const pauses = createPauses(config, {
     events: events.events,
     units: infra.units,
@@ -416,6 +428,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     servers: servers.servers,
     funding: shares.funding,
     calendar: calendar.calendar,
+    ipo: ipo.ipoView,
   });
   const rescue = createRescue(config, finance, shares, (s) => runway(s), (s) => infra.opsNeededNow(s));
 
@@ -487,6 +500,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       migrations: 0,
       loan: null,
       ...owned,
+      ...ipo.startingIpo(),
       rescue: null,
       pastLoans: [],
       interestPaid: 0,
@@ -534,7 +548,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
         "This game is from an older version of XaaS Tycoon, so it can't be played any more. Start a new company to play again.",
       );
     }
-    return saved.status === "playing" && saved.day >= saved.finalDay ? { ...saved, status: "finished" } : saved;
+    const over = saved.finalDay !== null && saved.day >= saved.finalDay;
+    return saved.status === "playing" && over ? { ...saved, status: "finished" } : saved;
   }
 
   /** Loads saved state and checks the game is still going. */
@@ -547,9 +562,11 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       );
     }
     if (state.status === "finished") {
-      const why = state.endedByTeacher
-        ? `Your teacher ended ${state.companyName} early`
-        : `${state.companyName} has played all ${state.finalDay} days`;
+      const why = state.ipo.result
+        ? `${state.companyName} floated on day ${state.ipo.result.day}`
+        : state.endedByTeacher
+          ? `Your teacher ended ${state.companyName} early`
+          : `${state.companyName} has played all ${state.finalDay} days`;
       throw new SimError("finished", `${why}, so this game is over. Start a new company to play again.`);
     }
     return state;
@@ -593,6 +610,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
         return shares.acceptFunding(state, action.funder);
       case "declineFunding":
         return shares.declineFunding(state, action.funder);
+      case "applyForIpo":
+        return ipo.applyForIpo(state);
+      case "ringBell":
+        return ipo.ringBell(state, action.float);
       case "counterFunding":
         return shares.counterFunding(state, action.funder, action.terms);
       case "buyBack":
@@ -744,11 +765,20 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     return { dailyIncome, dailyCosts, dailyNet, days };
   }
 
+  /** Loads a game still being played that time can move on in: an approved IPO holds it until the bell is rung. */
+  function loadUnheld(saved: GameState): GameState {
+    const state = loadPlaying(saved);
+    if (state.ipo.approvedDay !== null) {
+      throw new SimError("ring_the_bell", "Your IPO is approved: choose your float and ring the opening bell to go on.");
+    }
+    return state;
+  }
+
   function advance(saved: GameState, days = 1): AdvanceResult {
     if (!Number.isInteger(days) || days < 1) {
       throw new SimError("bad_days", "Days to advance must be a whole number of at least 1.");
     }
-    let current = loadPlaying(saved);
+    let current = loadUnheld(saved);
     const log: DayLog[] = [];
     // Stops early if the game ends part-way through: liquidation, or the final day played.
     for (let i = 0; i < days && current.status === "playing"; i++) {
@@ -760,7 +790,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   }
 
   function tick(saved: GameState): TickResult {
-    return pauses.tick(loadPlaying(saved), advanceOneDay);
+    return pauses.tick(loadUnheld(saved), advanceOneDay);
   }
 
   function endGame(saved: GameState): GameState {
@@ -812,6 +842,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     valuation: (s) => shares.valuation(load(s)),
     capTable: (s) => shares.capTable(load(s)),
     funding: (s) => shares.funding(load(s)),
+    ipo: (s) => ipo.ipoView(load(s)),
     counterOdds: (s, funder, terms) => shares.counterOdds(load(s), funder, terms),
     rescue: (s) => rescue.rescueView(load(s)),
     launch: (s) => launch.launchView(load(s)),

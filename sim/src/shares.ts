@@ -180,6 +180,7 @@ const NAMES: Record<Shareholder["id"], string> = {
   student: "You",
   friendsAndFamily: "Friends and family",
   vulture: "Vulture VC",
+  public: "Public shareholders",
 };
 const FUNDER_NAMES: Record<FunderId, string> = { friendsAndFamily: "Friends and family", grant: "The grant" };
 const percent = (share: number) => `${Math.round(share * 1000) / 10}%`;
@@ -374,7 +375,12 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
   }
 
   function capTable(state: GameState): CapTableView {
-    const { valuation: value, sharesInIssue: shares, sharePrice } = valuation(state);
+    // After the IPO the market prices the company: shares are worth the close of the first day of trading.
+    const floated = state.ipo.result;
+    const formula = valuation(state);
+    const { sharesInIssue: shares } = formula;
+    const value = floated ? floated.marketValue : formula.valuation;
+    const sharePrice = floated ? floated.closePrice : formula.sharePrice;
     return {
       sharesInIssue: shares,
       sharePrice,

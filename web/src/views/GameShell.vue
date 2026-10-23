@@ -22,6 +22,7 @@ const PAGES = [
 ];
 const onHome = computed(() => route.name === "game-home");
 const onFinance = computed(() => route.name === "game-finance");
+const onBell = computed(() => route.name === "game-ipo");
 
 // Each page visit goes in the playtest log, by its route name: "game-finance" is "finance".
 watch(
@@ -80,10 +81,10 @@ async function closeMenu() {
       <div v-if="game.company" class="day-controls">
         <span class="day-counter">
           <span class="label">Day</span>
-          <strong data-testid="day">{{ game.company.day }} <small>of {{ game.company.finalDay }}</small></strong>
+          <strong data-testid="day">{{ game.company.day }} <small v-if="game.company.finalDay !== null">of {{ game.company.finalDay }}</small></strong>
           <span class="date" data-testid="date">{{ game.company.calendar.today.text }}</span>
         </span>
-        <div v-if="game.timedFlow && !game.over" class="timed-flow" data-testid="timed-flow">
+        <div v-if="game.timedFlow && !game.over && !game.ipoApproved" class="timed-flow" data-testid="timed-flow">
           <!-- One button whose label changes, so keyboard focus stays on it. -->
           <button class="ghost play-pause" @click="togglePlay">
             {{ game.playing ? "Pause" : "Play" }}
@@ -104,8 +105,8 @@ async function closeMenu() {
         </div>
         <button
           class="continue"
-          :disabled="game.busy || game.over || game.playing"
-          :title="game.over ? 'This game has ended' : undefined"
+          :disabled="game.busy || game.over || game.playing || game.ipoApproved"
+          :title="game.over ? 'This game has ended' : game.ipoApproved ? 'Ring the opening bell first' : undefined"
           :aria-label="game.tickName === 'week' ? 'Continue a week' : 'Continue'"
           @click="game.continueDay()"
         >
@@ -157,7 +158,12 @@ async function closeMenu() {
           <RouterLink v-if="!onFinance" :to="`${game.base}/finance`">Open Finance</RouterLink>
         </p>
       </div>
-      <p v-if="game.over && !onHome" class="readonly-note" data-testid="read-only">
+      <p v-if="game.ipoApproved && !onBell" class="ipo-note" role="status" data-testid="ipo-approved-note">
+        <span class="badge">IPO approved</span>
+        Your company is ready to float. Choose your float and ring the opening bell: the game waits for you.
+        <RouterLink :to="`${game.base}/ipo`">Go to the opening bell</RouterLink>
+      </p>
+      <p v-if="game.over && !onHome && !onBell" class="readonly-note" data-testid="read-only">
         <span class="badge">Read only</span>
         This game has ended, so nothing here can change.
         <RouterLink :to="game.base">See how it went on Home</RouterLink>.

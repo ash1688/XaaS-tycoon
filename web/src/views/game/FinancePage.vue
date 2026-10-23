@@ -6,13 +6,14 @@ import CashChart from "../../components/CashChart.vue";
 import BalanceSheet from "../../panels/BalanceSheet.vue";
 import CapTablePanel from "../../panels/CapTablePanel.vue";
 import FundingPanel from "../../panels/FundingPanel.vue";
+import IpoPanel from "../../panels/IpoPanel.vue";
 import LoanPanel from "../../panels/LoanPanel.vue";
 import RescuePanel from "../../panels/RescuePanel.vue";
 import SpendPanel from "../../panels/SpendPanel.vue";
 import ValuationPanel from "../../panels/ValuationPanel.vue";
 
-// Finance: cash, the balance sheet of income against costs, the valuation and who owns the company, any rescue
-// buyout, funding, the bank loan, where the money went, and cash over time.
+// Finance: cash, the IPO readiness checklist, the balance sheet of income against costs, the valuation and who owns the
+// company, any rescue buyout, funding, the bank loan, where the money went, and cash over time.
 // The chart's figures come from the summary so far, fetched again only once a new day has been played.
 const game = useGame();
 watch(
@@ -77,6 +78,7 @@ watch(
         Runway is how long your cash lasts at today's income and costs.
       </p>
     </section>
+    <IpoPanel />
     <BalanceSheet />
     <ValuationPanel />
     <CapTablePanel />

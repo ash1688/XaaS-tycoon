@@ -213,10 +213,11 @@ export const TIMELINE_MAX_EVENTS = 5000;
 const MAX_CACHED_SIMS = 20;
 
 /**
- * SimError codes that are a 409: a game that has ended or that the student retired, or a price still locked after the
- * last change. The request was fine, but the game can't take it now.
+ * SimError codes that are a 409: a game that has ended or that the student retired, a price still locked after the
+ * last change, or a day played while an approved IPO waits for the bell. The request was fine, but the game can't take
+ * it now.
  */
-const CONFLICT = new Set(["liquidated", "finished", "retired", "price_locked"]);
+const CONFLICT = new Set(["liquidated", "finished", "retired", "price_locked", "ring_the_bell"]);
 
 /** The SimError code for a game saved by an older version of the sim, which can't be loaded any more. */
 const OLD_VERSION = "old_version";
@@ -411,6 +412,7 @@ export async function buildApp(opts: AppOptions) {
       valuation: sim.valuation(state),
       capTable: sim.capTable(state),
       funding: sim.funding(state),
+      ipo: sim.ipo(state),
       rescue: sim.rescue(state),
       features: sim.features(state),
       migration: sim.migration(state),
@@ -745,6 +747,8 @@ export async function buildApp(opts: AppOptions) {
                 "switchServer",
                 "setApiInstances",
                 "repayLoan",
+                "applyForIpo",
+                "ringBell",
               ],
             },
             pool: { enum: [...STAFF_POOLS] },
@@ -779,6 +783,8 @@ export async function buildApp(opts: AppOptions) {
             service: { enum: [...MANAGED_SERVICES] },
             // acceptFunding, declineFunding and counterFunding: friends and family or the grant.
             funder: { enum: [...FUNDER_IDS] },
+            // ringBell: the float, as a share of the company after the IPO. The sim checks it's in the allowed range.
+            float: { type: "number", minimum: 0, maximum: 1 },
             // counterFunding: the terms asked for. The sim checks they're the funder's and how far they ask.
             terms: { type: "object", properties: COUNTER_TERMS, additionalProperties: false },
           },
@@ -797,6 +803,7 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { enum: ["hire", "letGo", "setInstances"] } } }, then: { properties: { count: { type: "integer", minimum: 1 } } } },
             { if: { properties: { type: { const: "setApiInstances" } } }, then: { required: ["count"] } },
             { if: { properties: { type: { const: "switchServer" } } }, then: { required: ["id", "gives"] } },
+            { if: { properties: { type: { const: "ringBell" } } }, then: { required: ["float"] } },
             {
               if: { properties: { type: { const: "setManagedService" } } },
               then: { required: ["service", "size"] },
@@ -1131,9 +1138,9 @@ export async function buildApp(opts: AppOptions) {
               status: companies.status,
               updatedAt: companies.updatedAt,
               archivedAt: companies.archivedAt,
-              // The game's own, so a game keeps the length it started with. A game from before game lengths has its
-              // config's.
-              finalDay: sql<number | null>`coalesce(${companies.state}->>'finalDay', ${companies.config}->>'finalDay')::int`,
+              // The game's own, so a game keeps the length it started with: null until IPO. A game from before game
+              // lengths has its config's.
+              finalDay: sql<number | null>`case when ${companies.state}->>'gameLength' = 'until-ipo' then null else coalesce((${companies.state}->>'finalDay')::int, (${companies.config}->>'finalDay')::int, ${base.finalDay}) end`,
               endedByTeacher: sql<boolean | null>`(${companies.state}->>'endedByTeacher')::boolean`,
               preset: companies.preset,
               player: companies.player,
@@ -1166,7 +1173,7 @@ export async function buildApp(opts: AppOptions) {
             model: g.model as TeacherGameView["model"],
             migratingTo: g.migratingTo as TeacherGameView["migratingTo"],
             status: g.status as CompanyStatus,
-            finalDay: g.finalDay ?? base.finalDay,
+            finalDay: g.finalDay,
             endedByTeacher: g.endedByTeacher ?? false,
             updatedAt: g.updatedAt.toISOString(),
             archivedAt: g.archivedAt?.toISOString() ?? null,

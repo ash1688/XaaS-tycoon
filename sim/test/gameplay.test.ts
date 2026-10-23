@@ -58,6 +58,7 @@ function fingerprint(model: GameState["model"], productType: GameState["productT
         sim.valuation(state),
         sim.capTable(state),
         sim.funding(state),
+        sim.ipo(state),
       );
     }
     const next = sim.advance(state);

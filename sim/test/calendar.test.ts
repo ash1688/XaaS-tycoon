@@ -3,7 +3,7 @@ import { createSim, dayOfDate, defaultConfig, gameDate, SimError, type GameConfi
 
 // The real calendar and its holidays, through the sim's public interface, on the default config. Events are taken out
 // so only holidays move load and growth.
-const quiet: GameConfig = { ...defaultConfig, events: [], allowedGameLengths: { "180-days": 1, "1-year": 1, career: 1 } };
+const quiet: GameConfig = { ...defaultConfig, events: [], allowedGameLengths: { "180-days": 1, "until-ipo": 0, "1-year": 1, career: 1 } };
 const sim = createSim(quiet);
 
 const begin = (productType: string, startDate: string, gameLength = "1-year") =>
@@ -43,7 +43,7 @@ describe("the real calendar", () => {
     expect(sim.calendar(later).startYear).toBe(2026);
     // A career runs decades: day 1 + 47 × 365 days is 47 years on, less the leap days.
     const career = begin("social", "2026-06-01", "career");
-    expect(gameDate(career, career.finalDay).year).toBe(2073);
+    expect(gameDate(career, career.finalDay!).year).toBe(2073);
     expect(dayOfDate(career, "2026-06-01")).toBe(1);
   });
 

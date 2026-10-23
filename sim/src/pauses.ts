@@ -1,6 +1,7 @@
 import type { CalendarView } from "./calendar.ts";
 import type { GameConfig } from "./config.ts";
 import type { EventView } from "./events.ts";
+import type { IpoView } from "./ipo.ts";
 import type { LaunchView } from "./launch.ts";
 import type { MigrationView } from "./migration.ts";
 import type { ServerView, UnitsView } from "./servers.ts";
@@ -47,6 +48,7 @@ export interface PauseViews {
   servers(state: GameState): ServerView[];
   funding(state: GameState): FundingView;
   calendar(state: GameState): CalendarView;
+  ipo(state: GameState): IpoView;
 }
 
 export function createPauses(config: GameConfig, views: PauseViews) {
@@ -106,6 +108,15 @@ export function createPauses(config: GameConfig, views: PauseViews) {
     if (grantBefore === "accepted" && grantAfter === "withdrawn") add("alert", "grant", "The grant was withdrawn");
     if (grantBefore === "accepted" && grantAfter === "met") add("finished", "grant", "The grant's condition is met: it's yours to keep");
     if ((after.api?.dropped ?? 0) > 0 && (before.api?.dropped ?? 0) === 0) add("alert", "api-dropped", "API calls are being dropped");
+
+    // The IPO: every readiness condition met at last, or a condition lost by a company that was ready.
+    const ipoBefore = views.ipo(before);
+    const ipoAfter = views.ipo(after);
+    if (ipoAfter.status === "ready" && ipoBefore.status !== "ready") add("offer", "ipo-ready", "IPO: ready to apply");
+    else if (ipoBefore.ready && !ipoAfter.ready) {
+      const lost = ipoAfter.conditions.filter((x) => !x.met && ipoBefore.conditions.find((b) => b.id === x.id)?.met);
+      add("alert", "ipo-lost", `IPO: no longer ready (${lost.map((x) => x.label.toLowerCase()).join(", ")})`);
+    }
 
     // An offer that wasn't open yesterday.
     const fundingBefore = views.funding(before);

@@ -5,7 +5,7 @@ import { formatCash } from "../api";
 import { dayTicks, formatAxisCash, niceTicks, useWidth } from "../chart";
 
 // Cash left at the end of each day, as a line on the same day axis as the cost chart. Below £0 is a rescue buyout the first time, and liquidation the second.
-const props = defineProps<{ days: SummaryDay[]; finalDay: number }>();
+const props = defineProps<{ days: SummaryDay[]; finalDay: number | null }>();
 
 const el = ref<HTMLElement>();
 const width = useWidth(el);
@@ -16,7 +16,7 @@ const M = { top: 12, right: 12, bottom: 42, left: 70 };
 const plotW = computed(() => Math.max(100, width.value - M.left - M.right));
 const plotH = HEIGHT - M.top - M.bottom;
 
-const lastDay = computed(() => Math.max(props.finalDay, props.days.at(-1)?.day ?? 1));
+const lastDay = computed(() => Math.max(props.finalDay ?? 0, props.days.at(-1)?.day ?? 1));
 const band = computed(() => plotW.value / lastDay.value);
 // Cash before the first day's charges and any loan or funding taken at the start, so the line starts at the starting cash.
 const opening = computed(() => {

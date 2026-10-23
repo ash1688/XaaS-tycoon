@@ -1690,6 +1690,98 @@ describe("shares and funding", () => {
   });
 });
 
+describe("the IPO", () => {
+  // Thresholds anyone can meet after a couple of days, every user paying, and never a cold market.
+  const EASY_IPO = {
+    "productTypes.ecommerce.pricing.freeShare": 0,
+    "ipo.products.ecommerce.users": 0,
+    "ipo.products.ecommerce.annualRevenue": 0,
+    "ipo.products.ecommerce.payingUsers": 0,
+    "ipo.recordDays": 2,
+    "ipo.minUptime": 0,
+    "ipo.minSatisfaction": 0,
+    "ipo.maxCostSwing": 5,
+    "ipo.coldChance.min": 0,
+    "ipo.coldChance.max": 0,
+  };
+
+  async function setup(overrides: object = EASY_IPO, body: object = {}) {
+    await useOverrides(overrides);
+    const code = await newCode();
+    const created = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "saas", ...body });
+    expect(created.statusCode).toBe(201);
+    const company = created.json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
+    const next = () => app.inject({ method: "POST", url: `${url}/continue` });
+    return { code, company, url, act, next };
+  }
+
+  it("shows the readiness checklist, and refuses to apply until every condition is met", async () => {
+    const { company, act } = await setup({});
+    expect(company.ipo.conditions.map((c) => c.id)).toEqual([
+      "usersAndRevenue",
+      "uptime",
+      "costs",
+      "security",
+      "profit",
+      "satisfaction",
+      "payingUsers",
+    ]);
+    expect(company.ipo).toMatchObject({ status: "not-ready", ready: false, canApply: false, offer: null, result: null });
+    const res = await act({ type: "applyForIpo" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: "ipo_not_ready", message: expect.stringContaining("Not ready to float yet") });
+  });
+
+  it("applies once ready, holds the game, then floats and rings the bell, ending it", async () => {
+    const { url, act, next } = await setup();
+    await next();
+    const ready = (await next()).json<ContinueResult>().company;
+    expect(ready.ipo).toMatchObject({ status: "ready", canApply: true });
+    const approved = (await act({ type: "applyForIpo" })).json<CompanyView>();
+    expect(approved.ipo).toMatchObject({ status: "approved", approvedDay: 3, offer: { minFloat: 0.15, maxFloat: 0.4 } });
+    const held = await next();
+    expect(held.statusCode).toBe(409);
+    expect(held.json()).toMatchObject({ error: "ring_the_bell" });
+
+    for (const payload of [{ type: "ringBell" }, { type: "ringBell", float: 2 }]) expect((await act(payload)).statusCode).toBe(400);
+    expect((await act({ type: "ringBell", float: 0.5 })).json()).toMatchObject({ error: "bad_float" });
+
+    const preview = approved.ipo.offer!.floats.find((f) => f.float === 0.2)!;
+    const rung = await act({ type: "ringBell", float: 0.2 });
+    expect(rung.statusCode).toBe(200);
+    const floated = rung.json<CompanyView>();
+    const result = floated.ipo.result!;
+    expect(floated).toMatchObject({ status: "finished", cash: approved.cash + preview.cashRaised });
+    expect(floated.ipo.status).toBe("floated");
+    expect(result).toMatchObject({ float: 0.2, newShares: preview.newShares, cashRaised: preview.cashRaised, day: 3 });
+    expect(result.prices).toHaveLength(sim.config.ipo.ticks + 1);
+    expect(result.marketValue).toBe(Math.round(result.closePrice * result.sharesAfter));
+    expect(floated.capTable.rows.map((r) => [r.id, r.shares])).toEqual([
+      ["student", 10_000],
+      ["public", preview.newShares],
+    ]);
+    const summary = (await app.inject({ method: "GET", url: `${url}/summary` })).json<SummaryView>();
+    expect(summary).toMatchObject({ ending: "ipo", ipo: result });
+    const after = await next();
+    expect(after.statusCode).toBe(409);
+    expect(after.json()).toMatchObject({ error: "finished", message: expect.stringContaining("Acme floated on day 3") });
+  });
+
+  it("offers until IPO as a game length with no last day, when the preset allows it", async () => {
+    const { company } = await setup({ "allowedGameLengths.until-ipo": 1 }, { gameLength: "until-ipo" });
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.gameLengths).toEqual([
+      { id: "180-days", name: "180 days", finalDay: 180 },
+      { id: "until-ipo", name: "Until IPO", finalDay: null },
+    ]);
+    expect(company).toMatchObject({ gameLength: "until-ipo", gameLengthName: "Until IPO", finalDay: null });
+    const games = (await app.inject({ method: "GET", url: "/api/teacher/games", cookies: await teacherCookie() })).json<TeacherGamesView>();
+    expect(games.codes[0]!.companies[0]).toMatchObject({ finalDay: null });
+  });
+});
+
 describe("game end and summary", () => {
   // A 5-day game: continue plays days 2 to 5, then the game is over.
   const short = createSim({ ...sim.config, finalDay: 5 });

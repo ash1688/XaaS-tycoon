@@ -137,7 +137,7 @@ async function start() {
             <RouterLink :to="`/play/${code}/${c.id}`" class="company-row">
               <strong>{{ c.name }}</strong>
               <span class="muted">{{ productName(c.productType) }} · {{ modelName(c.model) }} · {{ c.difficultyName }}</span>
-              <span>Day {{ c.day }} of {{ c.finalDay }} · {{ formatCash(c.cash) }}</span>
+              <span>Day {{ c.day }}<template v-if="c.finalDay !== null"> of {{ c.finalDay }}</template> · {{ formatCash(c.cash) }}</span>
             </RouterLink>
             <button
               v-if="confirmingRetire !== c.id"
@@ -244,12 +244,14 @@ async function start() {
 
         <fieldset data-testid="game-lengths">
           <legend>How long will you play?</legend>
-          <p class="muted">The game ends on its last day, or sooner if it goes into liquidation or your teacher ends it.</p>
+          <p class="muted">The game ends on its last day, or sooner if you float on the stock market, it goes into liquidation or your teacher ends it.</p>
           <div class="choices">
             <label v-for="l in meta.gameLengths" :key="l.id" class="choice" :class="{ on: gameLength === l.id }">
               <input type="radio" name="gameLength" :value="l.id" v-model="gameLength" />
               <strong>{{ l.name }}</strong>
-              <span class="muted">Ends on day {{ l.finalDay.toLocaleString("en-GB") }}</span>
+              <span class="muted">{{
+                l.finalDay === null ? "Ends only when you float" : `Ends on day ${l.finalDay.toLocaleString("en-GB")}`
+              }}</span>
             </label>
           </div>
         </fieldset>
@@ -332,9 +334,9 @@ async function start() {
           <RouterLink :to="`/play/${code}/${c.id}`" class="company-row">
             <strong>{{ c.name }}</strong>
             <span class="muted">{{ productName(c.productType) }} · {{ modelName(c.model) }} · {{ c.difficultyName }}</span>
-            <span>Day {{ c.day }} of {{ c.finalDay }} · {{ formatCash(c.cash) }}</span>
+            <span>Day {{ c.day }}<template v-if="c.finalDay !== null"> of {{ c.finalDay }}</template> · {{ formatCash(c.cash) }}</span>
             <span :class="['badge', STATUS_BADGES[c.status]]">{{
-              c.endedByTeacher ? "Ended by teacher" : STATUS_LABELS[c.status]
+              c.ipo.status === "floated" ? "Floated" : c.endedByTeacher ? "Ended by teacher" : STATUS_LABELS[c.status]
             }}</span>
           </RouterLink>
         </li>
