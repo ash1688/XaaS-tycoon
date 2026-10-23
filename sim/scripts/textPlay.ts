@@ -274,7 +274,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
   );
   for (const r of danger.risks) lines.push(`  ${r.label}: ${r.detail}`);
   lines.push(`calendar: ${calendarLine(sim, state)}`);
-  for (const e of sim.events(state)) lines.push(`event today: ${e.name}. ${e.outcome}`);
+  for (const e of sim.events(state)) lines.push(`event today: ${e.name}. ${e.responsibility} ${e.outcome}`);
   for (const g of sim.featureGaps(state)) lines.push(`feature gap: ${g.name}. ${g.detail}`);
   return lines.join("\n");
 }

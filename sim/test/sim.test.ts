@@ -3388,13 +3388,16 @@ describe("default config", () => {
     return state;
   };
 
-  it("lets every product reach day 180 on IaaS renting ahead, down only for the provider and each spike's first day", () => {
+  it("lets every product reach day 180 on IaaS renting ahead, down only for the provider and each wave's first day", () => {
     for (const p of ["ecommerce", "social", "video"]) {
       const state = runStaffed(p, "iaas");
-      // The provider outage is the one an IaaS company can't staff its way out of. A traffic spike triples demand, and
-      // the extra VMs are only ready the next day, so its first day can be down too.
-      const fired = (id: string) => state.schedule.filter((e) => e.event === id).length;
-      expect(state.outageDays).toBeLessThanOrEqual(fired("providerOutage") + fired("trafficSpike"));
+      // A provider outage or a fire in its data centre is one an IaaS company can't staff its way out of. A traffic
+      // spike or viral growth brings more demand than the VMs rented ahead, and the extra VMs are only ready the next
+      // day (or not at all, short of the ops a spike needs), so the days it's on can be down too.
+      const daysOn = (id: string) =>
+        state.schedule.filter((e) => e.event === id).length * defaultConfig.events.find((e) => e.id === id)!.days;
+      const unavoidable = ["providerOutage", "dataCentreFire", "trafficSpike", "viralGrowth"];
+      expect(state.outageDays).toBeLessThanOrEqual(unavoidable.reduce((sum, id) => sum + daysOn(id), 0));
       expect(state.users).toBeGreaterThan(defaultConfig.productTypes[p as "social"].growth.launchUsersMin * 5);
     }
   });
@@ -5020,6 +5023,22 @@ describe("encounters", () => {
     expect(eventDays(late.advance(begin(late, "paas"), 30).log)[0]).toBe(17);
   });
 
+  it("only lists an event that follows another once that one has fired since it last did", () => {
+    const breach: EventConfig = { ...outage, id: "breach", name: "Breach" };
+    const lawsuit: EventConfig = { ...outage, id: "lawsuit", name: "Lawsuit", encounter: { chance: 1, follows: ["breach"] } };
+    // Both always come up, at the same threshold: on a tie the lawsuit, first in config, fires first.
+    const s = withEncounters({ thresholdMin: 5, thresholdMax: 5 }, lawsuit, breach);
+    const start = begin(s, "paas");
+    expect(start.encounterList.map((e) => e.event)).toEqual(["breach"]);
+    // A breach every time the lawsuit has nothing new to follow, so they take turns.
+    const { state } = s.advance(start, 30);
+    expect(state.schedule.map((e) => e.event).slice(0, 5)).toEqual(["breach", "lawsuit", "breach", "lawsuit", "breach"]);
+    // Only soon after: the meter takes at least 2 days to reach a threshold of 5, too late for a 1-day window.
+    const soon = withEncounters({ thresholdMin: 5, thresholdMax: 5 }, { ...lawsuit, encounter: { chance: 1, follows: ["breach"], followsWithinDays: 1 } }, breach);
+    const late = soon.advance(begin(soon, "paas"), 30).state;
+    expect(late.schedule.map((e) => e.event)).not.toContain("lawsuit");
+  });
+
   it("leaves the meter to top out on an empty list, then resets it quietly with a new roll", () => {
     const s = withEncounters({ thresholdMin: 5, thresholdMax: 8 }, { ...patch, encounter: { chance: 0 } });
     const start = begin(s, "paas");
@@ -5084,9 +5103,11 @@ describe("encounters", () => {
     const risky = allGaps(0);
     expect(risky.length).toBeGreaterThan(careful.length);
     expect(Math.min(...risky)).toBeGreaterThanOrEqual(8);
-    // Real default games that outgrow their setup and leave customers unhappy: rarely within 14 days.
+    // Real default games that outgrow their setup and leave customers unhappy: rarely within 14 days. Some events
+    // leave a risk behind that brings the next sooner (a viral wave overloads the servers, a fire's outage upsets
+    // customers), so a few do.
     const real = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].flatMap((seed) => gaps(defaultGame(seed).map((e) => e.day)));
-    expect(real.filter((g) => g < 14).length / real.length).toBeLessThan(0.1);
+    expect(real.filter((g) => g < 14).length / real.length).toBeLessThan(0.15);
   });
 
   it("carries on the same from a saved game", () => {
@@ -5171,6 +5192,170 @@ describe("default events", () => {
     };
     expect(run("onprem").outageDays).toBeGreaterThan(0);
     expect(run("paas").outageDays).toBe(0);
+  });
+});
+
+describe("events that are worse unpatched, and bring free users", () => {
+  const begin = (s: Sim, model: string, ops?: number) => {
+    const state = s.newGame({ companyName: "Acme", productType: "social", model, seed: 42 });
+    return withStaff(state, { ops: ops ?? s.opsNeededNow(state) });
+  };
+  const onDay = (day: number) => ({ schedule: { type: "fixed" as const, days: [day] } });
+
+  it("plays out worse when patches were overdue the day before", () => {
+    const breach: EventConfig = {
+      id: "breach",
+      name: "Breach",
+      description: "Attackers got in.",
+      layer: "data",
+      ...onDay(5),
+      days: 1,
+      effects: {
+        iaas: {
+          cost: { amount: 1_000, text: "Investigating" },
+          detail: "Contained.",
+          unpatched: { downtimeHours: 6, cost: { amount: 9_000, text: "Ransom" }, detail: "Ransomware." },
+        },
+      },
+    };
+    const s = createSim({ ...config, events: [breach] });
+    const play = (ops?: number) => {
+      // A game starts on day 1, so day 5 is the fourth played.
+      const { state, log } = s.advance(begin(s, "iaas", ops), 4);
+      const entries = log.at(-1)!.entries;
+      const event = entries.find((e) => e.kind === "event")!.text;
+      return { view: s.events(state)[0]!, event, cost: entries.find((e) => e.cashDelta < 0 && e.text.startsWith("Breach: "))! };
+    };
+    const patched = play();
+    expect(patched.view).toMatchObject({ unpatched: false, hit: true, outcome: "Contained. It cost £1,000: investigating." });
+    expect(patched.cost).toMatchObject({ text: "Breach: Investigating", cashDelta: -1_000 });
+    // No ops on IaaS: the servers went unpatched on day 4.
+    const unpatched = play(0);
+    expect(unpatched.view).toMatchObject({ unpatched: true, hit: true, outcome: "Ransomware. It cost £9,000: ransom." });
+    expect(unpatched.event).toBe("Breach: Data and users is your job on IaaS. Ransomware. It cost £9,000: ransom.");
+    expect(unpatched.cost).toMatchObject({ text: "Breach: Ransom", cashDelta: -9_000 });
+  });
+
+  it("brings a wave of free users at the end of the day it fires, as far as the market has room", () => {
+    const viral = (share: number, min: number): EventConfig => ({
+      id: "viral",
+      name: "Viral growth",
+      description: "A post went viral.",
+      layer: "runtime",
+      ...onDay(5),
+      days: 1,
+      effects: { saas: { freeUsers: { share, min }, detail: "They're staying." } },
+    });
+    const without = createSim({ ...config, events: [] });
+    // A game starts on day 1, so day 5 is the fourth played.
+    const quiet = without.advance(begin(without, "saas"), 4).state;
+    const s = createSim({ ...config, events: [viral(0.5, 100)] });
+    const { state, log } = s.advance(begin(s, "saas"), 4);
+    const wave = Math.round(quiet.users * 0.5);
+    // The same day otherwise: none of them pay yet.
+    expect(state.users).toBe(quiet.users + wave);
+    expect(state.paidUsers).toBe(quiet.paidUsers);
+    expect(s.events(state)[0]).toMatchObject({ newUsers: wave, hit: false });
+    expect(log.at(-1)!.entries.find((e) => e.kind === "event")!.text).toBe(
+      `Viral growth: Runtime and scaling is the provider's job on SaaS. ${wave.toLocaleString("en-GB")} new free users signed up. They're staying.`,
+    );
+    // Once: the day after, it's over.
+    expect(s.events(s.advance(state, 1).state)).toEqual([]);
+    // Never past the market.
+    const flood = createSim({ ...config, events: [viral(0, 10_000_000)] });
+    expect(flood.advance(begin(flood, "saas"), 4).state.users).toBe(config.productTypes.social.growth.marketSize);
+  });
+});
+
+describe("the beta's new events", () => {
+  const NEW = ["breach", "viralGrowth", "dataCentreFire", "fraud", "lawsuit"];
+  const event = (id: string) => defaultConfig.events.find((e) => e.id === id)!;
+
+  it("are all random events whose odds the company's situation changes", () => {
+    for (const id of NEW) {
+      const { encounter, effects } = event(id);
+      expect(encounter!.chance).toBeGreaterThan(0);
+      expect(Object.values(encounter!.risks ?? {}).some((m) => m !== 1)).toBe(true);
+      // They hit every model, each its own way.
+      expect(Object.keys(effects).sort()).toEqual([...MODEL_IDS].sort());
+    }
+    // Overdue patches let attackers in; kit run hot catches fire; unhappy customers don't spread the word, and sue.
+    expect(event("breach").encounter!.risks!.unpatched).toBeGreaterThan(1);
+    expect(event("dataCentreFire").encounter!.risks!.overloaded).toBeGreaterThan(1);
+    expect(event("viralGrowth").encounter!.risks!.lowSatisfaction).toBeLessThan(1);
+    expect(event("lawsuit").encounter!.risks!.lowSatisfaction).toBeGreaterThan(1);
+  });
+
+  it("only let a lawsuit follow a breach", () => {
+    expect(event("lawsuit").encounter).toMatchObject({ follows: ["breach"], followsWithinDays: 60 });
+  });
+
+  it("make a breach worse with patches overdue, only where the OS is yours", () => {
+    const { effects } = event("breach");
+    for (const m of MODEL_IDS) {
+      const osYours = responsibilityStack(m).find((l) => l.id === "os")!.owner === "you";
+      expect(effects[m]!.unpatched !== undefined).toBe(osYours);
+      if (osYours) {
+        expect(effects[m]!.unpatched!.cost!.amount).toBeGreaterThan(effects[m]!.cost!.amount);
+        expect(effects[m]!.unpatched!.downtimeHours).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("hit on-prem hardest in a fire, and SaaS least in a fraud", () => {
+    const fire = event("dataCentreFire").effects;
+    for (const m of ["iaas", "paas", "saas"] as const) {
+      expect(fire.onprem!.downtimeHours).toBeGreaterThan(fire[m]!.downtimeHours!);
+      expect(fire[m]!.cost).toBeUndefined();
+    }
+    expect(fire.onprem!.cost!.amount).toBeGreaterThan(0);
+    const fraud = event("fraud").effects;
+    for (const m of ["onprem", "iaas", "paas"] as const) expect(fraud.saas!.cost!.amount).toBeLessThan(fraud[m]!.cost!.amount);
+  });
+
+  it("explain whose job it was on each model", () => {
+    for (const id of NEW) {
+      const e = event(id);
+      const s = createSim({ ...roomyDefaults, events: [{ ...e, encounter: undefined, schedule: { type: "fixed", days: [6] } }] });
+      for (const model of MODEL_IDS) {
+        const start = setUp(s, s.newGame({ companyName: "Acme", productType: "social", model, seed: 7 }));
+        const { state } = s.advance(withStaff(start, { ops: 2 }), 5);
+        const view = s.events(state)[0]!;
+        const owner = responsibilityStack(model).find((l) => l.id === e.layer)!.owner;
+        expect(view).toMatchObject({ id, owner, layer: e.layer });
+        expect(view.responsibility).toMatch(owner === "you" ? /is your job/ : owner === "provider" ? /the provider's job/ : /shared/);
+        expect(view.outcome).toContain(e.effects[model]!.detail);
+      }
+    }
+  });
+
+  it("lead into the rescue buyout when one empties the cash, not straight to the end", () => {
+    const fraud = { ...event("fraud"), encounter: undefined, schedule: { type: "fixed" as const, days: [6] } };
+    const s = createSim({ ...roomyDefaults, events: [fraud] });
+    const start = setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 7 }));
+    // Just less cash than the fraud takes, the day before it.
+    const before = s.advance(start, 4).state;
+    const { state, log } = s.advance({ ...before, cash: 1_000 }, 1);
+    expect(log.at(-1)!.entries.some((e) => e.text.startsWith("Theft or fraud: Money clawed back"))).toBe(true);
+    expect(state.status).toBe("playing");
+    expect(state.rescue).toMatchObject({ day: 6 });
+  });
+
+  it("each fire in some games, with a lawsuit only ever soon after a breach", () => {
+    const s = createSim(roomyDefaults);
+    const fired = new Set<string>();
+    for (let seed = 1; seed <= 30; seed++) {
+      const { schedule } = s.advance(s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed }), 179).state;
+      schedule.forEach((e, i) => {
+        fired.add(e.event);
+        if (e.event !== "lawsuit") return;
+        const since = schedule.slice(0, i).map((x) => x.event);
+        const breach = since.lastIndexOf("breach");
+        expect(breach).toBeGreaterThan(since.lastIndexOf("lawsuit"));
+        expect(e.day - schedule[breach]!.day).toBeLessThanOrEqual(60);
+      });
+    }
+    for (const id of NEW) expect(fired).toContain(id);
   });
 });
 

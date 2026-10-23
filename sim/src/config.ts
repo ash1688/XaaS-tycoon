@@ -713,6 +713,11 @@ export interface EventOutcome {
    * double billing and lost add-ons) is the price of getting control back.
    */
   featureGap?: { growthMultiplier: number; features: Record<ProductTypeId, string> };
+  /**
+   * A wave of new free users arrives at the end of the day the event fires, and stays: this share of the users there
+   * that day, and at least `min`. Capacity faces them from the next day.
+   */
+  freeUsers?: { share: number; min: number };
 }
 
 /** How an event hits one model. */
@@ -720,6 +725,11 @@ export interface EventEffect extends EventOutcome {
   /** Ops staff needed to deal with it. With fewer, `shortOfOps` happens instead. */
   opsNeeded?: number;
   shortOfOps?: EventOutcome;
+  /**
+   * What happens instead when patches are overdue: the company had the unpatched risk on the day before (see
+   * EncounterConfig.riskRise). Short of ops, `shortOfOps` comes first.
+   */
+  unpatched?: EventOutcome;
 }
 
 /**
@@ -748,6 +758,13 @@ export interface EncounterOdds {
   maxTimes?: number;
   /** It can't go on a list rolled before this day. Left out, from the start. */
   fromDay?: number;
+  /**
+   * It can only follow one of these events: it can't go on a list until one of them has fired since it last fired.
+   * Left out, it needs nothing first.
+   */
+  follows?: string[];
+  /** With `follows`: only within this many days of the last time one of them fired. Left out, any time after. */
+  followsWithinDays?: number;
 }
 
 /**
@@ -1632,7 +1649,7 @@ export const defaultConfig: GameConfig = {
     {
       id: "trafficSpike",
       name: "Traffic spike",
-      description: "Your product went viral: a flood of visitors on top of your usual users.",
+      description: "A big news site featured your product: a flood of visitors on top of your usual users.",
       layer: "runtime",
       // The commonest random event.
       encounter: { chance: 0.6 },
@@ -1767,6 +1784,166 @@ export const defaultConfig: GameConfig = {
           },
           detail:
             "The platform's code isn't yours to change, so you can't build it. Growth stays slower until you migrate off SaaS and build what you like.",
+        },
+      },
+    },
+    {
+      id: "breach",
+      name: "Security breach",
+      description: "Attackers broke into your systems and stole customer data.",
+      layer: "data",
+      // Much likelier with servers going unpatched, and far worse then: ransomware gets in through a known hole.
+      encounter: { chance: 0.25, risks: { unpatched: 3 } },
+      days: 1,
+      effects: {
+        onprem: {
+          cost: { amount: 3_000, text: "Investigating the breach and telling the customers affected" },
+          detail:
+            "Your servers were patched, so the attackers only got a few accounts through a stolen password. You still had to find out what they took and tell those customers.",
+          unpatched: {
+            downtimeHours: 12,
+            cost: { amount: 12_000, text: "Recovering from ransomware" },
+            detail:
+              "Your servers were behind on patches, so attackers got in through a known hole and locked your data with ransomware. You took everything down and restored it from backups.",
+          },
+        },
+        iaas: {
+          cost: { amount: 3_000, text: "Investigating the breach and telling the customers affected" },
+          detail:
+            "Your VMs were patched, so the attackers only got a few accounts through a stolen password. You still had to find out what they took and tell those customers.",
+          unpatched: {
+            downtimeHours: 12,
+            cost: { amount: 12_000, text: "Recovering from ransomware" },
+            detail:
+              "Your VMs were behind on patches, so attackers got in through a known hole and locked your data with ransomware. You took everything down and restored it from backups.",
+          },
+        },
+        paas: {
+          cost: { amount: 3_000, text: "Investigating the breach and telling the customers affected" },
+          detail:
+            "The provider keeps the platform patched, so the attackers came in through your own app with a stolen password. The data in it is still yours to protect.",
+        },
+        saas: {
+          cost: { amount: 3_000, text: "Investigating the breach and telling the customers affected" },
+          detail:
+            "The provider keeps the platform patched, but the attackers logged in with one of your staff's passwords. Who can see your customers' data is still your job.",
+        },
+      },
+    },
+    {
+      id: "viralGrowth",
+      name: "Viral growth",
+      description: "A post about your product went viral, and a wave of new users signed up for free.",
+      layer: "runtime",
+      // Unhappy customers don't spread the word.
+      encounter: { chance: 0.35, risks: { lowSatisfaction: 0.3 } },
+      days: 1,
+      effects: {
+        onprem: {
+          freeUsers: { share: 0.25, min: 500 },
+          detail:
+            "They're staying, and your own servers carry them from tomorrow. New kit takes days to arrive, so check your capacity now.",
+        },
+        iaas: {
+          freeUsers: { share: 0.25, min: 500 },
+          detail: "They're staying, and your VMs carry them from tomorrow. Renting more is your job, so check your capacity now.",
+        },
+        paas: {
+          freeUsers: { share: 0.25, min: 500 },
+          detail:
+            "They're staying. The provider runs the platform, but how much of it you pay for is up to you, so check your capacity now.",
+        },
+        saas: {
+          freeUsers: { share: 0.25, min: 500 },
+          detail:
+            "They're staying. The provider carries the load, so there's no capacity to worry about, but you pay its fee for every user, free ones too.",
+        },
+      },
+    },
+    {
+      id: "dataCentreFire",
+      name: "Data-centre fire",
+      description: "A fire broke out where your servers run. The sprinklers flooded the floor and the power was cut.",
+      layer: "facilities",
+      // Kit run hot catches fire: likelier when capacity is overloaded. Once at most.
+      encounter: { chance: 0.2, risks: { overloaded: 2 }, maxTimes: 1 },
+      days: 1,
+      effects: {
+        onprem: {
+          downtimeHours: 16,
+          cost: { amount: 8_000, text: "Replacing kit ruined by fire and water" },
+          detail:
+            "It's your own building, so it was your servers that burned. You were down most of the day while you dried out and replaced the ruined kit.",
+        },
+        iaas: {
+          downtimeHours: 4,
+          detail:
+            "The provider moved your VMs to another of its data centres. You were down while it did, but the ruined kit is theirs to replace.",
+        },
+        paas: {
+          downtimeHours: 2,
+          detail:
+            "The provider moved the platform to another of its data centres. You were down briefly, but the ruined kit is theirs to replace.",
+        },
+        saas: {
+          downtimeHours: 1,
+          detail: "The provider runs the platform across several data centres, so it barely blinked. The ruined kit is theirs to replace.",
+        },
+      },
+    },
+    {
+      id: "fraud",
+      name: "Theft or fraud",
+      description: "Fraudsters paid you with stolen card details, and the banks clawed the money back with fees on top.",
+      layer: "application",
+      // Holes left unpatched let thieves in.
+      encounter: { chance: 0.3, risks: { unpatched: 1.5 } },
+      days: 1,
+      effects: {
+        onprem: {
+          cost: { amount: 4_000, text: "Money clawed back by the banks, and their fees" },
+          detail: "You built your own checkout, so spotting fraud is your job, and nothing stopped them.",
+        },
+        iaas: {
+          cost: { amount: 4_000, text: "Money clawed back by the banks, and their fees" },
+          detail: "You built your own checkout, so spotting fraud is your job, and nothing stopped them.",
+        },
+        paas: {
+          cost: { amount: 4_000, text: "Money clawed back by the banks, and their fees" },
+          detail: "You built your own checkout on the platform, so spotting fraud is your job, and nothing stopped them.",
+        },
+        saas: {
+          cost: { amount: 1_500, text: "Money clawed back by the banks, and their fees" },
+          detail: "The provider's checkout has its own fraud checks, which caught most of it. You lost what slipped through.",
+        },
+      },
+    },
+    {
+      id: "lawsuit",
+      name: "Lawsuit",
+      description: "Customers whose data was stolen in your recent security breach are suing you.",
+      layer: "data",
+      // Only after a breach (a deal's badly broken SLA can lead to one too, once there are deals). Unhappy customers
+      // are likelier to sue.
+      encounter: { chance: 0.5, risks: { lowSatisfaction: 1.6 }, follows: ["breach"], followsWithinDays: 60 },
+      days: 1,
+      effects: {
+        onprem: {
+          cost: { amount: 8_000, text: "Legal fees and a settlement" },
+          detail: "You hold your customers' data, so you answer for losing it.",
+        },
+        iaas: {
+          cost: { amount: 8_000, text: "Legal fees and a settlement" },
+          detail: "The provider runs the hardware, but the data on it is yours, so you answer for losing it.",
+        },
+        paas: {
+          cost: { amount: 8_000, text: "Legal fees and a settlement" },
+          detail: "The provider runs the platform, but the data in your app is yours, so you answer for losing it.",
+        },
+        saas: {
+          cost: { amount: 8_000, text: "Legal fees and a settlement" },
+          detail:
+            "The provider runs the platform, but your customers' data is yours, so you answer for losing it. Its contract doesn't cover you.",
         },
       },
     },

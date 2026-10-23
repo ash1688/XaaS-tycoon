@@ -88,7 +88,7 @@ const HOURS = range(0, 24, 1);
 
 /**
  * The numbers an event's effect on one model can set, relative to the effect. The same with "shortOfOps." in front
- * for what happens without enough ops. An effect only gets a field for the numbers it sets in the base config.
+ * for what happens without enough ops, and "unpatched." for what happens with patches overdue. An effect only gets a field for the numbers it sets in the base config.
  */
 const EFFECT_FIELDS: Record<string, { label: string; help: string } & Range> = {
   opsNeeded: { label: "ops needed", help: "Ops staff needed to deal with it; with fewer, the short-of-ops outcome happens.", ...HEADCOUNT },
@@ -97,6 +97,8 @@ const EFFECT_FIELDS: Record<string, { label: string; help: string } & Range> = {
   "cost.amount": { label: "clean-up cost", help: "A one-off charge for dealing with it.", ...POUNDS },
   "priceRise.percent": { label: "price rise %", help: "The provider's prices go up by this percent for good.", ...range(0, 200, 1) },
   "featureGap.growthMultiplier": { label: "growth while the gap is open", help: "Daily growth is multiplied by this until the company migrates off the model.", ...range(0, 2, 0.05) },
+  "freeUsers.share": { label: "new free users (share of users)", help: "A wave of free users arrives the day it fires, as a share of the users there (0.25 = a quarter more), as far as the market has room.", ...range(0, 5, 0.05) },
+  "freeUsers.min": { label: "fewest new free users", help: "The wave brings at least this many free users, as far as the market has room.", ...range(0, 100_000, 100) },
 };
 
 /** Every editable number, with its default from the base config. The server's base is defaultConfig plus env. */
@@ -437,6 +439,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
       }
       add(`${at}.encounter.maxTimes`, "Events", s, "Most times per game", "After firing this many times it no longer goes on the encounter list.", range(0, 20, 1));
       add(`${at}.encounter.fromDay`, "Events", s, "Earliest day", "It can't go on an encounter list rolled before this day.", GAME_DAY);
+      add(`${at}.encounter.followsWithinDays`, "Events", s, "Only within days of what it follows", `It can only fire within this many days of the event it follows (${event.encounter.follows?.join(", ")}).`, GAME_DAY);
     }
     event.schedule?.days.forEach((_, i) => {
       add(`${at}.schedule.days.${i}`, "Events", s, `Fires on day (${i + 1})`, "A day it fires on in every game, outside the danger meter.", GAME_DAY);
@@ -448,8 +451,12 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     for (const m of MODEL_IDS) {
       if (!event.effects[m]) continue;
       for (const [rel, meta] of Object.entries(EFFECT_FIELDS)) {
-        for (const [prefix, when] of [["", ""], ["shortOfOps.", ", short of ops"]] as const) {
-          const help = prefix ? `Without enough ops: ${meta.help[0]!.toLowerCase()}${meta.help.slice(1)}` : meta.help;
+        for (const [prefix, when, lead] of [
+          ["", "", ""],
+          ["shortOfOps.", ", short of ops", "Without enough ops"],
+          ["unpatched.", ", patches overdue", "With patches overdue"],
+        ] as const) {
+          const help = lead ? `${lead}: ${meta.help[0]!.toLowerCase()}${meta.help.slice(1)}` : meta.help;
           add(`${at}.effects.${m}.${prefix}${rel}`, "Events", s, `${MODEL_LABELS[m]}${when}: ${meta.label}`, help, meta);
         }
       }

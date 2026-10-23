@@ -228,8 +228,12 @@ export interface EventRecord {
   model: ModelId;
   /** Short of the ops staff needed to deal with it. */
   shortOfOps: boolean;
+  /** Patches were overdue, which made it worse. Left out in games saved before it was recorded: they weren't. */
+  unpatched?: boolean;
   /** It hurt: it caused downtime, a penalty, a price rise or a feature gap. */
   hit: boolean;
+  /** New free users it brought. Left out in games saved before it was recorded: none. */
+  newUsers?: number;
 }
 
 /** A feature the platform can't provide (see EventOutcome.featureGap), slowing growth until the company leaves it. */

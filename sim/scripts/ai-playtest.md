@@ -29,7 +29,7 @@ npm run -s play -- summary <game>
   `npm run -s play -- do <game> "preview 8; quote iaas"`.
 - `next [days]` (inside `do`) moves time on, 7 days by default, in ticks as the game page does: a tick is a day, or
   a week in a career. It **stops early**, on the day itself, when the game pauses for the student: an event that
-  hurts or an outage, a holiday that hits your product (announced 14 days ahead, and on the day it starts), an
+  hurts or brings a wave of new users, or an outage, a holiday that hits your product (announced 14 days ahead, and on the day it starts), an
   alert (capacity over 100%, satisfaction falling below the poor mark, the grant withdrawn, paid API calls starting
   to be dropped), a new offer, cash about to run out, or something finished (a feature
   built, the launch over, servers ready, a migration step, the grant's condition met). The text interface also

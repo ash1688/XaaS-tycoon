@@ -74,10 +74,11 @@ export function createPauses(config: GameConfig, views: PauseViews) {
       add("alert", "rescue", `Cash ran out: a vulture VC rescued the company for ${Math.round(after.rescue.share * 100)}% of it`);
     }
 
-    // An event that hurt or found the company short of ops, on its first day only. One with nothing to do is just shown.
+    // An event that hurt, found the company short of ops or brought a wave of users to carry, on its first day only.
+    // One with nothing to do is just shown.
     const yesterday = new Set(views.events(before).map((e) => e.id));
     for (const e of views.events(after)) {
-      if ((e.hit || e.shortOfOps) && !yesterday.has(e.id)) add("event", `event-${e.id}`, e.name);
+      if ((e.hit || e.shortOfOps || e.newUsers > 0) && !yesterday.has(e.id)) add("event", `event-${e.id}`, e.name);
     }
     if (after.outageDays > before.outageDays && !reasons.some((r) => r.kind === "event")) {
       add("event", "outage", "Outage: the service went down");

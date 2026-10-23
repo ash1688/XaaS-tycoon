@@ -624,7 +624,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const converted = conversion.convertDay(state, wave.users, wave.paidUsers);
     // On a launch ramp day, its share of the launch users arrives at the end of the day.
     const launched = launch.arrive({ ...state, users: wave.users, paidUsers: converted.paidUsers }, day);
-    const { users, paidUsers, launchDay } = launched.state;
+    const { paidUsers, launchDay } = launched.state;
+    // Last, any wave of free users from an event that fired today.
+    const viral = events.newUsersToday(state, day, today, launched.state.users);
+    const users = launched.state.users + viral.reduce((sum, n) => sum + n, 0);
     const rng = grown.rng;
 
     // The paid API's calls, served as far as the APIU go. Its traffic for tomorrow follows the users paying tonight.
@@ -641,7 +644,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     // Each event explains itself first, then any outage. Billed on the current model until a migration completes, so
     // the model being left is billed pro rata up to the day you leave. During a migration the new model is billed as
     // well (see migrationCharges).
-    const recorded = events.record(state, today, served.overloaded);
+    const recorded = events.record(state, today, served.overloaded, viral);
     // The loan is repaid every day, whatever else happens.
     const repayment = loan.repaymentDay(state, day);
     // A grant's uptime condition counts today's hours down, and may withdraw it.

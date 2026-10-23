@@ -662,6 +662,40 @@ test("on SaaS, a feature the platform can't provide shows a card, then stays on 
   await expect(student.getByTestId("gap-shop-note")).toContainText("a feed that ranks posts your way");
 });
 
+test("viral growth brings a wave of free users, shown as good news with whose job it is to carry them", async ({
+  browser,
+  request,
+}) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  const code = await createCode(teacher);
+
+  // Started with only viral growth as a random event, at a threshold of 4. SaaS launches as the game starts, so the
+  // danger meter reaches 4 at the end of day 5 and the wave comes on day 6.
+  const created = await withOnlyEncounter(request, "viralGrowth", 4, () =>
+    request.post(`/api/codes/${code}/companies`, { data: { name: "Buzz Ltd", productType: "social", model: "saas" } }),
+  );
+  const { id } = await created.json();
+
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${id}`);
+  for (let day = 2; day <= 6; day++) {
+    await student.getByRole("button", { name: "Continue" }).click();
+    await expect(student.getByTestId("day")).toContainText(`${day} of ${E2E_FINAL_DAY}`);
+  }
+
+  const card = student.getByTestId("event-card");
+  await expect(card).toHaveAttribute("data-event", "viralGrowth");
+  await expect(card.getByRole("strong").first()).toHaveText("Viral growth");
+  await expect(card.getByTestId("event-responsibility")).toHaveText("Runtime and scaling is the provider's job on SaaS.");
+  await expect(card.getByTestId("event-outcome")).toContainText(/[\d,]+ new free users signed up\. They're staying\./);
+  await expect(card.getByTestId("event-tone")).toHaveText("Good news");
+  const dayLog = await openDayLog(student);
+  await expect(dayLog.getByTestId("event")).toContainText("new free users signed up");
+});
+
 test("a company plays to the final day and sees its summary, again when reopened", async ({ browser, request }) => {
   const teacher = await (await browser.newContext()).newPage();
   await teacher.goto("/staff");

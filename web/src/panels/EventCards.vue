@@ -11,8 +11,9 @@ const router = useRouter();
 // The event happened on the model it hit; if a migration completed the same day, the stack has already moved on.
 const eventModelNote = (e: EventView) =>
   e.model !== game.company?.model ? ` (you were on ${game.modelName(e.model)})` : "";
-const eventTone = (e: EventView) => (e.hit ? "hit" : e.owner === "you" ? "handled" : "covered");
-const EVENT_TONES = { hit: "It hurt", handled: "You handled it", covered: "Not your problem" } as const;
+const eventTone = (e: EventView) =>
+  e.hit ? "hit" : e.newUsers > 0 ? "boost" : e.owner === "you" ? "handled" : "covered";
+const EVENT_TONES = { hit: "It hurt", boost: "Good news", handled: "You handled it", covered: "Not your problem" } as const;
 const slowerBy = (multiplier: number) => `${Math.round(100 * (1 - multiplier))}%`;
 
 const showLayer = (id: LayerId) => router.push({ path: `${game.base}/infrastructure`, hash: `#layer-${id}` });
