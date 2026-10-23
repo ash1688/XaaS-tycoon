@@ -294,18 +294,49 @@ export interface StaffGradeConfig {
   leadDays: number;
 }
 
-/** A run of busy days that repeats, like a sale season. */
-export interface SeasonalSpike {
-  /** First day of the first spike. */
-  firstDay: number;
-  /** Days from the start of one spike to the start of the next. */
-  every: number;
-  /** How many days each spike lasts. */
-  length: number;
-  /** Load is multiplied by this during a spike. */
+/**
+ * When a holiday starts each year: on a fixed date, or a number of days from Easter Sunday or Black Friday (the
+ * Friday after the fourth Thursday in November), which move from year to year. Month is 1–12.
+ */
+export type HolidayStart =
+  | { anchor: "date"; month: number; day: number }
+  | { anchor: "easter"; offset: number }
+  | { anchor: "blackFriday"; offset: number };
+
+/** How a holiday hits one product on each of its days. */
+export interface HolidayEffect {
+  /** Load and CU and DBU demand are multiplied by this (1.5 = half as busy again). */
   loadMultiplier: number;
-  /** Growth is multiplied by this during a spike. */
+  /** Growth is multiplied by this: above 1, more sign-ups; below 1, fewer. */
   growthMultiplier: number;
+  /** What it means for this product, for the student. */
+  detail: string;
+}
+
+/**
+ * A calendar event: a holiday that falls on its dates every year. Outside the encounter system, it doesn't use or
+ * reset the danger meter, so it can be seen coming and planned for. Each product feels it its own way.
+ */
+export interface HolidayConfig {
+  /** Unique. Saved in logs, so don't rename. */
+  id: string;
+  name: string;
+  /** What happens, the same for every product. */
+  description: string;
+  start: HolidayStart;
+  /** Days it lasts, from its start. It can run into the next year. */
+  days: number;
+  /** A product left out doesn't notice it. */
+  effects: Partial<Record<ProductTypeId, HolidayEffect>>;
+}
+
+/** The real calendar each game runs on. Day 1 is a random date in the year the game starts. */
+export interface CalendarConfig {
+  /** The year a game starts in when the caller doesn't say (the server passes the current year). */
+  startYear: number;
+  /** A holiday that hits the product is announced in the log this many days before it starts. */
+  noticeDays: number;
+  holidays: HolidayConfig[];
 }
 
 /** How a product's users grow and how much load they put on the system. */
@@ -328,7 +359,6 @@ export interface GrowthProfile {
   loadPerUser: number;
   /** Daily load varies randomly by up to this share either way. */
   loadNoise: number;
-  seasonalSpike?: SeasonalSpike;
 }
 
 /**
@@ -380,7 +410,7 @@ export interface ProductSupport {
 
 /**
  * The units each user needs from the servers, on models with servers. Every user counts, paying or free, and the
- * day's load variation and seasonal spike apply to both.
+ * day's load variation and any holiday apply to both.
  */
 export interface ProductDemand {
   /** Compute units (CU) each user needs: app servers. */
@@ -984,6 +1014,8 @@ export interface GameConfig {
   migration: MigrationConfig;
   /** The danger meter and encounter list, which decide when random events fire. */
   encounters: EncounterConfig;
+  /** The real calendar and its holidays: calendar events, outside the danger meter. */
+  calendar: CalendarConfig;
   /** Scripted events, in the order they're logged on a day when more than one is on. */
   events: EventConfig[];
 }
@@ -1131,7 +1163,7 @@ export const defaultConfig: GameConfig = {
   productTypes: {
     ecommerce: {
       name: "E-commerce platform",
-      profile: "Big seasonal traffic spikes",
+      profile: "Huge Black Friday and Christmas rushes",
       growth: {
         launchUsersMin: 2_500,
         launchUsersMax: 7_500,
@@ -1140,7 +1172,6 @@ export const defaultConfig: GameConfig = {
         growthNoise: 0.5,
         loadPerUser: 2,
         loadNoise: 0.1,
-        seasonalSpike: { firstDay: 45, every: 45, length: 5, loadMultiplier: 1.6, growthMultiplier: 2 },
       },
       // Baskets and orders: as much database as compute, 500 shoppers to a CU and a DBU. Server sizes are set by it: a
       // small app server serves 3,000 shoppers, a medium 5,000, a large 10,000 and a massive 15,000.
@@ -1492,6 +1523,77 @@ export const defaultConfig: GameConfig = {
     riskRise: { unpatched: 0.5, overloaded: 0.5, lowSatisfaction: 0.5 },
     thresholdMin: 20,
     thresholdMax: 56,
+  },
+  // Holidays fall on their dates every year, so a student can see them coming and plan capacity. Each product feels
+  // them its own way: a shop dreads Black Friday, a video platform is busy whenever people have time off.
+  calendar: {
+    startYear: 2026,
+    noticeDays: 14,
+    holidays: [
+      {
+        id: "januaryBlues",
+        name: "January blues",
+        description: "Money's tight after Christmas, so people spend less and sign up for less.",
+        start: { anchor: "date", month: 1, day: 2 },
+        days: 30,
+        effects: {
+          ecommerce: {
+            loadMultiplier: 0.85,
+            growthMultiplier: 0.6,
+            detail: "Shoppers are skint after Christmas: fewer orders and far fewer sign-ups.",
+          },
+        },
+      },
+      {
+        id: "easter",
+        name: "Easter holidays",
+        description: "Schools are off for Easter, so students and families are online more.",
+        start: { anchor: "easter", offset: -9 },
+        days: 16,
+        effects: {
+          social: { loadMultiplier: 1.3, growthMultiplier: 1.25, detail: "Students off school post and chat all day." },
+          video: { loadMultiplier: 1.35, growthMultiplier: 1.2, detail: "Families off school watch far more." },
+        },
+      },
+      {
+        id: "summer",
+        name: "Summer holidays",
+        description: "Schools are off for the summer, so students and families are online more.",
+        start: { anchor: "date", month: 7, day: 22 },
+        days: 42,
+        effects: {
+          // Six weeks long, so growth gets a gentler lift than Easter's: it compounds.
+          social: { loadMultiplier: 1.25, growthMultiplier: 1.1, detail: "Students off school post and chat all summer." },
+          video: { loadMultiplier: 1.3, growthMultiplier: 1.1, detail: "Long summer days mean far more watching." },
+        },
+      },
+      {
+        id: "blackFriday",
+        name: "Black Friday",
+        description: "The biggest shopping weekend of the year, from Black Friday to Cyber Monday.",
+        start: { anchor: "blackFriday", offset: 0 },
+        days: 4,
+        effects: {
+          ecommerce: {
+            loadMultiplier: 2.2,
+            growthMultiplier: 2.5,
+            detail: "A huge shopping spike: more than twice the usual load, and a rush of new shoppers.",
+          },
+        },
+      },
+      {
+        id: "christmas",
+        name: "Christmas",
+        description: "Gifts, new devices and time off, to New Year's Day.",
+        start: { anchor: "date", month: 12, day: 18 },
+        days: 15,
+        effects: {
+          ecommerce: { loadMultiplier: 1.5, growthMultiplier: 1.4, detail: "Last-minute gifts, then the Boxing Day sales." },
+          social: { loadMultiplier: 1.15, growthMultiplier: 1.1, detail: "New phones, and time off to use them." },
+          video: { loadMultiplier: 1.4, growthMultiplier: 1.3, detail: "Time off and new devices: far more watching." },
+        },
+      },
+    ],
   },
   events: [
     {

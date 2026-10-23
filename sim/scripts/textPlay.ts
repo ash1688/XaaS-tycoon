@@ -16,7 +16,9 @@ import {
   type Action,
   type DayLog,
   type FunderId,
+  type GameDate,
   type GameState,
+  type HolidayView,
   type ManagedService,
   type ModelId,
   type RackSize,
@@ -156,9 +158,10 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const daysToPlay = state.finalDay - state.day;
   const lasts = left === null ? "not losing money" : left > daysToPlay ? `lasts past day ${state.finalDay}` : `${left} days`;
   const status = state.endedByTeacher ? "ENDED BY TEACHER" : state.status.toUpperCase();
+  const calendar = sim.calendar(state);
   lines.push(
     `== ${state.companyName} | ${state.productType} on ${state.model} | day ${state.day}/${state.finalDay} ` +
-      `(${gameLengthName(sim.config, state.gameLength)}, ${DIFFICULTIES[state.difficulty].name}) | ${status}`,
+      `(${gameLengthName(sim.config, state.gameLength)}, ${DIFFICULTIES[state.difficulty].name}) | ${calendar.today.text} | ${status}`,
   );
   lines.push(
     `cash ${money(state.cash)} | income ${money(dailyIncome(sim, state))}/day | costs ${money(dailyCosts(sim, state))}/day | runway ${lasts}`,
@@ -267,9 +270,40 @@ export function renderStatus(sim: Sim, state: GameState): string {
     `danger meter: ${danger.meter} (no event waits past ${danger.max}) | rose ${danger.rise} today (well-run day +${danger.dailyRise}${risks ? `, ${risks}` : ""})`,
   );
   for (const r of danger.risks) lines.push(`  ${r.label}: ${r.detail}`);
+  lines.push(`calendar: ${calendarLine(sim, state)}`);
   for (const e of sim.events(state)) lines.push(`event today: ${e.name}. ${e.outcome}`);
   for (const g of sim.featureGaps(state)) lines.push(`feature gap: ${g.name}. ${g.detail}`);
   return lines.join("\n");
+}
+
+/** What a holiday does to the product: "load ×2.2, growth ×2.5", or "no effect on you". */
+const holidayEffect = (h: HolidayView) =>
+  h.effect ? `load ×${h.effect.loadMultiplier}, growth ×${h.effect.growthMultiplier}` : "no effect on you";
+
+/** "2 Dec 2026". */
+const shortDate = (h: GameDate) => `${h.dayOfMonth} ${h.text.split(" ")[2]!.slice(0, 3)} ${h.year}`;
+
+/** The holidays on now and the next one to come, in a line. */
+function calendarLine(sim: Sim, state: GameState): string {
+  const { on, upcoming } = sim.calendar(state);
+  // A holiday the product doesn't notice is left to the full calendar.
+  const now = on.filter((h) => h.effect).map((h) => `${h.name} on now to day ${h.endDay} (${holidayEffect(h)})`);
+  const next = upcoming[0];
+  const parts = [...now, next ? `next: ${next.name} in ${next.daysUntil} days, day ${next.startDay} (${holidayEffect(next)})` : "no more holidays this game"];
+  return `${parts.join(" | ")}   ("calendar" for all)`;
+}
+
+/** Every holiday to come in the game, with its dates and what it does to the product. */
+function calendarLines(sim: Sim, state: GameState): string[] {
+  const { today, startYear, on, upcoming } = sim.calendar(state);
+  const line = (h: HolidayView) =>
+    `  ${h.name}: ${h.daysUntil > 0 ? `in ${h.daysUntil} days, ` : ""}${shortDate(h.start)}–${shortDate(h.end)} (days ${h.startDay}–${h.endDay}), ${holidayEffect(h)}${h.effect ? `. ${h.effect.detail}` : ""}`;
+  return [
+    `calendar: ${today.text}, year ${today.year - startYear + 1} of the game (started ${startYear})`,
+    ...(on.length ? ["on now:", ...on.map(line)] : []),
+    upcoming.length ? "coming up:" : "no more holidays before the game ends",
+    ...upcoming.map(line),
+  ];
 }
 
 /** Friends and family and the grant in a line: each one's offer, or how it stands. */
@@ -393,6 +427,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
   }
   const loan = sim.loan(state);
   if (loan?.remaining) lines.push(`  repayloan   (pay off the loan now: ${money(loan.payoff)}, saving ${money(loan.interestSaved)} interest)`);
+  lines.push(`  calendar   (the holidays to come, their dates and what each does to your product)`);
   lines.push(`  next [days]   (advance up to that many days, default 7; stops early when something needs you)`);
   lines.push(`  end   (as the teacher: end the game now, scored as it stands)`);
   return lines.join("\n");
@@ -405,6 +440,7 @@ export type Command =
   | { kind: "quote"; model: string }
   | { kind: "valuation" }
   | { kind: "funding" }
+  | { kind: "calendar" }
   | { kind: "next"; days: number }
   /** The teacher ends the game, as from the staff panel. */
   | { kind: "end" };
@@ -499,6 +535,8 @@ export function parseCommand(text: string): Command {
       return { kind: "valuation" };
     case "funding":
       return { kind: "funding" };
+    case "calendar":
+      return { kind: "calendar" };
     case "accept":
       return one({ type: "acceptFunding", funder: funder(args[0]) });
     case "decline":
@@ -566,6 +604,7 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
   }
   if (command.kind === "valuation") return { state, rows: [], lines: valuationLines(sim, state) };
   if (command.kind === "funding") return { state, rows: [], lines: fundingLines(sim, state) };
+  if (command.kind === "calendar") return { state, rows: [], lines: calendarLines(sim, state) };
   if (command.kind === "end") {
     const ended = sim.endGame(state);
     // Logged as the classroom server logs a game the teacher ends.
@@ -685,7 +724,7 @@ function fundingLines(sim: Sim, state: GameState): string[] {
  * Log entry kinds worth showing every day they appear. Feature, migration and API entries show only on days they stop
  * time.
  */
-const SHOWN_KINDS = new Set(["outage", "event", "bankrupt", "finished", "support", "price", "launch", "staff", "funding", "danger"]);
+const SHOWN_KINDS = new Set(["outage", "event", "bankrupt", "finished", "support", "price", "launch", "staff", "funding", "danger", "calendar"]);
 const STOPPING_KINDS = new Set(["feature", "migration", "api"]);
 
 const builtCount = (state: GameState) => Object.values(state.features).filter((f) => f.status !== "building").length;
@@ -699,6 +738,12 @@ function stopReasons(sim: Sim, before: GameState, after: GameState): string[] {
   const events = sim.events(after).filter((e) => (e.hit || e.shortOfOps) && !yesterday.has(e.id));
   if (events.length) reasons.push(`event: ${events.map((e) => e.name).join(", ")}`);
   if (after.outageDays > before.outageDays) reasons.push("outage");
+  // A holiday that hits the product, announced ahead or starting today: time to plan capacity for it.
+  const { on, upcoming } = sim.calendar(after);
+  const starting = on.filter((h) => h.effect && h.startDay === after.day);
+  const announced = upcoming.filter((h) => h.effect && h.daysUntil === sim.config.calendar.noticeDays);
+  if (starting.length) reasons.push(`holiday started: ${starting.map((h) => h.name).join(", ")}`);
+  if (announced.length) reasons.push(`holiday coming in ${sim.config.calendar.noticeDays} days: ${announced.map((h) => h.name).join(", ")}`);
   // A risk that's new today makes the danger meter climb faster: worth a decision before the next random event.
   const risksBefore = new Set(sim.danger(before).risks.map((r) => r.id));
   const newRisks = sim.danger(after).risks.filter((r) => !risksBefore.has(r.id));

@@ -32,6 +32,8 @@ const STARTING_USERS = { ecommerce: 2000, social: 1000, video: 1000 };
 const sim = createSim({
   ...defaultConfig,
   startingCash: 1000,
+  // Games start on a random date, so holidays are left out unless a test adds them: they'd move load and growth.
+  calendar: { ...defaultConfig.calendar, holidays: [] },
   // Add-ons cost only their per-user price, so buying one fits in the starting cash.
   addons: { ...defaultConfig.addons, setupFeePerDevDay: 0 },
   servers: {
@@ -2470,6 +2472,41 @@ describe("leaving SaaS (vendor lock-in)", () => {
       url: `/api/codes/${code}/companies/${company.id}/migration-quote?target=saas`,
     });
     expect(res.json<MigrationQuoteView>().lostAddons).toEqual([]);
+  });
+});
+
+describe("the real calendar", () => {
+  const calendarSim = createSim({ ...sim.config, calendar: defaultConfig.calendar });
+  let calendarApp: Awaited<ReturnType<typeof buildApp>>;
+
+  beforeAll(async () => {
+    calendarApp = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), sim: calendarSim });
+  });
+
+  afterAll(async () => {
+    await calendarApp?.close();
+  });
+
+  it("starts the company on a random date this year, and counts the calendar forward a day at a time", async () => {
+    const code = await newCode();
+    const payload = { name: "Acme", productType: "ecommerce", model: "iaas" };
+    const created = await calendarApp.inject({ method: "POST", url: `/api/codes/${code}/companies`, payload });
+    const company = created.json<CompanyView>();
+    const year = new Date().getUTCFullYear();
+    expect(company.calendar).toMatchObject({ startYear: year, today: { year } });
+    expect(company.calendar.today.iso.startsWith(`${year}-`)).toBe(true);
+    // The next holidays are shown ahead of time, soonest first, each with what it does to a shop (or null).
+    const { upcoming } = company.calendar;
+    expect(upcoming.length).toBeGreaterThan(0);
+    expect(upcoming.map((h) => h.startDay)).toEqual([...upcoming.map((h) => h.startDay)].sort((x, y) => x - y));
+    for (const h of upcoming) {
+      expect(h.effect === null || h.effect.loadMultiplier > 0).toBe(true);
+      expect(h.daysUntil).toBe(h.startDay - 1);
+    }
+    const url = `/api/codes/${code}/companies/${company.id}/continue`;
+    const next = (await calendarApp.inject({ method: "POST", url })).json<ContinueResult>();
+    const tomorrow = new Date(Date.parse(company.calendar.today.iso) + 864e5).toISOString().slice(0, 10);
+    expect(next.company.calendar.today.iso).toBe(tomorrow);
   });
 });
 

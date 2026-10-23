@@ -115,6 +115,11 @@ export interface AppOptions {
   logger?: boolean;
   /** Companies still being played that one login code can have at once. Defaults to 3. */
   maxActiveCompanies?: number;
+  /**
+   * Day 1's date for every new game, "YYYY-MM-DD", in place of a random date this year: for tests and demonstrations.
+   * Unset, each game starts on a random date in the current year.
+   */
+  startDate?: string;
   /** How far back, in hours, the teacher's dashboard looks unless the teacher picks another window. Defaults to 3. */
   dashboardHours?: number;
   /**
@@ -197,6 +202,8 @@ export async function buildApp(opts: AppOptions) {
   const maxActiveCompanies = opts.maxActiveCompanies ?? DEFAULT_MAX_ACTIVE_COMPANIES;
   const dashboardHours = opts.dashboardHours ?? DEFAULT_DASHBOARD_HOURS;
   const timedFlow = opts.timedFlow ?? { enabled: false, seconds: DEFAULT_TIMED_FLOW_SECONDS };
+  // A new game starts on the configured date, or a random one this year.
+  const startsOn = () => (opts.startDate ? { startDate: opts.startDate } : { startYear: new Date().getUTCFullYear() });
   const app = Fastify({ logger: opts.logger ?? false, trustProxy: opts.trustProxy ?? false });
 
   await app.register(cookie, { secret: opts.sessionSecret });
@@ -375,6 +382,7 @@ export async function buildApp(opts: AppOptions) {
       migrations: state.migrations,
       events: sim.events(state),
       danger: sim.danger(state),
+      calendar: sim.calendar(state),
       featureGaps: sim.featureGaps(state),
       api: sim.api(state),
     };
@@ -533,6 +541,7 @@ export async function buildApp(opts: AppOptions) {
           gameLength,
           difficulty,
           shares,
+          ...startsOn(),
         });
         const [inserted] = await tx
           .insert(companies)

@@ -29,7 +29,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 31;
+export const GAME_STATE_VERSION = 32;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -333,6 +333,11 @@ export interface GameState {
   finalDay: number;
   /** True once the teacher has ended the game, scored as it stood. */
   endedByTeacher: boolean;
+  /**
+   * The real date of day 1, "YYYY-MM-DD": a random date in the year the game started. Day d is d − 1 days after it.
+   * See gameDate for a day's date and year.
+   */
+  startDate: string;
   day: number;
   cash: number;
   rng: number;
@@ -542,6 +547,10 @@ export interface NewGameParams {
   gameLength?: string;
   /** One of the difficulties the config allows. Left out, Normal if allowed, otherwise the easiest allowed. */
   difficulty?: string;
+  /** The year the game starts in: day 1 is a random date in it, drawn from the seed. Left out, the config's. */
+  startYear?: number;
+  /** Day 1's date exactly, "YYYY-MM-DD", in place of a random one: for tests and replays. */
+  startDate?: string;
 }
 
 export interface LogEntry {
@@ -573,7 +582,8 @@ export interface LogEntry {
     | "launch"
     | "staff"
     | "api"
-    | "danger";
+    | "danger"
+    | "calendar";
 }
 
 export interface DayLog {

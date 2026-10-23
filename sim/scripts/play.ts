@@ -2,7 +2,7 @@
 // a JSON file between calls, and every game writes a playtest log beside it (<game>.log.json) in the classroom
 // export's format. See textPlay.ts.
 //
-//   npm run play -- new <game.json> --product social --model paas [--loan] [--length 1-year] [--difficulty hard] [--shares 10000] [--seed 1] [--player "AI 1"] [--playstyle min-maxer]
+//   npm run play -- new <game.json> --product social --model paas [--loan] [--length 1-year] [--difficulty hard] [--shares 10000] [--seed 1] [--date 2026-11-01] [--player "AI 1"] [--playstyle min-maxer]
 //   npm run play -- look <game.json>
 //   npm run play -- do <game.json> "hire support 3; price 6; next 7"
 //   npm run play -- summary <game.json>
@@ -61,6 +61,8 @@ function newGame(file: string, args: string[]) {
     ...(flag(args, "shares") !== undefined && { shares: Number(flag(args, "shares")) }),
     gameLength: flag(args, "length"),
     difficulty: flag(args, "difficulty"),
+    // A random date this year unless one is given.
+    ...(flag(args, "date") !== undefined ? { startDate: flag(args, "date") } : { startYear: new Date().getFullYear() }),
   });
   const game: SavedGame = { player, playstyle, seed, state };
   const row = logRow(sim, state, game, "start", {
@@ -70,6 +72,7 @@ function newGame(file: string, args: string[]) {
     shares: sim.capTable(state).sharesInIssue,
     gameLength: state.gameLength,
     difficulty: state.difficulty,
+    startDate: state.startDate,
     seed,
     ...(playstyle ? { playstyle } : {}),
   });
@@ -89,7 +92,7 @@ function play(file: string, script: string) {
 function main(argv: string[]) {
   const [verb, file, ...rest] = argv;
   if (!verb || !file) {
-    console.log('Usage: play <new|look|do|summary> <game.json> [...]. "new" takes --product, --model, --loan, --length, --difficulty, --shares, --seed, --player, --playstyle.');
+    console.log('Usage: play <new|look|do|summary> <game.json> [...]. "new" takes --product, --model, --loan, --length, --difficulty, --shares, --seed, --date, --player, --playstyle.');
     process.exitCode = 1;
     return;
   }
