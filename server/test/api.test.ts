@@ -28,7 +28,7 @@ const LIGHT_DEMAND = { cuPerUser: 0.0005, dbuPerUser: 0.0005 };
 // the balance pass and launch day), pinned so that tuning the defaults doesn't change them. Each game launches as it
 // starts, with its starter setup in place and its launch users there; the launch tests change that with an override.
 const UNITS = { small: 10, medium: 15, large: 20, massive: 25 };
-const STARTING_USERS = { ecommerce: 2000, social: 1000, video: 1000 };
+const STARTING_USERS = { ecommerce: 2000, social: 1000, video: 1000, assistant: 1000, games: 1000 };
 const sim = createSim({
   ...defaultConfig,
   startingCash: 1000,
@@ -130,7 +130,7 @@ const sim = createSim({
           launchUsersMax: STARTING_USERS[id as keyof typeof STARTING_USERS],
         },
         pricing: { ...p.pricing, freeShare: 1, conversionRate: 0 },
-        demand: LIGHT_DEMAND,
+        demand: { ...LIGHT_DEMAND, perUserFeeMultiplier: p.demand.perUserFeeMultiplier },
       },
     ]),
   ) as typeof defaultConfig.productTypes,
@@ -712,6 +712,34 @@ describe("games from an older version", () => {
     }
     const list = (await app.inject({ method: "GET", url: `/api/codes/${code}` })).json<{ companies: CompanyView[] }>();
     expect(list.companies.map((c) => c.name).sort()).toEqual(["One", "Three", "Two"]);
+  });
+});
+
+describe("products", () => {
+  it("lists every product in the meta, with its per-user fee multiplier", async () => {
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.productTypes.map((p) => [p.id, p.name, p.perUserFeeMultiplier])).toEqual([
+      ["ecommerce", "E-commerce platform", 1],
+      ["social", "Social network", 1],
+      ["video", "Video sharing platform", 1],
+      ["assistant", "AI assistant", defaultConfig.productTypes.assistant.demand.perUserFeeMultiplier],
+      ["games", "Games network", defaultConfig.productTypes.games.demand.perUserFeeMultiplier],
+    ]);
+  });
+
+  it("starts an AI assistant and a games network, with their own features and paid API", async () => {
+    const code = await newCode();
+    for (const productType of ["assistant", "games"] as const) {
+      const created = await newCompany(code, { name: `New ${productType}`, productType, model: "saas" });
+      expect(created.statusCode, productType).toBe(201);
+      const company = created.json<CompanyView>();
+      expect(company.productType).toBe(productType);
+      expect(company.features.map((f) => f.id)).toEqual(defaultConfig.productTypes[productType].features.map((f) => f.id));
+      expect(company.api).toMatchObject({ name: defaultConfig.productTypes[productType].api!.name, owned: false });
+      // The SaaS platform bills each user its fee times the product's multiplier, to the penny.
+      const fee = sim.config.models.saas.monthlyCostPerUser * defaultConfig.productTypes[productType].demand.perUserFeeMultiplier;
+      expect(company.provider!.perUserFee).toBe(Math.round(fee * 100) / 100);
+    }
   });
 });
 
@@ -2757,7 +2785,7 @@ describe("meta", () => {
   it("lists product types and models from config", async () => {
     const res = await app.inject({ method: "GET", url: "/api/meta" });
     const meta = res.json();
-    expect(meta.productTypes.map((p: { id: string }) => p.id)).toEqual(["ecommerce", "social", "video"]);
+    expect(meta.productTypes.map((p: { id: string }) => p.id)).toEqual(["ecommerce", "social", "video", "assistant", "games"]);
     expect(meta.models.map((m: { id: string }) => m.id)).toEqual(["onprem", "iaas", "paas", "saas"]);
     expect(meta.startingCash).toBe(1000);
   });

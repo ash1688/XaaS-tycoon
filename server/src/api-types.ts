@@ -80,6 +80,8 @@ export interface MetaView {
     id: ProductTypeId;
     name: string;
     profile: string;
+    /** A model's per-user fee (SaaS) is multiplied by this for the product: dearer for one heavy on compute. */
+    perUserFeeMultiplier: number;
     /** On SaaS, each feature is an add-on at this price per user per month. */
     features: { id: string; name: string; addonPricePerUser: number }[];
   }[];

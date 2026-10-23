@@ -9,6 +9,12 @@ const game = useGame();
 const spendTotal = computed(() =>
   game.company ? SPEND_CATEGORIES.reduce((sum, c) => sum + game.company!.spend[c], 0) : 0,
 );
+// The model's per-user fee for this product: dearer for one heavy on compute.
+const perUserFee = computed(
+  () =>
+    (game.currentModel?.monthlyCostPerUser ?? 0) *
+    (game.meta?.productTypes.find((p) => p.id === game.company?.productType)?.perUserFeeMultiplier ?? 1),
+);
 </script>
 
 <template>
@@ -37,8 +43,8 @@ const spendTotal = computed(() =>
     </ul>
     <p v-if="game.currentModel" class="muted model-costs" data-testid="model-costs">
       {{ game.currentModel.name }}: {{ formatCash(game.currentModel.upfrontCost) }} upfront when you start, then
-      {{ formatCash(game.currentModel.monthlyCost) }} a month<template v-if="game.currentModel.monthlyCostPerUser">
-        plus {{ formatPrice(game.currentModel.monthlyCostPerUser) }} per user</template
+      {{ formatCash(game.currentModel.monthlyCost) }} a month<template v-if="perUserFee">
+        plus {{ formatPrice(perUserFee) }} per user</template
       ><template v-if="game.managed"> plus your instances and managed services</template
       ><template v-else-if="game.units"> plus {{ game.buysServers ? "power and upkeep for" : "rent on" }} your servers</template>
       and {{ formatCash(game.company.powerAndCooling) }} a day for power and cooling, billed a day at a time. At today's users that's

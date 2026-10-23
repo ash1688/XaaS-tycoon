@@ -419,11 +419,12 @@ export async function buildApp(opts: AppOptions) {
       maxActiveCompanies,
       timedFlow,
       productTypes: PRODUCT_TYPE_IDS.map((id) => {
-        const { name, profile, features } = config.productTypes[id];
+        const { name, profile, features, demand } = config.productTypes[id];
         return {
           id,
           name,
           profile,
+          perUserFeeMultiplier: demand.perUserFeeMultiplier,
           features: features.map((f) => ({ id: f.id, name: f.name, addonPricePerUser: f.addonPricePerUser })),
         };
       }),

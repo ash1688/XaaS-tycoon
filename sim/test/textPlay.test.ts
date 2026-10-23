@@ -347,3 +347,22 @@ describe("shares and funding", () => {
     expect(turn.lines.join("\n")).toMatch(/day 8: Grant (condition met|withdrawn)/);
   });
 });
+
+describe("the new products (#118)", () => {
+  it("names the product and shows its SaaS per-user fee", () => {
+    const state = sim.advance(sim.newGame({ companyName: "Test Co", productType: "assistant", model: "saas", seed: 3 }), 3).state;
+    const status = renderStatus(sim, state);
+    expect(status).toContain("== Test Co | AI assistant (assistant) on saas |");
+    expect(status).toMatch(/capacity: the provider's \(no limit\) \| £2\.80\/user\/month on [\d,]+ users = £[\d,]+\/month, plus £900\/month/);
+    expect(status).toContain("api: Assistant API not bought");
+  });
+
+  it("plays a games network: its features and paid API are commands", () => {
+    let state = sim.newGame({ companyName: "Test Co", productType: "games", model: "saas", seed: 3 });
+    expect(renderStatus(sim, state)).toContain("Games network (games) on saas");
+    const turn = runScript(sim, { ...state, cash: 50_000 }, "addon achievements; buyapi", who);
+    state = turn.state;
+    expect(sim.features(state).find((f) => f.id === "achievements")?.status).not.toBe("notStarted");
+    expect(sim.api(state)?.owned).toBe(true);
+  });
+});

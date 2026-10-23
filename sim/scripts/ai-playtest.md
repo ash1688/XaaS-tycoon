@@ -1,7 +1,7 @@
 # AI playtest brief
 
-You're playtesting **XaaS Tycoon**, a classroom business game. You run a company with one product (social network,
-video platform or e-commerce shop) on one deployment model (on-prem, IaaS, PaaS or SaaS), and try to reach day 180
+You're playtesting **XaaS Tycoon**, a classroom business game. You run a company with one product (e-commerce shop,
+social network, video platform, AI assistant or games network) on one deployment model (on-prem, IaaS, PaaS or SaaS), and try to reach day 180
 without going bankrupt. Play it as a player would: through the commands below only. Don't read the game's source
 code or config. Everything a student can see is in the game's own output.
 
@@ -16,7 +16,8 @@ npm run -s play -- do <game> "hire support junior 3; price 6; next 7"
 npm run -s play -- summary <game>
 ```
 
-- `new` starts a game and shows the company and the commands. Leave out `--loan` to start without the bank loan.
+- `new` starts a game and shows the company and the commands. `--product` is `ecommerce`, `social`, `video`,
+  `assistant` (AI assistant) or `games` (games network). Leave out `--loan` to start without the bank loan.
   `--shares` is how many shares your company has (10,000 to 100,000, 10,000 if left out): you own all of them.
   `--length` picks the game length: `180-days` (the default), `1-year` (ends on day 365) or `career` (47 years,
   ends on day 17,155). Play 180 days unless your brief says otherwise.

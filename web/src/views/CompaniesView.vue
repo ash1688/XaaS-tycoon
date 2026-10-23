@@ -43,6 +43,8 @@ const startCash = computed(() => {
   return m ? m.startingCash + (takeLoan.value ? m.startLoan.amount : 0) : 0;
 });
 const chosenModel = computed(() => meta.value?.models.find((m) => m.id === model.value));
+// A per-user fee is dearer for a product heavy on compute: priced for the product picked, if one is.
+const feeMultiplier = computed(() => meta.value?.productTypes.find((p) => p.id === productType.value)?.perUserFeeMultiplier ?? 1);
 const cantAfford = computed(() => !!chosenModel.value && chosenModel.value.upfrontCost > startCash.value);
 const sharesOk = computed(() => {
   const m = meta.value;
@@ -218,7 +220,7 @@ async function start() {
                     {{ m.comparison.monthlyCost }}
                     <span class="muted price">
                       {{ formatCash(m.monthlyCost) }}<template v-if="m.monthlyCostPerUser">
-                        + {{ formatPrice(m.monthlyCostPerUser) }}/user</template
+                        + {{ formatPrice(m.monthlyCostPerUser * feeMultiplier) }}/user</template
                       >
                     </span>
                   </td>

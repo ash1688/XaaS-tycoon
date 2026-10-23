@@ -174,6 +174,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     const product = base.productTypes[p];
     if (!product) continue;
     add(`productTypes.${p}.pricing.fairPrice`, "Money", product.name, "Fair price", "The monthly price users think it's worth, and where a new company starts.", range(0.01, 10_000, 0.01));
+    add(`productTypes.${p}.demand.perUserFeeMultiplier`, "Money", product.name, "Per-user fee multiplier", "On SaaS, the provider's per-user fee is multiplied by this for the product: higher for one heavy on compute.", range(0, 100, 0.1));
   }
   for (const p of PRODUCT_TYPE_IDS) {
     for (const f of base.productTypes[p]?.features ?? []) {

@@ -156,7 +156,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const lasts = left === null ? "not losing money" : left > daysToPlay ? `lasts past day ${state.finalDay}` : `${left} days`;
   const status = state.endedByTeacher ? "ENDED BY TEACHER" : state.status.toUpperCase();
   lines.push(
-    `== ${state.companyName} | ${state.productType} on ${state.model} | day ${state.day}/${state.finalDay} ` +
+    `== ${state.companyName} | ${sim.config.productTypes[state.productType].name} (${state.productType}) on ${state.model} | day ${state.day}/${state.finalDay} ` +
       `(${gameLengthName(sim.config, state.gameLength)}) | ${status}`,
   );
   lines.push(
@@ -197,7 +197,11 @@ export function renderStatus(sim: Sim, state: GameState): string {
     }
   } else if (state.model === "saas") {
     const provider = sim.provider(state);
-    if (provider) lines.push(`capacity: the provider's (no limit) | per-user bill ${money(provider.monthlyCost)}/month`);
+    if (provider) {
+      lines.push(
+        `capacity: the provider's (no limit) | ${price(provider.perUserFee)}/user/month on ${provider.users.toLocaleString("en-GB")} users = ${money(provider.monthlyPerUserBill)}/month, plus ${money(provider.monthlyCost)}/month`,
+      );
+    }
   }
 
   const managed = sim.managed(state);
