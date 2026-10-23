@@ -9,13 +9,11 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createSim, defaultConfig, GAME_LENGTH_IDS, SimError, type GameState } from "../src/index.ts";
 import {
-  advanceUntil,
   logRow,
-  parseCommand,
   renderCommands,
   renderStatus,
   renderSummary,
-  runCommand,
+  runScript,
   type LogRow,
   type Player,
 } from "./textPlay.ts";
@@ -79,33 +77,9 @@ function newGame(file: string, args: string[]) {
 
 function play(file: string, script: string) {
   const game = load(file);
-  let state = game.state;
-  const rows: LogRow[] = [];
-  const out: string[] = [];
-  for (const text of script.split(";").map((t) => t.trim()).filter(Boolean)) {
-    try {
-      const command = parseCommand(text);
-      // Once the game is over, only what changes nothing still works: the valuation and who owns the company.
-      if (state.status !== "playing" && command.kind !== "valuation" && command.kind !== "funding") {
-        out.push(`> ${text}: the game is over`);
-        break;
-      }
-      const turn = command.kind === "next" ? advanceUntil(sim, state, command.days, game) : runCommand(sim, state, command, game);
-      state = turn.state;
-      rows.push(...turn.rows);
-      out.push(`> ${text}`, ...turn.lines);
-      // An advance that stopped early leaves the rest of the script unplayed: the player should look first.
-      if (command.kind === "next" && turn.lines.at(-1)?.startsWith("stopped")) {
-        out.push("(rest of the commands skipped: something needs a decision)");
-        break;
-      }
-    } catch (err) {
-      if (!(err instanceof SimError)) throw err;
-      out.push(`> ${text}`, `refused: ${err.message}`);
-    }
-  }
-  save(file, { ...game, state }, rows);
-  console.log(`${out.join("\n")}\n\n${renderStatus(sim, state)}`);
+  const turn = runScript(sim, game.state, script, game);
+  save(file, { ...game, state: turn.state }, turn.rows);
+  console.log(`${turn.lines.join("\n")}\n\n${renderStatus(sim, turn.state)}`);
 }
 
 function main(argv: string[]) {

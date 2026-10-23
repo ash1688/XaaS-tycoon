@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createSim, defaultConfig, SimError, type GameState } from "../src/index.ts";
-import { advanceUntil, parseCommand, renderCommands, renderStatus, renderSummary, runCommand } from "../scripts/textPlay.ts";
+import { advanceUntil, parseCommand, renderCommands, renderStatus, renderSummary, runCommand, runScript } from "../scripts/textPlay.ts";
 
 const sim = createSim({ ...defaultConfig, finalDay: 40 });
 const who = { player: "test", playstyle: "average-joe" };
@@ -78,6 +78,42 @@ describe("runCommand", () => {
   });
 });
 
+describe("runScript", () => {
+  it("says why each refused command in a batch was refused, and goes on with the rest", () => {
+    const turn = runScript(sim, start(), "letgo ops senior; letgo support mid 3; dance; letgo support", who);
+    expect(turn.lines).toEqual([
+      "> letgo ops senior",
+      "letGo refused: You have no senior ops staff to let go. (ops now: 0 junior, 1 mid, 0 senior)",
+      "> letgo support mid 3",
+      "letGo refused: You only have 1 mid support staff to let go. (support now: 0 junior, 1 mid, 0 senior)",
+      "> dance",
+      expect.stringMatching(/^refused: Unknown command "dance"/),
+      "> letgo support",
+      "letGo: done",
+    ]);
+    expect(turn.rows.map((r) => r.ok)).toEqual([false, false, true]);
+    expect(turn.state.staff.support).toEqual({ junior: 0, mid: 0, senior: 0 });
+  });
+
+  it("says why each command after time stops isn't run", () => {
+    const turn = runScript(sim, start(), "instances 2; managed database small; next 30; letgo ops; hire ops 2", who);
+    expect(turn.lines.slice(-4)).toEqual([
+      "> letgo ops",
+      "not run: time stopped on day 2, so look first",
+      "> hire ops 2",
+      "not run: time stopped on day 2, so look first",
+    ]);
+    expect(turn.state.staff.ops).toEqual({ junior: 0, mid: 1, senior: 0 });
+  });
+
+  it("says why each command after the game ends isn't run", () => {
+    const turn = runScript(sim, start(), "end; letgo ops; valuation", who);
+    expect(turn.lines).toContain("not run: the game is over");
+    expect(turn.lines.indexOf("> letgo ops")).toBeGreaterThan(-1);
+    expect(turn.lines.at(-1)).toBe("not run: the game is over");
+  });
+});
+
 describe("advanceUntil", () => {
   it("stops early when something needs a decision", () => {
     let state = run(start(), "instances 2").state;
@@ -115,6 +151,16 @@ describe("advanceUntil", () => {
     expect(turn.lines.at(-1)).toMatch(/danger meter climbing faster: customers unhappy/);
     expect(renderStatus(sim, turn.state)).toMatch(/rose 1\.5 today \(well-run day \+1, customers unhappy \+0\.5\)/);
     expect(renderStatus(sim, turn.state)).toMatch(/Customers unhappy: Satisfaction is below 40%/);
+  });
+
+  it("shows paying users lost each day, and how the users changed, after a price rise", () => {
+    let state = runScript(sim, start(), "instances 2; managed database small", who).state;
+    while (sim.launch(state).status !== "launched") state = run(state, "next 30").state;
+    state = run(state, "price 1000").state;
+    const turn = run(state, "next 3");
+    expect(turn.lines).toContainEqual(expect.stringMatching(/^  day \d+: Paying users lost: [\d,]+ left and [\d,]+ dropped to free, because your price is above/));
+    expect(turn.lines.at(-2)).toMatch(/^  users [\d,]+→[\d,]+ \(paid [\d,]+→[\d,]+, free [\d,]+→[\d,]+\)$/);
+    expect(turn.lines.at(-1)).toMatch(/^stopped on day|^advanced to day/);
   });
 
   it("plays to the end and logs the ending", () => {
