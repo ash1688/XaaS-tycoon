@@ -1,8 +1,8 @@
-import { SPEND_CATEGORIES, type GameConfig, type GameLengthId, type ModelId, type ProductTypeId } from "./config.ts";
+import { SPEND_CATEGORIES, type DifficultyId, type GameConfig, type GameLengthId, type ModelId, type ProductTypeId } from "./config.ts";
 import { profitCosts } from "./finance.ts";
 import { isOpen } from "./loan.ts";
 import type { Infrastructure } from "./infrastructure.ts";
-import type { DaySpend, GameEnding, GameState, Spend } from "./state.ts";
+import type { DaySpend, GameEnding, GameState, IpoResult, Rescue, Spend } from "./state.ts";
 
 /** What was spent and earned on one day, and the cash left at the end of it. */
 export interface SummaryDay extends DaySpend {
@@ -67,8 +67,11 @@ export interface GameSummary {
   /** The last day played. */
   day: number;
   gameLength: GameLengthId;
-  /** The game length's last day. */
-  finalDay: number;
+  difficulty: DifficultyId;
+  /** The game length's last day: null until IPO, which has none. */
+  finalDay: number | null;
+  /** The float and the first day of trading, if the game ended in an IPO. */
+  ipo: IpoResult | null;
   cash: number;
   users: number;
   /** Of the users, those paying. The rest are free. */
@@ -95,6 +98,8 @@ export interface GameSummary {
   /** Price changes made. */
   priceChanges: number;
   loan: LoanSummary | null;
+  /** The rescue buyout, if cash ran out once: what the vulture VC put in and took, the cuts, and any buy-back. */
+  rescue: Rescue | null;
   /**
    * Spend and income on each day played and the cash left after it, day 1 (upfront costs) first: the cost-over-time
    * and cash charts.
@@ -137,7 +142,8 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
     const costs = profitCosts(state.spend, state.interestPaid);
     const ending =
       state.status === "playing" ? null
-      : state.status === "bankrupt" ? "bankrupt"
+      : state.status === "liquidated" ? "liquidation"
+      : state.ipo.result ? "ipo"
       : state.endedByTeacher ? "ended"
       : "completed";
     return {
@@ -147,7 +153,9 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
       ending,
       day: state.day,
       gameLength: state.gameLength,
+      difficulty: state.difficulty,
       finalDay: state.finalDay,
+      ipo: state.ipo.result,
       cash: state.cash,
       users: state.users,
       paidUsers: state.paidUsers,
@@ -163,6 +171,7 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
       migrations: state.migrations,
       priceChanges: state.priceChanges.length,
       loan: loanSummary(state),
+      rescue: state.rescue,
       days,
       incomeVsCosts,
     };

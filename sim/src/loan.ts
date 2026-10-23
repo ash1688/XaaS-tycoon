@@ -68,7 +68,8 @@ export function createLoan(config: GameConfig, finance: Finance) {
         "You're still repaying your bank loan. Pay it off first: the bank only lends one at a time.",
       );
     }
-    // A term can run past the final day, but the bank won't lend in a game's last days.
+    // A term can run past the final day, but the bank won't lend in a game's last days. Until IPO has none.
+    if (state.finalDay === null) return null;
     const days = Math.max(0, state.finalDay - state.day);
     if (days < minDays) {
       return new SimError(

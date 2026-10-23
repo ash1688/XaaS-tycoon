@@ -125,9 +125,9 @@ describe("runScript", () => {
     const turn = runScript(sim, start(), "instances 2; managed database small; next 30; letgo ops; hire ops 2", who);
     expect(turn.lines.slice(-4)).toEqual([
       "> letgo ops",
-      "not run: time stopped on day 2, so look first",
+      "not run: time stopped on day 4, so look first",
       "> hire ops 2",
-      "not run: time stopped on day 2, so look first",
+      "not run: time stopped on day 4, so look first",
     ]);
     expect(turn.state.staff.ops).toEqual({ junior: 0, mid: 1, senior: 0 });
   });
@@ -166,6 +166,22 @@ describe("advanceUntil", () => {
     expect(quiet).toBeGreaterThan(0);
   });
 
+  it("stops for viral growth, and shows whose job it is to carry the new users", () => {
+    const viral = defaultConfig.events.find((e) => e.id === "viralGrowth")!;
+    const s = createSim({ ...defaultConfig, finalDay: 40, events: [{ ...viral, encounter: undefined, schedule: { type: "fixed", days: [10] } }] });
+    const begun = s.newGame({ companyName: "Test Co", productType: "social", model: "paas", seed: 3, takeLoan: true });
+    let state = runCommand(s, begun, parseCommand("instances 3"), who).state;
+    state = runCommand(s, state, parseCommand("managed database medium"), who).state;
+    // Time stops for other things on the way, such as the launch.
+    let turn = advanceUntil(s, state, 30, who);
+    while (turn.state.day < 10) turn = advanceUntil(s, turn.state, 30, who);
+    expect(turn.lines.at(-1)).toBe("stopped on day 10: Viral growth");
+    expect(turn.lines.join("\n")).toMatch(/day 10: Viral growth: Runtime and scaling is the provider's job on PaaS\. [\d,]+ new free users signed up\./);
+    expect(renderStatus(s, turn.state)).toMatch(
+      /event today: Viral growth\. Runtime and scaling is the provider's job on PaaS\. [\d,]+ new free users signed up\. They're staying\./,
+    );
+  });
+
   it("shows the danger meter, and stops when a new risk makes it climb faster", () => {
     let state = run(start(), "instances 2").state;
     state = run(state, "managed database small").state;
@@ -187,6 +203,21 @@ describe("advanceUntil", () => {
     expect(turn.lines).toContainEqual(expect.stringMatching(/^  day \d+: Paying users lost: [\d,]+ left and [\d,]+ dropped to free, because your price is above/));
     expect(turn.lines.at(-2)).toMatch(/^  users [\d,]+→[\d,]+ \(paid [\d,]+→[\d,]+, free [\d,]+→[\d,]+\)$/);
     expect(turn.lines.at(-1)).toMatch(/^stopped on day|^advanced to day/);
+  });
+
+  it("plays a week a tick in a career, logging one Continue a week, and stops mid-week on the day something needs you", () => {
+    const careers = createSim({ ...defaultConfig, allowedGameLengths: { "180-days": 0, "until-ipo": 0, "1-year": 0, career: 1 } });
+    const career = careers.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3, gameLength: "career" });
+    expect(renderCommands(careers, career)).toMatch(/next \[days\]\s+\(play ticks of a week \(this is a career\)/);
+    // The launch is over on day 3, two days into the first week: time stops there.
+    const launch = advanceUntil(careers, career, 7, who);
+    expect(launch.state.day).toBe(3);
+    expect(launch.lines.at(-1)).toBe("stopped on day 3: Your launch is over");
+    // A quiet stretch then plays whole weeks: "next 10" is two of them, one Continue each.
+    const weeks = advanceUntil(careers, launch.state, 10, who);
+    expect(weeks.state.day).toBe(17);
+    expect(weeks.lines.at(-1)).toBe("advanced to day 17");
+    expect(weeks.rows.map((r) => r.type)).toEqual(["continue", "continue"]);
   });
 
   it("plays to the end and logs the ending", () => {
@@ -250,14 +281,21 @@ describe("racks, cabling, power and cooling", () => {
 
 describe("rendering", () => {
   it("shows a longer game's length and final day", () => {
-    const yearly = createSim({ ...defaultConfig, allowedGameLengths: { "180-days": 0, "1-year": 1, career: 1 } });
+    const yearly = createSim({ ...defaultConfig, allowedGameLengths: { "180-days": 0, "until-ipo": 0, "1-year": 1, career: 1 } });
     const career = yearly.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3, gameLength: "career" });
-    expect(renderStatus(yearly, career)).toMatch(/day 1\/17155 \(Career \(47 years, age 18 to 65\)\)/);
+    expect(renderStatus(yearly, career)).toMatch(/day 1\/17155 \(Career \(47 years, age 18 to 65\), Normal, a week a tick\)/);
+  });
+
+  it("shows the game's difficulty", () => {
+    const any = createSim({ ...defaultConfig, allowedDifficulties: { easy: 1, normal: 1, hard: 1 } });
+    const hard = any.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3, difficulty: "hard" });
+    expect(renderStatus(any, hard)).toMatch(/day 1\/180 \(180 days, Hard\)/);
+    expect(renderSummary(any, hard)).toMatch(/"difficulty": "hard"/);
   });
 
   it("shows the company and the commands that work now", () => {
     const state = start();
-    expect(renderStatus(sim, state)).toMatch(/day 1\/40 \(40 days\)/);
+    expect(renderStatus(sim, state)).toMatch(/day 1\/40 \(40 days, Normal\)/);
     expect(renderCommands(sim, state)).toMatch(/^\s+end /m);
     const commands = renderCommands(sim, state);
     expect(commands).toMatch(/instances <1–20>/);
@@ -314,7 +352,7 @@ describe("the paid API", () => {
     state = run(state, "rent database large").state;
     state = run(state, "buyapi").state;
     const turn = run(state, "next 7");
-    expect(turn.lines.at(-1)).toMatch(/API calls dropped/);
+    expect(turn.lines.at(-1)).toMatch(/API calls are being dropped/);
     expect(turn.lines.some((l) => /Shop API: [\d,]+ calls dropped/.test(l))).toBe(true);
   });
 
@@ -339,7 +377,7 @@ describe("shares and funding", () => {
   it("shows the valuation, cap table and open offers, and the commands to answer them", () => {
     const state = start();
     expect(renderStatus(sim, state)).toMatch(/valuation £[\d,]+ \| share price £[\d.]+ \| you 100% of 10,000 shares/);
-    expect(renderStatus(sim, state)).toMatch(/funding: friends and family offer £15,000 for [\d.]+% \| grant offer £10,000/);
+    expect(renderStatus(sim, state)).toMatch(/funding: friends and family offer 1 of 3, 2 counters left £15,000 for [\d.]+% \| grant offer 1 of 3, 2 counters left £10,000/);
     expect(renderCommands(sim, state)).toMatch(/accept <ff\|grant> \| decline <ff\|grant>/);
     const valuation = run(state, "valuation");
     expect(valuation.state).toBe(state);
@@ -359,6 +397,39 @@ describe("shares and funding", () => {
     expect(again.lines[0]).toMatch(/refused: .*only be taken once/);
   });
 
+  it("reads counters and odds: a share as a percent, terms in any order", () => {
+    expect(parseCommand("counter ff amount 18000 share 18")).toEqual({
+      kind: "action",
+      action: { type: "counterFunding", funder: "friendsAndFamily", terms: { amount: 18_000, share: 0.18 } },
+      times: 1,
+    });
+    expect(parseCommand("counter grant days 45 amount £11,000")).toMatchObject({
+      action: { type: "counterFunding", funder: "grant", terms: { days: 45, amount: 11_000 } },
+    });
+    expect(parseCommand("odds ff share 20%")).toEqual({ kind: "odds", funder: "friendsAndFamily", terms: { share: 0.2 } });
+    expect(() => parseCommand("counter ff price 5")).toThrow(/Expected a term/);
+    expect(() => parseCommand("counter ff amount")).toThrow(/the amount as a number/);
+  });
+
+  it("negotiates: shows the odds, then each roll and the offer that stands, to the final offer", () => {
+    const state = start();
+    expect(renderCommands(sim, state)).toMatch(/counter ff \[amount <£>\] \[share <%>\]/);
+    const odds = run(state, "odds ff amount 18000");
+    expect(odds.state).toBe(state);
+    expect(odds.lines.join("\n")).toMatch(/asks 20% better \(most 50%\): −6 on the roll\n  high 5% → £17,400 .*\n  middle 35% → £16,500 .*\n  low 60% → £15,300/);
+    let turn = run(state, "counter ff amount 18000");
+    expect(turn.rows[0]).toMatchObject({ type: "counterFunding", ok: true, params: { funder: "friendsAndFamily", terms: { amount: 18_000 } } });
+    expect(turn.lines[0]).toMatch(/^counter £18,000 for [\d.]+%: rolled \d+ −6 for asking 20% = −?\d+: (high|middle|low), they moved \d+% of the way\. Offer 2: .*\(1 counter left\)/);
+    expect(renderStatus(sim, turn.state)).toMatch(/friends and family offer 2 of 3, 1 counter left/);
+    expect(run(turn.state, "funding").lines.join("\n")).toMatch(/offer 1 £15,000 .*; you asked £18,000 .*, rolled .* → offer 2 /);
+    turn = run(turn.state, "counter ff share 20");
+    expect(turn.lines[0]).toMatch(/Offer 3: .* \(final: accept or decline\)/);
+    expect(renderStatus(sim, turn.state)).toMatch(/friends and family final offer/);
+    expect(renderCommands(sim, turn.state)).not.toMatch(/counter ff/);
+    expect(renderCommands(sim, turn.state)).toMatch(/odds <grant>/);
+    expect(run(turn.state, "counter ff amount 20000").lines[0]).toMatch(/refused: This is the final offer/);
+  });
+
   it("stops time when the grant's condition ends", () => {
     const short = createSim({ ...defaultConfig, finalDay: 40, funding: { ...defaultConfig.funding, grant: { ...defaultConfig.funding.grant, days: 5 } } });
     const state = short.applyAction(
@@ -369,7 +440,217 @@ describe("shares and funding", () => {
     while (turn.state.funding.grant?.status === "accepted") turn = advanceUntil(short, turn.state, 20, who);
     // Launched on day 1, so the condition runs from the end of the ramp: days 4 to 8.
     expect(turn.state.day).toBe(8);
-    expect(turn.lines.at(-1)).toMatch(/^stopped on day 8: .*grant (met|withdrawn)/);
+    expect(turn.lines.at(-1)).toMatch(/^stopped on day 8: The grant( was withdrawn|'s condition is met)/);
     expect(turn.lines.join("\n")).toMatch(/day 8: Grant (condition met|withdrawn)/);
+  });
+});
+
+describe("the IPO", () => {
+  const ipoSim = (cold: number) =>
+    createSim({
+      ...defaultConfig,
+      events: [],
+      allowedGameLengths: { "180-days": 1, "until-ipo": 1, "1-year": 0, career: 0 },
+      ipo: {
+        ...defaultConfig.ipo,
+        coldChance: { min: cold, max: cold },
+        products: { ...defaultConfig.ipo.products, social: { users: 1_000, annualRevenue: 100_000, payingUsers: 500 } },
+      },
+    });
+  /** A SaaS company 40 days in, made comfortably over every condition. */
+  const ready = (s: ReturnType<typeof createSim>): GameState => {
+    const played = s.advance(s.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 }), 40).state;
+    return {
+      ...played,
+      users: 2_000,
+      paidUsers: 1_000,
+      price: 60,
+      satisfaction: 90,
+      spendByDay: played.spendByDay.map((d) => ({
+        ...d,
+        ...{ staff: 100, infrastructure: 50, cabling: 0, power: 10, addons: 0, debt: 0, interest: 0 },
+        ...{ income: 1_000, users: 2_000, paidUsers: 1_000, satisfaction: 90, hoursDown: 0 },
+      })),
+    };
+  };
+  const play = (s: ReturnType<typeof createSim>, state: GameState, script: string) => runScript(s, state, script, who);
+
+  it("reads the IPO commands", () => {
+    expect(parseCommand("ipo")).toEqual({ kind: "ipo" });
+    expect(parseCommand("apply")).toEqual({ kind: "action", action: { type: "applyForIpo" }, times: 1 });
+    expect(parseCommand("ring 25")).toEqual({ kind: "action", action: { type: "ringBell", float: 0.25 }, times: 1 });
+    expect(() => parseCommand("ring")).toThrow(/float percentage/);
+  });
+
+  it("shows the checklist, and offers apply only once every condition is met", () => {
+    const s = ipoSim(0);
+    const state = start();
+    expect(renderStatus(sim, state)).toMatch(/ipo: 1\/7 readiness conditions met; still to meet: users and revenue, uptime record, predictable costs, profitability, satisfaction record, paying customer base$/m);
+    expect(renderCommands(sim, state)).toMatch(/ipo {3}\(the IPO readiness checklist/);
+    expect(renderCommands(sim, state)).not.toMatch(/apply/);
+    expect(run(state, "ipo").lines.join("\n")).toMatch(/\[ \] Users and revenue: .*\n.*\[ \] Uptime record: /);
+    const r = ready(s);
+    expect(renderStatus(s, r)).toMatch(/ipo: READY: all 7 conditions met, comfort \d+% \("apply" to float\)/);
+    expect(renderCommands(s, r)).toMatch(/apply {3}\(apply to float/);
+    expect(play(s, r, "ipo").lines.join("\n")).toMatch(/\[x\] Paying customer base: 1,000, of 2,000 users in a market of about 40,000: .*\. Needs 500 paying users\. Comfort 100%\./);
+  });
+
+  it("says when a cold market postpones the IPO", () => {
+    const s = ipoSim(1);
+    const turn = play(s, ready(s), "apply; apply");
+    expect(turn.lines.join("\n")).toMatch(/COLD MARKET\. The IPO is postponed: apply again from day 71\. Satisfaction fell to 80%/);
+    expect(turn.lines.at(-1)).toMatch(/refused: The markets are cold .* day 71, in 30 days/);
+    expect(renderStatus(s, turn.state)).toMatch(/ipo: cold market: can apply again on day 71/);
+  });
+
+  it("applies, shows the offer, rings the bell and ends the game", () => {
+    const s = ipoSim(0);
+    const approved = play(s, ready(s), "apply");
+    expect(approved.lines.join("\n")).toMatch(/APPROVED\. Pick a float.*\noffer: valuation £[\d,]+, 10,000 shares at £[\d.]+; you own 100%/);
+    expect(approved.lines.join("\n")).toMatch(/ {2}15%: 1,765 new shares, raises £[\d,]+, you'd own 85%, first day swings about ±20%/);
+    expect(renderCommands(s, approved.state)).toMatch(/ring <15-40> {3}\(float that % .*ENDS THE GAME/);
+    expect(play(s, approved.state, "ring 50").lines.at(-1)).toMatch(/refused: Float from 15% to 40%/);
+    expect(play(s, approved.state, "next").lines.at(-1)).toMatch(/refused: Your IPO is approved: choose your float and ring/);
+
+    const rung = play(s, approved.state, "ring 25; next");
+    const text = rung.lines.join("\n");
+    expect(text).toMatch(/opening bell! floated 25%: 3,333 new shares at £[\d.]+ raised £[\d,]+/);
+    expect(text).toMatch(/first day: 09:30 £[\d.]+, 10:00 £[\d.]+, .* 16:00 £[\d.]+/);
+    expect(text).toMatch(/close £[\d.]+ \([+−][\d.]+% on the offer\) \| market value £[\d,]+ \(cash raised included\) \| you own 75%, worth £[\d,]+/);
+    expect(text).toMatch(/GAME OVER: floated on day 41\n> next\nnot run: the game is over/);
+    expect(rung.rows.map((r) => r.type)).toEqual(["ringBell", "end"]);
+    expect(rung.rows.at(-1)).toMatchObject({ params: { status: "finished", ending: "ipo" } });
+    expect(renderStatus(s, rung.state)).toMatch(/\| FLOATED\n[^]*ipo: floated 25% on day 41: raised £[\d,]+/);
+    const r = rung.state.ipo.result!;
+    expect(renderStatus(s, rung.state)).toContain(`market value £${r.marketValue.toLocaleString("en-GB")} at the first day's close`);
+    expect(JSON.parse(renderSummary(s, rung.state))).toMatchObject({ marketValue: r.marketValue, yourSharesWorth: r.studentValue });
+    expect(play(s, rung.state, "ipo").lines.join("\n")).toMatch(/opening bell!/);
+    expect(JSON.parse(renderSummary(s, rung.state))).toMatchObject({ ending: "ipo", ipo: { float: 0.25 } });
+  });
+
+  it("shows an until-IPO game with no last day", () => {
+    const s = ipoSim(0);
+    const state = s.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3, gameLength: "until-ipo" });
+    expect(renderStatus(s, state)).toMatch(/\| day 1 \(Until IPO, Normal\) \| .* \| PLAYING/);
+  });
+});
+
+describe("the IPO checklist over time", () => {
+  it("stops time when the company is no longer ready", () => {
+    const s = createSim({
+      ...defaultConfig,
+      // A provider outage on day 30 is the only event: it breaks the uptime record.
+      events: [
+        {
+          id: "providerOutage",
+          name: "Provider outage",
+          description: "The provider's data centre lost power.",
+          layer: "facilities",
+          schedule: { type: "fixed", days: [30] },
+          days: 1,
+          effects: { saas: { downtimeHours: 6, detail: "The SaaS platform went down with it." } },
+        },
+      ],
+      ipo: {
+        ...defaultConfig.ipo,
+        recordDays: 2,
+        minSatisfaction: 0,
+        maxCostSwing: 5,
+        products: { ...defaultConfig.ipo.products, social: { users: 0, annualRevenue: 0, payingUsers: 0 } },
+      },
+    });
+    let state = s.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 });
+    state = s.advance(state, 25).state;
+    expect(s.ipo(state).ready).toBe(true);
+    const turn = advanceUntil(s, state, 10, who);
+    expect(turn.state.day).toBe(30);
+    expect(turn.lines.at(-1)).toMatch(/stopped on day 30: .*IPO: no longer ready \(uptime record\)/);
+  });
+});
+
+describe("rescue buyout and liquidation", () => {
+  // Far more developers than the company can pay for: cash runs out within the 40 days.
+  const broke = (): GameState => sim.applyAction(start(), { type: "hire", pool: "developers", grade: "senior", count: 40 });
+
+  it("reads the rescue commands", () => {
+    expect(parseCommand("rescue")).toEqual({ kind: "rescue" });
+    expect(parseCommand("buyback")).toEqual({ kind: "action", action: { type: "buyBack" }, times: 1 });
+  });
+
+  it("stops time on the rescue, shows the cash, share taken and cuts, and offers the buy-back at its price", () => {
+    expect(run(start(), "rescue").lines[0]).toMatch(/no rescue yet/);
+    let turn = advanceUntil(sim, broke(), 40, who);
+    while (!turn.state.rescue) turn = advanceUntil(sim, turn.state, 40, who);
+    const { rescue } = turn.state;
+    expect(turn.lines.at(-1)).toMatch(new RegExp(`^stopped on day ${rescue.day}: Cash ran out: a vulture VC rescued the company for 75% of it`));
+    expect(turn.lines.join("\n")).toMatch(/vulture VC rescued Test Co: it put in £[\d,]+ .* 75% of the company/);
+    expect(turn.lines.join("\n")).toMatch(/Forced cost cuts: the vulture VC let go 11 senior developers/);
+    const view = sim.rescue(turn.state)!;
+    expect(renderStatus(sim, turn.state)).toMatch(/rescue: day \d+, a vulture VC put in £[\d,]+ for 75%; it owns 75% and sells it back for £[\d,]+/);
+    expect(renderStatus(sim, turn.state)).toMatch(/you 25%, vulture vc 75%/);
+    expect(renderCommands(sim, turn.state)).toContain(`buyback   (buy all the vulture VC's shares back from company cash: £${view.buyBackPrice!.toLocaleString("en-GB")}`);
+    const terms = run(turn.state, "rescue").lines.join("\n");
+    expect(terms).toMatch(/forced cuts: 11 senior developers/);
+    expect(terms).toMatch(/buy-back \(buyback\): £[\d,]+ for its 30,000 shares \(75%\)/);
+    const refused = run(turn.state, "buyback");
+    expect(refused.lines[0]).toMatch(/buyBack refused: The vulture VC wants £[\d,]+ for its shares/);
+    expect(refused.rows[0]).toMatchObject({ type: "buyBack", ok: false, error: "cant_afford" });
+    const rich = { ...turn.state, cash: view.buyBackPrice! };
+    const bought = run(rich, "buyback");
+    expect(bought.rows[0]).toMatchObject({ type: "buyBack", ok: true });
+    expect(renderStatus(sim, bought.state)).toMatch(/you bought it back on day \d+ for £/);
+  });
+
+  it("ends in liquidation the second time, and still shows the rescue after", () => {
+    const long = createSim({ ...defaultConfig, finalDay: 120 });
+    const begun = long.newGame({ companyName: "Test Co", productType: "social", model: "paas", seed: 3, takeLoan: true });
+    let turn = advanceUntil(long, long.applyAction(begun, { type: "hire", pool: "developers", grade: "senior", count: 40 }), 120, who);
+    while (turn.state.status === "playing") turn = advanceUntil(long, turn.state, 120, who);
+    expect(turn.state.status).toBe("liquidated");
+    expect(turn.lines.join("\n")).toMatch(/Cash ran out again, after the rescue buyout on day \d+: Test Co goes into liquidation/);
+    expect(turn.lines.at(-1)).toMatch(/^GAME OVER: liquidated on day \d+/);
+    expect(turn.rows.at(-1)).toMatchObject({ type: "end", params: { status: "liquidated" } });
+    const after = runScript(long, turn.state, "rescue; buyback", who).lines;
+    expect(after[1]).toMatch(/^rescue on day/);
+    expect(after.at(-1)).toBe("not run: the game is over");
+    expect(JSON.parse(renderSummary(long, turn.state))).toMatchObject({ ending: "liquidation", valuation: 0, rescue: { share: 0.75 } });
+  });
+});
+
+describe("the calendar", () => {
+  const full = createSim(defaultConfig);
+  const shop = (startDate: string) =>
+    full.newGame({ companyName: "Test Co", productType: "ecommerce", model: "saas", seed: 3, startDate });
+  /** Plays on until time stops for a holiday. */
+  const toHoliday = (state: GameState) => {
+    let turn = advanceUntil(full, state, 60, who);
+    while (!/holiday/i.test(turn.lines.at(-1)!)) turn = advanceUntil(full, turn.state, 60, who);
+    return turn;
+  };
+
+  it("reads the calendar command", () => {
+    expect(parseCommand("calendar")).toEqual({ kind: "calendar" });
+    expect(renderCommands(sim, start())).toContain("calendar");
+  });
+
+  it("shows the date and the next holiday in the status, and every holiday to come on asking", () => {
+    const state = shop("2026-11-01");
+    const status = renderStatus(full, state);
+    expect(status).toContain("| Sunday 1 November 2026 |");
+    expect(status).toContain("calendar: next: Black Friday in 26 days, day 27 (load ×2.2, growth ×2.5)");
+    const { lines } = runCommand(full, state, parseCommand("calendar"), who);
+    expect(lines[0]).toBe("calendar: Sunday 1 November 2026, year 1 of the game (started 2026)");
+    expect(lines).toContain("  Christmas: in 47 days, 18 Dec 2026–1 Jan 2027 (days 48–62), load ×1.5, growth ×1.4. Last-minute gifts, then the Boxing Day sales.");
+  });
+
+  it("stops time when a holiday that hits the product is announced, and when it starts", () => {
+    const announced = toHoliday(shop("2026-11-01"));
+    expect(announced.state.day).toBe(13);
+    expect(announced.lines.at(-1)).toContain("Holiday coming in 14 days: Black Friday, on Friday 27 November 2026");
+    expect(announced.lines.some((l) => l.includes("day 13: Black Friday is coming in 14 days"))).toBe(true);
+    const started = toHoliday(announced.state);
+    expect(started.state.day).toBe(27);
+    expect(started.lines.at(-1)).toContain("Holiday started: Black Friday, for 4 days");
+    expect(renderStatus(full, started.state)).toContain("Black Friday on now to day 30 (load ×2.2, growth ×2.5)");
   });
 });

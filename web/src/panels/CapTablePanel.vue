@@ -42,7 +42,7 @@ const table = computed(() => game.company?.capTable ?? null);
             <th scope="row">Shares in issue</th>
             <td class="num" data-testid="shares-in-issue">{{ table.sharesInIssue.toLocaleString("en-GB") }}</td>
             <td class="num">100%</td>
-            <td class="num">{{ formatCash(game.company!.valuation.valuation) }}</td>
+            <td class="num">{{ formatCash(game.company!.ipo.result?.marketValue ?? game.company!.valuation.valuation) }}</td>
           </tr>
         </tbody>
       </table>

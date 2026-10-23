@@ -7,7 +7,7 @@ import { dayTicks, formatAxisCash, niceTicks, useWidth } from "../chart";
 // Income and costs added up from day 1, as two lines on the same day axis as the other charts. Where the income line is
 // above the costs line, the company is in profit so far; the gap at the end is the profit or loss. Costs are dashed, so
 // the lines differ by more than colour.
-const props = defineProps<{ days: IncomeCostDay[]; finalDay: number }>();
+const props = defineProps<{ days: IncomeCostDay[]; finalDay: number | null }>();
 
 const el = ref<HTMLElement>();
 const width = useWidth(el);
@@ -18,7 +18,7 @@ const M = { top: 12, right: 12, bottom: 42, left: 70 };
 const plotW = computed(() => Math.max(100, width.value - M.left - M.right));
 const plotH = HEIGHT - M.top - M.bottom;
 
-const lastDay = computed(() => Math.max(props.finalDay, props.days.at(-1)?.day ?? 1));
+const lastDay = computed(() => Math.max(props.finalDay ?? 0, props.days.at(-1)?.day ?? 1));
 const band = computed(() => plotW.value / lastDay.value);
 const yTicks = computed(() =>
   niceTicks(0, Math.max(1, ...props.days.map((d) => Math.max(d.totalIncome, d.totalCosts))), 4),

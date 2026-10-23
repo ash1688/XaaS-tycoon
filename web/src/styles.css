@@ -647,6 +647,33 @@ fieldset > p {
   color: var(--text);
 }
 
+/* Why time paused itself: the same shape as the low-cash warning, in the accent colour. */
+.pause-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.75rem;
+  margin: 0 0 1rem;
+  padding: 0.7rem 1rem;
+  border-radius: 10px;
+  border: 2px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.pause-reasons p {
+  flex: 1 1 20rem;
+  margin: 0;
+  color: var(--text);
+}
+
+.pause-reasons ul {
+  flex-basis: 100%;
+  margin: 0;
+  padding-left: 1.25rem;
+  color: var(--text);
+}
+
 .bankrupt h2 {
   margin: 0.5rem 0 0.25rem;
 }
@@ -2025,6 +2052,12 @@ button.danger-fill {
   white-space: nowrap;
 }
 
+.day-counter .date {
+  color: var(--muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
 .day-counter small {
   font-size: 0.85rem;
   font-weight: 500;
@@ -2044,6 +2077,12 @@ button.danger-fill {
 .day-controls .play-pause {
   min-width: 5rem;
   padding: 0.55rem 0.9rem;
+}
+
+.day-controls .speed {
+  width: auto;
+  padding: 0.45rem 0.5rem;
+  font-size: 0.85rem;
 }
 
 .day-controls .timed-status {
@@ -2111,7 +2150,13 @@ button.danger-fill {
     justify-content: flex-end;
   }
 
-  .day-controls .timed-status {
+  .day-controls .speed {
+  width: auto;
+  padding: 0.45rem 0.5rem;
+  font-size: 0.85rem;
+}
+
+.day-controls .timed-status {
     max-width: none;
   }
 }
@@ -3127,6 +3172,27 @@ body.modal-open {
   color: var(--pos);
 }
 
+/* A holiday announced or starting, in the day log. */
+.day-log li.event.calendar {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+/* The Home calendar card's coming holidays. */
+.holiday-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.holiday-list .when {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 /* The Home launch card's setup checklist. Its links sit above the card's whole-card button. */
 .launch-checklist {
   display: flex;
@@ -3751,4 +3817,168 @@ select:disabled {
   margin-right: 0.4rem;
   border-radius: 3px;
   background: var(--type);
+}
+
+/* The IPO readiness checklist on Finance, and the opening-bell page */
+.ipo-checklist {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 0.6rem;
+  margin: 0.75rem 0;
+  padding: 0;
+  list-style: none;
+}
+.ipo-checklist li {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.ipo-checklist li.met {
+  border-color: var(--pos);
+  background: color-mix(in srgb, var(--pos) 8%, transparent);
+}
+.ipo-checklist p {
+  margin: 0.15rem 0 0;
+  font-size: 0.9rem;
+}
+.ipo-tick {
+  flex: none;
+  width: 1.4rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+.ipo-checklist li.met .ipo-tick {
+  color: var(--pos);
+}
+.ipo-now {
+  overflow-wrap: anywhere;
+}
+.ipo-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+.ipo-footer p {
+  margin: 0;
+  flex: 1 1 20rem;
+}
+.ipo-cold {
+  padding: 0.6rem 0.8rem;
+  border-left: 4px solid var(--warn);
+  background: var(--warn-soft);
+}
+.badge.ipo-ready,
+.badge.ipo-approved,
+.badge.ipo-floated {
+  color: var(--pos);
+}
+.badge.ipo-cold {
+  color: var(--warn);
+}
+.ipo-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.6rem;
+  margin: 0 0 1.25rem;
+  padding: 0.7rem 1rem;
+  border: 2px solid var(--pos);
+  border-radius: 10px;
+}
+.bell-float {
+  display: block;
+  margin-top: 1rem;
+}
+.bell-page input[type="range"] {
+  width: 100%;
+}
+.bell-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+}
+.bell-preview {
+  margin: 0.75rem 0;
+}
+.bell-ring {
+  font-size: 1.1rem;
+  padding: 0.7rem 1.4rem;
+}
+.bell-price {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.75rem;
+  margin: 0.25rem 0 0.5rem;
+}
+.bell-price strong {
+  font-size: 1.8rem;
+}
+.bell-chart {
+  width: 100%;
+  height: 14rem;
+  display: block;
+  border-bottom: 1px solid var(--border);
+}
+.bell-offer {
+  stroke: var(--muted);
+  stroke-dasharray: 5 5;
+}
+.bell-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0.25rem 0 1rem;
+  font-size: 0.85rem;
+}
+.bell-line {
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+}
+.bell-line.up {
+  stroke: var(--pos);
+}
+.bell-line.down {
+  stroke: var(--neg);
+}
+.bell-reasons {
+  margin: 0.25rem 0 1rem;
+  padding-left: 1.2rem;
+/* Negotiating a funder's offer, in its review modal. */
+.negotiation {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+.negotiation h3 {
+  margin: 0;
+}
+.negotiation-rounds {
+  padding-left: 1.25rem;
+}
+.negotiation-rounds li + li {
+  margin-top: 0.4rem;
+}
+.counter-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: end;
+}
+.counter-form label {
+  display: grid;
+  gap: 0.25rem;
+}
+.counter-form input {
+  width: 8rem;
+}
+.counter-form .counter-odds,
+.counter-form p {
+  flex-basis: 100%;
+  margin: 0;
 }
