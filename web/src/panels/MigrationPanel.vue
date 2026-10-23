@@ -363,8 +363,8 @@ async function startMigration() {
           </li>
           <li v-if="quote.setup.length">Once you've switched, fine-tune the sizes here on Infrastructure.</li>
           <li>
-            Then {{ targetModel.name }} needs <strong data-testid="quote-ops">{{ quote.opsNeeded }}</strong> ops staff. You have
-            {{ game.company.ops }}.
+            Then {{ targetModel.name }} needs <strong data-testid="quote-ops">{{ quote.opsNeeded }}</strong> ops staff. Yours do the
+            work of {{ formatCount(game.opsWork) }}.
           </li>
         </ul>
         <div class="confirm-buttons">

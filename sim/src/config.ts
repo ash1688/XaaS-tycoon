@@ -9,6 +9,8 @@ export type ProductTypeId = (typeof PRODUCT_TYPE_IDS)[number];
 
 export const STAFF_POOLS = ["developers", "ops", "support"] as const;
 export type StaffPool = (typeof STAFF_POOLS)[number];
+export const STAFF_GRADES = ["junior", "mid", "senior"] as const;
+export type StaffGrade = (typeof STAFF_GRADES)[number];
 
 /** A migration runs through these phases in order. Saved in game state, so don't rename. */
 export const MIGRATION_PHASES = ["planning", "testing", "moving"] as const;
@@ -224,10 +226,25 @@ export interface StaffPoolConfig {
   name: string;
   /** One person, for buttons: "developer". */
   personName: string;
-  /** Fixed cost per person per day. */
+  /** Fixed cost per mid per day. Each grade's pay is this × its pay multiplier. */
   dayRate: number;
-  /** Headcount a new company starts with. */
+  /** Mids a new company starts with, on the team from day 1. */
   startingCount: number;
+}
+
+/**
+ * A grade of staff, the same in every pool. Output is work a day against a mid's: developer-days for developers,
+ * tickets (× ticketsPerPerson) for support, and cover towards ops needed for ops.
+ */
+export interface StaffGradeConfig {
+  /** For headings and buttons: "Junior". */
+  name: string;
+  /** Pay as a multiple of the pool's day rate (a mid's). */
+  payMultiplier: number;
+  /** Work a day as a multiple of a mid's. */
+  output: number;
+  /** Days from hiring to starting work: hired after day 10 with 3, they work and are paid from day 13. */
+  leadDays: number;
 }
 
 /** A run of busy days that repeats, like a sale season. */
@@ -700,6 +717,7 @@ export interface GameConfig {
   models: Record<ModelId, ModelConfig>;
   productTypes: Record<ProductTypeId, ProductTypeConfig>;
   staff: Record<StaffPool, StaffPoolConfig>;
+  staffGrades: Record<StaffGrade, StaffGradeConfig>;
   capacity: CapacityConfig;
   servers: ServersConfig;
   outage: OutageConfig;
@@ -1014,6 +1032,13 @@ export const defaultConfig: GameConfig = {
     ops: { name: "Ops staff", personName: "ops person", dayRate: 120, startingCount: 1 },
     // One to start, enough for the first few weeks: more are needed as users grow.
     support: { name: "Support staff", personName: "support person", dayRate: 100, startingCount: 1 },
+  },
+  // A senior does about twice a junior's work for about 1.7× the pay: cheaper per unit of work, dearer up front, and
+  // slowest to arrive. Placeholders from the beta design.
+  staffGrades: {
+    junior: { name: "Junior", payMultiplier: 0.75, output: 0.65, leadDays: 3 },
+    mid: { name: "Mid", payMultiplier: 1, output: 1, leadDays: 7 },
+    senior: { name: "Senior", payMultiplier: 1.3, output: 1.35, leadDays: 14 },
   },
   capacity: { unstaffedShare: 0.4 },
   // Each size gives a set number of units. A CU serves the same users whatever the size, so the sizes are 6/10/20/30 to

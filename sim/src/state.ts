@@ -6,6 +6,7 @@ import {
   RACK_SIZES,
   SERVER_SIZES,
   SERVER_TYPES,
+  STAFF_GRADES,
   STAFF_POOLS,
   type GameLengthId,
   type ManagedService,
@@ -16,6 +17,7 @@ import {
   type ServerSize,
   type ServerType,
   type SpendCategory,
+  type StaffGrade,
   type StaffPool,
 } from "./config.ts";
 
@@ -23,7 +25,19 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 24;
+export const GAME_STATE_VERSION = 25;
+
+/** Headcount in one pool, by grade. */
+export type GradeCounts = Record<StaffGrade, number>;
+
+/** People hired together who haven't started yet. */
+export interface Hire {
+  pool: StaffPool;
+  grade: StaffGrade;
+  count: number;
+  /** The first day they work and are paid: the day hired plus their grade's lead time. */
+  arrivesOn: number;
+}
 
 /** Money spent in each category. */
 export type Spend = Record<SpendCategory, number>;
@@ -237,10 +251,13 @@ export interface GameState {
   day: number;
   cash: number;
   rng: number;
-  developers: number;
-  ops: number;
-  /** Support staff: they answer customers' tickets, on every model. */
-  support: number;
+  /**
+   * Staff on the team, by pool and grade: developers build features, ops keep the servers running, and support answer
+   * customers' tickets on every model. Hires still to start aren't here.
+   */
+  staff: Record<StaffPool, GradeCounts>;
+  /** Hires waiting to start, in the order they were made. */
+  hiring: Hire[];
   /**
    * The day the company launched: its first users arrived at the end of it, the first day of the launch ramp. Null until
    * then, when it has no users (see LaunchConfig).
@@ -332,18 +349,22 @@ export interface GameState {
 
 /** Something the player does between days. */
 export type Action =
-  /** Hires or lets go people in one pool: `count` of them, one if it's left out. */
-  | { type: "hire"; pool: StaffPool; count?: number }
-  | { type: "letGo"; pool: StaffPool; count?: number }
+  /**
+   * Hires or lets go people of one grade in one pool: `count` of them, one if it's left out, mids if the grade is.
+   * Hires start after their grade's lead time; letting go is at once, and only of those on the team.
+   */
+  | { type: "hire"; pool: StaffPool; grade?: StaffGrade; count?: number }
+  | { type: "letGo"; pool: StaffPool; grade?: StaffGrade; count?: number }
   /** Starts building one of the product's features. One build at a time; not on SaaS. */
   | { type: "buildFeature"; feature: string }
   /** Buys one of the product's features as an add-on, active at once. SaaS only, with a configuration team. */
   | { type: "buyAddon"; feature: string }
   /**
-   * Moves one person from one pool into another. Any time, including during a migration. Without `from`, a move
-   * into developers comes from ops and any other move from developers.
+   * Moves one person from one pool into another, keeping their grade. Any time, including during a migration. Without
+   * `from`, a move into developers comes from ops and any other move from developers. Without `grade`, a mid moves if
+   * there is one, else a junior, else a senior.
    */
-  | { type: "moveStaff"; to: StaffPool; from?: StaffPool }
+  | { type: "moveStaff"; to: StaffPool; from?: StaffPool; grade?: StaffGrade }
   /** Starts a migration to another model. One at a time; it runs in the background. */
   | { type: "startMigration"; model: ModelId }
   /** Sets the monthly price paying users pay, from the next day played. Above 0 and at most the configured maximum. */
@@ -420,7 +441,8 @@ export interface LogEntry {
     | "price"
     | "conversion"
     | "loan"
-    | "launch";
+    | "launch"
+    | "staff";
 }
 
 export interface DayLog {
@@ -483,4 +505,8 @@ export function isManagedService(v: string): v is ManagedService {
 
 export function isStaffPool(v: string): v is StaffPool {
   return (STAFF_POOLS as readonly string[]).includes(v);
+}
+
+export function isStaffGrade(v: string): v is StaffGrade {
+  return (STAFF_GRADES as readonly string[]).includes(v);
 }

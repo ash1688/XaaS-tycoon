@@ -1,31 +1,41 @@
 <script setup lang="ts">
 import { computed, reactive, useId } from "vue";
-import type { StaffPool } from "@xaas/sim";
+import type { StaffGrade, StaffPool } from "@xaas/sim";
 import { formatCash, formatCount } from "../api";
+import GradeCounter from "../components/GradeCounter.vue";
 import { useGame } from "../game";
 
-// Developers, ops and support: hire, let go, and retrain someone into another team. − and + move one person; the
-// number box hires or lets go that many at once, so a big team doesn't take hundreds of clicks.
+// Developers, ops and support, each in junior, mid and senior grades: hire, let go, and retrain someone into another
+// team. Pick a grade, then − and + move one person; the number box hires or lets go that many of the grade at once, so
+// a big team doesn't take hundreds of clicks. Hires start after their grade's lead time.
 const game = useGame();
 const id = useId();
 const MAX_AT_ONCE = 999;
 const amounts = reactive<Record<StaffPool, number | "">>({ developers: 10, ops: 10, support: 10 });
+const grades = reactive<Record<StaffPool, StaffGrade>>({ developers: "mid", ops: "mid", support: "mid" });
 // The number in the box, or 0 when it isn't a whole number from 1 to the most at once.
 const amountOf = (pool: StaffPool) => {
   const n = amounts[pool];
   return typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= MAX_AT_ONCE ? n : 0;
 };
+const gradeOf = (pool: StaffPool) => game.staffPool(pool)?.grades.find((g) => g.grade === grades[pool]);
 const people = (pool: StaffPool, n: number) => {
   const p = game.meta?.staff.find((s) => s.id === pool);
-  return n === 1 ? (p?.personName ?? pool) : (p?.name.toLowerCase() ?? pool);
+  const grade = gradeOf(pool)?.name.toLowerCase() ?? grades[pool];
+  return `${grade} ${n === 1 ? (p?.personName ?? pool) : (p?.name.toLowerCase() ?? pool)}`;
 };
 function change(type: "hire" | "letGo", pool: StaffPool, count: number) {
   if (count < 1) return;
-  game.actFrom(`staff-${type === "hire" ? "hire" : "let-go"}-many-${pool}`, { type, pool, count });
+  game.actFrom(`staff-${type === "hire" ? "hire" : "let-go"}-many-${pool}`, { type, pool, grade: grades[pool], count });
 }
-// Short of ops or support: how many more to hire to cover it, for a one-click fix.
-const shortOf = (pool: StaffPool) =>
-  pool === "ops" ? (game.understaffed ? game.company!.opsNeeded - game.company!.ops : 0) : pool === "support" ? game.supportShort : 0;
+// Short of ops or support, in mids' work, counting hires on the way: how many of the picked grade cover it.
+const need = (pool: StaffPool) =>
+  pool === "ops" ? (game.company?.opsNeeded ?? 0) : pool === "support" ? game.supportNeeded : 0;
+const shortAfterHires = (pool: StaffPool) => game.midsShort(need(pool), game.work(pool) + game.workComing(pool));
+const toCover = (pool: StaffPool) => {
+  const output = gradeOf(pool)?.output ?? 1;
+  return output > 0 ? Math.ceil(Math.round((shortAfterHires(pool) / output) * 100) / 100) : 0;
+};
 // Every move from one team to another, developers and ops first as they're the usual swap.
 const moves = computed(() => {
   const pools = game.meta?.staff ?? [];
@@ -43,36 +53,24 @@ const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.fr
         Total <strong data-testid="staff-cost">{{ formatCash(game.company.dailyStaffCost) }}</strong> a day
       </span>
     </div>
+    <p class="muted staff-grades-note">
+      Juniors start soonest and cost least, but do the least. Seniors do the most for their pay, but take longest to
+      start. Work is counted in mids: what's measured against ops needed, a build's developer-days and tickets cleared.
+    </p>
     <ul class="staff">
       <li v-for="pool in game.meta.staff" :key="pool.id" :data-pool="pool.id">
         <div class="staff-info">
           <strong>{{ pool.name }}</strong>
-          <span class="muted">{{ formatCash(pool.dayRate) }} each a day</span>
+          <span class="muted" :data-testid="`${pool.id}-work`">
+            Does the work of {{ formatCount(game.work(pool.id)) }} mid{{ game.work(pool.id) === 1 ? "" : "s" }}
+          </span>
           <span v-if="pool.id === 'support'" class="muted" data-testid="support-hint">
-            Each clears {{ formatCount(game.meta.ticketsPerPerson) }} tickets a day. Your users raise about
-            {{ formatCount(game.company.usualTickets) }} a day, so you need
+            A mid clears {{ formatCount(game.meta.ticketsPerPerson) }} tickets a day. Your users raise about
+            {{ formatCount(game.company.usualTickets) }} a day, so you need the work of
             {{ game.supportNeeded }}<template v-if="game.company.backlog">, plus more to clear the backlog</template>.
           </span>
         </div>
-        <div class="counter">
-          <button
-            class="ghost"
-            :disabled="game.busy || game.over || game.company[pool.id] < 1"
-            :aria-label="`Let go one ${pool.personName}`"
-            @click="game.actFrom(`staff-${pool.id}`, { type: 'letGo', pool: pool.id })"
-          >
-            −
-          </button>
-          <output :data-testid="`${pool.id}-count`" aria-live="polite">{{ game.company[pool.id] }}</output>
-          <button
-            class="ghost"
-            :disabled="game.busy || game.over"
-            :aria-label="`Hire one ${pool.personName}`"
-            @click="game.actFrom(`staff-${pool.id}`, { type: 'hire', pool: pool.id })"
-          >
-            +
-          </button>
-        </div>
+        <GradeCounter v-model:grade="grades[pool.id]" :pool="pool.id" source="staff" />
         <div class="staff-bulk" :data-testid="`${pool.id}-bulk`">
           <label :for="`${id}-${pool.id}-amount`" class="muted">How many</label>
           <input
@@ -96,30 +94,30 @@ const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.fr
           </button>
           <button
             class="ghost"
-            :disabled="game.busy || game.over || !amountOf(pool.id) || game.company[pool.id] < amountOf(pool.id)"
+            :disabled="game.busy || game.over || !amountOf(pool.id) || (gradeOf(pool.id)?.count ?? 0) < amountOf(pool.id)"
             :data-testid="`${pool.id}-let-go-many`"
             @click="change('letGo', pool.id, amountOf(pool.id))"
           >
             Let go {{ amountOf(pool.id) || "" }}
           </button>
           <span v-if="amountOf(pool.id)" class="muted staff-bulk-cost">
-            {{ formatCash(amountOf(pool.id) * pool.dayRate) }} a day for {{ amountOf(pool.id) }}
-            {{ people(pool.id, amountOf(pool.id)) }}
+            {{ formatCash(amountOf(pool.id) * (gradeOf(pool.id)?.dayRate ?? pool.dayRate)) }} a day for
+            {{ amountOf(pool.id) }} {{ people(pool.id, amountOf(pool.id)) }}
           </span>
           <span v-else class="muted staff-bulk-cost">Enter a whole number from 1 to {{ MAX_AT_ONCE }}.</span>
           <button
-            v-if="shortOf(pool.id) > 0"
+            v-if="toCover(pool.id) > 0"
             :disabled="game.busy || game.over"
             :data-testid="`${pool.id}-hire-short`"
-            @click="change('hire', pool.id, shortOf(pool.id))"
+            @click="change('hire', pool.id, toCover(pool.id))"
           >
-            Hire the {{ shortOf(pool.id) }} you're short
+            Hire {{ toCover(pool.id) }} {{ people(pool.id, toCover(pool.id)) }} to cover the shortfall
           </button>
         </div>
       </li>
     </ul>
     <div class="move-staff" data-testid="move-staff">
-      <span class="muted">Retrain someone into another team (no cost, any time):</span>
+      <span class="muted">Retrain someone into another team, keeping their grade (a mid if there is one; no cost, any time):</span>
       <div class="move-buttons">
         <button
           v-for="{ from, to } in sortedMoves"
@@ -139,7 +137,7 @@ const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.fr
         Once the kit on order arrives, you'll need <strong>{{ game.company.opsNeededOnceReady }}</strong>.
       </span>
       <span v-if="game.understaffed" class="badge">
-        Understaffed: {{ game.company.opsNeeded - game.company.ops }} short{{ game.provider ? "" : ", capacity cut" }}
+        Understaffed: {{ game.opsShort }} short{{ game.provider ? "" : ", capacity cut" }}
       </span>
     </p>
   </section>

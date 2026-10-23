@@ -21,7 +21,7 @@ import { createPricing, type PricePreview, type PriceWaveView } from "./pricing.
 import { createRacks, type RacksView } from "./racks.ts";
 import { seedRng } from "./rng.ts";
 import { createServers, type ManagedView, type ServerOption, type ServerView, type UnitsView } from "./servers.ts";
-import { createStaff } from "./staff.ts";
+import { createStaff, type StaffPoolView } from "./staff.ts";
 import {
   GAME_STATE_VERSION,
   isCurrentState,
@@ -62,6 +62,7 @@ export type {
   TierView,
   UnitsView,
 } from "./servers.ts";
+export type { GradeView, HireView, StaffPoolView } from "./staff.ts";
 export type { GameSummary, IncomeCostDay, LoanSummary, PeakUsers, SummaryDay } from "./summary.ts";
 export { interestIn, profitCosts } from "./finance.ts";
 export {
@@ -153,8 +154,13 @@ export interface Sim {
   opsNeededNow(state: GameState): number;
   /** Ops staff the company will need once every server it has is in service: on-prem, kit on order included. */
   opsNeededOnceReady(state: GameState): number;
-  /** What the current headcount costs per day. */
+  /** What the staff on the team cost per day. Hires still to start cost nothing. */
   dailyStaffCost(state: GameState): number;
+  /**
+   * Each pool in config order: its grades with what each costs, does and takes to arrive, the headcount and work
+   * a day of everyone on the team, and the hires still to start.
+   */
+  staff(state: GameState): StaffPoolView[];
   /** What the current model costs per month at today's users. */
   monthlyInfrastructureCost(state: GameState): number;
   /** What the active add-ons cost per month at today's users. */
@@ -204,7 +210,7 @@ export interface Sim {
   powerAndCooling(model: ModelId): number;
   /** On SaaS: capacity is the provider's, so what you pay for it is the per-user bill. Null on any other model. */
   provider(state: GameState): ProviderView | null;
-  /** Tickets the support staff can clear in a day: support staff × tickets each. */
+  /** Tickets the support staff can clear in a day: their output in mids × tickets each. */
   dailyClearance(state: GameState): number;
   /** Tickets today's users would raise in a day before any burst: paid and free users × their rates. */
   usualTickets(state: GameState): number;
@@ -300,9 +306,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       day: 1,
       cash: config.startingCash,
       rng,
-      developers: config.staff.developers.startingCount,
-      ops: config.staff.ops.startingCount,
-      support: config.staff.support.startingCount,
+      ...staff.startingStaff(),
       ...customers.startingCustomers(productType, seed),
       ...support.startingSupport(),
       ...conversion.startingConversion(),
@@ -381,13 +385,13 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     switch (action.type) {
       case "hire":
       case "letGo":
-        return staff.changeStaff(state, action.type, action.pool, action.count);
+        return staff.changeStaff(state, action.type, action.pool, action.grade, action.count);
       case "buildFeature":
         return features.startBuild(state, action.feature);
       case "buyAddon":
         return features.buyAddon(state, action.feature);
       case "moveStaff":
-        return staff.moveStaff(state, action.to, action.from);
+        return staff.moveStaff(state, action.to, action.from, action.grade);
       case "startMigration":
         return migration.startMigration(state, action.model);
       case "setPrice":
@@ -417,8 +421,11 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     }
   }
 
-  function advanceOneDay(start: GameState): AdvanceResult {
-    const day = start.day + 1;
+  function advanceOneDay(yesterday: GameState): AdvanceResult {
+    const day = yesterday.day + 1;
+    // Hires due today start first, so they work and are paid today.
+    const arrivals = staff.arrive(yesterday, day);
+    const start = arrivals.state;
 
     // Scripted events on today. A price rise or feature gap from today counts from today's bill and growth. Before the
     // first users arrive there's nothing running for one to hit.
@@ -458,6 +465,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     // Income comes from the users paying at the start of the day, at today's price, like the per-user fees, less any
     // who stopped paying today over the price: they won't pay it.
     const entries: LogEntry[] = [
+      ...arrivals.entries,
       ...launched.entries,
       ...recorded.entries,
       ...(ramping ? [] : organic.entries),
@@ -558,6 +566,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     opsNeededNow: (s) => infra.opsNeededNow(load(s)),
     opsNeededOnceReady: (s) => servers.opsNeededOnceReady(load(s)),
     dailyStaffCost: (s) => staff.dailyStaffCost(load(s)),
+    staff: (s) => staff.staffView(load(s)),
     monthlyInfrastructureCost: (s) => infra.monthlyInfrastructureCost(load(s)),
     monthlyAddonCost: (s) => features.monthlyAddonCost(load(s)),
     dailyIncome: (s) => pricing.dailyIncome(load(s)),

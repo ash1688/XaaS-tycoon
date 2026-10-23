@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { formatCash, formatCount } from "../api";
+import GradeCounter from "../components/GradeCounter.vue";
 import { useGame } from "../game";
 
 // Customer care: today's tickets, what support cleared, the backlog left and the satisfaction it sets, with a quick
@@ -18,7 +19,7 @@ const satisfactionChange = computed(() =>
   <section v-if="game.company && game.meta && pool" class="card support" aria-labelledby="support-heading" data-testid="support">
     <div class="row-between panel-head">
       <h2 id="support-heading">Customer care</h2>
-      <span class="muted">{{ formatCash(pool.dayRate) }} per support person a day</span>
+      <span class="muted">{{ formatCash(pool.dayRate) }} per mid support person a day</span>
     </div>
     <div class="stats">
       <div class="stat">
@@ -66,31 +67,13 @@ const satisfactionChange = computed(() =>
       <div class="staff-info">
         <strong>Support staff</strong>
         <span class="muted" data-testid="support-needed">
-          Each clears {{ formatCount(game.meta.ticketsPerPerson) }} tickets a day. You need about
+          A mid clears {{ formatCount(game.meta.ticketsPerPerson) }} tickets a day. You need the work of about
           {{ game.supportNeeded }} for your users' usual {{ formatCount(game.company.usualTickets) }} a day<template
             v-if="game.company.backlog"
           >, and more to clear the backlog</template>.
         </span>
       </div>
-      <div class="counter">
-        <button
-          class="ghost"
-          :disabled="game.busy || game.over || game.company.support < 1"
-          :aria-label="`Let go one ${pool.personName}`"
-          @click="game.actFrom('support-panel', { type: 'letGo', pool: 'support' })"
-        >
-          −
-        </button>
-        <output data-testid="support-count" aria-live="polite">{{ game.company.support }}</output>
-        <button
-          class="ghost"
-          :disabled="game.busy || game.over"
-          :aria-label="`Hire one ${pool.personName}`"
-          @click="game.actFrom('support-panel', { type: 'hire', pool: 'support' })"
-        >
-          +
-        </button>
-      </div>
+      <GradeCounter :pool="'support'" source="support-panel" />
     </div>
     <p>
       Your customers raise tickets every day, paying and free alike, and more when you're down. Support is your job on

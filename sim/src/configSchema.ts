@@ -12,6 +12,7 @@ import {
   RACK_SIZES,
   SERVER_SIZES,
   SERVER_TYPES,
+  STAFF_GRADES,
   STAFF_POOLS,
   defaultConfig,
   gameLengthName,
@@ -286,8 +287,14 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   // People
   for (const pool of STAFF_POOLS) {
     const s = base.staff[pool]?.name ?? pool;
-    add(`staff.${pool}.dayRate`, "People", s, "Day rate", "Cost per person per day.", range(0, 2_000, 10));
-    add(`staff.${pool}.startingCount`, "People", s, "Starting headcount", "How many a new company starts with.", HEADCOUNT);
+    add(`staff.${pool}.dayRate`, "People", s, "Day rate", "Cost per mid per day. Juniors and seniors are paid this × their grade's pay multiplier.", range(0, 2_000, 10));
+    add(`staff.${pool}.startingCount`, "People", s, "Starting headcount", "How many mids a new company starts with.", HEADCOUNT);
+  }
+  for (const grade of STAFF_GRADES) {
+    const g = base.staffGrades[grade]?.name ?? grade;
+    add(`staffGrades.${grade}.payMultiplier`, "People", `${g} staff`, "Pay multiplier", "Pay as a multiple of each team's day rate (a mid's).", MULTIPLIER);
+    add(`staffGrades.${grade}.output`, "People", `${g} staff`, "Output", "Work a day as a multiple of a mid's: developer-days, tickets cleared, or cover towards ops needed.", MULTIPLIER);
+    add(`staffGrades.${grade}.leadDays`, "People", `${g} staff`, "Lead time (days)", "Days from hiring to starting work (0 = at once). They're paid only once they start.", range(0, 60, 1));
   }
   for (const m of MODEL_IDS) {
     add(`models.${m}.opsNeeded`, "People", MODEL_LABELS[m], "Ops needed", "Ops staff this model needs to keep the service running, however big it gets. Too few cuts capacity on a model with servers.", HEADCOUNT);

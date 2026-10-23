@@ -18,7 +18,12 @@ import { setupTestDb } from "./testDb.ts";
 // deletes, and that none of it can identify a student.
 const PASSWORD = "test-teacher-password";
 // Short games, so one can be played to the end.
-const sim = createSim({ ...defaultConfig, finalDay: 4 });
+// Mids start at once here, so a hire shows in the next snapshot.
+const sim = createSim({
+  ...defaultConfig,
+  finalDay: 4,
+  staffGrades: { ...defaultConfig.staffGrades, mid: { ...defaultConfig.staffGrades.mid, leadDays: 0 } },
+});
 // Distinctive, so a leak into any stored or exported text can be searched for.
 const NAME = "Zebedee Quux Ltd";
 

@@ -15,7 +15,10 @@ function run(state: GameState, text: string) {
 
 describe("parseCommand", () => {
   it("reads actions, counts and server types without case", () => {
-    expect(parseCommand("hire support 5")).toEqual({ kind: "action", action: { type: "hire", pool: "support" }, times: 5 });
+    expect(parseCommand("hire support 5")).toEqual({ kind: "action", action: { type: "hire", pool: "support", count: 5 }, times: 1 });
+    expect(parseCommand("hire ops junior 3")).toMatchObject({ action: { type: "hire", pool: "ops", grade: "junior", count: 3 } });
+    expect(parseCommand("letgo developers senior")).toMatchObject({ action: { type: "letGo", pool: "developers", grade: "senior", count: 1 } });
+    expect(parseCommand("move ops developers junior")).toMatchObject({ action: { type: "moveStaff", to: "ops", from: "developers", grade: "junior" } });
     expect(parseCommand("Rent LoadBalancer small")).toEqual({
       kind: "action",
       action: { type: "rentServer", server: "loadBalancer", size: "small" },
@@ -29,15 +32,24 @@ describe("parseCommand", () => {
     expect(() => parseCommand("hire suport")).toThrow(SimError);
     expect(() => parseCommand("dance")).toThrow(/Unknown command/);
     expect(() => parseCommand("hire support 0")).toThrow(/1 to 500/);
+    expect(() => parseCommand("hire support intern 2")).toThrow(/a grade/);
   });
 });
 
 describe("runCommand", () => {
-  it("repeats an action and logs a row for each", () => {
-    const turn = run(start(), "hire support 3");
-    expect(turn.state.support).toBe(4);
-    expect(turn.rows).toHaveLength(3);
-    expect(turn.rows[0]).toMatchObject({ kind: "game", type: "hire", ok: true, player: "test", params: { pool: "support" } });
+  it("hires a grade in one go, shows them waiting, and stops when they start", () => {
+    const turn = run(start(), "hire support junior 3");
+    expect(turn.rows).toHaveLength(1);
+    expect(turn.rows[0]).toMatchObject({ kind: "game", type: "hire", ok: true, player: "test", params: { pool: "support", grade: "junior", count: 3 } });
+    // Juniors start 3 days after hiring: not on the team or paid until then.
+    expect(turn.state.staff.support).toEqual({ junior: 0, mid: 1, senior: 0 });
+    expect(renderStatus(sim, turn.state)).toMatch(/support 1 \(0 junior, 1 mid, 0 senior\) work 1 .*hired, not started: 3 junior on day 4 \(3d\)/);
+    let later = turn;
+    while (later.state.day < 4) later = run(later.state, "next 1");
+    expect(later.lines.at(-1)).toMatch(/^stopped on day 4: .*staff started/);
+    expect(later.lines).toContain("  day 4: 3 junior support staff started work.");
+    expect(later.state.staff.support).toEqual({ junior: 3, mid: 1, senior: 0 });
+    expect(later.rows.at(-1)).toMatchObject({ support: 4 });
   });
 
   it("reports a refused action and logs it with its error code, without throwing", () => {

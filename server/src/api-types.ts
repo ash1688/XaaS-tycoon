@@ -30,7 +30,9 @@ import type {
   ServerView,
   Spend,
   StackLayer,
+  StaffGrade,
   StaffPool,
+  StaffPoolView,
   UnitsView,
 } from "@xaas/sim";
 
@@ -93,7 +95,10 @@ export interface MetaView {
     /** Power and cooling a day, charged whatever the company runs: highest on-prem. */
     powerAndCooling: number;
   }[];
+  /** Each pool, with a mid's day rate: a grade's pay is that × its pay multiplier. */
   staff: { id: StaffPool; name: string; personName: string; dayRate: number }[];
+  /** Junior, mid and senior: pay and work a day against a mid's, and days from hiring to starting work. */
+  grades: { id: StaffGrade; name: string; payMultiplier: number; output: number; leadDays: number }[];
   /** Developers a SaaS company needs to configure add-ons before it can buy one. */
   minConfigDevelopers: number;
   /** Tickets one support person clears a day. */
@@ -149,13 +154,19 @@ export interface CompanyView {
    * if cash went below zero, "finished" if it played the final day, or "retired" if the student retired it.
    */
   status: CompanyStatus;
+  /** People on each team, every grade. Hires still to start aren't counted. */
   developers: number;
   ops: number;
   /** Support staff: they answer customers' tickets, on every model. */
   support: number;
   /**
-   * Ops staff the company needs: on a model with servers, for the servers it has (on IaaS ready or not, on-prem once
-   * they've arrived).
+   * Each pool by grade: who's on the team, their work a day in mids (what's measured against ops needed, a build's
+   * developer-days and tickets cleared), and hires still to start.
+   */
+  staff: StaffPoolView[];
+  /**
+   * Ops staff the company needs, in mids' work: on a model with servers, for the servers it has (on IaaS ready or
+   * not, on-prem once they've arrived).
    */
   opsNeeded: number;
   /**

@@ -112,7 +112,7 @@ const cachePercent = () => Math.round(100 * (game.meta?.cacheableShare ?? 0));
         </template>
       </p>
       <p v-if="game.understaffed" class="warn-text capacity-staff">
-        You're {{ game.company.opsNeeded - game.company.ops }} ops short, so every tier is cut.
+        You're {{ game.opsShort }} ops short, so every tier is cut.
         <RouterLink :to="`${game.base}/people`">Hire ops on the People page</RouterLink>.
       </p>
     </div>
@@ -172,7 +172,7 @@ const cachePercent = () => Math.round(100 * (game.meta?.cacheableShare ?? 0));
         <template v-else>Load over 100% causes an outage.</template>
       </p>
       <p v-if="game.understaffed" class="warn-text capacity-staff">
-        You're {{ game.company.opsNeeded - game.company.ops }} ops short, so capacity is cut.
+        You're {{ game.opsShort }} ops short, so capacity is cut.
         <RouterLink :to="`${game.base}/people`">Hire ops on the People page</RouterLink>.
       </p>
     </div>

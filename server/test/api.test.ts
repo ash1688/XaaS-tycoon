@@ -109,6 +109,12 @@ const sim = createSim({
     ops: { ...defaultConfig.staff.ops, dayRate: 4, startingCount: 0 },
     support: { ...defaultConfig.staff.support, dayRate: 3, startingCount: 0 },
   },
+  // Mids (the default hire) and seniors start at once, so tests needn't wait; juniors wait 3 days, to test lead times.
+  staffGrades: {
+    junior: { ...defaultConfig.staffGrades.junior, leadDays: 3 },
+    mid: { ...defaultConfig.staffGrades.mid, leadDays: 0 },
+    senior: { ...defaultConfig.staffGrades.senior, leadDays: 0 },
+  },
   // No scripted events, so continue charges and outages are only the ones a test sets up.
   events: [],
   // Everyone on the free tier and none converting, so continue brings in no income unless a test's config says otherwise.
@@ -478,7 +484,7 @@ describe("staff actions", () => {
     await act({ type: "hire", pool: "developers" });
     const body = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
     expect(body.company).toMatchObject({ day: 2, cash: 1000 - 25 - 20, developers: 2 });
-    expect(body.log[0]!.entries).toContainEqual({ text: "Developers pay (2)", cashDelta: -20, category: "staff" });
+    expect(body.log[0]!.entries).toContainEqual({ text: "Developers pay (2 mids)", cashDelta: -20, category: "staff" });
   });
 
   it("hires and lets go several at once, within limits", async () => {
@@ -529,6 +535,41 @@ describe("staff actions", () => {
     });
     expect(res.statusCode).toBe(404);
     expect(res.json()).toMatchObject({ error: "unknown_company" });
+  });
+
+  it("hires by grade: each grade's pay and work, and juniors shown waiting until they start", async () => {
+    const { url, act } = await setup();
+    // A senior support person is £3 × 1.3 = £3.90, rounded to £4, and clears 1.35 × 30 tickets.
+    const senior = (await act({ type: "hire", pool: "support", grade: "senior" })).json<CompanyView>();
+    expect(senior).toMatchObject({ support: 1, dailyStaffCost: 4, dailyClearance: 40.5 });
+    const waiting = (await act({ type: "hire", pool: "support", grade: "junior", count: 2 })).json<CompanyView>();
+    expect(waiting).toMatchObject({ support: 1, dailyStaffCost: 4 });
+    expect(waiting.staff.find((p) => p.pool === "support")).toMatchObject({
+      headcount: 1,
+      output: 1.35,
+      grades: [
+        { grade: "junior", count: 0, dayRate: 2, output: 0.65, leadDays: 3 },
+        { grade: "mid", count: 0, dayRate: 3 },
+        { grade: "senior", count: 1, dayRate: 4, output: 1.35 },
+      ],
+      hiring: [{ grade: "junior", count: 2, arrivesOn: 4, daysLeft: 3 }],
+    });
+    // Juniors can't be let go before they start.
+    expect((await act({ type: "letGo", pool: "support", grade: "junior" })).json()).toMatchObject({ error: "no_staff" });
+    let played: ContinueResult | undefined;
+    for (let i = 0; i < 3; i++) played = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    expect(played!.company).toMatchObject({ day: 4, support: 3, dailyStaffCost: 8 });
+    expect(played!.log[0]!.entries).toContainEqual({ text: "2 junior support staff started work.", cashDelta: 0, kind: "staff" });
+    expect((await act({ type: "hire", pool: "support", grade: "intern" })).statusCode).toBe(400);
+  });
+
+  it("lists the grades in the game's meta", async () => {
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.grades).toEqual([
+      { id: "junior", name: "Junior", payMultiplier: 0.75, output: 0.65, leadDays: 3 },
+      { id: "mid", name: "Mid", payMultiplier: 1, output: 1, leadDays: 0 },
+      { id: "senior", name: "Senior", payMultiplier: 1.3, output: 1.35, leadDays: 0 },
+    ]);
   });
 
   it("serialises concurrent hires so none are lost", async () => {
@@ -599,7 +640,7 @@ describe("support and satisfaction", () => {
     const { company, log } = await play(3);
     expect(company).toMatchObject({ backlog: 0, satisfaction: 100 });
     expect(company.clearedToday).toBe(company.ticketsToday);
-    expect(log[0]!.entries).toContainEqual({ text: "Support staff pay (1)", cashDelta: -3, category: "staff" });
+    expect(log[0]!.entries).toContainEqual({ text: "Support staff pay (1 mid)", cashDelta: -3, category: "staff" });
   });
 
   it("recovers satisfaction once support clears the backlog", async () => {
@@ -1231,7 +1272,7 @@ describe("ledger and bankruptcy", () => {
     for (let i = 0; i < 2; i++) body = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
     expect(body!.log[0]!.entries).toEqual([
       { text: expect.stringContaining("running costs"), cashDelta: -25, category: "infrastructure" },
-      { text: "Ops staff pay (1)", cashDelta: -4, category: "staff" },
+      { text: "Ops staff pay (1 mid)", cashDelta: -4, category: "staff" },
     ]);
     const spend = { staff: 8, infrastructure: 50, cabling: 0, power: 0, addons: 0, debt: 0 };
     expect(body!.company).toMatchObject({ cash: 1000 - 58, spend });
