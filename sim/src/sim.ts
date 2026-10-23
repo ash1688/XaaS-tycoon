@@ -206,11 +206,14 @@ export interface Sim {
   uptime(state: GameState): number;
   /** The product's features, in config order, with each one's progress. */
   features(state: GameState): FeatureView[];
-  /** The bank loan once taken, with what's left to repay and the repayments left, or null. */
+  /**
+   * The latest bank loan, kept once repaid, with what's left to repay, the repayments left, and what paying it off
+   * now would cost and save. Null if none has been taken.
+   */
   loan(state: GameState): LoanView | null;
   /**
-   * What taking the bank loan now would cost: amount, rate, interest, total repaid, the daily repayment and the days
-   * to repay it. Null when it can't be taken: one has been, or there are too few days left.
+   * What taking a bank loan now would cost: amount, rate, interest, total repaid, the daily repayment and the days
+   * of its fixed term. Null when one can't be taken: one is being repaid, or the game is in its last days.
    */
   loanQuote(state: GameState): LoanQuote | null;
   /** The terms a new game gets if it takes the loan at the start: the best there are. */
@@ -299,6 +302,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       migration: null,
       migrations: 0,
       loan: null,
+      pastLoans: [],
+      interestPaid: 0,
       schedule,
       events: [],
       priceRises: {},
@@ -387,6 +392,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         return servers.setManagedService(state, action.service, action.size);
       case "takeLoan":
         return loan.takeLoan(state);
+      case "repayLoan":
+        return loan.repayLoan(state);
       default:
         throw new SimError("unknown_action", "That action isn't recognised.");
     }
@@ -492,7 +499,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       ...features.addonEntries(state),
       ...staff.staffEntries(state),
     ];
-    const repayment = state.loan ? Math.min(state.loan.dailyRepayment, state.loan.total - state.loan.repaid) : 0;
+    const repayment = loan.dailyRepayment(state);
     const dailyCosts = repayment - charges.reduce((sum, e) => sum + e.cashDelta, 0);
     const dailyIncome = pricing.dailyIncome(state);
     const dailyNet = dailyIncome - dailyCosts;

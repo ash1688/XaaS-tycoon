@@ -116,4 +116,19 @@ describe("rendering", () => {
     expect(commands).toMatch(/instances <1–20>/);
     expect(commands).not.toMatch(/^\s+rent /m);
   });
+
+  it("shows the loan with its payoff, pays it off early, and then offers another", () => {
+    const state = run(start(), "next 10").state;
+    const loan = sim.loan(state)!;
+    expect(renderStatus(sim, state)).toContain(`to day ${loan.lastDay}); paying off now costs £${loan.payoff.toLocaleString("en-GB")}`);
+    expect(renderCommands(sim, state)).toMatch(/repayloan {3}\(pay off the loan now: .*, saving .* interest\)/);
+    expect(renderCommands(sim, state)).not.toMatch(/^\s+loan /m);
+    expect(parseCommand("repayloan")).toEqual({ kind: "action", action: { type: "repayLoan" }, times: 1 });
+
+    const turn = run({ ...state, cash: state.cash + 50_000 }, "repayloan");
+    expect(turn.rows[0]).toMatchObject({ type: "repayLoan", ok: true });
+    expect(renderStatus(sim, turn.state)).toContain(`loan: repaid early on day ${state.day}`);
+    expect(renderCommands(sim, turn.state)).toMatch(/^\s+loan {3}\(£35,000 now at .*, to day \d+: .* interest\)/m);
+    expect(renderCommands(sim, turn.state)).not.toMatch(/repayloan/);
+  });
 });

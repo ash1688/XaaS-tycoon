@@ -29,6 +29,7 @@ import {
   GAME_STATE_VERSION,
   gameLengthDays,
   gameLengthName,
+  interestIn,
   isCurrentState,
   MANAGED_SERVICES,
   MIGRATION_PHASES,
@@ -350,6 +351,7 @@ export async function buildApp(opts: AppOptions) {
       monthlyInfrastructureCost: sim.monthlyInfrastructureCost(state),
       monthlyAddonCost: sim.monthlyAddonCost(state),
       spend: state.spend,
+      interestPaid: state.interestPaid,
       loan: sim.loan(state),
       loanQuote: sim.loanQuote(state),
       runway: sim.runway(state),
@@ -614,6 +616,7 @@ export async function buildApp(opts: AppOptions) {
                 "setInstances",
                 "setManagedService",
                 "takeLoan",
+                "repayLoan",
               ],
             },
             pool: { enum: [...STAFF_POOLS] },
@@ -996,6 +999,7 @@ export async function buildApp(opts: AppOptions) {
               paidUsers: sql<number | null>`(${companies.state}->>'paidUsers')::int`,
               satisfaction: sql<number | null>`(${companies.state}->>'satisfaction')::double precision`,
               loan: sql<Loan | null>`${companies.state}->'loan'`,
+              interestPaid: sql<number | null>`(${companies.state}->>'interestPaid')::double precision`,
             },
           })
           .from(loginCodes)
@@ -1024,10 +1028,11 @@ export async function buildApp(opts: AppOptions) {
             paidUsers,
             freeUsers: Math.max(0, g.users - paidUsers),
             lastDayIncome: m.lastDayIncome ?? 0,
-            // As the summary's: only the loan's interest counts against profit.
-            profit: income - profitCosts(spend, m.loan),
+            // As the summary's: only the loans' interest counts against profit. A game from before it was kept had
+            // one loan, whose repayments were all debt.
+            profit: income - profitCosts(spend, m.interestPaid ?? interestIn(m.loan, spend.debt)),
             satisfaction: Math.round(m.satisfaction ?? 100),
-            loanRemaining: m.loan ? m.loan.total - m.loan.repaid : null,
+            loanRemaining: m.loan ? (m.loan.paidOffDay ? 0 : m.loan.total - m.loan.repaid) : null,
           });
         }
         return { hours, codes: [...codes.values()] };

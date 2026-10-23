@@ -1247,31 +1247,33 @@ describe("bank loan", () => {
 
   it("shows the start terms in meta, and a new game can take them", async () => {
     const terms = await startLoan();
-    // £38,500 over 179 days, rounded up to the pound a day.
+    // £38,500 over the 120-day term, rounded up to the pound a day.
     expect(terms).toEqual({
       amount: 35_000,
       rate: 0.1,
-      dailyRepayment: 216,
-      days: 179,
-      total: 38_664,
-      interest: 3_664,
-      lastDay: 180,
+      dailyRepayment: 321,
+      days: 120,
+      total: 38_520,
+      interest: 3_520,
+      lastDay: 121,
     });
     const { company, next } = await setup({ takeLoan: true });
     expect(company.cash).toBe(1_000 + 35_000);
     expect(company.loan).toMatchObject({ amount: 35_000, day: 1, rate: 0.1, total: terms.total, repaid: 0 });
-    expect(company.loan).toMatchObject({ dailyRepayment: terms.dailyRepayment, remaining: terms.total, daysLeft: 179 });
+    expect(company.loan).toMatchObject({ dailyRepayment: terms.dailyRepayment, remaining: terms.total, daysLeft: 120 });
     expect(company.loanQuote).toBeNull();
     const { company: after, log } = await next();
     expect(after.spend.debt).toBe(terms.dailyRepayment);
-    expect(after.loan).toMatchObject({ repaid: terms.dailyRepayment, daysLeft: 178 });
+    expect(after.loan).toMatchObject({ repaid: terms.dailyRepayment, daysLeft: 119 });
+    // £3,520 of the £38,520 is interest, so £29 of the first £321.
+    expect(after.interestPaid).toBe(29);
     expect(log[0]!.entries).toContainEqual(
       expect.objectContaining({ category: "debt", cashDelta: -terms.dailyRepayment }),
     );
     expect(log[0]!.entries).toContainEqual(expect.objectContaining({ kind: "loan" }));
   });
 
-  it("starts without a loan by default, offering the start terms, which get worse later", async () => {
+  it("starts without a loan by default, offering the start terms, which get worse and shorter later", async () => {
     const terms = await startLoan();
     const { company, next } = await setup();
     expect(company).toMatchObject({ cash: 1_000, loan: null, loanQuote: terms });
@@ -1281,10 +1283,11 @@ describe("bank loan", () => {
     expect(later.loanQuote!.rate).toBeGreaterThan(terms.rate);
     expect(later.loanQuote!.dailyRepayment).toBeGreaterThan(terms.dailyRepayment);
     expect(later.loanQuote!.total).toBeGreaterThan(terms.total);
-    expect(later.loanQuote!.days).toBe(169);
+    // Half a day off the 120-day term for each of the 10 days later.
+    expect(later.loanQuote!.days).toBe(115);
   });
 
-  it("takes the loan later as an action, on the quoted terms, and only once", async () => {
+  it("takes a loan later as an action, on the quoted terms, and not a second while it's being repaid", async () => {
     const { act, next } = await setup();
     await next();
     const before = (await next()).company;
@@ -1302,14 +1305,41 @@ describe("bank loan", () => {
     expect(taken.loanQuote).toBeNull();
     const again = await act({ type: "takeLoan" });
     expect(again.statusCode).toBe(400);
-    expect(again.json()).toMatchObject({ error: "loan_taken", message: expect.stringContaining("one") });
+    expect(again.json()).toMatchObject({ error: "loan_open", message: expect.stringContaining("one at a time") });
   });
 
   it("rejects a second loan on a game that took one at the start", async () => {
     const { act } = await setup({ takeLoan: true });
     const res = await act({ type: "takeLoan" });
     expect(res.statusCode).toBe(400);
-    expect(res.json()).toMatchObject({ error: "loan_taken" });
+    expect(res.json()).toMatchObject({ error: "loan_open" });
+  });
+
+  it("pays a loan off early, saving the interest the quote showed, and then lends again", async () => {
+    const { act, next } = await setup({ takeLoan: true });
+    await next();
+    const { company } = await next();
+    // Two repayments of £321, £59 of them interest: £34,417 of the money borrowed is left.
+    expect(company.loan).toMatchObject({ repaid: 642, interestPaid: 59, payoff: 34_417, interestSaved: 3_461 });
+    const res = await act({ type: "repayLoan" });
+    expect(res.statusCode).toBe(200);
+    const paid = res.json<CompanyView>();
+    expect(paid.cash).toBe(company.cash - 34_417);
+    expect(paid.loan).toMatchObject({ paidOffDay: 3, remaining: 0, payoff: 0, repaidInFull: true });
+    expect(paid.interestPaid).toBe(59);
+    expect(paid.loanQuote).toMatchObject({ amount: 35_000, rate: 0.104, days: 119 });
+    const { company: after } = await next();
+    expect(after.spend.debt).toBe(642 + 34_417);
+    const again = await act({ type: "takeLoan" });
+    expect(again.statusCode).toBe(200);
+    expect(again.json<CompanyView>().loan).toMatchObject({ day: 4, repaid: 0, repaidInFull: false });
+  });
+
+  it("refuses to pay off a loan that isn't being repaid", async () => {
+    const { act } = await setup();
+    const res = await act({ type: "repayLoan" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: "no_loan" });
   });
 
   it("validates the take-loan option", async () => {

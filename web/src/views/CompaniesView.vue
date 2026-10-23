@@ -244,7 +244,8 @@ async function start() {
           <legend>Bank loan</legend>
           <p class="muted">
             You start with {{ formatCash(meta.startingCash) }} of your own. You can borrow more from the bank now, on its
-            best terms, or later at a higher rate. Each company can have one loan.
+            best terms, or later at a higher rate over a shorter term. One loan at a time: pay it off, early if you like, and
+            you can take another.
           </p>
           <label :class="['loan-option', { on: takeLoan }]">
             <input v-model="takeLoan" type="checkbox" data-testid="take-loan" />
