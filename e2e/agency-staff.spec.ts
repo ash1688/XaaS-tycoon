@@ -57,4 +57,7 @@ test("hire agency staff for the next day, shown apart, and see severance before 
   await modal.getByTestId("severance-confirm").click();
   await expect(modal).toBeHidden();
   await expect(student.getByTestId("support-count")).toHaveText("0");
+
+  // Tidy up, so later tests start with an empty dashboard: deleting the code deletes the game.
+  expect((await teacher.request.delete(`/api/teacher/codes/${code}`)).ok()).toBe(true);
 });

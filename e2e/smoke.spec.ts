@@ -107,7 +107,9 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await expect(student.getByTestId("staff-cost")).toHaveText("£460");
   // The grades: a junior would start in 3 days, a senior in 14.
   await student.getByRole("radio", { name: "Junior" }).first().check();
-  await expect(student.getByTestId("developers-grade-note")).toContainText("Juniors: £90 each a day, 0.65× a mid's work, start 3 days after hiring.");
+  await expect(student.getByTestId("developers-grade-note")).toContainText(
+    "Juniors: £90 each a day, 0.65× a mid's work, start 3 days after hiring, £1,260 severance each if let go.",
+  );
 
   // Features: IaaS builds them in developer-days, one at a time.
   await goTo(student, "Product");
@@ -911,7 +913,8 @@ test("a Home card opens an accessible modal with its controls, and Continue work
   const modal = student.getByRole("dialog", { name: "Staff" });
   await expect(modal).toBeVisible();
   await expect(modal).toHaveAttribute("aria-modal", "true");
-  await expect(modal.getByRole("radio", { name: "Junior" }).first()).toBeFocused();
+  // The first control: permanent or agency staff.
+  await expect(modal.getByRole("radio", { name: "Permanent" }).first()).toBeFocused();
 
   // Its quick actions work in place. A hire waits for its grade's lead time; a move is at once, and the card behind
   // it keeps up.
