@@ -21,6 +21,9 @@ npm run -s play -- summary <game>
   `--length` picks the game length: `180-days` (the default), `1-year` (ends on day 365) or `career` (47 years,
   ends on day 17,155). Play 180 days unless your brief says otherwise. `--date 2026-11-01` starts the game on that
   date; left out, it starts on a random date this year.
+  `--difficulty` picks `easy`, `normal` (the default) or `hard`: Easy starts with more cash, has fewer random events
+  and customers who put up with dearer prices; Hard the opposite. The status line shows it. Play Normal unless your
+  brief says otherwise.
 - `look` shows the company and every command that works right now, with prices and allowed values.
 - `do` runs game commands separated by `;`. Every game command goes inside `do`, including `preview` and `quote`:
   `npm run -s play -- do <game> "preview 8; quote iaas"`.

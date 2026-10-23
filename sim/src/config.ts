@@ -30,6 +30,48 @@ export type GameLengthId = (typeof GAME_LENGTH_IDS)[number];
 /** A career runs from founding the company at 18 to retiring at 65. */
 export const CAREER_YEARS = 65 - 18;
 
+/**
+ * How hard a game is. The student picks one of the difficulties the preset allows when starting a company. Saved in
+ * game state, so don't rename.
+ */
+export const DIFFICULTY_IDS = ["easy", "normal", "hard"] as const;
+export type DifficultyId = (typeof DIFFICULTY_IDS)[number];
+
+/**
+ * A difficulty's numbers: multipliers on the preset's own numbers, so a teacher's preset is just as much easier or
+ * harder. A difficulty only changes numbers, never which systems a game has. Normal is all 1s: the preset as it is.
+ */
+export interface DifficultyNumbers {
+  name: string;
+  /** One line on what it changes, for the new-company screen. */
+  blurb: string;
+  /** Multiplies the starting cash. */
+  startingCash: number;
+  /** Multiplies how fast the danger meter climbs (its daily rise and each risk's extra rise): more random events. */
+  dangerRise: number;
+  /** Multiplies each customer type's price threshold: above 1, customers put up with dearer prices. */
+  priceThreshold: number;
+}
+
+/** The built-in difficulties. Not on the config page: the teacher picks which are allowed, not what they do. */
+export const DIFFICULTIES: Record<DifficultyId, DifficultyNumbers> = {
+  easy: {
+    name: "Easy",
+    blurb: "More starting cash, fewer random events, and customers put up with dearer prices.",
+    startingCash: 1.5,
+    dangerRise: 0.75,
+    priceThreshold: 1.15,
+  },
+  normal: { name: "Normal", blurb: "The game as designed.", startingCash: 1, dangerRise: 1, priceThreshold: 1 },
+  hard: {
+    name: "Hard",
+    blurb: "Less starting cash, more random events, and customers are quicker to leave over price.",
+    startingCash: 0.8,
+    dangerRise: 1.33,
+    priceThreshold: 0.9,
+  },
+};
+
 /** Every charge is tagged with one of these, so students can see where their money goes. */
 export const SPEND_CATEGORIES = ["staff", "infrastructure", "cabling", "power", "addons", "debt"] as const;
 export type SpendCategory = (typeof SPEND_CATEGORIES)[number];
@@ -947,6 +989,8 @@ export interface GameConfig {
    * Numbers rather than flags so the config page can store them like every other setting.
    */
   allowedGameLengths: Record<GameLengthId, number>;
+  /** Which difficulties students can pick from when starting a company: 1 if allowed, 0 if not. At least one must be. */
+  allowedDifficulties: Record<DifficultyId, number>;
   maxCompanyNameLength: number;
   launch: LaunchConfig;
   models: Record<ModelId, ModelConfig>;
@@ -984,6 +1028,8 @@ export const defaultConfig: GameConfig = {
   // A normal lesson plays 180 days. The longer lengths could take hours, so the teacher turns them on for clubs,
   // homework or extension work.
   allowedGameLengths: { "180-days": 1, "1-year": 0, career: 0 },
+  // Normal only, so a class plays the same game unless the teacher opens up the others.
+  allowedDifficulties: { easy: 0, normal: 1, hard: 0 },
   maxCompanyNameLength: 40,
   // Users trickle in over 3 days, building up. SaaS starts on day 1; a platform set up or VMs rented on day 1 start on
   // day 2; on-prem kit bought on day 1 arrives on day 5, so it starts a few days after the cloud models.
@@ -1711,4 +1757,36 @@ export function gameLengthName(config: GameConfig, length: GameLengthId): string
   if (length === "1-year") return "1 year";
   if (length === "career") return `Career (${CAREER_YEARS} years, age 18 to 65)`;
   return `${config.finalDay} days`;
+}
+
+/** The difficulties a config lets students pick, easiest first. */
+export function allowedDifficulties(config: GameConfig): DifficultyId[] {
+  return DIFFICULTY_IDS.filter((id) => config.allowedDifficulties[id] === 1);
+}
+
+/** The difficulty a new game gets when the student doesn't pick one: Normal if allowed, otherwise the easiest allowed. */
+export function defaultDifficulty(config: GameConfig): DifficultyId | undefined {
+  const allowed = allowedDifficulties(config);
+  return allowed.includes("normal") ? "normal" : allowed[0];
+}
+
+/** The config a game of a difficulty plays on: the preset's numbers with the difficulty's multipliers. Normal is the preset. */
+export function withDifficulty(config: GameConfig, difficulty: DifficultyId): GameConfig {
+  const d = DIFFICULTIES[difficulty];
+  if (d.startingCash === 1 && d.dangerRise === 1 && d.priceThreshold === 1) return config;
+  const { encounters } = config;
+  return {
+    ...config,
+    startingCash: Math.round(config.startingCash * d.startingCash),
+    encounters: {
+      ...encounters,
+      dailyRise: encounters.dailyRise * d.dangerRise,
+      riskRise: Object.fromEntries(
+        Object.entries(encounters.riskRise).map(([risk, rise]) => [risk, rise * d.dangerRise]),
+      ) as EncounterConfig["riskRise"],
+    },
+    customerTypes: Object.fromEntries(
+      Object.entries(config.customerTypes).map(([id, type]) => [id, { ...type, thresholdMultiple: type.thresholdMultiple * d.priceThreshold }]),
+    ) as GameConfig["customerTypes"],
+  };
 }

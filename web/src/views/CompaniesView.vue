@@ -19,6 +19,7 @@ const takeLoan = ref(false);
 // Shares in issue at the start, all the student's. Set to the game's default once meta has loaded.
 const shares = ref<number>();
 const gameLength = ref("");
+const difficulty = ref("");
 const formError = ref("");
 const nameError = ref("");
 const busy = ref(false);
@@ -37,11 +38,13 @@ const retiring = ref(false);
 
 const productName = (id: string) => meta.value?.productTypes.find((p) => p.id === id)?.name ?? id;
 const modelName = (id: string) => meta.value?.models.find((m) => m.id === id)?.name ?? id;
-// A model that costs more up front than the company would start with can't be picked without the loan: on-prem.
-const startCash = computed(() => {
+// The cash of the student's own the company starts with, which the difficulty sets.
+const ownCash = computed(() => {
   const m = meta.value;
-  return m ? m.startingCash + (takeLoan.value ? m.startLoan.amount : 0) : 0;
+  return m?.difficulties.find((d) => d.id === difficulty.value)?.startingCash ?? m?.startingCash ?? 0;
 });
+// A model that costs more up front than the company would start with can't be picked without the loan: on-prem.
+const startCash = computed(() => ownCash.value + (takeLoan.value && meta.value ? meta.value.startLoan.amount : 0));
 const chosenModel = computed(() => meta.value?.models.find((m) => m.id === model.value));
 const cantAfford = computed(() => !!chosenModel.value && chosenModel.value.upfrontCost > startCash.value);
 const sharesOk = computed(() => {
@@ -60,6 +63,7 @@ onMounted(async () => {
     shares.value = m.shares.default;
     companies.value = c.companies;
     gameLength.value = m.gameLengths[0]?.id ?? "";
+    difficulty.value = (m.difficulties.find((d) => d.id === "normal") ?? m.difficulties[0])?.id ?? "";
   } catch (e) {
     loadError.value = (e as Error).message;
   }
@@ -100,6 +104,7 @@ async function start() {
       takeLoan: takeLoan.value,
       shares: shares.value,
       gameLength: gameLength.value,
+      difficulty: difficulty.value,
     });
     await router.push(`/play/${props.code}/${company.id}`);
   } catch (e) {
@@ -131,7 +136,7 @@ async function start() {
           <div class="company-item-main">
             <RouterLink :to="`/play/${code}/${c.id}`" class="company-row">
               <strong>{{ c.name }}</strong>
-              <span class="muted">{{ productName(c.productType) }} · {{ modelName(c.model) }}</span>
+              <span class="muted">{{ productName(c.productType) }} · {{ modelName(c.model) }} · {{ c.difficultyName }}</span>
               <span>Day {{ c.day }} of {{ c.finalDay }} · {{ formatCash(c.cash) }}</span>
             </RouterLink>
             <button
@@ -249,6 +254,17 @@ async function start() {
           </div>
         </fieldset>
 
+        <fieldset data-testid="difficulties">
+          <legend>How hard?</legend>
+          <div class="choices">
+            <label v-for="d in meta.difficulties" :key="d.id" class="choice" :class="{ on: difficulty === d.id }">
+              <input type="radio" name="difficulty" :value="d.id" v-model="difficulty" />
+              <strong>{{ d.name }}</strong>
+              <span class="muted">{{ d.blurb }} Starting cash {{ formatCash(d.startingCash) }}.</span>
+            </label>
+          </div>
+        </fieldset>
+
         <fieldset>
           <legend>Shares</legend>
           <p class="muted">
@@ -278,7 +294,7 @@ async function start() {
         <fieldset>
           <legend>Bank loan</legend>
           <p class="muted">
-            You start with {{ formatCash(meta.startingCash) }} of your own. You can borrow more from the bank now, on its
+            You start with {{ formatCash(ownCash) }} of your own. You can borrow more from the bank now, on its
             best terms, or later at a higher rate over a shorter term. One loan at a time: pay it off, early if you like, and
             you can take another.
           </p>
@@ -315,7 +331,7 @@ async function start() {
         <li v-for="c in history" :key="c.id">
           <RouterLink :to="`/play/${code}/${c.id}`" class="company-row">
             <strong>{{ c.name }}</strong>
-            <span class="muted">{{ productName(c.productType) }} · {{ modelName(c.model) }}</span>
+            <span class="muted">{{ productName(c.productType) }} · {{ modelName(c.model) }} · {{ c.difficultyName }}</span>
             <span>Day {{ c.day }} of {{ c.finalDay }} · {{ formatCash(c.cash) }}</span>
             <span :class="['badge', STATUS_BADGES[c.status]]">{{
               c.endedByTeacher ? "Ended by teacher" : STATUS_LABELS[c.status]

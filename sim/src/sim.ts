@@ -1,10 +1,16 @@
 import { createApi, type ApiView } from "./api.ts";
 import { createCalendar, isIsoDate, type CalendarView } from "./calendar.ts";
 import {
+  allowedDifficulties,
   allowedGameLengths,
+  DIFFICULTIES,
+  DIFFICULTY_IDS,
   defaultConfig,
+  defaultDifficulty,
   gameLengthDays,
   gameLengthName,
+  withDifficulty,
+  type DifficultyId,
   type GameConfig,
   type ModelId,
   type ServerCount,
@@ -29,6 +35,7 @@ import { createStaff, type StaffPoolView } from "./staff.ts";
 import {
   GAME_STATE_VERSION,
   isCurrentState,
+  isDifficultyId,
   isGameLengthId,
   isModelId,
   isProductTypeId,
@@ -89,6 +96,7 @@ export {
   FUNDER_IDS,
   GAME_STATE_VERSION,
   isCurrentState,
+  isDifficultyId,
   isFunderId,
   isGameLengthId,
   isManagedService,
@@ -313,7 +321,43 @@ export interface Sim {
   api(state: GameState): ApiView | null;
 }
 
+/**
+ * A sim for a config. Each game plays on its own difficulty's numbers (see withDifficulty), so this keeps a sim per
+ * difficulty and hands every call to the one for the game's difficulty. Calls that don't take a game use Normal's.
+ * `config` is the preset as given: on Normal, the numbers a game plays on.
+ */
 export function createSim(config: GameConfig = defaultConfig): Sim {
+  type Calls = Record<string, (...args: unknown[]) => unknown>;
+  const sims = Object.fromEntries(
+    DIFFICULTY_IDS.map((d) => [d, createGameSim(withDifficulty(config, d), d) as unknown as Calls]),
+  ) as Record<DifficultyId, Calls>;
+  // A call's first argument is the game (or a new game's params) when it has one.
+  const simFor = (arg: unknown): Calls => {
+    const difficulty = typeof arg === "object" && arg !== null ? (arg as { difficulty?: unknown }).difficulty : undefined;
+    return typeof difficulty === "string" && isDifficultyId(difficulty) ? sims[difficulty] : sims.normal;
+  };
+  const sim = Object.fromEntries(
+    Object.entries(sims.normal).map(([key, value]) => [
+      key,
+      typeof value === "function" ? (...args: unknown[]) => simFor(args[0])[key]!(...args) : value,
+    ]),
+  ) as unknown as Sim;
+
+  function newGame(params: NewGameParams): GameState {
+    const allowed = allowedDifficulties(config);
+    const difficulty = params.difficulty ?? defaultDifficulty(config);
+    if (!difficulty || !isDifficultyId(difficulty) || !allowed.includes(difficulty)) {
+      const names = allowed.map((d) => DIFFICULTIES[d].name).join(", ");
+      throw new SimError("difficulty_not_allowed", `Pick a difficulty your teacher allows: ${names}.`);
+    }
+    return (sims[difficulty] as unknown as Sim).newGame(params);
+  }
+
+  return { ...sim, config, newGame };
+}
+
+/** A sim for one difficulty, on a config that already has that difficulty's numbers. */
+function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const events = createEvents(config);
   const calendar = createCalendar(config);
   const finance = createFinance(config);
@@ -380,6 +424,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       productType,
       model,
       gameLength: length,
+      difficulty,
       finalDay: gameLengthDays(config, length),
       endedByTeacher: false,
       startDate: startDate ?? calendar.startDate(seed, startYear),

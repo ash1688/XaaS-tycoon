@@ -1,4 +1,5 @@
 import {
+  DIFFICULTY_IDS,
   GAME_LENGTH_IDS,
   MANAGED_SERVICES,
   type DangerRisk,
@@ -10,6 +11,7 @@ import {
   STAFF_GRADES,
   STAFF_POOLS,
   type CustomerTypeId,
+  type DifficultyId,
   type GameLengthId,
   type ManagedService,
   type MigrationPhase,
@@ -27,7 +29,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 31;
+export const GAME_STATE_VERSION = 32;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -325,6 +327,8 @@ export interface GameState {
   model: ModelId;
   /** The game length the student picked when starting the company. */
   gameLength: GameLengthId;
+  /** The difficulty the student picked when starting the company. The game plays on that difficulty's numbers. */
+  difficulty: DifficultyId;
   /** The last day played: the game finishes once it has been played. Set from the game length at the start. */
   finalDay: number;
   /** True once the teacher has ended the game, scored as it stood. */
@@ -541,6 +545,8 @@ export interface NewGameParams {
   shares?: number;
   /** One of the game lengths the config allows. Left out, the first it allows (180 days by default). */
   gameLength?: string;
+  /** One of the difficulties the config allows. Left out, Normal if allowed, otherwise the easiest allowed. */
+  difficulty?: string;
   /** The year the game starts in: day 1 is a random date in it, drawn from the seed. Left out, the config's. */
   startYear?: number;
   /** Day 1's date exactly, "YYYY-MM-DD", in place of a random one: for tests and replays. */
@@ -608,6 +614,10 @@ export class SimError extends Error {
 /** Whether something stored is a game from this version. Anything else is refused, not upgraded. */
 export function isCurrentState(saved: unknown): saved is GameState {
   return typeof saved === "object" && saved !== null && (saved as { version?: unknown }).version === GAME_STATE_VERSION;
+}
+
+export function isDifficultyId(v: string): v is DifficultyId {
+  return (DIFFICULTY_IDS as readonly string[]).includes(v);
 }
 
 export function isGameLengthId(v: string): v is GameLengthId {
