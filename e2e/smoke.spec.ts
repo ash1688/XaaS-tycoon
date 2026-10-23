@@ -118,9 +118,8 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await expect(student.getByTestId("feature-progress-photos")).toContainText("0 of 16 developer-days");
   await expect(student.getByRole("button", { name: "Build Groups" })).toBeDisabled();
 
-  // Timed flow is off by default: only the Continue button, no Play/Pause or countdown.
-  await expect(student.getByTestId("timed-flow")).toHaveCount(0);
-  await expect(student.getByRole("button", { name: "Play" })).toHaveCount(0);
+  // Timed flow is on by default, and a game opens paused, so Continue still plays a day at a time.
+  await expect(student.getByTestId("timed-status")).toContainText("Paused");
   // Continue is in the nav bar, so it plays the day from any page, here Product.
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
@@ -238,6 +237,8 @@ test("running out of cash brings a vulture VC's rescue, a buy-back, then liquida
   await expect(rescue.first()).toContainText("a vulture VC rescued Broke Ltd");
   await expect(rescue.first()).toContainText("75% of the company. You now own 25%");
   await expect(rescue.nth(1)).toContainText("Forced cost cuts");
+  // It's a pause trigger, so timed flow stops for it and says why.
+  await expect(student.getByTestId("pause-reasons")).toContainText("Cash ran out: a vulture VC rescued the company for 75% of it");
   await expect(student.getByTestId("home-alerts")).toContainText("A vulture VC owns 75% of the company");
   await expect(student.getByRole("button", { name: "Continue" })).toBeEnabled();
   await goTo(student, "Finance");

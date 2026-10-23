@@ -1,9 +1,16 @@
 import { createApi, type ApiView } from "./api.ts";
+import { createCalendar, isIsoDate, type CalendarView } from "./calendar.ts";
 import {
+  allowedDifficulties,
   allowedGameLengths,
+  DIFFICULTIES,
+  DIFFICULTY_IDS,
   defaultConfig,
+  defaultDifficulty,
   gameLengthDays,
   gameLengthName,
+  withDifficulty,
+  type DifficultyId,
   type GameConfig,
   type ModelId,
   type ServerCount,
@@ -19,6 +26,7 @@ import { createLaunch, type LaunchView } from "./launch.ts";
 import { createLoan, type LoanQuote, type LoanView } from "./loan.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
 import { isNameAllowed } from "./nameFilter.ts";
+import { createPauses, type TickResult } from "./pauses.ts";
 import { createPricing, type CustomerMixView, type PricePreview, type PriceWaveView } from "./pricing.ts";
 import { createRacks, type RacksView } from "./racks.ts";
 import { createRescue, type RescueView } from "./rescue.ts";
@@ -29,6 +37,7 @@ import { createStaff, type StaffPoolView } from "./staff.ts";
 import {
   GAME_STATE_VERSION,
   isCurrentState,
+  isDifficultyId,
   isGameLengthId,
   isModelId,
   isProductTypeId,
@@ -47,6 +56,8 @@ import { createSupport } from "./support.ts";
 // The sim's one public interface is createSim. Its modules are internal; only the types and helpers the server and
 // web client need are re-exported here.
 export type { ApiView } from "./api.ts";
+export type { CalendarView, GameDate, HolidayView } from "./calendar.ts";
+export { dayOfDate, gameDate } from "./calendar.ts";
 export type { ConversionDriver, ConversionDriverId, ConversionView } from "./conversion.ts";
 export type { DangerRiskView, DangerView } from "./encounters.ts";
 export type { EventView, FeatureGapView } from "./events.ts";
@@ -55,6 +66,7 @@ export type { ProviderView } from "./infrastructure.ts";
 export type { LaunchView } from "./launch.ts";
 export type { LoanQuote, LoanView } from "./loan.ts";
 export type { LostAddon, MigrationQuote, MigrationView, SetupRack } from "./migration.ts";
+export { LOW_CASH_DAYS, type PauseKind, type PauseReason, type TickResult } from "./pauses.ts";
 export type { RackOption, RackView, RacksView } from "./racks.ts";
 export type { RescueView } from "./rescue.ts";
 export type { CustomerMixView, CustomerTypeView, PricePreview, PriceWaveView, TypeReaction } from "./pricing.ts";
@@ -88,6 +100,7 @@ export {
   FUNDER_IDS,
   GAME_STATE_VERSION,
   isCurrentState,
+  isDifficultyId,
   isFunderId,
   isGameLengthId,
   isManagedService,
@@ -154,8 +167,16 @@ export interface Sim {
   load(saved: unknown): GameState;
   /** Applies a player's action without moving time on. */
   applyAction(state: GameState, action: Action): GameState;
-  /** The only way time moves. Continue calls it with 1. */
+  /** Plays that many days, one at a time, with no pauses: for scripts, tests and the balance harness. */
   advance(state: GameState, days?: number): AdvanceResult;
+  /**
+   * What Continue and the timed flow play: one tick, a day or, in a career, a week. Pause triggers (an event that hurts,
+   * an alert, an offer, low cash or something finished) are checked after every day, and the tick stops on the day one
+   * fires, with the reasons.
+   */
+  tick(state: GameState): TickResult;
+  /** Days in one tick for this game: 7 in a career, otherwise 1. */
+  tickDays(state: GameState): number;
   /**
    * The teacher ends a game still being played: it finishes where it stands, before its final day, and its summary
    * is how it did. A game that has already ended is returned as it is.
@@ -300,6 +321,11 @@ export interface Sim {
   migrationQuote(state: GameState, target: string): MigrationQuote;
   /** Scripted events that were on during the day just played, each explained, in config order. */
   events(state: GameState): EventView[];
+  /**
+   * The real calendar: the date and year of the day just played, the holidays on it, and the next of each holiday to
+   * come in the game, with what each does to the company's product.
+   */
+  calendar(state: GameState): CalendarView;
   /** The danger meter: how fast trouble is building, and why. The encounter list itself stays hidden. */
   danger(state: GameState): DangerView;
   /** Feature gaps still slowing growth, oldest first. Shown every day, not just the day the event fired. */
@@ -314,13 +340,50 @@ export interface Sim {
   api(state: GameState): ApiView | null;
 }
 
+/**
+ * A sim for a config. Each game plays on its own difficulty's numbers (see withDifficulty), so this keeps a sim per
+ * difficulty and hands every call to the one for the game's difficulty. Calls that don't take a game use Normal's.
+ * `config` is the preset as given: on Normal, the numbers a game plays on.
+ */
 export function createSim(config: GameConfig = defaultConfig): Sim {
+  type Calls = Record<string, (...args: unknown[]) => unknown>;
+  const sims = Object.fromEntries(
+    DIFFICULTY_IDS.map((d) => [d, createGameSim(withDifficulty(config, d), d) as unknown as Calls]),
+  ) as Record<DifficultyId, Calls>;
+  // A call's first argument is the game (or a new game's params) when it has one.
+  const simFor = (arg: unknown): Calls => {
+    const difficulty = typeof arg === "object" && arg !== null ? (arg as { difficulty?: unknown }).difficulty : undefined;
+    return typeof difficulty === "string" && isDifficultyId(difficulty) ? sims[difficulty] : sims.normal;
+  };
+  const sim = Object.fromEntries(
+    Object.entries(sims.normal).map(([key, value]) => [
+      key,
+      typeof value === "function" ? (...args: unknown[]) => simFor(args[0])[key]!(...args) : value,
+    ]),
+  ) as unknown as Sim;
+
+  function newGame(params: NewGameParams): GameState {
+    const allowed = allowedDifficulties(config);
+    const difficulty = params.difficulty ?? defaultDifficulty(config);
+    if (!difficulty || !isDifficultyId(difficulty) || !allowed.includes(difficulty)) {
+      const names = allowed.map((d) => DIFFICULTIES[d].name).join(", ");
+      throw new SimError("difficulty_not_allowed", `Pick a difficulty your teacher allows: ${names}.`);
+    }
+    return (sims[difficulty] as unknown as Sim).newGame(params);
+  }
+
+  return { ...sim, config, newGame };
+}
+
+/** A sim for one difficulty, on a config that already has that difficulty's numbers. */
+function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const events = createEvents(config);
+  const calendar = createCalendar(config);
   const finance = createFinance(config);
   const features = createFeatures(config, finance);
   const pricing = createPricing(config);
   const support = createSupport(config);
-  const customers = createCustomers(config, features, events, pricing, support);
+  const customers = createCustomers(config, features, events, pricing, support, calendar);
   const conversion = createConversion(config, features, pricing);
   const racks = createRacks(config, finance);
   const servers = createServers(config, finance, racks);
@@ -333,6 +396,18 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   const shares = createShares(config, finance, conversion);
   const api = createApi(config, features, finance, infra.apiuOn);
   const encounters = createEncounters(config, servers);
+  const pauses = createPauses(config, {
+    events: events.events,
+    units: infra.units,
+    capacity: infra.capacity,
+    runwayDays: (s) => runway(s).days,
+    features: features.features,
+    launch: launch.launchView,
+    migration: migration.migration,
+    servers: servers.servers,
+    funding: shares.funding,
+    calendar: calendar.calendar,
+  });
   const rescue = createRescue(config, finance, shares, (s) => runway(s), (s) => infra.opsNeededNow(s));
 
   function newGame({
@@ -343,6 +418,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     takeLoan = false,
     gameLength,
     shares: shareCount,
+    startYear,
+    startDate,
   }: NewGameParams): GameState {
     const name = companyName.trim();
     if (!name) throw new SimError("name_required", "Enter a company name.");
@@ -361,6 +438,12 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       const names = allowed.map((l) => gameLengthName(config, l)).join(", ");
       throw new SimError("game_length_not_allowed", `Pick a game length your teacher allows: ${names}.`);
     }
+    if (startDate !== undefined && !isIsoDate(startDate)) {
+      throw new SimError("bad_start_date", "The start date must be a real date, YYYY-MM-DD.");
+    }
+    if (startYear !== undefined && (!Number.isInteger(startYear) || startYear < 1 || startYear > 9_000)) {
+      throw new SimError("bad_start_year", "The start year must be a whole number of years.");
+    }
     const schedule = events.fixedSchedule(1);
     // Encounters have their own random sequence, seeded apart from the game's.
     const starting = encounters.startingEncounters({ model, schedule, featureGaps: [], dangerRisks: [] }, seedRng(seed ^ 0x5eed));
@@ -373,8 +456,10 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       productType,
       model,
       gameLength: length,
+      difficulty,
       finalDay: gameLengthDays(config, length),
       endedByTeacher: false,
+      startDate: startDate ?? calendar.startDate(seed, startYear),
       day: 1,
       cash: config.startingCash,
       rng: seedRng(seed),
@@ -424,8 +509,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const { users } = launched.state;
     const started: GameState = {
       ...launched.state,
-      load: Math.round(customers.baseLoad(productType, users, 1)),
-      demand: customers.baseDemand(productType, users, 1),
+      load: Math.round(customers.baseLoad(launched.state, users, 1)),
+      demand: customers.baseDemand(launched.state, users, 1),
     };
     return finance.settle(started, 1, [...borrowed.entries, ...upfront, ...launched.entries]).state;
   }
@@ -564,6 +649,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     // Income comes from the users paying at the start of the day, at today's price, like the per-user fees, less any
     // who stopped paying today over the price: they won't pay it.
     const entries: LogEntry[] = [
+      // Holidays starting today, or soon enough to announce. They're on the calendar, outside the danger meter.
+      ...calendar.dayEntries(state, day),
       ...check.entries,
       ...arrivals.entries,
       ...launched.entries,
@@ -596,7 +683,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       // Over the launch ramp the users arriving outgrow the day's load, so the load and demand shown are the usual ones
       // of the users there now: what the servers face from tomorrow.
       ...(ramping
-        ? { load: Math.round(customers.baseLoad(state.productType, users, day)), demand: customers.baseDemand(state.productType, users, day) }
+        ? { load: Math.round(customers.baseLoad(state, users, day)), demand: customers.baseDemand(state, users, day) }
         : { load: served.load, demand: served.demand }),
       outageDays: state.outageDays + (served.hoursDown > 0 ? 1 : 0),
       downtimeHours: state.downtimeHours + served.hoursDown,
@@ -656,6 +743,10 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return { state: current, log };
   }
 
+  function tick(saved: GameState): TickResult {
+    return pauses.tick(loadPlaying(saved), advanceOneDay);
+  }
+
   function endGame(saved: GameState): GameState {
     const state = load(saved);
     return state.status === "playing" ? { ...state, status: "finished", endedByTeacher: true } : state;
@@ -667,6 +758,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     load,
     applyAction,
     advance,
+    tick,
+    tickDays: (s) => pauses.tickDays(load(s)),
     endGame,
     opsNeeded: infra.opsNeeded,
     upfrontCost: (model) => infra.upfrontCost(model),
@@ -708,6 +801,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     migration: (s) => migration.migration(load(s)),
     migrationQuote: (s, target) => migration.migrationQuote(load(s), target),
     events: (s) => events.events(load(s)),
+    calendar: (s) => calendar.calendar(load(s)),
     danger: (s) => encounters.danger(load(s)),
     featureGaps: (s) => events.featureGaps(load(s)),
     summarise: (s) => summary.summarise(load(s)),

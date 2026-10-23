@@ -3,6 +3,7 @@
 // decision. Every game writes the same rows as the classroom playtest log, so the same analysis runs on both.
 // A tool for testing the game, not part of it. See play.ts for the command line.
 import {
+  DIFFICULTIES,
   gameLengthName,
   MANAGED_SERVICES,
   MODEL_IDS,
@@ -15,9 +16,12 @@ import {
   type Action,
   type DayLog,
   type FunderId,
+  type GameDate,
   type GameState,
+  type HolidayView,
   type ManagedService,
   type ModelId,
+  type PauseReason,
   type RackSize,
   type ServerSize,
   type ServerType,
@@ -155,9 +159,10 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const daysToPlay = state.finalDay - state.day;
   const lasts = left === null ? "not losing money" : left > daysToPlay ? `lasts past day ${state.finalDay}` : `${left} days`;
   const status = state.endedByTeacher ? "ENDED BY TEACHER" : state.status.toUpperCase();
+  const calendar = sim.calendar(state);
   lines.push(
     `== ${state.companyName} | ${state.productType} on ${state.model} | day ${state.day}/${state.finalDay} ` +
-      `(${gameLengthName(sim.config, state.gameLength)}) | ${status}`,
+      `(${gameLengthName(sim.config, state.gameLength)}, ${DIFFICULTIES[state.difficulty].name}${sim.tickDays(state) === 7 ? ", a week a tick" : ""}) | ${calendar.today.text} | ${status}`,
   );
   lines.push(
     `cash ${money(state.cash)} | income ${money(dailyIncome(sim, state))}/day | costs ${money(dailyCosts(sim, state))}/day | runway ${lasts}`,
@@ -268,9 +273,40 @@ export function renderStatus(sim: Sim, state: GameState): string {
     `danger meter: ${danger.meter} (no event waits past ${danger.max}) | rose ${danger.rise} today (well-run day +${danger.dailyRise}${risks ? `, ${risks}` : ""})`,
   );
   for (const r of danger.risks) lines.push(`  ${r.label}: ${r.detail}`);
+  lines.push(`calendar: ${calendarLine(sim, state)}`);
   for (const e of sim.events(state)) lines.push(`event today: ${e.name}. ${e.outcome}`);
   for (const g of sim.featureGaps(state)) lines.push(`feature gap: ${g.name}. ${g.detail}`);
   return lines.join("\n");
+}
+
+/** What a holiday does to the product: "load ×2.2, growth ×2.5", or "no effect on you". */
+const holidayEffect = (h: HolidayView) =>
+  h.effect ? `load ×${h.effect.loadMultiplier}, growth ×${h.effect.growthMultiplier}` : "no effect on you";
+
+/** "2 Dec 2026". */
+const shortDate = (h: GameDate) => `${h.dayOfMonth} ${h.text.split(" ")[2]!.slice(0, 3)} ${h.year}`;
+
+/** The holidays on now and the next one to come, in a line. */
+function calendarLine(sim: Sim, state: GameState): string {
+  const { on, upcoming } = sim.calendar(state);
+  // A holiday the product doesn't notice is left to the full calendar.
+  const now = on.filter((h) => h.effect).map((h) => `${h.name} on now to day ${h.endDay} (${holidayEffect(h)})`);
+  const next = upcoming[0];
+  const parts = [...now, next ? `next: ${next.name} in ${next.daysUntil} days, day ${next.startDay} (${holidayEffect(next)})` : "no more holidays this game"];
+  return `${parts.join(" | ")}   ("calendar" for all)`;
+}
+
+/** Every holiday to come in the game, with its dates and what it does to the product. */
+function calendarLines(sim: Sim, state: GameState): string[] {
+  const { today, startYear, on, upcoming } = sim.calendar(state);
+  const line = (h: HolidayView) =>
+    `  ${h.name}: ${h.daysUntil > 0 ? `in ${h.daysUntil} days, ` : ""}${shortDate(h.start)}–${shortDate(h.end)} (days ${h.startDay}–${h.endDay}), ${holidayEffect(h)}${h.effect ? `. ${h.effect.detail}` : ""}`;
+  return [
+    `calendar: ${today.text}, year ${today.year - startYear + 1} of the game (started ${startYear})`,
+    ...(on.length ? ["on now:", ...on.map(line)] : []),
+    upcoming.length ? "coming up:" : "no more holidays before the game ends",
+    ...upcoming.map(line),
+  ];
 }
 
 /** Friends and family and the grant in a line: each one's offer, or how it stands. */
@@ -428,7 +464,11 @@ export function renderCommands(sim: Sim, state: GameState): string {
   }
   const loan = sim.loan(state);
   if (loan?.remaining) lines.push(`  repayloan   (pay off the loan now: ${money(loan.payoff)}, saving ${money(loan.interestSaved)} interest)`);
-  lines.push(`  next [days]   (advance up to that many days, default 7; stops early when something needs you)`);
+  lines.push(`  calendar   (the holidays to come, their dates and what each does to your product)`);
+  const tick = sim.tickDays(state) === 7 ? "a week (this is a career)" : "a day";
+  lines.push(
+    `  next [days]   (play ticks of ${tick} until that many days have gone by, default 7; stops early, on the day, when something needs you)`,
+  );
   lines.push(`  end   (as the teacher: end the game now, scored as it stands)`);
   return lines.join("\n");
 }
@@ -441,6 +481,7 @@ export type Command =
   | { kind: "valuation" }
   | { kind: "funding" }
   | { kind: "rescue" }
+  | { kind: "calendar" }
   | { kind: "next"; days: number }
   /** The teacher ends the game, as from the staff panel. */
   | { kind: "end" };
@@ -535,6 +576,8 @@ export function parseCommand(text: string): Command {
       return { kind: "valuation" };
     case "funding":
       return { kind: "funding" };
+    case "calendar":
+      return { kind: "calendar" };
     case "accept":
       return one({ type: "acceptFunding", funder: funder(args[0]) });
     case "decline":
@@ -607,6 +650,7 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
   if (command.kind === "valuation") return { state, rows: [], lines: valuationLines(sim, state) };
   if (command.kind === "funding") return { state, rows: [], lines: fundingLines(sim, state) };
   if (command.kind === "rescue") return { state, rows: [], lines: rescueLines(sim, state) };
+  if (command.kind === "calendar") return { state, rows: [], lines: calendarLines(sim, state) };
   if (command.kind === "end") {
     const ended = sim.endGame(state);
     // Logged as the classroom server logs a game the teacher ends.
@@ -726,71 +770,45 @@ function fundingLines(sim: Sim, state: GameState): string[] {
  * Log entry kinds worth showing every day they appear. Feature, migration and API entries show only on days they stop
  * time.
  */
-const SHOWN_KINDS = new Set(["outage", "event", "rescue", "liquidation", "finished", "support", "price", "launch", "staff", "funding", "danger"]);
+const SHOWN_KINDS = new Set(["outage", "event", "rescue", "liquidation", "finished", "support", "price", "launch", "staff", "funding", "danger", "calendar"]);
 const STOPPING_KINDS = new Set(["feature", "migration", "api"]);
 
-const builtCount = (state: GameState) => Object.values(state.features).filter((f) => f.status !== "building").length;
-
-/** Why the day just played needs a decision, if it does: compares the company before and after the day. */
-function stopReasons(sim: Sim, before: GameState, after: GameState): string[] {
+/**
+ * Stops the text interface makes on top of the sim's own pause triggers, comparing the company before and after a
+ * tick: worth a look for a playtester, though the game page plays on through them.
+ */
+function extraStops(sim: Sim, before: GameState, after: GameState, pauses: PauseReason[]): string[] {
   const reasons: string[] = [];
-  if (after.rescue && !before.rescue) reasons.push("cash ran out: rescued by a vulture VC");
-  // Only events that need the player stop time: ones that hurt or found the company short of ops. A provider patch
-  // with nothing to do is just shown. An event lasting several days stops on its first day only.
-  const yesterday = new Set(sim.events(before).map((e) => e.id));
-  const events = sim.events(after).filter((e) => (e.hit || e.shortOfOps) && !yesterday.has(e.id));
-  if (events.length) reasons.push(`event: ${events.map((e) => e.name).join(", ")}`);
-  if (after.outageDays > before.outageDays) reasons.push("outage");
   // A risk that's new today makes the danger meter climb faster: worth a decision before the next random event.
   const risksBefore = new Set(sim.danger(before).risks.map((r) => r.id));
   const newRisks = sim.danger(after).risks.filter((r) => !risksBefore.has(r.id));
   if (newRisks.length) reasons.push(`danger meter climbing faster: ${newRisks.map((r) => r.label.toLowerCase()).join(", ")}`);
-  if (builtCount(after) > builtCount(before)) reasons.push("feature built");
-  const launchBefore = sim.launch(before).status;
-  const launchAfter = sim.launch(after).status;
-  if (launchAfter !== launchBefore && (launchAfter === "launching" || launchAfter === "launched")) reasons.push(`launch ${launchAfter}`);
-  const migBefore = sim.migration(before);
-  const migAfter = sim.migration(after);
-  if (migBefore && !migAfter) reasons.push("migration complete");
-  else if (migBefore && migAfter && migAfter.phase !== migBefore.phase) reasons.push(`migration now ${migAfter.phase}`);
-  const pending = (st: GameState) => sim.servers(st).filter((x) => x.status === "pending").length;
-  if (pending(after) < pending(before)) reasons.push("server arrived");
   if (after.hiring.length < before.hiring.length) reasons.push("staff started");
-  const { use } = tierUse(sim, after);
-  const { use: useBefore } = tierUse(sim, before);
-  if (use !== null && use > 100 && (useBefore === null || useBefore <= 100)) reasons.push(`capacity over 100% (${use}%)`);
-  if (after.satisfaction <= before.satisfaction - 15 || (after.satisfaction < 50 && before.satisfaction >= 50)) {
-    reasons.push(`satisfaction fell to ${pct(after.satisfaction)}`);
-  }
-  const left = runway(sim, after);
-  const leftBefore = runway(sim, before);
-  if (left !== null && left <= 7 && (leftBefore === null || leftBefore > 7)) reasons.push(`cash runs out in ${left} days`);
+  const fell = after.satisfaction <= before.satisfaction - 15 || (after.satisfaction < 50 && before.satisfaction >= 50);
+  if (fell && !pauses.some((p) => p.id === "satisfaction")) reasons.push(`satisfaction fell to ${pct(after.satisfaction)}`);
   if (sim.priceLockDaysLeft(before) > 0 && sim.priceLockDaysLeft(after) === 0) reasons.push("price can change again");
-  const grantBefore = before.funding.grant?.status;
-  const grantAfter = after.funding.grant?.status;
-  if (grantBefore === "accepted" && grantAfter !== "accepted") reasons.push(`grant ${grantAfter}`);
-  const dropped = (st: GameState) => st.api?.dropped ?? 0;
-  if (dropped(after) > 0 && dropped(before) === 0) reasons.push(`API calls dropped (${dropped(after).toLocaleString("en-GB")})`);
   return reasons;
 }
 
 /**
- * Plays up to `days` days, one at a time, and stops early when something needs a decision: an event, outage, a new
- * risk on the danger meter, built feature, migration step, the launch, a server arriving, staff starting, capacity
- * running out, satisfaction falling hard, cash about to run out, the price unlocking, or API calls starting to be
- * dropped. Returns the notable lines of each day played and why it stopped.
+ * Plays ticks until at least `days` days have gone by: a tick is a day, or a week in a career, as Continue plays on
+ * the game page. Stops early when the sim pauses itself (an event that hurts, an alert, an offer, low cash or something
+ * finished), on the day it does, and also when a new risk climbs the danger meter, staff start, satisfaction falls
+ * hard or the price unlocks. Logs one Continue a tick, as the classroom server does. Returns the notable lines of each
+ * day played and why it stopped.
  */
 export function advanceUntil(sim: Sim, state: GameState, days: number, who: Player): Turn {
   let current = state;
   const lines: string[] = [];
   const rows: LogRow[] = [];
   let stop: string | null = null;
-  for (let i = 0; i < days && current.status === "playing" && !stop; i++) {
+  for (let played = 0; played < days && current.status === "playing" && !stop; ) {
     const before = current;
-    const result = sim.advance(current, 1);
+    const result = sim.tick(current);
     current = result.state;
+    played += result.days;
     rows.push(logRow(sim, current, who, "continue", { events: sim.events(current).map((e) => e.id) }));
-    const reasons = stopReasons(sim, before, current);
+    const reasons = current.status === "playing" ? [...result.pauses.map((p) => p.text), ...extraStops(sim, before, current, result.pauses)] : [];
     lines.push(...dayLines(result.log, reasons.length > 0));
     if (reasons.length) stop = `stopped on day ${current.day}: ${reasons.join("; ")}`;
   }

@@ -32,6 +32,8 @@ const STARTING_USERS = { ecommerce: 2000, social: 1000, video: 1000 };
 const sim = createSim({
   ...defaultConfig,
   startingCash: 1000,
+  // Games start on a random date, so holidays are left out unless a test adds them: they'd move load and growth.
+  calendar: { ...defaultConfig.calendar, holidays: [] },
   // Add-ons cost only their per-user price, so buying one fits in the starting cash.
   addons: { ...defaultConfig.addons, setupFeePerDevDay: 0 },
   servers: {
@@ -426,12 +428,37 @@ describe("continue", () => {
     const res = await app.inject({ method: "POST", url: `${url}/continue` });
     expect(res.statusCode).toBe(200);
     const body = res.json<ContinueResult>();
-    expect(body.company).toMatchObject({ day: 2, cash: 975 });
+    expect(body.company).toMatchObject({ day: 2, cash: 975, tickDays: 1 });
+    expect(body).toMatchObject({ days: 1, pauses: [] });
     expect(body.log).toHaveLength(1);
     expect(body.log[0]!.day).toBe(2);
 
     // Resuming later (a fresh request, as from another machine) sees the saved state.
     expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({ day: 2, cash: 975 });
+  });
+
+  it("plays a week a press in a career, stopping on the day something needs the student, with why", async () => {
+    await useOverrides({ "allowedGameLengths.career": 1 });
+    const code = await newCode();
+    const company = (
+      await newCompany(code, { name: "Lifer", productType: "social", model: "saas", gameLength: "career" })
+    ).json<CompanyView>();
+    expect(company.tickDays).toBe(7);
+    const url = `/api/codes/${code}/companies/${company.id}/continue`;
+
+    // £1,000 of cash runs low inside the first week: time stops that day, with why.
+    const first = (await app.inject({ method: "POST", url })).json<ContinueResult>();
+    expect(first.days).toBeGreaterThan(0);
+    expect(first.days).toBeLessThan(7);
+    expect(first.pauses).toContainEqual({ kind: "lowCash", id: "low-cash", text: expect.stringMatching(/^Cash runs out/) });
+    expect(first.company.day).toBe(1 + first.days);
+    expect(first.log.map((d) => d.day)).toEqual(Array.from({ length: first.days }, (_, i) => 2 + i));
+
+    // The next press plays on from there, up to a week.
+    const second = (await app.inject({ method: "POST", url })).json<ContinueResult>();
+    expect(second.log[0]!.day).toBe(first.company.day + 1);
+    expect(second.days).toBeLessThanOrEqual(7);
+    expect(second.company.day).toBe(first.company.day + second.days);
   });
 
   it("serialises concurrent presses so each advances one day", async () => {
@@ -712,6 +739,51 @@ describe("games from an older version", () => {
     }
     const list = (await app.inject({ method: "GET", url: `/api/codes/${code}` })).json<{ companies: CompanyView[] }>();
     expect(list.companies.map((c) => c.name).sort()).toEqual(["One", "Three", "Two"]);
+  });
+});
+
+describe("difficulty", () => {
+  it("offers only Normal by default, and refuses a difficulty the preset doesn't allow", async () => {
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.difficulties).toEqual([
+      { id: "normal", name: "Normal", blurb: expect.any(String), startingCash: meta.startingCash },
+    ]);
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    expect(company).toMatchObject({ difficulty: "normal", difficultyName: "Normal" });
+    const refused = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "iaas", difficulty: "easy" });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toMatchObject({ error: "difficulty_not_allowed", message: expect.stringContaining("Normal") });
+  });
+
+  it("starts a game on a difficulty the preset allows, with its numbers, and records it", async () => {
+    await useOverrides({ "allowedDifficulties.easy": 1, "allowedDifficulties.hard": 1 });
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.difficulties.map((d) => d.id)).toEqual(["easy", "normal", "hard"]);
+    const [easy, normal, hard] = meta.difficulties.map((d) => d.startingCash);
+    expect(easy).toBeGreaterThan(normal!);
+    expect(hard).toBeLessThan(normal!);
+    const code = await newCode();
+    const games: Record<string, CompanyView> = {};
+    for (const difficulty of ["easy", "normal", "hard"]) {
+      const created = await newCompany(code, { name: difficulty, productType: "social", model: "saas", difficulty });
+      expect(created.statusCode).toBe(201);
+      games[difficulty] = created.json<CompanyView>();
+    }
+    expect(games.hard).toMatchObject({ difficulty: "hard", difficultyName: "Hard" });
+    // SaaS has nothing to pay up front, so each game's cash follows its starting cash.
+    expect(games.easy!.cash - games.normal!.cash).toBe(easy! - normal!);
+    expect(games.normal!.cash - games.hard!.cash).toBe(normal! - hard!);
+    // Left out, Normal.
+    const plain = await newCompany(await newCode(), { name: "Plain", productType: "social", model: "saas" });
+    expect(plain.json<CompanyView>().difficulty).toBe("normal");
+
+    // The game keeps its difficulty after the preset stops allowing it.
+    await useOverrides({}, "Normal only");
+    const url = `/api/codes/${code}/companies/${games.hard!.id}`;
+    expect((await app.inject({ method: "POST", url: `${url}/continue` })).statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({ difficulty: "hard", day: 2 });
+    expect((await app.inject({ method: "GET", url: `${url}/summary` })).json<SummaryView>()).toMatchObject({ difficulty: "hard" });
   });
 });
 
@@ -2461,6 +2533,41 @@ describe("leaving SaaS (vendor lock-in)", () => {
   });
 });
 
+describe("the real calendar", () => {
+  const calendarSim = createSim({ ...sim.config, calendar: defaultConfig.calendar });
+  let calendarApp: Awaited<ReturnType<typeof buildApp>>;
+
+  beforeAll(async () => {
+    calendarApp = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), sim: calendarSim });
+  });
+
+  afterAll(async () => {
+    await calendarApp?.close();
+  });
+
+  it("starts the company on a random date this year, and counts the calendar forward a day at a time", async () => {
+    const code = await newCode();
+    const payload = { name: "Acme", productType: "ecommerce", model: "iaas" };
+    const created = await calendarApp.inject({ method: "POST", url: `/api/codes/${code}/companies`, payload });
+    const company = created.json<CompanyView>();
+    const year = new Date().getUTCFullYear();
+    expect(company.calendar).toMatchObject({ startYear: year, today: { year } });
+    expect(company.calendar.today.iso.startsWith(`${year}-`)).toBe(true);
+    // The next holidays are shown ahead of time, soonest first, each with what it does to a shop (or null).
+    const { upcoming } = company.calendar;
+    expect(upcoming.length).toBeGreaterThan(0);
+    expect(upcoming.map((h) => h.startDay)).toEqual([...upcoming.map((h) => h.startDay)].sort((x, y) => x - y));
+    for (const h of upcoming) {
+      expect(h.effect === null || h.effect.loadMultiplier > 0).toBe(true);
+      expect(h.daysUntil).toBe(h.startDay - 1);
+    }
+    const url = `/api/codes/${code}/companies/${company.id}/continue`;
+    const next = (await calendarApp.inject({ method: "POST", url })).json<ContinueResult>();
+    const tomorrow = new Date(Date.parse(company.calendar.today.iso) + 864e5).toISOString().slice(0, 10);
+    expect(next.company.calendar.today.iso).toBe(tomorrow);
+  });
+});
+
 describe("encounters", () => {
   // Only the OS patch, certain to come up, at a threshold of 2: it fires when the meter reaches 2.
   const encounterSim = createSim({
@@ -2730,22 +2837,41 @@ describe("provider and SaaS events", () => {
 });
 
 describe("meta", () => {
-  it("reports timed flow as off by default, with the default interval", async () => {
+  const SPEEDS_AT_15 = [
+    { id: "slow", name: "Slow", seconds: 30 },
+    { id: "normal", name: "Normal", seconds: 15 },
+    { id: "fast", name: "Fast", seconds: 5 },
+    { id: "fastest", name: "Fastest", seconds: 1.5 },
+  ];
+
+  it("reports timed flow as on by default, with the default interval and its speeds", async () => {
     const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
-    expect(meta.timedFlow).toEqual({ enabled: false, seconds: 15 });
+    expect(meta.timedFlow).toEqual({ enabled: true, seconds: 15, speeds: SPEEDS_AT_15 });
   });
 
-  it("reports timed flow and its interval when the server turns it on", async () => {
+  it("lets the teacher switch timed flow off, reaching games already being played", async () => {
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    const gameMeta = async () =>
+      (await app.inject({ method: "GET", url: `/api/codes/${code}/companies/${company.id}/meta` })).json<MetaView>().timedFlow;
+    expect((await gameMeta()).enabled).toBe(true);
+    await useOverrides({ timedFlow: 0 });
+    expect((await gameMeta()).enabled).toBe(false);
+    expect((await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>().timedFlow.enabled).toBe(false);
+  });
+
+  it("reports timed flow off when the server switches it off, whatever the preset says", async () => {
     const timed = await buildApp({
       db: testDb.db,
       teacherPassword: PASSWORD,
       sessionSecret: "x".repeat(32),
       sim,
-      timedFlow: { enabled: true, seconds: 5 },
+      timedFlow: { enabled: false, seconds: 3 },
     });
     try {
       const meta = (await timed.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
-      expect(meta.timedFlow).toEqual({ enabled: true, seconds: 5 });
+      expect(meta.timedFlow).toMatchObject({ enabled: false, seconds: 3 });
+      expect(meta.timedFlow.speeds.map((s) => s.seconds)).toEqual([6, 3, 1, 0.3]);
     } finally {
       await timed.close();
     }

@@ -218,21 +218,23 @@ function dailyGrowth(sim: Sim, state: GameState): number {
   return Math.max(1, daily);
 }
 
-/** Whether the product's seasonal peak is on any day from tomorrow until servers added today would be ready. */
-function peakSoon(sim: Sim, state: GameState): boolean {
-  const spike = sim.config.productTypes[state.productType].growth.seasonalSpike;
-  if (!spike) return false;
+/**
+ * What holidays multiply the product's load by at their busiest from tomorrow until servers added today would be
+ * ready: 1 with none due. Planning ahead, it counts holidays still to start (a student sees them coming on the
+ * calendar); reacting, only one already on, as a student sees from the load.
+ */
+function peakSoon(sim: Sim, state: GameState, ahead: boolean): number {
   const lead = sim.config.models[state.model].servers?.readyDays ?? 0;
-  for (let day = state.day + 1; day <= state.day + lead + 1; day++) {
-    if (day >= spike.firstDay && (day - spike.firstDay) % spike.every < spike.length) return true;
-  }
-  return false;
+  const last = state.day + lead + 1;
+  const { on, upcoming } = sim.calendar(state);
+  const due = [...on.filter((h) => h.endDay > state.day), ...(ahead ? upcoming.filter((h) => h.startDay <= last) : [])];
+  return Math.max(1, ...due.map((h) => h.effect?.loadMultiplier ?? 1));
 }
 
 /**
  * The units view, with demand replaced by what the bot plans for: the users' usual demand (until the launch ramp
- * ends, the launch total's), times how far ahead it plans, and times the product's seasonal peak when one is due before
- * new servers would be ready (a shop knows when its sales are). So it doesn't buy servers for a two-day traffic spike
+ * ends, the launch total's), times how far ahead it plans, and times any holiday peak on now, or when planning ahead,
+ * due before new servers would be ready (a shop knows when Black Friday is). So it doesn't buy servers for a two-day traffic spike
  * that triples demand.
  */
 function plannedUnits(sim: Sim, state: GameState, strategy: Strategy): UnitsView | null {
@@ -242,7 +244,7 @@ function plannedUnits(sim: Sim, state: GameState, strategy: Strategy): UnitsView
   const launch = sim.launch(state);
   // Until all its launch users are in, it plans for the most there might be: like a student, it can't see the total.
   const users = launch.status === "launched" ? state.users : Math.max(state.users, product.growth.launchUsersMax);
-  const peak = strategy.scaling === "ahead" && peakSoon(sim, state) ? (product.growth.seasonalSpike?.loadMultiplier ?? 1) : 1;
+  const peak = peakSoon(sim, state, strategy.scaling === "ahead");
   const plan = users * peak * ahead(sim, state);
   const dbu = plan * product.demand.dbuPerUser;
   const cacheable = dbu * sim.config.servers.cacheableShare;

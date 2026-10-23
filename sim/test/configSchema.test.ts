@@ -126,19 +126,32 @@ describe("validateOverrides", () => {
     expect(validateOverrides({ "models.onprem.servers.racks.serverUnits.massive": 42 })).toEqual({});
   });
 
-  it("has a toggle for each game length, and needs at least one allowed", () => {
+  it("has a toggle for each game length and for timed flow, and needs at least one length allowed", () => {
     const toggles = fields.filter((f) => f.kind === "toggle");
     expect(toggles.map((f) => [f.path, f.default])).toEqual([
       ["allowedGameLengths.180-days", 1],
       ["allowedGameLengths.1-year", 0],
       ["allowedGameLengths.career", 0],
+      ["timedFlow", 1],
+      ["allowedDifficulties.easy", 0],
+      ["allowedDifficulties.normal", 1],
+      ["allowedDifficulties.hard", 0],
     ]);
+    expect(validateOverrides({ timedFlow: 0 })).toEqual({});
     expect(validateOverrides({ "allowedGameLengths.career": 1, "allowedGameLengths.1-year": 1 })).toEqual({});
     expect(validateOverrides({ "allowedGameLengths.career": 0.5 })).toHaveProperty(["allowedGameLengths.career"]);
     expect(validateOverrides({ "allowedGameLengths.180-days": 0 })).toEqual({
       "allowedGameLengths.180-days": "At least one game length must be allowed.",
     });
     expect(validateOverrides({ "allowedGameLengths.180-days": 0, "allowedGameLengths.career": 1 })).toEqual({});
+  });
+
+  it("needs at least one difficulty allowed", () => {
+    expect(validateOverrides({ "allowedDifficulties.easy": 1, "allowedDifficulties.hard": 1 })).toEqual({});
+    expect(validateOverrides({ "allowedDifficulties.normal": 0 })).toEqual({
+      "allowedDifficulties.normal": "At least one difficulty must be allowed.",
+    });
+    expect(validateOverrides({ "allowedDifficulties.normal": 0, "allowedDifficulties.hard": 1 })).toEqual({});
   });
 });
 
