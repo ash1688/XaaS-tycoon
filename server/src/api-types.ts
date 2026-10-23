@@ -26,6 +26,7 @@ import type {
   MigrationView,
   ModelComparison,
   PricePreview,
+  PaymentsView,
   PriceWaveView,
   ModelId,
   ProductTypeId,
@@ -217,6 +218,12 @@ export interface CompanyView {
    * mark on the bar and whether the price is over it.
    */
   customerMix: CustomerMixView;
+  /**
+   * The payments app's monthly fee and transaction fee (set together as one price change), what a usual month costs a
+   * business, the two income streams on a usual day and so far, and the next payday and Black Friday. Null on other
+   * products.
+   */
+  payments: PaymentsView | null;
   /**
    * Free-to-paid conversion: free users who started paying on the day just played and in all (a price wave's upgrades
    * aren't counted here), the base and current daily rates (from the next day played), recent uptime, and each

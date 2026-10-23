@@ -57,9 +57,13 @@ export function createFinance(config: GameConfig) {
   function settle(state: GameState, day: number, entries: LogEntry[]): { state: GameState; entries: LogEntry[] } {
     const daySpend = noSpend();
     let dayIncome = 0;
+    const streams = { fees: 0, transactions: 0 };
     for (const e of entries) {
       if (e.category) daySpend[e.category] -= e.cashDelta;
-      else if (e.kind === "income") dayIncome += e.cashDelta;
+      else if (e.kind === "income") {
+        dayIncome += e.cashDelta;
+        if (e.stream) streams[e.stream] += e.cashDelta;
+      }
     }
     const spend = noSpend();
     for (const c of SPEND_CATEGORIES) spend[c] = state.spend[c] + daySpend[c];
@@ -69,6 +73,8 @@ export function createFinance(config: GameConfig) {
       cash,
       spend,
       income: state.income + dayIncome,
+      feeIncome: state.feeIncome + streams.fees,
+      transactionIncome: state.transactionIncome + streams.transactions,
       interestPaid: state.interestPaid + interestOf(entries),
       spendByDay: [
         ...state.spendByDay,
@@ -76,6 +82,8 @@ export function createFinance(config: GameConfig) {
           day,
           ...daySpend,
           income: dayIncome,
+          feeIncome: streams.fees,
+          transactionIncome: streams.transactions,
           borrowed: borrowedIn(entries),
           raised: raisedIn(entries),
           interest: interestOf(entries),
@@ -125,7 +133,7 @@ export function createFinance(config: GameConfig) {
               interest: last.interest + interest,
             },
           ]
-        : [...state.spendByDay, { day: state.day, ...daySpend, income: 0, borrowed, raised, interest, ...customersAt(state) }];
+        : [...state.spendByDay, { day: state.day, ...daySpend, income: 0, feeIncome: 0, transactionIncome: 0, borrowed, raised, interest, ...customersAt(state) }];
     const cash = state.cash + entries.reduce((sum, e) => sum + e.cashDelta, 0);
     return { ...state, cash, spend, spendByDay, interestPaid: state.interestPaid + interest };
   }

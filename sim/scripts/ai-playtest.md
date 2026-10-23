@@ -41,6 +41,11 @@ npm run -s play -- summary <game>
 - `preview <price>` and `quote <model>` show what a price change or migration would do without doing it.
   A price rise's reaction is each customer type's reaction weighted by its share of users: the status shows your
   customer mix, each type's price threshold, and `!` where your price is over it.
+- The **payments app** (`--product payments`) earns two ways: a monthly fee from each paying business, and a
+  transaction fee, a share of every payment they take. `price <fee> <rate%>` sets both in one change, with one lock
+  (`price 12 2.5%`; the fee alone keeps today's rate), and `preview <fee> <rate%>` shows what they'd do. Customers judge
+  them together, as what a usual month costs a business. The status shows both streams, the next payday and Black
+  Friday, when payments (and load) rise. Outages hurt it most: no payments are taken, and no fee charged, for the hours you're down.
 - `valuation` shows what your company is worth, what's pushing it up or down, and who owns it. `funding` shows the
   friends and family and grant offers in full; `accept ff`, `accept grant`, `decline ff` and `decline grant` answer
   them, once each.

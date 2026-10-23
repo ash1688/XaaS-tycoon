@@ -4,7 +4,7 @@ import type { LayerId } from "./responsibility.ts";
 export const MODEL_IDS = ["onprem", "iaas", "paas", "saas"] as const;
 export type ModelId = (typeof MODEL_IDS)[number];
 
-export const PRODUCT_TYPE_IDS = ["ecommerce", "social", "video"] as const;
+export const PRODUCT_TYPE_IDS = ["ecommerce", "social", "video", "payments"] as const;
 export type ProductTypeId = (typeof PRODUCT_TYPE_IDS)[number];
 
 /** Customer types, from the least willing to pay to the most. Saved in game state, so don't rename. */
@@ -359,6 +359,46 @@ export interface ProductTypeConfig {
   features: FeatureConfig[];
   /** The paid API other businesses build on, for a product that would have one. Left out, the product has none. */
   api?: ProductApiConfig;
+  /**
+   * A share of every payment its paying users take, on top of the monthly price: the payments app. Left out, the
+   * product earns only the monthly price.
+   */
+  transactions?: ProductTransactionsConfig;
+  /**
+   * Paying users lost to each hour down are multiplied by this (2 = twice as many as other products). Left out, 1. A
+   * payments app's businesses can't take money while it's down, so they leave fastest.
+   */
+  outageChurnMultiple?: number;
+}
+
+/**
+ * A product that earns a share of each payment its users take, as well as a monthly fee. The student sets the fee
+ * and the rate together, as one price change. Customers judge the two together, as what a usual month costs them:
+ * fee + rate × volumePerPaidUser, the product's monthly price for every price reaction, threshold and the fair
+ * price (fairPrice + fairRate × volumePerPaidUser). So a rise in either is a rise, and moving money from one to the
+ * other changes nothing for them.
+ *
+ * The rate's income follows each day's payments: a usual day's share of the month, more on paydays and on Black
+ * Friday (the product's seasonal spike), and none for the hours the product is down. Paydays only move money within
+ * the month, so a payday cycle earns what the same days at a steady volume would.
+ */
+export interface ProductTransactionsConfig {
+  /** The share of each payment a new company takes (0.02 = 2%): with the fair price, what users think it's worth. */
+  fairRate: number;
+  /** The highest rate a student can set. */
+  maxRate: number;
+  /** What each paying user takes in payments in a usual month, in pounds. */
+  volumePerPaidUser: number;
+  /**
+   * Payday: a few busy days each month when people have just been paid. Payments, and the load they bring, are
+   * multiplied by `multiplier` on those days and lowered on the others so a cycle averages out.
+   */
+  payday: { firstDay: number; every: number; length: number; multiplier: number };
+  /**
+   * On SaaS the platform takes the payments for you, and charges this share of every payment (0.009 = 0.9%) as
+   * infrastructure, whatever fee and rate you charge.
+   */
+  saasFeeRate: number;
 }
 
 /**
@@ -1268,6 +1308,87 @@ export const defaultConfig: GameConfig = {
         },
       ],
     },
+    payments: {
+      name: "Payments app",
+      profile: "Businesses pay a fee plus a cut of every payment",
+      // Few users, each worth a lot: a business pays about six times what a shopper does. A small start that grows
+      // quickly to a small market, so like the social network it pays its way from about day 45–65 on every model.
+      growth: {
+        launchUsersMin: 380,
+        launchUsersMax: 950,
+        marketSize: 4_000,
+        dailyGrowth: 0.045,
+        growthNoise: 0.3,
+        loadPerUser: 6,
+        loadNoise: 0.1,
+        // Black Friday: shoppers' busiest days, so the businesses' payments (and load) jump. Once a year.
+        seasonalSpike: { firstDay: 110, every: 365, length: 4, loadMultiplier: 2.2, growthMultiplier: 1.5 },
+      },
+      // Every payment is checked and written to a ledger: heavy on the database.
+      demand: { cuPerUser: 0.012, dbuPerUser: 0.015 },
+      // Free users are businesses still in test mode: set up, but not yet taking real payments. Mostly businesses
+      // and professionals, who put up with a dear price but leave rather than go free.
+      pricing: {
+        fairPrice: 10,
+        freeShare: 0.5,
+        conversionRate: 0.0012,
+        customerMix: { casual: 0.05, enthusiasts: 0.1, professionals: 0.25, businesses: 0.6 },
+      },
+      // Money going missing is urgent: businesses raise a lot of tickets.
+      support: { ticketsPerPaidUser: 0.02, ticketsPerFreeUser: 0.006 },
+      features: [
+        {
+          id: "invoices",
+          name: "Invoices and payment links",
+          blurb: "Businesses send a link and get paid.",
+          devDays: 12,
+          growthMultiplier: 1.08,
+          addonPricePerUser: 0.15,
+        },
+        {
+          id: "fraud",
+          name: "Fraud checks",
+          blurb: "Stops stolen cards before the money moves.",
+          devDays: 24,
+          growthMultiplier: 1.15,
+          addonPricePerUser: 0.3,
+        },
+        {
+          id: "payouts",
+          name: "Instant payouts",
+          blurb: "Businesses get their money the same day.",
+          devDays: 20,
+          growthMultiplier: 1.12,
+          addonPricePerUser: 0.25,
+        },
+        {
+          id: "subscriptions",
+          name: "Subscription billing",
+          blurb: "Charges customers every month without them lifting a finger.",
+          devDays: 30,
+          growthMultiplier: 1.2,
+          addonPricePerUser: 0.35,
+        },
+      ],
+      // Shops, booking sites and accounting software take payments and check refunds through it.
+      api: {
+        name: "Payments API",
+        blurb: "Other businesses' apps and websites take payments and issue refunds through yours.",
+        price: 4_000,
+        callsPerPaidUser: 10,
+      },
+      // A fee of £10 a month plus 2% of £1,000 of payments: £30 a month to a usual business.
+      transactions: {
+        fairRate: 0.02,
+        maxRate: 0.2,
+        volumePerPaidUser: 1_000,
+        payday: { firstDay: 28, every: 30, length: 3, multiplier: 1.3 },
+        // The SaaS platform's per-user fee is tiny next to what a business pays, so its fee on each payment is the price
+        // of SaaS here: nearly half of what the fair rate takes.
+        saasFeeRate: 0.009,
+      },
+      outageChurnMultiple: 2,
+    },
   },
   // Casual users react at the fair price, as everyone did in the alpha; the others put up with more, and go free less.
   customerTypes: {
@@ -1582,6 +1703,7 @@ export const defaultConfig: GameConfig = {
               ecommerce: "delivery options built around your own couriers",
               social: "a feed that ranks posts your way",
               video: "your own video player",
+              payments: "payouts through your own bank partner",
             },
           },
           detail:

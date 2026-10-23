@@ -99,6 +99,27 @@ describe("customer types", () => {
     expect(reactions[2]).toBeGreaterThan(reactions[3]!);
   });
 
+  it("makes the same cut draw less from a more professional mix: a bargain draws bargain hunters", () => {
+    const cut = (type: CustomerTypeId) => {
+      const s = createSim(withMix("social", only(type)));
+      const state = running(s);
+      const preview = s.pricePreview(state, s.fairPrice(state) * 0.5);
+      // The day after the cut: growth and the paid share of new users, as well as the wave.
+      const after = s.applyAction(state, { type: "setPrice", price: s.fairPrice(state) * 0.5 });
+      return { joined: preview.total.joined / state.users, upgraded: preview.total.upgraded, grown: s.advance(after).state.users - state.users };
+    };
+    const [casual, enthusiasts, professionals, businesses] = CUSTOMER_TYPE_IDS.map(cut);
+    expect(casual!.joined).toBeGreaterThan(enthusiasts!.joined);
+    expect(enthusiasts!.joined).toBeGreaterThan(professionals!.joined);
+    expect(professionals!.joined).toBeGreaterThan(businesses!.joined);
+    expect(casual!.grown).toBeGreaterThan(businesses!.grown);
+    // All casual is the alpha's cut: measured against the fair price, with growth at most doubled.
+    expect(casual!.joined).toBeCloseTo(
+      Math.min(defaultConfig.pricing.maxCutGain, defaultConfig.pricing.cutGainStrength * 0.5 ** defaultConfig.pricing.waveCurve),
+      2,
+    );
+  });
+
   it("has no reaction to a cut", () => {
     const state = running();
     const preview = sim.pricePreview(state, sim.fairPrice(state) * 0.8);

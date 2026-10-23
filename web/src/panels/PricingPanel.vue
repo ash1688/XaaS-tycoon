@@ -1,26 +1,36 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, useId, watch } from "vue";
 import type { PricePreviewView } from "@xaas/server/api-types";
-import { api, formatCash, formatCount, formatPrice } from "../api";
+import { api, formatCash, formatCount, formatPrice, formatRate } from "../api";
 import { days, useGame } from "../game";
 import AppModal from "../components/AppModal.vue";
 import WaveChart from "../components/WaveChart.vue";
 
 // Pricing: what each paying user pays a month, and what that brings in a day. The price is changed in a modal, with
 // the product's fair price as a hint and a live preview of the wave it would start, and applies from the next day
-// played. After a change the price is locked for a while, with a countdown.
+// played. After a change the price is locked for a while, with a countdown. On the payments app the price is a monthly
+// fee and a transaction fee (a share of every payment) set together in one change: customers judge them together, as
+// what a usual month costs a business.
 const game = useGame();
 const id = useId();
 const open = ref(false);
 const draft = ref<number | "">("");
+// The payments app's transaction fee, as a percentage (2.5 for 2.5%).
+const draftRate = ref<number | "">("");
 const formError = ref("");
 
+const payments = computed(() => game.company?.payments ?? null);
 const maxPrice = computed(() => game.meta?.maxPrice ?? 0);
+const maxRatePercent = computed(() => (payments.value ? payments.value.maxRate * 100 : 0));
+/** A percentage typed in the form as a share, to a hundredth of a percent: 2.5 → 0.025. */
+const shareOf = (percent: number) => Math.round(percent * 100) / 10_000;
+/** A price for the screens: "£5", or on the payments app "£10 + 2%". */
+const priceLabel = (price: number, rate: number | null) => (rate === null ? formatPrice(price) : `${formatPrice(price)} + ${formatRate(rate)}`);
 // Price against the fair price, in words, so the student sees which side of it they are.
 const priceNote = computed(() => {
   const c = game.company;
   if (!c) return "";
-  const ratio = c.price / c.fairPrice;
+  const ratio = c.payments ? c.payments.monthly / c.payments.fairMonthly : c.price / c.fairPrice;
   if (Math.abs(ratio - 1) < 0.005) return "At the fair price.";
   const percent = Math.round(100 * Math.abs(ratio - 1));
   return ratio > 1 ? `${percent}% above the fair price.` : `${percent}% below the fair price.`;
@@ -33,6 +43,8 @@ const PREVIEW_DELAY_MS = 250;
 // For the playtest log: the prices previewed since the modal opened (not the current one it opens on), and whether the
 // student went on to set one. Logged when it closes.
 const tried: number[] = [];
+// On the payments app, what a usual month would cost a business at the draft fee and rate: what's logged as tried.
+const monthlyAt = (price: number, rate: number | null) => (payments.value && rate !== null ? price + rate * payments.value.volumePerPaidUser : price);
 let confirmed = false;
 watch(open, (isOpen) => {
   if (isOpen || (!tried.length && !confirmed)) return;
@@ -45,10 +57,14 @@ const previewing = ref(false);
 let previewTimer: number | undefined;
 let previewSeq = 0;
 
-function schedulePreview(price: number | "") {
+function schedulePreview(price: number | "", ratePercent: number | "" = "") {
   window.clearTimeout(previewTimer);
   const seq = ++previewSeq;
-  if (typeof price !== "number" || !(price > 0) || price > maxPrice.value) {
+  const pay = payments.value;
+  const rate = pay ? (typeof ratePercent === "number" ? shareOf(ratePercent) : null) : null;
+  const badRate = !!pay && (rate === null || rate < 0 || rate > pay.maxRate);
+  const badPrice = typeof price !== "number" || price < 0 || (!(price > 0) && !(rate && rate > 0)) || price > maxPrice.value;
+  if (badPrice || badRate) {
     preview.value = undefined;
     previewError.value = "";
     previewing.value = false;
@@ -57,9 +73,11 @@ function schedulePreview(price: number | "") {
   previewing.value = true;
   previewTimer = window.setTimeout(async () => {
     try {
-      const result = await api.pricePreview(game.code, game.id, price);
+      const result = await api.pricePreview(game.code, game.id, price, rate ?? undefined);
       if (seq !== previewSeq) return;
-      if (price !== tried.at(-1) && (tried.length || price !== game.company?.price)) tried.push(price);
+      const monthly = monthlyAt(price, rate);
+      const now = game.company ? monthlyAt(game.company.price, game.company.payments?.rate ?? null) : undefined;
+      if (monthly !== tried.at(-1) && (tried.length || monthly !== now)) tried.push(monthly);
       if (result.direction !== "none") compare(result);
       preview.value = result;
       previewError.value = "";
@@ -73,7 +91,7 @@ function schedulePreview(price: number | "") {
   }, PREVIEW_DELAY_MS);
 }
 
-watch(draft, (price) => open.value && schedulePreview(price));
+watch([draft, draftRate], ([price, ratePercent]) => open.value && schedulePreview(price, ratePercent));
 onBeforeUnmount(() => window.clearTimeout(previewTimer));
 
 // The preview's change in income a day, once the wave settles.
@@ -92,7 +110,7 @@ const verdict = computed(() => {
     p.direction === "rise"
       ? `${formatCount(p.total.left)} paying users leave and ${formatCount(p.total.toFree)} drop to free.`
       : `${formatCount(p.total.joined)} new users join and ${formatCount(p.total.upgraded)} free users start paying.`;
-  return `At ${formatPrice(p.price)} you'd make ${income} once the wave settles. ${users}`;
+  return `At ${priceLabel(p.price, p.rate)} you'd make ${income} once the wave settles. ${users}`;
 });
 /** A share as a percentage to one place: 0.2318 → "23.2%". */
 const sharePercent = (share: number) => `${(100 * share).toFixed(1).replace(/\.0$/, "")}%`;
@@ -101,48 +119,75 @@ const typeName = (id: string) => (game.company?.customerMix.types.find((t) => t.
 // A step too small to matter: the student is better off trying a bigger one.
 const tinyStep = computed(() => {
   const p = preview.value;
-  return !!p && p.direction !== "none" && Math.abs(p.price - p.currentPrice) / p.currentPrice < 0.05;
+  return !!p && p.direction !== "none" && Math.abs(p.monthly - p.currentMonthly) / p.currentMonthly < 0.05;
 });
 
 // Every price previewed since the modal opened, by price, so they can be compared side by side without typing each
-// one again. The one bringing in the most once the wave settles is marked.
-const compared = ref<{ price: number; dailyIncome: number; change: number }[]>([]);
+// one again. The one bringing in the most once the wave settles is marked. On the payments app a price is a fee and
+// rate together, ordered by what a usual month costs.
+type ComparedRow = { key: string; price: number; rate: number | null; monthly: number; dailyIncome: number; change: number };
+const compared = ref<ComparedRow[]>([]);
+const keyOf = (price: number, rate: number | null) => `${price}|${rate ?? ""}`;
 function compare(p: PricePreviewView) {
-  const row = { price: p.price, dailyIncome: p.dailyIncome, change: p.dailyIncome - p.currentDailyIncome };
-  compared.value = [...compared.value.filter((r) => r.price !== p.price), row].toSorted((a, b) => a.price - b.price).slice(-8);
+  const row = { key: keyOf(p.price, p.rate), price: p.price, rate: p.rate, monthly: p.monthly, dailyIncome: p.dailyIncome, change: p.dailyIncome - p.currentDailyIncome };
+  compared.value = [...compared.value.filter((r) => r.key !== row.key), row].toSorted((a, b) => a.monthly - b.monthly || a.price - b.price).slice(-8);
 }
 const bestPrice = computed(() =>
-  compared.value.length > 1 ? compared.value.reduce((best, r) => (r.dailyIncome > best.dailyIncome ? r : best)).price : undefined,
+  compared.value.length > 1 ? compared.value.reduce((best, r) => (r.dailyIncome > best.dailyIncome ? r : best)).key : undefined,
 );
-// Quick steps from the price now, so trying a price is one click.
+const draftKey = computed(() =>
+  typeof draft.value === "number" ? keyOf(draft.value, payments.value && typeof draftRate.value === "number" ? shareOf(draftRate.value) : null) : "",
+);
+// Quick steps from the price now, so trying a price is one click. On the payments app each moves the fee and the
+// rate together.
 const quickPrices = computed(() => {
   const c = game.company;
   if (!c) return [];
-  const round = (n: number) => Math.max(0.01, Math.min(maxPrice.value, Math.round(n * 100) / 100));
+  const round = (n: number) => Math.max(c.payments ? 0 : 0.01, Math.min(maxPrice.value, Math.round(n * 100) / 100));
+  const pay = c.payments;
+  const rate = (r: number) => (pay ? Math.min(pay.maxRate, Math.round(r * 10_000) / 10_000) : null);
+  const step = (m: number) => ({ price: round(c.price * m), rate: pay ? rate(pay.rate * m) : null });
   return [
-    { label: "−25%", price: round(c.price * 0.75) },
-    { label: "−10%", price: round(c.price * 0.9) },
-    { label: "Fair price", price: round(c.fairPrice) },
-    { label: "+10%", price: round(c.price * 1.1) },
-    { label: "+25%", price: round(c.price * 1.25) },
+    { label: "−25%", ...step(0.75) },
+    { label: "−10%", ...step(0.9) },
+    { label: "Fair price", price: round(c.fairPrice), rate: pay ? pay.fairRate : null },
+    { label: "+10%", ...step(1.1) },
+    { label: "+25%", ...step(1.25) },
   ];
 });
-function tryPrice(price: number, label: string) {
+function tryPrice(price: number, label: string, rate: number | null = null) {
   game.track("control", { control: "price-quick", value: label });
   draft.value = price;
+  if (rate !== null) draftRate.value = Math.round(rate * 10_000) / 100;
 }
 
 function openModal() {
   draft.value = game.company?.price ?? "";
+  draftRate.value = payments.value ? Math.round(payments.value.rate * 10_000) / 100 : "";
   compared.value = [];
   formError.value = "";
   open.value = true;
-  schedulePreview(draft.value);
+  schedulePreview(draft.value, draftRate.value);
 }
 
 async function save() {
   const price = draft.value;
-  if (typeof price !== "number" || !(price > 0)) {
+  const pay = payments.value;
+  const ratePercent = draftRate.value;
+  if (pay) {
+    if (typeof ratePercent !== "number" || ratePercent < 0 || ratePercent > maxRatePercent.value) {
+      formError.value = `Enter a transaction fee from 0% to ${formatRate(pay.maxRate)}.`;
+      return;
+    }
+    if (typeof price !== "number" || price < 0) {
+      formError.value = "Enter a monthly fee of £0 or more.";
+      return;
+    }
+    if (price === 0 && ratePercent === 0) {
+      formError.value = "Charge a monthly fee, a transaction fee or both.";
+      return;
+    }
+  } else if (typeof price !== "number" || !(price > 0)) {
     formError.value = "Enter a price above £0.";
     return;
   }
@@ -155,7 +200,7 @@ async function save() {
     return;
   }
   formError.value = "";
-  await game.act({ type: "setPrice", price });
+  await game.act({ type: "setPrice", price, ...(pay && typeof ratePercent === "number" ? { rate: shareOf(ratePercent) } : {}) });
   if (game.error) return;
   confirmed = true;
   open.value = false;
@@ -170,17 +215,36 @@ async function save() {
         {{ lockDaysLeft ? "Preview a price" : "Change price" }}
       </button>
     </div>
+    <div v-if="payments" class="stats">
+      <div class="stat">
+        <span class="label">Monthly fee</span>
+        <span class="value" data-testid="price">{{ formatPrice(payments.fee) }}</span>
+        <small>Fair {{ formatPrice(payments.fairFee) }}</small>
+      </div>
+      <div class="stat">
+        <span class="label">Transaction fee</span>
+        <span class="value" data-testid="transaction-rate">{{ formatRate(payments.rate) }}</span>
+        <small>of every payment · fair {{ formatRate(payments.fairRate) }}</small>
+      </div>
+      <div class="stat">
+        <span class="label">A usual month per business</span>
+        <span class="value" data-testid="monthly-cost">{{ formatPrice(payments.monthly) }}</span>
+        <small>{{ priceNote }} Fair {{ formatPrice(payments.fairMonthly) }}</small>
+      </div>
+    </div>
     <div class="stats">
-      <div class="stat">
-        <span class="label">Monthly price</span>
-        <span class="value" data-testid="price">{{ formatPrice(game.company.price) }}</span>
-        <small>{{ priceNote }}</small>
-      </div>
-      <div class="stat">
-        <span class="label">Fair price</span>
-        <span class="value" data-testid="fair-price">{{ formatPrice(game.company.fairPrice) }}</span>
-        <small>What users think it's worth</small>
-      </div>
+      <template v-if="!payments">
+        <div class="stat">
+          <span class="label">Monthly price</span>
+          <span class="value" data-testid="price">{{ formatPrice(game.company.price) }}</span>
+          <small>{{ priceNote }}</small>
+        </div>
+        <div class="stat">
+          <span class="label">Fair price</span>
+          <span class="value" data-testid="fair-price">{{ formatPrice(game.company.fairPrice) }}</span>
+          <small>What users think it's worth</small>
+        </div>
+      </template>
       <div class="stat">
         <span class="label">Income a day</span>
         <span class="value pos" data-testid="daily-income">{{ formatCash(game.company.dailyIncome) }}</span>
@@ -203,7 +267,14 @@ async function save() {
     >
       <div class="meter-fill high" :style="{ width: `${(100 * lockDaysLeft) / game.meta.priceLockDays}%` }"></div>
     </div>
-    <p class="muted">
+    <p v-if="payments" class="muted" data-testid="payments-note">
+      Each paying business pays a day's share of the monthly fee, and you take {{ formatRate(payments.rate) }} of every
+      payment it takes: about {{ formatCash(payments.volumePerPaidUser) }} a month for a usual business, so
+      {{ formatPrice(payments.monthly) }} a month in all. Customers judge the two together, so raising either is a price
+      rise. Payments, and the transaction fees they bring, are busier on paydays and Black Friday. While you're down
+      no payments are taken and businesses aren't charged the fee for those hours.
+    </p>
+    <p v-else class="muted">
       Each paying user pays a day's share of the monthly price: {{ formatPrice(game.company.price) }} a month is
       {{ formatPrice(Math.round((game.company.price / 30) * 100) / 100) }} a day. Free users pay nothing. Charge more than
       the fair price and fewer people sign up, and fewer of those who do will pay.
@@ -212,18 +283,32 @@ async function save() {
 
   <AppModal :open="open" title="Set your price" @close="open = false">
     <form class="price-form" novalidate @submit.prevent="save">
-      <label :for="`${id}-price`">Monthly price per paying user (£)</label>
+      <label :for="`${id}-price`">{{ payments ? "Monthly fee per paying business (£)" : "Monthly price per paying user (£)" }}</label>
       <input
         :id="`${id}-price`"
         v-model.number="draft"
         type="number"
         inputmode="decimal"
-        min="0.01"
+        :min="payments ? 0 : 0.01"
         :max="maxPrice"
         step="0.01"
         :aria-describedby="`${id}-hint`"
         data-testid="price-input"
       />
+      <template v-if="payments">
+        <label :for="`${id}-rate`">Transaction fee (% of every payment)</label>
+        <input
+          :id="`${id}-rate`"
+          v-model.number="draftRate"
+          type="number"
+          inputmode="decimal"
+          min="0"
+          :max="maxRatePercent"
+          step="0.01"
+          :aria-describedby="`${id}-hint`"
+          data-testid="rate-input"
+        />
+      </template>
       <div class="price-quick" role="group" aria-label="Try a price" data-testid="price-quick">
         <span class="muted">Try:</span>
         <button
@@ -231,13 +316,19 @@ async function save() {
           :key="q.label"
           type="button"
           class="ghost"
-          :aria-label="`Try ${formatPrice(q.price)} (${q.label})`"
-          @click="tryPrice(q.price, q.label)"
+          :aria-label="`Try ${priceLabel(q.price, q.rate)} (${q.label})`"
+          @click="tryPrice(q.price, q.label, q.rate)"
         >
-          {{ q.label }} <small>{{ formatPrice(q.price) }}</small>
+          {{ q.label }} <small>{{ priceLabel(q.price, q.rate) }}</small>
         </button>
       </div>
-      <p :id="`${id}-hint`" class="muted price-hint" data-testid="fair-price-hint">
+      <p v-if="payments" :id="`${id}-hint`" class="muted price-hint" data-testid="fair-price-hint">
+        Fair for a payments app: <strong>{{ formatPrice(payments.fairFee) }}</strong> a month plus
+        <strong>{{ formatRate(payments.fairRate) }}</strong> of every payment, {{ formatPrice(payments.fairMonthly) }} a usual
+        month. One change sets both, and locks both. You can charge up to {{ formatCash(maxPrice) }} and
+        {{ formatRate(payments.maxRate) }}.
+      </p>
+      <p v-else :id="`${id}-hint`" class="muted price-hint" data-testid="fair-price-hint">
         Fair price for {{ game.productName(game.company!.productType).toLowerCase() }}:
         <strong>{{ formatPrice(game.company!.fairPrice) }}</strong> a month. You can charge up to
         {{ formatCash(maxPrice) }}.
@@ -248,7 +339,11 @@ async function save() {
       </p>
       <div class="price-preview" data-testid="price-preview" aria-live="polite" :aria-busy="previewing">
         <template v-if="preview && preview.direction === 'none'">
-          <p class="muted">That's your price now: nothing changes.</p>
+          <p v-if="preview.price !== preview.currentPrice || preview.rate !== preview.currentRate" class="muted" data-testid="price-same-monthly">
+            A usual month still costs a business {{ formatPrice(preview.monthly) }}, so customers won't react: you only
+            move money between the fee and the transaction fee. It still locks your price.
+          </p>
+          <p v-else class="muted">That's your price now: nothing changes.</p>
         </template>
         <template v-else-if="preview">
           <h3 class="price-preview-title">
@@ -257,7 +352,7 @@ async function save() {
           </h3>
           <p :class="['price-verdict', incomeChange < 0 ? 'neg' : 'pos']" data-testid="price-verdict">{{ verdict }}</p>
           <p v-if="tinyStep" class="muted" data-testid="price-tiny-step">
-            That's a small change from {{ formatPrice(preview.currentPrice) }}, so the effect is small too. Try a bigger
+            That's a small change from {{ priceLabel(preview.currentPrice, preview.currentRate) }}, so the effect is small too. Try a bigger
             step to see the difference.
           </p>
           <div class="preview-figures">
@@ -306,7 +401,7 @@ async function save() {
                 ? `A small reaction tomorrow, then a backlash over ${days(preview.days.length)} as word spreads.`
                 : `Word of mouth spreads over ${days(preview.days.length)}.`
             }}
-            {{ formatCount(preview.paidUsers) }} paying users at {{ formatPrice(preview.price) }} a month, then the
+            {{ formatCount(preview.paidUsers) }} paying users at {{ priceLabel(preview.price, preview.rate) }}, then the
             price is locked for {{ days(preview.lockDays) }}.
           </p>
         </template>
@@ -324,15 +419,15 @@ async function save() {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="r in compared" :key="r.price" :class="{ on: r.price === draft }">
+          <tr v-for="r in compared" :key="r.key" :class="{ on: r.key === draftKey }">
             <th scope="row">
-              {{ formatPrice(r.price) }}
-              <span v-if="r.price === bestPrice" class="badge best-badge">Most income</span>
+              {{ priceLabel(r.price, r.rate) }}
+              <span v-if="r.key === bestPrice" class="badge best-badge">Most income</span>
             </th>
             <td>{{ formatCash(r.dailyIncome) }}</td>
             <td :class="r.change < 0 ? 'neg' : 'pos'">{{ signedCash(r.change) }}</td>
             <td>
-              <button v-if="r.price !== draft" type="button" class="ghost" @click="tryPrice(r.price, 'compared')">Use</button>
+              <button v-if="r.key !== draftKey" type="button" class="ghost" @click="tryPrice(r.price, 'compared', r.rate)">Use</button>
             </td>
           </tr>
         </tbody>

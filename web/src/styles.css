@@ -2797,6 +2797,16 @@ body.modal-open {
   color: var(--muted);
 }
 
+/* The payments app's income streams, under the income they make up. */
+.balance .stream-row th {
+  padding-left: 1.6rem;
+  color: var(--muted);
+}
+
+.balance .stream-row td {
+  font-size: 0.92em;
+}
+
 .balance tfoot th,
 .balance tfoot td {
   font-weight: 700;

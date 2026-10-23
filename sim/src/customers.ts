@@ -42,8 +42,12 @@ export function createCustomers(
     return !!spike && day >= spike.firstDay && (day - spike.firstDay) % spike.every < spike.length;
   }
 
-  /** What the seasonal spike multiplies load and demand by on a day: 1 outside one. */
+  /**
+   * What the seasonal spike multiplies load and demand by on a day: 1 outside one. On the payments app load follows
+   * the day's payments, which also rise on paydays (see Pricing.paymentsMultiplier).
+   */
   function spikeMultiplier(productType: ProductTypeId, day: number): number {
+    if (config.productTypes[productType].transactions) return pricing.paymentsMultiplier(productType, day);
     const spike = config.productTypes[productType].growth.seasonalSpike;
     return spike && inSpike(productType, day) ? spike.loadMultiplier : 1;
   }
@@ -84,7 +88,7 @@ export function createCustomers(
 
   /** Each share of paying users who stop paying in a day, on top of churn, the price's first. Added together. */
   function paidChurnShares(state: GameState, hoursDown: number): number[] {
-    return [pricing.priceChurn(state), support.satisfactionPaidChurn(state), config.outage.paidChurnPerHour * hoursDown];
+    return [pricing.priceChurn(state), support.satisfactionPaidChurn(state), config.outage.paidChurnPerHour * hoursDown * (config.productTypes[state.productType].outageChurnMultiple ?? 1)];
   }
 
   /**

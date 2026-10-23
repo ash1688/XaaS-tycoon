@@ -336,6 +336,7 @@ export async function buildApp(opts: AppOptions) {
       priceWave: sim.priceWave(state),
       priceLockDaysLeft: sim.priceLockDaysLeft(state),
       customerMix: sim.customerMix(state),
+      payments: sim.payments(state),
       conversion: sim.conversion(state),
       ticketsToday: state.ticketsToday,
       burstTickets: state.burstTickets,
@@ -574,22 +575,23 @@ export async function buildApp(opts: AppOptions) {
   );
 
   // What a new price would do, for the price modal's live preview. Changes nothing.
-  app.get<{ Params: { code: string; id: string }; Querystring: { price: number } }>(
+  app.get<{ Params: { code: string; id: string }; Querystring: { price: number; rate?: number } }>(
     "/api/codes/:code/companies/:id/price-preview",
     {
       schema: {
         querystring: {
           type: "object",
           required: ["price"],
-          // The sim checks it against the game's highest price.
-          properties: { price: { type: "number", exclusiveMinimum: 0 } },
+          // The sim checks them against the game's highest price and rate. A £0 fee is only allowed with a rate, on
+          // the payments app, and only it takes a rate: the sim refuses either elsewhere.
+          properties: { price: { type: "number", minimum: 0 }, rate: { type: "number", minimum: 0 } },
         },
       },
     },
     async (req, reply) => {
       const row = await findCompany(req.params.code, req.params.id);
       if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
-      return simOf(row).pricePreview(row.state, req.query.price) satisfies PricePreviewView;
+      return simOf(row).pricePreview(row.state, req.query.price, req.query.rate) satisfies PricePreviewView;
     },
   );
 
@@ -652,8 +654,10 @@ export async function buildApp(opts: AppOptions) {
             from: { enum: [...STAFF_POOLS] },
             // startMigration: the model to move to.
             model: { enum: [...MODEL_IDS] },
-            // setPrice: the monthly price. The sim checks it against the game's highest price.
-            price: { type: "number", exclusiveMinimum: 0 },
+            // setPrice: the monthly price, and on the payments app the share of each payment taken, set together. The
+            // sim checks them against the game's highest, refuses a rate on other products, and a £0 price without one.
+            price: { type: "number", minimum: 0 },
+            rate: { type: "number", minimum: 0 },
             // rentServer and buyServer: the type and size of server. The sim checks the model rents or buys them.
             // setManagedService uses size too, where null turns the cache off; it's refused for the others below.
             server: { enum: [...SERVER_TYPES] },

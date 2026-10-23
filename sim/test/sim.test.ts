@@ -168,6 +168,17 @@ const config: GameConfig = {
       support,
       features,
     },
+    // A fee of £5 plus 1% of £1,000 of payments: £15 a usual month. No paydays or Black Friday unless a test sets them.
+    payments: {
+      name: "Payments",
+      profile: "",
+      growth: { ...growth, dailyGrowth: 0.02 },
+      demand,
+      pricing,
+      support,
+      features,
+      transactions: { fairRate: 0.01, maxRate: 0.2, volumePerPaidUser: 1_000, payday: { firstDay: 28, every: 30, length: 0, multiplier: 1 }, saasFeeRate: 0 },
+    },
   },
   customerTypes: {
     ...defaultConfig.customerTypes,
@@ -362,7 +373,7 @@ describe("launch", () => {
   const fresh = (s: Sim, model: ModelId, productType = "social", takeLoan = false) =>
     s.newGame({ companyName: "Acme", productType, model, seed: 7, takeLoan });
   // Round two's launch users, fixed per product, so the ramp's sums are exact: the default draws each game's from a range.
-  const fixed = { ecommerce: 3_000, social: 4_000, video: 1_600 };
+  const fixed = { ecommerce: 3_000, social: 4_000, video: 1_600, payments: 1_200 };
   const fixedTotals: GameConfig = {
     ...roomyDefaults,
     productTypes: Object.fromEntries(
@@ -2464,6 +2475,8 @@ describe("bank loan", () => {
         addons: 0,
         debt: 0,
         income: 0,
+        feeIncome: 0,
+        transactionIncome: 0,
         borrowed: 17_900,
         raised: 0,
         interest: 0,
@@ -2929,6 +2942,8 @@ describe("game end and summary", () => {
       addons: 0,
       debt: 0,
       income: 0,
+      feeIncome: 0,
+      transactionIncome: 0,
       borrowed: 0,
       raised: 0,
       interest: 0,
@@ -4519,7 +4534,7 @@ describe("provider events and the SaaS feature gap", () => {
     days: 1,
     effects: {
       saas: {
-        featureGap: { growthMultiplier: 0.5, features: { ecommerce: "Own couriers", social: "Custom feeds", video: "Own player" } },
+        featureGap: { growthMultiplier: 0.5, features: { ecommerce: "Own couriers", social: "Custom feeds", video: "Own player", payments: "Own bank" } },
         detail: "Not yours to change.",
       },
     },
@@ -5003,7 +5018,7 @@ describe("pricing and income", () => {
   // Each product with its own free share and fair price.
   const priced = (
     overrides: Partial<GameConfig["pricing"]> = {},
-    freeShares = { ecommerce: 0.4, social: 0.8, video: 0.5 },
+    freeShares = { ecommerce: 0.4, social: 0.8, video: 0.5, payments: 0.5 },
   ) =>
     createSim({
       ...config,
@@ -5012,6 +5027,7 @@ describe("pricing and income", () => {
         ecommerce: { ...config.productTypes.ecommerce, pricing: { fairPrice: 30, freeShare: freeShares.ecommerce, conversionRate: 0, customerMix: allCasual } },
         social: { ...config.productTypes.social, pricing: { fairPrice: 6, freeShare: freeShares.social, conversionRate: 0, customerMix: allCasual } },
         video: { ...config.productTypes.video, pricing: { fairPrice: 9, freeShare: freeShares.video, conversionRate: 0, customerMix: allCasual } },
+        payments: { ...config.productTypes.payments, pricing: { fairPrice: 5, freeShare: freeShares.payments, conversionRate: 0, customerMix: allCasual } },
       },
     });
   const s = priced();
@@ -5041,7 +5057,7 @@ describe("pricing and income", () => {
   });
 
   it("pays nothing for free users", () => {
-    const allFree = priced({}, { ecommerce: 1, social: 1, video: 1 });
+    const allFree = priced({}, { ecommerce: 1, social: 1, video: 1, payments: 1 });
     const { state, log } = allFree.advance(begin(allFree), 10);
     expect(state.paidUsers).toBe(0);
     expect(state.income).toBe(0);
@@ -5093,7 +5109,7 @@ describe("pricing and income", () => {
 
   it("puts load on the servers from free users as well as paying ones", () => {
     const firstDay = (free: number) => {
-      const sm = priced({}, { ecommerce: free, social: free, video: free });
+      const sm = priced({}, { ecommerce: free, social: free, video: free, payments: free });
       // No load noise, so load is exactly users × load per user.
       const video = sm.config.productTypes.video;
       const quiet = createSim({

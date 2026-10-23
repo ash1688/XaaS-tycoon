@@ -216,15 +216,23 @@ function dailyGrowth(sim: Sim, state: GameState): number {
   return Math.max(1, daily);
 }
 
-/** Whether the product's seasonal peak is on any day from tomorrow until servers added today would be ready. */
-function peakSoon(sim: Sim, state: GameState): boolean {
-  const spike = sim.config.productTypes[state.productType].growth.seasonalSpike;
-  if (!spike) return false;
+/**
+ * The biggest peak multiplier on any day from tomorrow until servers added today would be ready: the product's seasonal
+ * peak, and on the payments app, payday too. 1 when neither is due.
+ */
+function peakSoon(sim: Sim, state: GameState): number {
+  const product = sim.config.productTypes[state.productType];
+  const spike = product.growth.seasonalSpike;
+  const payday = product.transactions?.payday;
   const lead = sim.config.models[state.model].servers?.readyDays ?? 0;
+  let peak = 1;
   for (let day = state.day + 1; day <= state.day + lead + 1; day++) {
-    if (day >= spike.firstDay && (day - spike.firstDay) % spike.every < spike.length) return true;
+    if (spike && day >= spike.firstDay && (day - spike.firstDay) % spike.every < spike.length) peak = Math.max(peak, spike.loadMultiplier);
+    if (payday && payday.length > 0 && day >= payday.firstDay && (day - payday.firstDay) % payday.every < payday.length) {
+      peak = Math.max(peak, payday.multiplier);
+    }
   }
-  return false;
+  return peak;
 }
 
 /**
@@ -240,7 +248,7 @@ function plannedUnits(sim: Sim, state: GameState, strategy: Strategy): UnitsView
   const launch = sim.launch(state);
   // Until all its launch users are in, it plans for the most there might be: like a student, it can't see the total.
   const users = launch.status === "launched" ? state.users : Math.max(state.users, product.growth.launchUsersMax);
-  const peak = strategy.scaling === "ahead" && peakSoon(sim, state) ? (product.growth.seasonalSpike?.loadMultiplier ?? 1) : 1;
+  const peak = strategy.scaling === "ahead" ? peakSoon(sim, state) : 1;
   const plan = users * peak * ahead(sim, state);
   const dbu = plan * product.demand.dbuPerUser;
   const cacheable = dbu * sim.config.servers.cacheableShare;
@@ -360,7 +368,10 @@ function buildFeatures(sim: Sim, state: GameState): GameState {
 export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameState {
   let s = state;
   if (s.day === 1 && strategy.priceFactor !== 1) {
-    s = tryAction(sim, s, { type: "setPrice", price: Math.round(sim.fairPrice(s) * strategy.priceFactor * 100) / 100 });
+    // On the payments app the transaction fee moves with the monthly fee.
+    const fairRate = sim.payments(s)?.fairRate;
+    const rate = fairRate === undefined ? {} : { rate: Math.round(fairRate * strategy.priceFactor * 10_000) / 10_000 };
+    s = tryAction(sim, s, { type: "setPrice", price: Math.round(sim.fairPrice(s) * strategy.priceFactor * 100) / 100, ...rate });
   }
   if (strategy.migrateDay !== undefined && s.day >= strategy.migrateDay && s.migrations === 0 && !s.migration) {
     // Only once the quote leaves a month of running costs in the bank.

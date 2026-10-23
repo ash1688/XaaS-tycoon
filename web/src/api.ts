@@ -74,11 +74,13 @@ export const api = {
       `/api/codes/${enc(code)}/companies/${enc(id)}/migration-quote?target=${enc(target)}`,
     ),
 
-  // What a new price would do, for the price modal's live preview. Changes nothing.
-  pricePreview: (code: string, id: string, price: number) =>
+  // What a new price would do, for the price modal's live preview. Changes nothing. On the payments app, with the
+  // transaction fee (a share, 0.02 = 2%) to preview with it.
+  pricePreview: (code: string, id: string, price: number, rate?: number) =>
     request<PricePreviewView>(
       "GET",
-      `/api/codes/${enc(code)}/companies/${enc(id)}/price-preview?price=${enc(String(price))}`,
+      `/api/codes/${enc(code)}/companies/${enc(id)}/price-preview?price=${enc(String(price))}` +
+        (rate === undefined ? "" : `&rate=${enc(String(rate))}`),
     ),
 
   teacherLogin: (password: string) => request<{ ok: true }>("POST", "/api/teacher/login", { password }),
@@ -128,6 +130,8 @@ export const formatCash = (n: number) => money.format(n);
 // For prices under a pound, such as a per-user fee: shows pence only when there are some.
 const price = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", minimumFractionDigits: 2 });
 export const formatPrice = (n: number) => (Number.isInteger(n) ? money.format(n) : price.format(n));
+/** A transaction fee as a percentage, to at most two places: 0.025 is "2.5%". */
+export const formatRate = (rate: number) => `${Math.round(rate * 10_000) / 100}%`;
 
 const count = new Intl.NumberFormat("en-GB");
 export const formatCount = (n: number) => count.format(n);
