@@ -9,6 +9,7 @@ import type {
   EventView,
   FeatureGapView,
   FeatureView,
+  GameLengthId,
   GameSummary,
   LaunchView,
   LoanQuote,
@@ -45,9 +46,21 @@ export interface TimedFlowView {
   seconds: number;
 }
 
+/** A game length a student can pick when starting a company. */
+export interface GameLengthView {
+  id: GameLengthId;
+  /** "180 days", "1 year" or the career's name. */
+  name: string;
+  /** The last day played. */
+  finalDay: number;
+}
+
 export interface MetaView {
   startingCash: number;
+  /** The last day of the shortest game length, 180 by default: the bank loan is repaid by it. */
   finalDay: number;
+  /** The game lengths the preset allows, shortest first: the first is picked unless the student chooses another. */
+  gameLengths: GameLengthView[];
   maxCompanyNameLength: number;
   /** Companies still being played (status "active") that one login code can have at once. */
   maxActiveCompanies: number;
@@ -116,8 +129,14 @@ export interface CompanyView {
   preset: string;
   productType: ProductTypeId;
   model: ModelId;
+  /** The game length picked when the company started. */
+  gameLength: GameLengthId;
+  gameLengthName: string;
   day: number;
+  /** The game length's last day. */
   finalDay: number;
+  /** True once the teacher has ended the game early (its status is then "finished"). */
+  endedByTeacher: boolean;
   cash: number;
   /**
    * "active" while playing. Once the game is over it rejects Continue and actions, and shows its summary: "bankrupt"
@@ -302,6 +321,13 @@ export interface NewCompanyBody {
   model: string;
   /** Take the bank loan at the start, on the terms in MetaView.startLoan. */
   takeLoan?: boolean;
+  /** One of MetaView.gameLengths. Left out, the first of them. */
+  gameLength?: string;
+}
+
+/** How many games a teacher's end request ended: those still being played. */
+export interface EndGamesResult {
+  ended: number;
 }
 
 export type ActionBody = Action;
@@ -329,6 +355,8 @@ export interface TeacherGameView {
   migratingTo: ModelId | null;
   day: number;
   finalDay: number;
+  /** True once the teacher has ended the game early (its status is then "finished"). */
+  endedByTeacher: boolean;
   cash: number;
   users: number;
   /** Percentage of time up across every day played. */

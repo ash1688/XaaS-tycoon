@@ -88,7 +88,7 @@ export function createFinance(config: GameConfig) {
         ],
       };
     }
-    if (day >= config.finalDay) {
+    if (day >= state.finalDay) {
       const text = `Day ${day} was the last: ${state.companyName} made it to the end. See how you did in the summary.`;
       return { state: { ...settled, status: "finished" }, entries: [...entries, { text, cashDelta: 0, kind: "finished" }] };
     }

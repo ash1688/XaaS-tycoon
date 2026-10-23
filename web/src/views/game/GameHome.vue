@@ -233,6 +233,14 @@ const alerts = computed(() => {
         <RouterLink :to="`/play/${game.code}`">start a new company</RouterLink> and try a different plan.
       </p>
     </div>
+    <div v-else-if="game.finished && game.company.endedByTeacher" class="game-end" role="status" data-testid="ended-screen">
+      <span class="badge">Ended</span>
+      <h2>Your teacher ended the game on day {{ game.company.day }}</h2>
+      <p>
+        {{ game.company.name }} is scored as it stood on day {{ game.company.day }} of {{ game.company.finalDay }}. Look
+        at how you did below, then <RouterLink :to="`/play/${game.code}`">go back to your companies</RouterLink>.
+      </p>
+    </div>
     <div v-else-if="game.finished" class="game-end" role="status" data-testid="finished-screen">
       <span class="badge">Finished</span>
       <h2>You made it to day {{ game.company.finalDay }}</h2>

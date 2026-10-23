@@ -107,6 +107,7 @@ function noWaves() {
 const config: GameConfig = {
   startingCash: 1000,
   finalDay: 180,
+  allowedGameLengths: { "180-days": 1, "1-year": 0, career: 0 },
   maxCompanyNameLength: 20,
   // Launches in full on day 1, as the game starts, with the starter setups below in place: the launch tests set their own.
   launch: { rampShares: [1] },
@@ -2483,6 +2484,20 @@ describe("bank loan", () => {
       });
     });
 
+    it("is lent until the last days of the game's own length", () => {
+      const year = createSim({
+        ...config,
+        startingCash: 100_000,
+        allowedGameLengths: { "180-days": 0, "1-year": 1, career: 0 },
+        loan: { ...config.loan, termDays: 120, termPerDay: 0.5, minTermDays: 60 },
+      });
+      const begun = year.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 });
+      expect(begun.finalDay).toBe(365);
+      // Day 300 is past a 180-day game's end, but a year has 65 days left: the usual 60-day term, to day 360.
+      expect(year.loanQuote(year.advance(begun, 299).state)).toMatchObject({ days: 60, lastDay: 360 });
+      expect(year.loanQuote(year.advance(begun, 352).state)).toBeNull();
+    });
+
     it("is shorter, and dearer, taken later", () => {
       const day61 = long.loanQuote(long.advance(startLong(), 60).state)!;
       // 22% over 90 days.
@@ -2562,6 +2577,65 @@ describe("bank loan", () => {
   });
 });
 
+describe("game lengths", () => {
+  const allowing = (lengths: Partial<GameConfig["allowedGameLengths"]>) =>
+    createSim({ ...config, allowedGameLengths: { "180-days": 0, "1-year": 0, career: 0, ...lengths } });
+  const newGame = (s: Sim, gameLength?: string) =>
+    s.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1, gameLength });
+  const rich = (lengths: Partial<GameConfig["allowedGameLengths"]>) =>
+    createSim({ ...config, startingCash: 10_000_000, allowedGameLengths: { "180-days": 0, "1-year": 0, career: 0, ...lengths } });
+
+  it("allows only 180 days by default", () => {
+    const s = createSim();
+    expect(s.config.allowedGameLengths).toEqual({ "180-days": 1, "1-year": 0, career: 0 });
+    expect(newGame(s)).toMatchObject({ gameLength: "180-days", finalDay: 180, endedByTeacher: false });
+    for (const length of ["1-year", "career"]) {
+      expect(() => newGame(s, length)).toThrow(expect.objectContaining({ code: "game_length_not_allowed" }));
+    }
+  });
+
+  it("starts a game of any allowed length, with its final day", () => {
+    const s = allowing({ "180-days": 1, "1-year": 1, career: 1 });
+    expect(newGame(s, "180-days")).toMatchObject({ gameLength: "180-days", finalDay: 180 });
+    expect(newGame(s, "1-year")).toMatchObject({ gameLength: "1-year", finalDay: 365 });
+    expect(newGame(s, "career")).toMatchObject({ gameLength: "career", finalDay: 47 * 365 });
+  });
+
+  it("starts on the first allowed length when none is picked, and refuses one it doesn't know", () => {
+    const s = allowing({ "1-year": 1, career: 1 });
+    expect(newGame(s)).toMatchObject({ gameLength: "1-year" });
+    expect(() => newGame(s, "180-days")).toThrow(/game length your teacher allows: 1 year, Career/);
+    expect(() => newGame(s, "forever")).toThrow(expect.objectContaining({ code: "game_length_not_allowed" }));
+  });
+
+  it("ends a 1-year game on day 365 and a career after 47 years", () => {
+    const s = rich({ "1-year": 1, career: 1 });
+    const year = s.advance(newGame(s, "1-year"), 400);
+    expect(year.state).toMatchObject({ day: 365, status: "finished" });
+    expect(year.log.at(-1)!.entries.at(-1)!.text).toMatch(/Day 365 was the last/);
+    expect(s.summarise(year.state)).toMatchObject({ ending: "completed", gameLength: "1-year", finalDay: 365 });
+
+    const career = newGame(s, "career");
+    const nearlyRetired = s.advance({ ...career, day: 47 * 365 - 2 }, 1).state;
+    expect(nearlyRetired).toMatchObject({ day: 47 * 365 - 1, status: "playing" });
+    expect(s.advance(nearlyRetired, 10).state).toMatchObject({ day: 17_155, status: "finished" });
+  });
+
+  it("lets the teacher end a game early, as it stands, with its summary", () => {
+    const s = rich({ "1-year": 1 });
+    const { state } = s.advance(newGame(s, "1-year"), 40);
+    const ended = s.endGame(state);
+    expect(ended).toMatchObject({ day: 41, cash: state.cash, status: "finished", endedByTeacher: true });
+    expect(s.summarise(ended)).toMatchObject({ ending: "ended", day: 41, finalDay: 365, cash: state.cash });
+    expect(() => s.advance(ended)).toThrow(/Your teacher ended Acme early/);
+    expect(() => s.applyAction(ended, { type: "hire", pool: "ops" })).toThrow(expect.objectContaining({ code: "finished" }));
+    // Ending a game that is already over leaves it as it was.
+    expect(s.endGame(ended)).toEqual(ended);
+    const bankrupt = { ...state, status: "bankrupt" } as GameState;
+    expect(s.endGame(bankrupt)).toEqual(bankrupt);
+  });
+});
+
 describe("game end and summary", () => {
   // A 30-day game, with cash for two migrations. IaaS costs 20 a day and £100 upfront; PaaS 30 a day. A loan's term
   // ends on the final day.
@@ -2607,12 +2681,19 @@ describe("game end and summary", () => {
     }
   });
 
-  it("ends a game saved past the final day, such as one played under a longer config", () => {
+  it("keeps the final day a game started with, whatever config loads it later", () => {
     const longer = sim.advance(sim.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1 }), 39);
-    expect(longer.state).toMatchObject({ day: 40, status: "playing" });
-    expect(s.load(longer.state).status).toBe("finished");
-    expect(() => s.advance(longer.state)).toThrow(expect.objectContaining({ code: "finished" }));
-    expect(s.summarise(longer.state).ending).toBe("completed");
+    expect(longer.state).toMatchObject({ day: 40, finalDay: 180, status: "playing" });
+    expect(s.load(longer.state).status).toBe("playing");
+    expect(s.advance(longer.state).state).toMatchObject({ day: 41, status: "playing" });
+  });
+
+  it("ends a game saved on or past its final day", () => {
+    const { state } = s.advance(begin(), 10);
+    const saved = { ...state, day: 30, status: "playing" } as GameState;
+    expect(s.load(saved).status).toBe("finished");
+    expect(() => s.advance(saved)).toThrow(expect.objectContaining({ code: "finished" }));
+    expect(s.summarise(saved).ending).toBe("completed");
   });
 
   it("counts going bankrupt on the final day as bankrupt", () => {

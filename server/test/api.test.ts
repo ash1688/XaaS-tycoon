@@ -672,6 +672,92 @@ describe("games from an older version", () => {
   });
 });
 
+describe("game lengths", () => {
+  const ALL_LENGTHS = { "allowedGameLengths.1-year": 1, "allowedGameLengths.career": 1 };
+
+  it("offers only 180 days by default, and refuses a length the preset doesn't allow", async () => {
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.gameLengths).toEqual([{ id: "180-days", name: "180 days", finalDay: 180 }]);
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    expect(company).toMatchObject({ gameLength: "180-days", gameLengthName: "180 days", finalDay: 180, endedByTeacher: false });
+    const refused = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "iaas", gameLength: "1-year" });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toMatchObject({ error: "game_length_not_allowed", message: expect.stringContaining("180 days") });
+  });
+
+  it("starts a game of a length the preset allows, which keeps its final day", async () => {
+    await useOverrides(ALL_LENGTHS);
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.gameLengths.map((l) => [l.id, l.finalDay])).toEqual([
+      ["180-days", 180],
+      ["1-year", 365],
+      ["career", 17_155],
+    ]);
+    const code = await newCode();
+    const created = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "iaas", gameLength: "1-year" });
+    expect(created.statusCode).toBe(201);
+    expect(created.json<CompanyView>()).toMatchObject({ gameLength: "1-year", finalDay: 365 });
+    const career = (await newCompany(code, { name: "Lifer", productType: "social", model: "saas", gameLength: "career" })).json<CompanyView>();
+    expect(career).toMatchObject({ gameLength: "career", finalDay: 17_155 });
+    const games = (await app.inject({ method: "GET", url: "/api/teacher/games", cookies: await teacherCookie() })).json<TeacherGamesView>();
+    expect(games.codes[0]!.companies.map((c) => c.finalDay).sort()).toEqual([17_155, 365]);
+  });
+
+  it("lets the teacher end one game, which then shows its summary and can't be played", async () => {
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    await app.inject({ method: "POST", url: `${url}/continue` });
+    const endUrl = `/api/teacher/companies/${company.id}/end`;
+    expect((await app.inject({ method: "POST", url: endUrl })).statusCode).toBe(401);
+    const cookies = await teacherCookie();
+    const ended = await app.inject({ method: "POST", url: endUrl, cookies });
+    expect(ended.statusCode).toBe(200);
+    expect(ended.json()).toEqual({ ended: 1 });
+    const after = (await app.inject({ method: "GET", url })).json<CompanyView>();
+    expect(after).toMatchObject({ status: "finished", endedByTeacher: true, day: 2 });
+    const summary = (await app.inject({ method: "GET", url: `${url}/summary` })).json<SummaryView>();
+    expect(summary).toMatchObject({ ending: "ended", day: 2, finalDay: 180 });
+    const next = await app.inject({ method: "POST", url: `${url}/continue` });
+    expect(next.statusCode).toBe(409);
+    expect(next.json()).toMatchObject({ error: "finished", message: expect.stringContaining("Your teacher ended Acme early") });
+    // Ending it again ends nothing more.
+    expect((await app.inject({ method: "POST", url: endUrl, cookies })).json()).toEqual({ ended: 0 });
+    const games = (await app.inject({ method: "GET", url: "/api/teacher/games", cookies })).json<TeacherGamesView>();
+    expect(games.codes[0]!.companies[0]).toMatchObject({ status: "finished", endedByTeacher: true });
+    for (const id of ["00000000-0000-0000-0000-000000000000", "nope"]) {
+      expect((await app.inject({ method: "POST", url: `/api/teacher/companies/${id}/end`, cookies })).statusCode).toBe(404);
+    }
+  });
+
+  it("lets the teacher end every game still being played under a code, leaving others alone", async () => {
+    const code = await newCode();
+    const other = await newCode();
+    const ids: string[] = [];
+    for (const name of ["One", "Two", "Retired"]) {
+      ids.push((await newCompany(code, { name, productType: "ecommerce", model: "iaas" })).json<CompanyView>().id);
+    }
+    await app.inject({ method: "POST", url: `/api/codes/${code}/companies/${ids[2]}/retire` });
+    const elsewhere = (await newCompany(other)).json<CompanyView>();
+    const cookies = await teacherCookie();
+    expect((await app.inject({ method: "POST", url: `/api/teacher/codes/${code}/end` })).statusCode).toBe(401);
+    const ended = await app.inject({ method: "POST", url: `/api/teacher/codes/${code}/end`, cookies });
+    expect(ended.json()).toEqual({ ended: 2 });
+    const list = (await app.inject({ method: "GET", url: `/api/codes/${code}` })).json<{ companies: CompanyView[] }>();
+    expect(Object.fromEntries(list.companies.map((c) => [c.name, [c.status, c.endedByTeacher]]))).toEqual({
+      One: ["finished", true],
+      Two: ["finished", true],
+      Retired: ["retired", false],
+    });
+    const untouched = (await app.inject({ method: "GET", url: `/api/codes/${other}/companies/${elsewhere.id}` })).json<CompanyView>();
+    expect(untouched.status).toBe("active");
+    // Ended games are history, so they don't count towards the limit.
+    expect((await newCompany(code, { name: "Again", productType: "ecommerce", model: "iaas" })).statusCode).toBe(201);
+    expect((await app.inject({ method: "POST", url: "/api/teacher/codes/99999999/end", cookies })).statusCode).toBe(404);
+  });
+});
+
 describe("users, capacity and uptime", () => {
   async function setup() {
     const code = await newCode();

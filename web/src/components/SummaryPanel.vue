@@ -37,6 +37,9 @@ const biggest = computed(() =>
       <template v-else-if="summary.ending === 'bankrupt'">
         Ran out of cash on day {{ summary.day }} of {{ summary.finalDay }}
       </template>
+      <template v-else-if="summary.ending === 'ended'">
+        Ended by the teacher on day {{ summary.day }} of {{ summary.finalDay }}
+      </template>
       <template v-else-if="retired">Retired on day {{ summary.day }} of {{ summary.finalDay }}</template>
       <template v-else>So far: day {{ summary.day }} of {{ summary.finalDay }}</template>
       · ended on {{ modelName }}
