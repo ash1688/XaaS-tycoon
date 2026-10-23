@@ -329,7 +329,9 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
     }
     // A paying user is worth less for paying less than the fair price, so a give-away price can't inflate it either.
     const users = Math.round(paidUsers);
-    const fair = config.productTypes[state.productType].pricing.fairPrice;
+    // On the payments app, what a usual month costs a business at the fair fee and rate.
+    const { pricing: fairPricing, transactions: tx } = config.productTypes[state.productType];
+    const fair = fairPricing.fairPrice + (tx ? tx.fairRate * tx.volumePerPaidUser : 0);
     const perUser = v.valuePerPayingUser * Math.min(1, monthlyPerUser === null ? 1 : monthlyPerUser / fair);
     drivers.push({
       id: "payingUsers",

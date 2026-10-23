@@ -8,6 +8,7 @@ import {
   type StaffPool,
 } from "./config.ts";
 import type { Features } from "./features.ts";
+import type { Pricing } from "./pricing.ts";
 import { pounds } from "./finance.ts";
 import { nextRandom, seedRng } from "./rng.ts";
 import type { GameState, LogEntry, RivalJoin, RivalState } from "./state.ts";
@@ -67,9 +68,13 @@ interface Contender {
  * Rivals answer the student's price after a delay, sometimes undercutting it, and can take on staff the student lets
  * go. They never run out of money.
  */
-export function createRivals(config: GameConfig, features: Features) {
+export function createRivals(config: GameConfig, features: Features, pricing: Pricing) {
   const rivalConfigs = (productType: ProductTypeId): RivalConfig[] => config.productTypes[productType].rivals ?? [];
-  const fairPrice = (productType: ProductTypeId) => config.productTypes[productType].pricing.fairPrice;
+  // Prices are what a usual month costs a customer: on the payments app, the fee and the transaction fee together.
+  const fairPrice = (productType: ProductTypeId) => pricing.fairMonthly(productType);
+  /** The student's price in a change, as a usual month's cost. */
+  const changed = (state: GameState, price: number, rate: number | undefined) =>
+    pricing.monthly(state.productType, price, rate ?? state.transactionRate);
   const penny = (n: number) => Math.round(n * 100) / 100;
   const clamp = (n: number, low: number, high: number) => Math.min(high, Math.max(low, n));
 
@@ -130,7 +135,7 @@ export function createRivals(config: GameConfig, features: Features) {
   function contenders(state: GameState): Contender[] {
     const configs = rivalConfigs(state.productType);
     return [
-      { price: state.price, quality: studentQuality(state) },
+      { price: pricing.monthlyNow(state), quality: studentQuality(state) },
       ...state.rivals.map((rival, i) => ({ price: rival.price, quality: rivalQuality(state, configs[i]!, rival) })),
     ];
   }
@@ -195,8 +200,9 @@ export function createRivals(config: GameConfig, features: Features) {
 
   /** The student's price in force on a day: the latest change made by then, or the price before any change. */
   function priceOn(state: GameState, day: number): number {
-    let price = state.priceChanges[0]?.from ?? state.price;
-    for (const c of state.priceChanges) if (c.day <= day) price = c.to;
+    const first = state.priceChanges[0];
+    let price = first ? changed(state, first.from, first.fromRate) : pricing.monthlyNow(state);
+    for (const c of state.priceChanges) if (c.day <= day) price = changed(state, c.to, c.toRate);
     return price;
   }
 
@@ -285,7 +291,7 @@ export function createRivals(config: GameConfig, features: Features) {
         name: state.companyName,
         blurb: "",
         you: true,
-        price: state.price,
+        price: Math.round(pricing.monthlyNow(state) * 100) / 100,
         quality: round1(list[0]!.quality),
         features: features.activeCount(state),
         uptime: round1(studentUptime(state)),
@@ -317,7 +323,7 @@ export function createRivals(config: GameConfig, features: Features) {
     // The latest change whose answer is still to come.
     const pending = [...state.priceChanges].reverse().find((c) => c.day + config.rivals.reactionDays > state.day);
     const nextReaction =
-      state.rivals.length && pending ? { day: pending.day + config.rivals.reactionDays, price: pending.to } : null;
+      state.rivals.length && pending ? { day: pending.day + config.rivals.reactionDays, price: Math.round(changed(state, pending.to, pending.toRate) * 100) / 100 } : null;
     return {
       companies,
       byType,

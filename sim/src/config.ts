@@ -4,7 +4,7 @@ import type { LayerId } from "./responsibility.ts";
 export const MODEL_IDS = ["onprem", "iaas", "paas", "saas"] as const;
 export type ModelId = (typeof MODEL_IDS)[number];
 
-export const PRODUCT_TYPE_IDS = ["ecommerce", "social", "video"] as const;
+export const PRODUCT_TYPE_IDS = ["ecommerce", "social", "video", "payments"] as const;
 export type ProductTypeId = (typeof PRODUCT_TYPE_IDS)[number];
 
 /** Customer types, from the least willing to pay to the most. Saved in game state, so don't rename. */
@@ -469,6 +469,16 @@ export interface ProductTypeConfig {
   moderation?: ProductModeration;
   /** The one or two rivals in the product's market (see RivalsConfig). Empty for none. */
   rivals: RivalConfig[];
+  /**
+   * A share of every payment its paying users take, on top of the monthly price: the payments app. Left out, the
+   * product earns only the monthly price.
+   */
+  transactions?: ProductTransactionsConfig;
+  /**
+   * Paying users lost to each hour down are multiplied by this (2 = twice as many as other products). Left out, 1. A
+   * payments app's businesses can't take money while it's down, so they leave fastest.
+   */
+  outageChurnMultiple?: number;
 }
 
 /**
@@ -544,6 +554,36 @@ export interface RivalsConfig {
   /** How much each customer type cares about price, and about quality (see RivalsConfig). */
   priceWeight: Record<CustomerTypeId, number>;
   qualityWeight: Record<CustomerTypeId, number>;
+}
+
+/**
+ * A product that earns a share of each payment its users take, as well as a monthly fee. The student sets the fee
+ * and the rate together, as one price change. Customers judge the two together, as what a usual month costs them:
+ * fee + rate × volumePerPaidUser, the product's monthly price for every price reaction, threshold and the fair
+ * price (fairPrice + fairRate × volumePerPaidUser). So a rise in either is a rise, and moving money from one to the
+ * other changes nothing for them.
+ *
+ * The rate's income follows each day's payments: a usual day's share of the month, more on paydays and on Black
+ * Friday (the product's seasonal spike), and none for the hours the product is down. Paydays only move money within
+ * the month, so a payday cycle earns what the same days at a steady volume would.
+ */
+export interface ProductTransactionsConfig {
+  /** The share of each payment a new company takes (0.02 = 2%): with the fair price, what users think it's worth. */
+  fairRate: number;
+  /** The highest rate a student can set. */
+  maxRate: number;
+  /** What each paying user takes in payments in a usual month, in pounds. */
+  volumePerPaidUser: number;
+  /**
+   * Payday: a few busy days each month when people have just been paid. Payments, and the load they bring, are
+   * multiplied by `multiplier` on those days and lowered on the others so a cycle averages out.
+   */
+  payday: { firstDay: number; every: number; length: number; multiplier: number };
+  /**
+   * On SaaS the platform takes the payments for you, and charges this share of every payment (0.009 = 0.9%) as
+   * infrastructure, whatever fee and rate you charge.
+   */
+  saasFeeRate: number;
 }
 
 /**
@@ -1650,6 +1690,92 @@ export const defaultConfig: GameConfig = {
         { id: "reelhaus", name: "Reelhaus", blurb: "The big established video site.", priceStance: 0.95, startingUsers: 8_000, maxUsers: 20_000, dailyGrowth: 0.01, features: 2, featureEveryDays: 55, uptime: 99.5 },
       ],
     },
+    payments: {
+      name: "Payments app",
+      profile: "Businesses pay a fee plus a cut of every payment",
+      // Few users, each worth a lot: a business pays about six times what a shopper does. A small start that grows
+      // quickly to a small market, so like the social network it pays its way from about day 45–65 on every model.
+      growth: {
+        launchUsersMin: 380,
+        launchUsersMax: 950,
+        marketSize: 4_000,
+        dailyGrowth: 0.045,
+        growthNoise: 0.3,
+        loadPerUser: 6,
+        loadNoise: 0.1,
+        // Black Friday (on the calendar) is shoppers' busiest weekend, so the businesses' payments and load jump.
+      },
+      // Every payment is checked and written to a ledger: heavy on the database.
+      demand: { cuPerUser: 0.012, dbuPerUser: 0.015 },
+      // Free users are businesses still in test mode: set up, but not yet taking real payments. Mostly businesses
+      // and professionals, who put up with a dear price but leave rather than go free.
+      pricing: {
+        fairPrice: 10,
+        freeShare: 0.5,
+        conversionRate: 0.0012,
+        customerMix: { casual: 0.05, enthusiasts: 0.1, professionals: 0.25, businesses: 0.6 },
+      },
+      // Money going missing is urgent: businesses raise a lot of tickets.
+      support: { ticketsPerPaidUser: 0.02, ticketsPerFreeUser: 0.006 },
+      features: [
+        {
+          id: "invoices",
+          name: "Invoices and payment links",
+          blurb: "Businesses send a link and get paid.",
+          devDays: 12,
+          growthMultiplier: 1.08,
+          addonPricePerUser: 0.15,
+        },
+        {
+          id: "fraud",
+          name: "Fraud checks",
+          blurb: "Stops stolen cards before the money moves.",
+          devDays: 24,
+          growthMultiplier: 1.15,
+          addonPricePerUser: 0.3,
+        },
+        {
+          id: "payouts",
+          name: "Instant payouts",
+          blurb: "Businesses get their money the same day.",
+          devDays: 20,
+          growthMultiplier: 1.12,
+          addonPricePerUser: 0.25,
+        },
+        {
+          id: "subscriptions",
+          name: "Subscription billing",
+          blurb: "Charges customers every month without them lifting a finger.",
+          devDays: 30,
+          growthMultiplier: 1.2,
+          addonPricePerUser: 0.35,
+        },
+      ],
+      // Shops, booking sites and accounting software take payments and check refunds through it.
+      api: {
+        name: "Payments API",
+        blurb: "Other businesses' apps and websites take payments and issue refunds through yours.",
+        price: 4_000,
+        callsPerPaidUser: 10,
+      },
+      // A fee of £10 a month plus 2% of £1,000 of payments: £30 a month to a usual business.
+      transactions: {
+        fairRate: 0.02,
+        maxRate: 0.2,
+        volumePerPaidUser: 1_000,
+        payday: { firstDay: 28, every: 30, length: 3, multiplier: 1.3 },
+        // The SaaS platform's per-user fee is tiny next to what a business pays, so its fee on each payment is the price
+        // of SaaS here: nearly half of what the fair rate takes.
+        saasFeeRate: 0.009,
+      },
+      outageChurnMultiple: 2,
+      // Prices compared as a usual month (fee + transaction fee, £30 at fair): a cheap one for small sellers, and an
+      // established one businesses trust.
+      rivals: [
+        { id: "paypebble", name: "PayPebble", blurb: "Cheap and simple, for small sellers.", priceStance: 0.85, startingUsers: 900, maxUsers: 3_000, dailyGrowth: 0.012, features: 1, featureEveryDays: 50, uptime: 99 },
+        { id: "ledgerline", name: "Ledgerline", blurb: "Established and dear; businesses trust it.", priceStance: 1.2, startingUsers: 700, maxUsers: 2_500, dailyGrowth: 0.01, features: 2, featureEveryDays: 60, uptime: 99.9 },
+      ],
+    },
   },
   // Casual users react at the fair price, as everyone did in the alpha; the others put up with more, and go free less.
   customerTypes: {
@@ -1777,6 +1903,8 @@ export const defaultConfig: GameConfig = {
       ecommerce: { users: 18_000, annualRevenue: 1_000_000, payingUsers: 16_000 },
       social: { users: 36_000, annualRevenue: 1_250_000, payingUsers: 21_000 },
       video: { users: 18_000, annualRevenue: 1_250_000, payingUsers: 12_000 },
+      // A small market of businesses, each worth about £30 a month: revenue comes from few payers.
+      payments: { users: 3_600, annualRevenue: 900_000, payingUsers: 2_400 },
     },
     recordDays: 30,
     minUptime: 99,
@@ -1957,6 +2085,11 @@ export const defaultConfig: GameConfig = {
         start: { anchor: "blackFriday", offset: 0 },
         days: 4,
         effects: {
+          payments: {
+            loadMultiplier: 2.2,
+            growthMultiplier: 1.5,
+            detail: "Shoppers' busiest weekend: your businesses take more than twice their usual payments, and the load with them.",
+          },
           ecommerce: {
             loadMultiplier: 2.2,
             growthMultiplier: 2.5,
@@ -2113,6 +2246,7 @@ export const defaultConfig: GameConfig = {
               ecommerce: "delivery options built around your own couriers",
               social: "a feed that ranks posts your way",
               video: "your own video player",
+              payments: "payouts through your own bank partner",
             },
           },
           detail:

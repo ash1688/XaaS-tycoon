@@ -239,14 +239,21 @@ function dailyGrowth(sim: Sim, state: GameState): number {
 /**
  * What holidays multiply the product's load by at their busiest from tomorrow until servers added today would be
  * ready: 1 with none due. Planning ahead, it counts holidays still to start (a student sees them coming on the
- * calendar); reacting, only one already on, as a student sees from the load.
+ * calendar); reacting, only one already on, as a student sees from the load. On the payments app, planning ahead
+ * also covers a payday due in that time.
  */
 function peakSoon(sim: Sim, state: GameState, ahead: boolean): number {
   const lead = sim.config.models[state.model].servers?.readyDays ?? 0;
   const last = state.day + lead + 1;
   const { on, upcoming } = sim.calendar(state);
   const due = [...on.filter((h) => h.endDay > state.day), ...(ahead ? upcoming.filter((h) => h.startDay <= last) : [])];
-  return Math.max(1, ...due.map((h) => h.effect?.loadMultiplier ?? 1));
+  const holiday = Math.max(1, ...due.map((h) => h.effect?.loadMultiplier ?? 1));
+  const payday = sim.config.productTypes[state.productType].transactions?.payday;
+  let pay = 1;
+  for (let day = state.day + 1; ahead && payday && payday.length > 0 && day <= last; day++) {
+    if (day >= payday.firstDay && (day - payday.firstDay) % payday.every < payday.length) pay = Math.max(pay, payday.multiplier);
+  }
+  return holiday * pay;
 }
 
 /**
@@ -382,7 +389,10 @@ function buildFeatures(sim: Sim, state: GameState): GameState {
 export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameState {
   let s = state;
   if (s.day === 1 && strategy.priceFactor !== 1) {
-    s = tryAction(sim, s, { type: "setPrice", price: Math.round(sim.fairPrice(s) * strategy.priceFactor * 100) / 100 });
+    // On the payments app the transaction fee moves with the monthly fee.
+    const fairRate = sim.payments(s)?.fairRate;
+    const rate = fairRate === undefined ? {} : { rate: Math.round(fairRate * strategy.priceFactor * 10_000) / 10_000 };
+    s = tryAction(sim, s, { type: "setPrice", price: Math.round(sim.fairPrice(s) * strategy.priceFactor * 100) / 100, ...rate });
   }
   if (strategy.migrateDay !== undefined && s.day >= strategy.migrateDay && s.migrations === 0 && !s.migration) {
     // Only once the quote leaves a month of running costs in the bank.

@@ -29,7 +29,7 @@ const LIGHT_DEMAND = { cuPerUser: 0.0005, dbuPerUser: 0.0005 };
 // the balance pass and launch day), pinned so that tuning the defaults doesn't change them. Each game launches as it
 // starts, with its starter setup in place and its launch users there; the launch tests change that with an override.
 const UNITS = { small: 10, medium: 15, large: 20, massive: 25 };
-const STARTING_USERS = { ecommerce: 2000, social: 1000, video: 1000 };
+const STARTING_USERS = { ecommerce: 2000, social: 1000, video: 1000, payments: 1000 };
 const sim = createSim({
   ...defaultConfig,
   startingCash: 1000,
@@ -3112,7 +3112,7 @@ describe("meta", () => {
   it("lists product types and models from config", async () => {
     const res = await app.inject({ method: "GET", url: "/api/meta" });
     const meta = res.json();
-    expect(meta.productTypes.map((p: { id: string }) => p.id)).toEqual(["ecommerce", "social", "video"]);
+    expect(meta.productTypes.map((p: { id: string }) => p.id)).toEqual(["ecommerce", "social", "video", "payments"]);
     expect(meta.models.map((m: { id: string }) => m.id)).toEqual(["onprem", "iaas", "paas", "saas"]);
     expect(meta.startingCash).toBe(1000);
   });
@@ -3346,6 +3346,49 @@ describe("pricing and income", () => {
     expect(company.priceWave).toMatchObject({ day: 1, remaining: body.days.length - 1 });
     expect(company.priceWave!.done).toMatchObject({ left: body.days[0]!.left, toFree: body.days[0]!.toFree });
     expect((await preview(fairPrice)).json<PricePreviewView>()).toMatchObject({ locked: true });
+  });
+
+  it("sets the payments app's fee and transaction fee as one change, with one lock, and shows both income streams", async () => {
+    const overrides = { "productTypes.payments.pricing.freeShare": 0.5, "pricing.riseStrength": 0, "pricing.priceChurn": 0 };
+    await useOverrides(overrides);
+    const code = await newCode();
+    const created = (await newCompany(code, { name: "Pay Co", productType: "payments", model: "saas" })).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${created.id}`;
+    const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
+    const { transactions: tx, pricing } = sim.config.productTypes.payments;
+    expect(created).toMatchObject({ price: pricing.fairPrice, paidUsers: 500 });
+    expect(created.payments).toMatchObject({ fee: pricing.fairPrice, rate: tx!.fairRate, monthly: 30, fairMonthly: 30 });
+    expect(created.customerMix).toMatchObject({ price: 30, includesRate: true });
+
+    // The preview takes both: +£5 a usual month by the rate alone.
+    const preview = (await app.inject({ method: "GET", url: `${url}/price-preview?price=10&rate=0.025` })).json<PricePreviewView>();
+    expect(preview).toMatchObject({ price: 10, rate: 0.025, currentRate: 0.02, monthly: 35, currentMonthly: 30, direction: "rise" });
+    // A £0 fee is fine with a rate here, but no rate is refused on another product.
+    expect((await app.inject({ method: "GET", url: `${url}/price-preview?price=0&rate=0.03` })).statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: `${url}/price-preview?price=10&rate=-1` })).statusCode).toBe(400);
+
+    const set = await act({ type: "setPrice", price: 12, rate: 0.025 });
+    expect(set.statusCode).toBe(200);
+    const company = set.json<CompanyView>();
+    expect(company).toMatchObject({ price: 12, priceLockDaysLeft: sim.config.pricing.lockDays });
+    expect(company.payments).toMatchObject({ fee: 12, rate: 0.025, monthly: 37 });
+    expect(company.priceWave).toMatchObject({ from: 10, to: 12, fromRate: 0.02, toRate: 0.025 });
+    // One lock for both.
+    expect((await act({ type: "setPrice", price: 12, rate: 0.03 })).json()).toMatchObject({ error: "price_locked" });
+
+    const { company: after, log } = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    const incomes = log[0]!.entries.filter((e) => e.kind === "income");
+    expect(incomes.map((e) => e.stream)).toEqual(["fees", "transactions"]);
+    expect(incomes[0]).toMatchObject({ text: "Income: 500 paying users at £12 a month fee", cashDelta: 200 });
+    expect(incomes[1]!.text).toMatch(/^Transaction fees: 2\.5% of £[\d,]+ of payments/);
+    expect(after.payments).toMatchObject({ feeIncome: 200, transactionIncome: incomes[1]!.cashDelta });
+    const summary = (await app.inject({ method: "GET", url: `${url}/summary` })).json<SummaryView>();
+    expect(summary.income).toBe(200 + incomes[1]!.cashDelta);
+
+    // Other products take no rate.
+    const shop = await setup();
+    expect(shop.company.payments).toBeNull();
+    expect((await shop.act({ type: "setPrice", price: 10, rate: 0.02 })).json()).toMatchObject({ error: "no_transaction_rate" });
   });
 
   it("validates the preview's price", async () => {

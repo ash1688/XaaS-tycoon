@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { SPEND_CATEGORIES } from "@xaas/sim";
-import { CATEGORY_LABELS, formatCash } from "../api";
+import { CATEGORY_LABELS, formatCash, formatRate } from "../api";
 import { useGame } from "../game";
 
 // The balance sheet: income against costs by category, and the profit or loss they leave, for the last day played
@@ -23,6 +23,21 @@ const dayCostsForProfit = computed(() => game.summary?.incomeVsCosts.at(-1)?.cos
 const dayPrincipal = computed(() => dayCosts.value - dayCostsForProfit.value);
 const dayProfit = computed(() => (lastDay.value ? lastDay.value.income - dayCostsForProfit.value : 0));
 const signed = (n: number) => (n < 0 ? `−${formatCash(-n)}` : formatCash(Math.abs(n)));
+// The payments app's two income streams, for the day and so far, and anything else coming in (a paid API).
+const payments = computed(() => game.company?.payments ?? null);
+const streams = computed(() => {
+  const c = game.company;
+  const p = payments.value;
+  if (!c || !p) return [];
+  const day = lastDay.value;
+  const dayOther = (day?.income ?? 0) - (day?.feeIncome ?? 0) - (day?.transactionIncome ?? 0);
+  const other = c.income - p.feeIncome - p.transactionIncome;
+  return [
+    { id: "fees", label: "Monthly fees", day: day?.feeIncome ?? 0, total: p.feeIncome },
+    { id: "transactions", label: "Transaction fees", day: day?.transactionIncome ?? 0, total: p.transactionIncome },
+    ...(other || dayOther ? [{ id: "other", label: "API calls", day: dayOther, total: other }] : []),
+  ];
+});
 </script>
 
 <template>
@@ -47,6 +62,11 @@ const signed = (n: number) => (n < 0 ? `−${formatCash(-n)}` : formatCash(Math.
             <th scope="row">Income</th>
             <td class="num pos" data-testid="balance-day-income">{{ formatCash(lastDay?.income ?? 0) }}</td>
             <td class="num pos" data-testid="balance-income">{{ formatCash(game.company.income) }}</td>
+          </tr>
+          <tr v-for="s in streams" :key="s.id" class="stream-row" :data-testid="`balance-stream-${s.id}`">
+            <th scope="row">of which {{ s.label.toLowerCase() }}</th>
+            <td class="num pos">{{ formatCash(s.day) }}</td>
+            <td class="num pos" :data-testid="`balance-stream-${s.id}-total`">{{ formatCash(s.total) }}</td>
           </tr>
           <tr v-for="c in SPEND_CATEGORIES" :key="c" :class="['cost-row', `cat-${c}`]">
             <th scope="row"><span class="swatch" aria-hidden="true"></span>{{ CATEGORY_LABELS[c] }}</th>
@@ -77,6 +97,11 @@ const signed = (n: number) => (n < 0 ? `−${formatCash(-n)}` : formatCash(Math.
         </tfoot>
       </table>
     </div>
+    <p v-if="payments" class="muted" data-testid="balance-streams-note">
+      A payments app earns two ways: a monthly fee from each paying business, and
+      {{ formatRate(payments.rate) }} of every payment they take. Transaction fees follow the payments: more on paydays
+      and Black Friday, none while you're down.
+    </p>
     <p class="muted">
       Income is what paying users pay, a day's share of the monthly price each. Profit is income less every cost. Day 1
       includes any upfront cost of your model. Debt is bank loan repayments, part paying back what you

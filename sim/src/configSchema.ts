@@ -224,6 +224,17 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     const product = base.productTypes[p];
     if (!product) continue;
     add(`productTypes.${p}.pricing.fairPrice`, "Money", product.name, "Fair price", "The monthly price users think it's worth, and where a new company starts.", range(0.01, 10_000, 0.01));
+    const tx = product.transactions;
+    if (!tx) continue;
+    const t = `productTypes.${p}.transactions`;
+    add(`${t}.fairRate`, "Money", product.name, "Fair transaction fee", "The share of each payment users think is fair to take (0.02 = 2%), on top of the fair monthly fee, and where a new company starts.", range(0, 1, 0.001));
+    add(`${t}.maxRate`, "Money", product.name, "Highest transaction fee", "The most of each payment a student can take (0.2 = 20%).", range(0, 1, 0.01));
+    add(`${t}.volumePerPaidUser`, "Money", product.name, "Payments per paying user a month", "What each paying user takes in payments in a usual month. Customers judge the fee plus the transaction fee's share of this.", range(0, 1_000_000, 10));
+    add(`${t}.payday.firstDay`, "Money", product.name, "Payday: first day", "The day the first payday rush starts.", GAME_DAY);
+    add(`${t}.payday.every`, "Money", product.name, "Payday: every (days)", "Days from one payday rush to the next.", GAME_DAY);
+    add(`${t}.payday.length`, "Money", product.name, "Payday: length (days)", "How many days each payday rush lasts. 0 for none.", range(0, 365, 1));
+    add(`${t}.saasFeeRate`, "Money", product.name, "SaaS platform's fee per payment", "On SaaS the platform takes the payments for you and charges this share of every payment (0.009 = 0.9%) as infrastructure, whatever you charge.", range(0, 1, 0.001));
+    add(`${t}.payday.multiplier`, "Money", product.name, "Payday: payments multiplier", "Payments, and the load they bring, are multiplied by this on payday; the other days are lowered so a month averages out.", MULTIPLIER);
   }
   for (const p of PRODUCT_TYPE_IDS) {
     for (const f of base.productTypes[p]?.features ?? []) {
@@ -272,6 +283,11 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   }
   add("outage.growthMultiplier", "Customers", "", "Growth on an outage day", "Growth is multiplied by this on a day with an outage.", SHARE);
   add("outage.paidChurnPerHour", "Customers", "", "Payers lost per hour down", "Share of paying users who stop paying for each hour of downtime (0.002 = 0.2%).", range(0, 0.1, 0.0005));
+  for (const p of PRODUCT_TYPE_IDS) {
+    const product = base.productTypes[p];
+    if (product?.outageChurnMultiple === undefined) continue;
+    add(`productTypes.${p}.outageChurnMultiple`, "Customers", product.name, "Payers lost per hour down: multiple", "The payers this product loses for each hour down are multiplied by this (2 = twice as many).", MULTIPLIER);
+  }
   add("pricing.growthSensitivity", "Customers", "", "Price effect on growth", "Growth is multiplied by (price ÷ fair price) to minus this. 0 for no effect.", range(0, 5, 0.05));
   add("pricing.maxGrowthBoost", "Customers", "", "Most a low price speeds growth", "A price below the fair price multiplies growth by at most this.", range(1, 10, 0.05));
   add("pricing.paidShareSensitivity", "Customers", "", "Price effect on new payers", "The paid share of new users is multiplied by (price ÷ fair price) to minus this.", range(0, 5, 0.05));

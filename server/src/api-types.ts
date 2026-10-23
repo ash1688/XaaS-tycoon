@@ -34,6 +34,7 @@ import type {
   ModelComparison,
   PauseReason,
   PricePreview,
+  PaymentsView,
   PriceWaveView,
   ModelId,
   ProductTypeId,
@@ -271,6 +272,12 @@ export interface CompanyView {
    * customer type's new users, what rivals do to growth, and a price change they haven't answered yet.
    */
   market: MarketView;
+  /**
+   * The payments app's monthly fee and transaction fee (set together as one price change), what a usual month costs a
+   * business, the two income streams on a usual day and so far, and the next payday and Black Friday. Null on other
+   * products.
+   */
+  payments: PaymentsView | null;
   /**
    * Free-to-paid conversion: free users who started paying on the day just played and in all (a price wave's upgrades
    * aren't counted here), the base and current daily rates (from the next day played), recent uptime, and each

@@ -72,6 +72,11 @@ npm run -s play -- summary <game>
   from features and uptime). New users of each customer type go mostly to the best value for them: casual users chase
   price, businesses quality. Rivals answer a price change 14 days later, sometimes undercutting you, and staff you
   let go may join one and raise its quality. `market` shows it all in full, with who wins each customer type.
+- The **payments app** (`--product payments`) earns two ways: a monthly fee from each paying business, and a
+  transaction fee, a share of every payment they take. `price <fee> <rate%>` sets both in one change, with one lock
+  (`price 12 2.5%`; the fee alone keeps today's rate), and `preview <fee> <rate%>` shows what they'd do. Customers judge
+  them together, as what a usual month costs a business. The status shows both streams, the next payday and Black
+  Friday (on the calendar), when payments (and load) rise. Outages hurt it most: no payments are taken, and no fee charged, for the hours you're down.
 - `valuation` shows what your company is worth, what's pushing it up or down, and who owns it. `funding` shows the
   friends and family and grant offers in full; `accept ff`, `accept grant`, `decline ff` and `decline grant` answer
   them, once each. Either can be negotiated first: `counter ff amount 18000 share 18` asks friends and family for more

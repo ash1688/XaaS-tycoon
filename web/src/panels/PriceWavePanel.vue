@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { formatCount, formatPrice } from "../api";
+import { formatCount, formatPrice, formatRate } from "../api";
 import { days, useGame } from "../game";
 import WaveChart from "../components/WaveChart.vue";
 
@@ -15,7 +15,10 @@ const rise = computed(() => wave.value?.direction === "rise");
   <section v-if="wave" :class="['card', 'price-wave', wave.direction]" aria-labelledby="wave-heading" data-testid="price-wave">
     <div class="row-between panel-head">
       <h2 id="wave-heading">{{ rise ? "Price rise backlash" : "Price cut wave" }}</h2>
-      <span class="badge">{{ formatPrice(wave.from) }} → {{ formatPrice(wave.to) }}</span>
+      <span class="badge">
+        {{ formatPrice(wave.from) }}{{ wave.fromRate === undefined ? "" : ` + ${formatRate(wave.fromRate)}` }} →
+        {{ formatPrice(wave.to) }}{{ wave.toRate === undefined ? "" : ` + ${formatRate(wave.toRate)}` }}
+      </span>
     </div>
     <p data-testid="wave-progress">
       <template v-if="wave.day === 0">

@@ -41,8 +41,8 @@ const FIRST_SETUP: Record<string, object[]> = {
   saas: [],
 };
 
-/** Round two's launch users for each product: what the specs' sums were worked out with. */
-const ROUND_TWO_LAUNCH: Record<string, number> = { ecommerce: 3_000, social: 4_000, video: 1_600 };
+/** Round two's launch users for each product (the payments app came later): what the specs' sums were worked out with. */
+const ROUND_TWO_LAUNCH: Record<string, number> = { ecommerce: 3_000, social: 4_000, video: 1_600, payments: 600 };
 
 /** Users arrived by the end of ramp day k out of a launch total, worked out as the sim does (see createLaunch). */
 function arrivedBy(launchUsers: number, k: number) {

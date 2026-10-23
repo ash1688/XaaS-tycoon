@@ -18,7 +18,7 @@ const quiet: GameConfig = {
   events: [],
   productTypes: Object.fromEntries(
     Object.entries(defaultConfig.productTypes).map(([id, p]) => [id, { ...p, rivals: [] }]),
-  ) as GameConfig["productTypes"],
+  ) as unknown as GameConfig["productTypes"],
 };
 
 /** A SaaS company 20 days in: launched, with users in the product's mix. */

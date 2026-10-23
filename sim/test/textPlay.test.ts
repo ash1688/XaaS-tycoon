@@ -738,3 +738,56 @@ describe("rivals", () => {
     expect(lines).toMatch(/day \d+: (Natterly|GatherHub) (answered your £6 price|undercut you)/);
   });
 });
+
+describe("the payments app", () => {
+  const full = createSim();
+  const pay = (): GameState =>
+    full.advance(full.newGame({ companyName: "Pay Co", productType: "payments", model: "saas", seed: 3 }), 20).state;
+  const runFull = (state: GameState, text: string) => {
+    const command = parseCommand(text);
+    return command.kind === "next" ? advanceUntil(full, state, command.days, who) : runCommand(full, state, command, who);
+  };
+
+  it("reads a fee with an optional transaction fee in %", () => {
+    expect(parseCommand("price 12 2.5%")).toEqual({ kind: "action", action: { type: "setPrice", price: 12, rate: 0.025 }, times: 1 });
+    expect(parseCommand("price 0 3")).toMatchObject({ action: { type: "setPrice", price: 0, rate: 0.03 } });
+    expect(parseCommand("price 12")).toEqual({ kind: "action", action: { type: "setPrice", price: 12 }, times: 1 });
+    expect(parseCommand("preview 12 2.5%")).toEqual({ kind: "preview", price: 12, rate: 0.025 });
+    expect(() => parseCommand("price 12 lots")).toThrow(/transaction fee/);
+  });
+
+  it("shows both prices, both income streams and the busy days, and the commands that set them", () => {
+    const state = pay();
+    const status = renderStatus(full, state);
+    expect(status).toMatch(/price £10\/month \+ 2% of payments = £30 a usual month per business \(fair £10 \+ 2% = £30/);
+    expect(status).toMatch(/payments: £[\d,]+ on a usual day -> fees £[\d,]+ \+ transaction fees £[\d,]+\/day \| SaaS platform's fee £[\d,]+\/day/);
+    expect(status).toMatch(/next payday day 28, Black Friday (day \d+|none) \| so far fees £[\d,]+, transaction fees £[\d,]+/);
+    expect(status).toMatch(/thresholds are a usual month's cost: yours £30/);
+    expect(renderCommands(full, state)).toMatch(/price <fee 0–1000> \[transaction fee 0–20%, e\.g\. 2\.5%\]/);
+    // Other products show one price, as before.
+    expect(renderStatus(sim, start())).toMatch(/price £5\/month \(fair £5\)/);
+    expect(renderStatus(sim, start())).not.toMatch(/payments:/);
+  });
+
+  it("previews and sets both in one change, with one lock", () => {
+    const state = pay();
+    const preview = runFull(state, "preview 12 2.5%");
+    expect(preview.state).toBe(state);
+    expect(preview.lines[0]).toMatch(/^preview £10 \+ 2% \(£30 a usual month\)→£12 \+ 2\.5% \(£37 a usual month\) \(rise\)/);
+    const changed = runFull(state, "price 12 2.5%").state;
+    expect(changed).toMatchObject({ price: 12, transactionRate: 0.025 });
+    expect(renderStatus(full, changed)).toMatch(/price £12\/month \+ 2\.5% of payments = £37 .* locked 14 more days/);
+    expect(renderStatus(full, changed)).toMatch(/price wave: rise £10 \+ 2%→£12 \+ 2\.5%/);
+    expect(renderCommands(full, changed)).not.toMatch(/^ {2}price </m);
+  });
+
+  it("announces Black Friday on the calendar, and stops time for it", () => {
+    // Day 1 is 1 October 2026: Black Friday (day 58) is announced 14 days before, on day 44.
+    const started = full.newGame({ companyName: "Pay Co", productType: "payments", model: "saas", seed: 3, startDate: "2026-10-01" });
+    const state = full.advance(started, 40).state;
+    expect(renderStatus(full, state)).toMatch(/Black Friday day 58/);
+    const turn = runFull(state, "next 7");
+    expect(turn.state.day).toBe(44);
+    expect(turn.lines.join("\n")).toMatch(/day 44: Black Friday is coming in 14 days/);
+  });
+});
