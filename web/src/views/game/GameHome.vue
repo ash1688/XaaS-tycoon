@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import type { GameDate, HolidayView } from "@xaas/sim";
 import { formatCash, formatCount, formatPrice, formatUptime } from "../../api";
 import { days, useGame } from "../../game";
 import OverviewCard from "../../components/OverviewCard.vue";
@@ -30,6 +31,12 @@ const activeFeatures = computed(
 const phaseName = (id: string) => game.meta?.migrationPhases.find((p) => p.id === id)?.name ?? id;
 // The danger meter: shown as how far it has risen towards the top of its scale, never the hidden thresholds.
 const danger = computed(() => game.company?.danger);
+// The real calendar: today's date, any holiday on now and the ones coming, with what each does to the product.
+const calendar = computed(() => game.company?.calendar);
+const monthName = (d: GameDate) => d.text.split(" ")[2];
+const shortDate = (d: GameDate) => `${d.dayOfMonth} ${monthName(d)}`;
+const holidayEffect = (h: HolidayView) =>
+  h.effect ? `load ×${h.effect.loadMultiplier}, sign-ups ×${h.effect.growthMultiplier}` : "no effect on you";
 // Earlier days played this session, newest first, under the latest one in the full log.
 const earlierDays = computed(() => game.dayLogs.slice(0, -1).toReversed());
 
@@ -107,7 +114,16 @@ const alerts = computed(() => {
     list.push({
       id: "low-cash",
       text: game.runway.days ? `Cash runs out in about ${days(game.runway.days)}` : "Cash runs out tomorrow",
-      detail: `You're losing ${formatCash(-game.runway.dailyNet)} a day. ${c.loanQuote ? "Take a bank loan or cut costs" : "Cut costs"} before you go below £0: once you're bankrupt, the bank won't lend.`,
+      detail: `You're losing ${formatCash(-game.runway.dailyNet)} a day. ${c.loanQuote ? "Take a bank loan or cut costs" : "Cut costs"} before you go below £0: ${c.rescue ? "there's no second rescue, so it's liquidation." : "a vulture VC would rescue you, but take most of the company."}`,
+      page: "finance",
+      pageName: "Finance",
+    });
+  // A rescue changes who owns the company: shown until the vulture VC's shares are bought back.
+  if (c.rescue && c.rescue.buyBackPrice !== null)
+    list.push({
+      id: "rescue",
+      text: `A vulture VC owns ${Math.round(c.rescue.vultureShare * 100)}% of the company`,
+      detail: `It rescued you on day ${c.rescue.day} with ${formatCash(c.rescue.amount)} and forced cost cuts. It sells its shares back for ${formatCash(c.rescue.buyBackPrice)}, and there's no second rescue: run out of cash again and it's liquidation.`,
       page: "finance",
       pageName: "Finance",
     });
@@ -225,13 +241,13 @@ const alerts = computed(() => {
 
 <template>
   <template v-if="game.company">
-    <div v-if="game.bankrupt" class="bankrupt" role="alert" data-testid="bankrupt-screen">
-      <span class="badge">Bankrupt</span>
-      <h2>Game over: you ran out of cash</h2>
+    <div v-if="game.liquidated" class="bankrupt" role="alert" data-testid="liquidation-screen">
+      <span class="badge">Liquidation</span>
+      <h2>Game over: you ran out of cash again</h2>
       <p>
-        {{ game.company.name }} went below £0 on day {{ game.company.day }}, so the game has ended. You can't continue
-        or change anything, and it's too late for a bank loan: banks don't lend once you've gone under. Look at where
-        your money went below, then
+        {{ game.company.name }} went below £0 on day {{ game.company.day }}, after the vulture VC's rescue on day
+        {{ game.company.rescue?.day }}. There's no second rescue, so the company has gone into liquidation and the game
+        has ended. You can't continue or change anything. Look at where your money went below, then
         <RouterLink :to="`/play/${game.code}`">start a new company</RouterLink> and try a different plan.
       </p>
     </div>
@@ -345,7 +361,7 @@ const alerts = computed(() => {
             {{ game.company.loan.lastDay }}, {{ formatCash(game.company.loan.remaining) }} left.
           </template>
           <template v-else-if="game.company.loan">Bank loan repaid in full.</template>
-          <template v-else-if="game.bankrupt">No bank loan: banks don't lend once you've gone under.</template>
+          <template v-else-if="game.liquidated">No bank loan: banks don't lend to a company in liquidation.</template>
           <template v-else-if="game.company.loanQuote && !game.over">
             No bank loan. You can borrow {{ formatCash(game.company.loanQuote.amount) }} on Finance.
           </template>
@@ -357,7 +373,7 @@ const alerts = computed(() => {
             {{ formatCash(game.company.runway.dailyCosts) }}<template v-if="game.company.runway.days === null">, so
               cash is growing.</template
             ><template v-else>: at that rate your {{ formatCash(game.company.cash) }} lasts about
-              {{ days(game.company.runway.days) }}. Below £0 the game ends.</template
+              {{ days(game.company.runway.days) }}. {{ game.company.rescue ? "Below £0 again is liquidation." : "Below £0 brings a vulture VC's rescue, for most of the company." }}</template
             >
           </p>
           <SpendPanel />
@@ -580,6 +596,43 @@ const alerts = computed(() => {
             <RouterLink :to="page('customers')">Open Customers</RouterLink> ·
             <RouterLink :to="page('people')">Open People</RouterLink>
           </p>
+        </template>
+      </OverviewCard>
+
+      <OverviewCard
+        v-if="!game.over && calendar"
+        title="Calendar"
+        :tone="calendar.on.some((h) => h.effect) ? 'warn' : undefined"
+      >
+        <p class="overview-value" data-testid="calendar-date">
+          {{ calendar.today.dayOfMonth }} {{ monthName(calendar.today) }} <small>{{ calendar.today.year }}</small>
+        </p>
+        <p v-for="h in calendar.on" :key="h.id" data-testid="holiday-on">
+          <strong>{{ h.name }}</strong> now, to {{ shortDate(h.end) }}: {{ holidayEffect(h) }}.
+        </p>
+        <p v-if="calendar.upcoming[0]" class="muted" data-testid="holiday-next">
+          Next: {{ calendar.upcoming[0].name }} in {{ calendar.upcoming[0].daysUntil }}
+          {{ calendar.upcoming[0].daysUntil === 1 ? "day" : "days" }} ({{ holidayEffect(calendar.upcoming[0]) }}).
+        </p>
+        <p v-else class="muted">No more holidays before the game ends.</p>
+        <template #detail>
+          <p>
+            Your company runs on a real calendar, from {{ calendar.startYear }}. Holidays fall on their dates every year and hit each product its own way: more load and more sign-ups, or fewer. They don't touch
+            the danger meter, so you can see them coming and plan your capacity.
+          </p>
+          <ul class="holiday-list" data-testid="holiday-list">
+            <li v-for="h in [...calendar.on, ...calendar.upcoming]" :key="`${h.id}-${h.startDay}`" :data-holiday="h.id">
+              <strong>{{ h.name }}</strong>
+              <span class="when">
+                {{ shortDate(h.start) }} to {{ shortDate(h.end) }}
+                ({{ h.daysUntil > 0 ? `in ${h.daysUntil} ${h.daysUntil === 1 ? "day" : "days"}` : "on now" }})
+              </span>
+              <br />
+              {{ h.description }}
+              <template v-if="h.effect">{{ h.effect.detail }} ({{ holidayEffect(h) }})</template>
+              <template v-else>Your product doesn't notice it.</template>
+            </li>
+          </ul>
         </template>
       </OverviewCard>
 

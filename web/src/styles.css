@@ -647,6 +647,33 @@ fieldset > p {
   color: var(--text);
 }
 
+/* Why time paused itself: the same shape as the low-cash warning, in the accent colour. */
+.pause-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.75rem;
+  margin: 0 0 1rem;
+  padding: 0.7rem 1rem;
+  border-radius: 10px;
+  border: 2px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.pause-reasons p {
+  flex: 1 1 20rem;
+  margin: 0;
+  color: var(--text);
+}
+
+.pause-reasons ul {
+  flex-basis: 100%;
+  margin: 0;
+  padding-left: 1.25rem;
+  color: var(--text);
+}
+
 .bankrupt h2 {
   margin: 0.5rem 0 0.25rem;
 }
@@ -2025,6 +2052,12 @@ button.danger-fill {
   white-space: nowrap;
 }
 
+.day-counter .date {
+  color: var(--muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
 .day-counter small {
   font-size: 0.85rem;
   font-weight: 500;
@@ -2044,6 +2077,12 @@ button.danger-fill {
 .day-controls .play-pause {
   min-width: 5rem;
   padding: 0.55rem 0.9rem;
+}
+
+.day-controls .speed {
+  width: auto;
+  padding: 0.45rem 0.5rem;
+  font-size: 0.85rem;
 }
 
 .day-controls .timed-status {
@@ -2111,7 +2150,13 @@ button.danger-fill {
     justify-content: flex-end;
   }
 
-  .day-controls .timed-status {
+  .day-controls .speed {
+  width: auto;
+  padding: 0.45rem 0.5rem;
+  font-size: 0.85rem;
+}
+
+.day-controls .timed-status {
     max-width: none;
   }
 }
@@ -3125,6 +3170,27 @@ body.modal-open {
 
 .day-log li.event.launch .badge {
   color: var(--pos);
+}
+
+/* A holiday announced or starting, in the day log. */
+.day-log li.event.calendar {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+/* The Home calendar card's coming holidays. */
+.holiday-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.holiday-list .when {
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 /* The Home launch card's setup checklist. Its links sit above the card's whole-card button. */

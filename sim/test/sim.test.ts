@@ -130,6 +130,8 @@ const config: GameConfig = {
   startingCash: 1000,
   finalDay: 180,
   allowedGameLengths: { "180-days": 1, "1-year": 0, career: 0 },
+  timedFlow: 1,
+  allowedDifficulties: { easy: 0, normal: 1, hard: 0 },
   maxCompanyNameLength: 20,
   // Launches in full on day 1, as the game starts, with the starter setups below in place: the launch tests set their own.
   launch: { rampShares: [1] },
@@ -148,11 +150,7 @@ const config: GameConfig = {
     ecommerce: {
       name: "Shop",
       profile: "",
-      growth: {
-        ...growth,
-        dailyGrowth: 0.02,
-        seasonalSpike: { firstDay: 10, every: 10, length: 3, loadMultiplier: 3, growthMultiplier: 3 },
-      },
+      growth: { ...growth, dailyGrowth: 0.02 },
       demand,
       pricing,
       support,
@@ -205,6 +203,7 @@ const config: GameConfig = {
   shares: { min: 10_000, max: 100_000, default: 10_000 },
   valuation: defaultConfig.valuation,
   funding: defaultConfig.funding,
+  rescue: defaultConfig.rescue,
   // No price waves unless a test says otherwise, so a price change only has its ongoing effect on growth and payers.
   pricing: {
     maxPrice: 1_000,
@@ -247,7 +246,8 @@ const config: GameConfig = {
     thresholdMin: 24,
     thresholdMax: 64,
   },
-  // No scripted events unless a test adds some.
+  // No holidays or scripted events unless a test adds some.
+  calendar: { startYear: 2026, noticeDays: 14, holidays: [] },
   events: [],
 };
 
@@ -1159,9 +1159,10 @@ describe("users and growth", () => {
     const users = Object.fromEntries(
       (["ecommerce", "social", "video"] as const).map((p) => [p, play(p, 60).state.users]),
     );
-    // Social grows steadily fastest. E-commerce and video share a base rate, but sale spikes put e-commerce ahead.
+    // Social grows steadily fastest. E-commerce and video share a base rate here: holidays set them apart (see
+    // calendar.test.ts).
     expect(users.social).toBeGreaterThan(users.ecommerce! * 1.5);
-    expect(users.ecommerce).toBeGreaterThan(users.video! * 1.1);
+    expect(users.social).toBeGreaterThan(users.video! * 1.5);
   });
 
   it("puts heavier load per user on video", () => {
@@ -1170,11 +1171,6 @@ describe("users and growth", () => {
       return state.load / state.users;
     };
     expect(perUser("video")).toBeGreaterThan(perUser("social") * 3);
-  });
-
-  it("spikes e-commerce load during the season", () => {
-    const loads = [9, 10].map((d) => play("ecommerce", d - 1).state.load);
-    expect(loads[1]! / loads[0]!).toBeGreaterThan(2);
   });
 
   it("slows as users approach the market size", () => {
@@ -2344,44 +2340,149 @@ describe("ledger", () => {
   });
 });
 
-describe("bankruptcy", () => {
+describe("rescue buyout and liquidation", () => {
   // 1000 cash at 20 a day on IaaS: day 51 leaves exactly 0, day 52 goes below.
   const broke = () => sim.advance(start(), 50);
+  // The vulture VC puts in the £20 of losses and 30 days at £20 a day, to the £100 above: £700, leaving £680. That
+  // lasts 34 days, so cash runs out again on day 87.
+  const rescued = () => sim.advance(start(), 51).state;
 
-  it("does not end the game at exactly zero cash", () => {
+  it("does not rescue the company at exactly zero cash", () => {
     const { state } = broke();
-    expect(state).toMatchObject({ day: 51, cash: 0, status: "playing" });
+    expect(state).toMatchObject({ day: 51, cash: 0, status: "playing", rescue: null });
+    expect(sim.rescue(state)).toBeNull();
   });
 
-  it("ends the game the day cash goes below zero, and says so in the log", () => {
+  it("rescues the company the first time cash goes below zero: cash, the share taken and the cuts, in the log", () => {
     const { state, log } = sim.advance(broke().state);
-    expect(state).toMatchObject({ day: 52, cash: -20, status: "bankrupt" });
-    expect(log[0]!.entries.at(-1)).toMatchObject({ kind: "bankrupt", cashDelta: 0 });
-    expect(log[0]!.entries.at(-1)!.text).toMatch(/bankrupt/);
+    expect(state).toMatchObject({ day: 52, cash: 680, status: "playing" });
+    expect(state.rescue).toEqual({
+      day: 52,
+      amount: 700,
+      losses: 20,
+      shares: 30_000,
+      share: 0.75,
+      cuts: [],
+      hiresCancelled: 0,
+      savedPerDay: 0,
+      boughtBack: null,
+    });
+    const rescue = log[0]!.entries.filter((e) => e.kind === "rescue");
+    expect(rescue).toHaveLength(2);
+    expect(rescue[0]).toMatchObject({ cashDelta: 700 });
+    expect(rescue[0]!.text).toMatch(/vulture VC rescued Acme: it put in £700 \(£20 to cover the losses.*30,000 new shares, 75% of the company\. You now own 25%/);
+    expect(rescue[1]!.text).toMatch(/Forced cost cuts/);
+    expect(sim.capTable(state).rows.map((r) => [r.id, r.name, r.share])).toEqual([
+      ["student", "You", 0.25],
+      ["vulture", "Vulture VC", 0.75],
+    ]);
+    // The rescue is money raised, not income, so the cash chart still adds up.
+    expect(state.spendByDay.at(-1)).toMatchObject({ day: 52, raised: 700, income: 0 });
+    expect(sim.summarise(state).days.at(-1)!.cash).toBe(680);
   });
 
-  it("stops a multi-day advance on the day of bankruptcy", () => {
-    const { state, log } = sim.advance(start(), 100);
-    expect(state).toMatchObject({ day: 52, status: "bankrupt" });
-    expect(log.at(-1)!.day).toBe(52);
+  it("forces cost cuts: the dearest grades first, ops kept to what the servers need, and hires cancelled", () => {
+    const base = start();
+    const need = sim.opsNeededNow(base);
+    const staffed: GameState = {
+      ...base,
+      staff: {
+        developers: { junior: 1, mid: 2, senior: 1 },
+        ops: { junior: 0, mid: need, senior: 0 },
+        support: { junior: 4, mid: 0, senior: 0 },
+      },
+      hiring: [{ pool: "developers", grade: "mid", count: 2, arrivesOn: 999 }],
+    };
+    const { state, log } = sim.advance(staffed, 200);
+    const rescue = state.rescue!;
+    expect(rescue.cuts).toEqual([
+      { pool: "developers", grade: "senior", count: 1 },
+      { pool: "support", grade: "junior", count: 1 },
+    ]);
+    expect(rescue.hiresCancelled).toBe(2);
+    // A senior developer at £14 a day and a junior support person at £1.
+    expect(rescue.savedPerDay).toBe(15);
+    const after = sim.advance(staffed, rescue.day - 1).state;
+    expect(after.hiring).toEqual([]);
+    expect(after.staff.developers).toEqual({ junior: 1, mid: 2, senior: 0 });
+    expect(after.staff.ops.mid).toBe(need);
+    const text = log.flatMap((d) => d.entries).find((e) => e.text.startsWith("Forced cost cuts"))!.text;
+    expect(text).toMatch(/let go 1 senior developer, let go 1 junior support person, cancelled 2 hires still to start, saving £15 a day/);
+  });
+
+  it("goes into liquidation the second time cash goes below zero, and says so in the log", () => {
+    const { state, log } = sim.advance(rescued(), 100);
+    expect(state).toMatchObject({ day: 87, cash: -20, status: "liquidated" });
+    expect(log.at(-1)!.day).toBe(87);
+    expect(log.at(-1)!.entries.at(-1)).toMatchObject({ kind: "liquidation", cashDelta: 0 });
+    expect(log.at(-1)!.entries.at(-1)!.text).toMatch(/after the rescue buyout on day 52: Acme goes into liquidation/);
+    expect(sim.summarise(state)).toMatchObject({ ending: "liquidation", day: 87, rescue: { day: 52, amount: 700 } });
+    expect(sim.valuation(state).valuation).toBe(0);
+  });
+
+  it("stops a multi-day advance on the day of liquidation, carrying on through the rescue", () => {
+    const { state, log } = sim.advance(start(), 200);
+    expect(state).toMatchObject({ day: 87, status: "liquidated" });
+    expect(log.at(-1)!.day).toBe(87);
   });
 
   it("rejects advances and actions afterwards", () => {
-    const { state } = sim.advance(start(), 100);
+    const { state } = sim.advance(start(), 200);
     for (const attempt of [
       () => sim.advance(state),
       () => sim.applyAction(state, { type: "hire", pool: "ops" }),
-      () => sim.applyAction(state, { type: "letGo", pool: "ops" }),
+      () => sim.applyAction(state, { type: "buyBack" }),
     ]) {
       expect(attempt).toThrow(SimError);
-      expect(attempt).toThrow(expect.objectContaining({ code: "bankrupt" }));
+      expect(attempt).toThrow(expect.objectContaining({ code: "liquidated" }));
     }
+    expect(sim.rescue(state)).toMatchObject({ buyBackPrice: null, canBuyBack: false });
   });
 
-  it("goes bankrupt sooner with more staff", () => {
-    const hired = sim.applyAction(start(), { type: "hire", pool: "developers" });
-    expect(sim.advance(hired, 100).state.day).toBeLessThan(sim.advance(start(), 100).state.day);
+  it("offers the vulture VC's shares back at its price, and sells them for it", () => {
+    const state = rescued();
+    const view = sim.rescue(state)!;
+    // No paying users or revenue, so the business is worth nothing without its cash: the price is twice the £700.
+    expect(view).toMatchObject({ vultureShares: 30_000, vultureShare: 0.75, buyBackPrice: 1_400, canBuyBack: false });
+    expect(view.priceDetail).toMatch(/2× the £700 it put in: it never sells back for less/);
+    expect(() => sim.applyAction(state, { type: "buyBack" })).toThrow(
+      expect.objectContaining({ code: "cant_afford", details: { cost: 1_400, cash: 680 } }),
+    );
+    // More cash doesn't move the price: the company pays with it.
+    const rich = { ...state, cash: 2_000 };
+    expect(sim.rescue(rich)).toMatchObject({ buyBackPrice: 1_400, canBuyBack: true });
+    const bought = sim.applyAction(rich, { type: "buyBack" });
+    expect(bought.cash).toBe(600);
+    expect(bought.rescue!.boughtBack).toEqual({ day: 52, price: 1_400 });
+    expect(sim.capTable(bought).rows.map((r) => [r.id, r.share])).toEqual([["student", 1]]);
+    expect(sim.rescue(bought)).toMatchObject({ vultureShares: 0, buyBackPrice: null, canBuyBack: false });
+    expect(bought.spendByDay.at(-1)!.raised).toBe(700 - 1_400);
+    expect(() => sim.applyAction(bought, { type: "buyBack" })).toThrow(expect.objectContaining({ code: "bought_back" }));
   });
+
+  it("prices a trading business at the premium on its share of the valuation, leaving out the cash", () => {
+    const real = createSim(defaultConfig);
+    const begun = real.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 3 });
+    let state = withStaff(real.advance(begun, 40).state, { developers: 30 });
+    while (!state.rescue) state = real.advance(state).state;
+    const { valuation, sharesInIssue, drivers } = real.valuation(state);
+    const netCash = drivers.find((d) => d.id === "netCash")!.amount;
+    const business = Math.max(0, valuation - netCash) - (drivers.find((d) => d.id === "minimum")?.amount ?? 0);
+    expect(business).toBeGreaterThan(0);
+    const premium = Math.ceil((1.5 * business * state.rescue.shares) / sharesInIssue / 100) * 100;
+    const price = Math.max(premium, 2 * state.rescue.amount);
+    expect(real.rescue(state)!.buyBackPrice).toBe(price);
+  });
+
+  it("refuses a buy-back before any rescue", () => {
+    expect(() => sim.applyAction(start(), { type: "buyBack" })).toThrow(expect.objectContaining({ code: "no_rescue" }));
+  });
+
+  it("is rescued sooner with more staff", () => {
+    const hired = sim.applyAction(start(), { type: "hire", pool: "developers" });
+    expect(sim.advance(hired, 100).state.rescue!.day).toBeLessThan(sim.advance(start(), 100).state.rescue!.day);
+  });
+
 
   it("is deterministic", () => {
     expect(sim.advance(start(), 100)).toEqual(sim.advance(start(), 100));
@@ -2592,18 +2693,17 @@ describe("bank loan", () => {
     expect(profit).toBeCloseTo(state.income - costs + principal, 6);
   });
 
-  it("charges repayments whatever happens, so they can bankrupt a company", () => {
+  it("charges repayments whatever happens, so they can run a company out of cash", () => {
     // SaaS at £5 a day: £1,000 lasts to day 180 alone, but £110 a day of repayments on top of the £17,900 runs out.
     const play = (takeLoan: boolean) =>
       sim.advance(sim.newGame({ companyName: "Acme", productType: "ecommerce", model: "saas", seed: 1, takeLoan }), 200);
     expect(play(false).state).toMatchObject({ day: 180, status: "finished" });
     const { state, log } = play(true);
-    expect(state.status).toBe("bankrupt");
-    expect(state.day).toBeLessThan(180);
-    const last = log.at(-1)!.entries;
-    expect(last.some((e) => e.category === "debt")).toBe(true);
-    expect(last.at(-1)).toMatchObject({ kind: "bankrupt" });
-    expect(sim.summarise(state).loan).toMatchObject({ day: 1, amount: 17_900, fullyRepaid: false });
+    expect(state.rescue!.day).toBeLessThan(180);
+    const rescueDay = log.find((d) => d.day === state.rescue!.day)!.entries;
+    expect(rescueDay.some((e) => e.category === "debt")).toBe(true);
+    expect(rescueDay.some((e) => e.kind === "rescue")).toBe(true);
+    expect(sim.summarise(state).loan).toMatchObject({ day: 1, amount: 17_900 });
   });
 
   it("is deterministic", () => {
@@ -2749,6 +2849,78 @@ describe("bank loan", () => {
   });
 });
 
+describe("difficulty", () => {
+  const every = { easy: 1, normal: 1, hard: 1 };
+  const allowing = (difficulties: Partial<GameConfig["allowedDifficulties"]>) =>
+    createSim({ ...defaultConfig, allowedDifficulties: { easy: 0, normal: 0, hard: 0, ...difficulties } });
+  const newGame = (s: Sim, difficulty?: string) =>
+    s.newGame({ companyName: "Acme", productType: "ecommerce", model: "saas", seed: 1, difficulty });
+
+  it("allows only Normal by default, and Normal is the preset's own numbers", () => {
+    const s = createSim();
+    expect(s.config.allowedDifficulties).toEqual({ easy: 0, normal: 1, hard: 0 });
+    expect(s.config).toBe(defaultConfig);
+    const game = newGame(s);
+    expect(game.difficulty).toBe("normal");
+    expect(s.summarise(game).difficulty).toBe("normal");
+    for (const difficulty of ["easy", "hard", "nightmare"]) {
+      expect(() => newGame(s, difficulty)).toThrow(expect.objectContaining({ code: "difficulty_not_allowed" }));
+    }
+    expect(() => newGame(s, "hard")).toThrow(/difficulty your teacher allows: Normal\./);
+  });
+
+  it("starts on Normal when allowed and none is picked, otherwise the easiest allowed", () => {
+    expect(newGame(allowing(every)).difficulty).toBe("normal");
+    expect(newGame(allowing({ easy: 1, hard: 1 })).difficulty).toBe("easy");
+    expect(newGame(allowing({ hard: 1 })).difficulty).toBe("hard");
+  });
+
+  it("changes the starting cash, how fast the danger meter climbs and the customers' price thresholds", () => {
+    const s = allowing(every);
+    const [easy, normal, hard] = (["easy", "normal", "hard"] as const).map((d) => newGame(s, d));
+    // SaaS has nothing to pay up front, so the cash left after day 1 follows the starting cash.
+    const spentOnDay1 = defaultConfig.startingCash - normal!.cash;
+    expect(easy!.cash).toBe(defaultConfig.startingCash * 1.5 - spentOnDay1);
+    expect(hard!.cash).toBe(defaultConfig.startingCash * 0.8 - spentOnDay1);
+
+    expect(s.danger(normal!).dailyRise).toBe(defaultConfig.encounters.dailyRise);
+    expect(s.danger(easy!).dailyRise).toBeLessThan(s.danger(normal!).dailyRise);
+    expect(s.danger(hard!).dailyRise).toBeGreaterThan(s.danger(normal!).dailyRise);
+
+    const thresholds = (g: GameState) => s.customerMix(g).types.map((t) => t.threshold);
+    const fair = s.fairPrice(normal!);
+    expect(thresholds(normal!)).toEqual(
+      Object.values(defaultConfig.customerTypes).map((t) => Math.round(fair * t.thresholdMultiple * 100) / 100),
+    );
+    thresholds(easy!).forEach((t, i) => expect(t).toBeGreaterThan(thresholds(normal!)[i]!));
+    thresholds(hard!).forEach((t, i) => expect(t).toBeLessThan(thresholds(normal!)[i]!));
+    // The same price loses more payers on Hard.
+    const rise = (g: GameState) => s.pricePreview(g, fair * 1.5).reaction;
+    expect(rise(hard!)).toBeGreaterThan(rise(normal!));
+    expect(rise(easy!)).toBeLessThan(rise(normal!));
+  });
+
+  it("never changes which systems a game has", () => {
+    const s = allowing(every);
+    const shape = (g: GameState) => Object.keys(g).toSorted();
+    const [easy, normal, hard] = (["easy", "normal", "hard"] as const).map((d) => newGame(s, d));
+    expect(shape(easy!)).toEqual(shape(normal!));
+    expect(shape(hard!)).toEqual(shape(normal!));
+    expect(s.events(hard!).map((e) => e.id)).toEqual(s.events(normal!).map((e) => e.id));
+  });
+
+  it("keeps playing a game on its own difficulty once the preset stops allowing it", () => {
+    const easy = newGame(allowing({ easy: 1 }), "easy");
+    const s = createSim();
+    const { state } = s.advance(easy, 20);
+    expect(state).toMatchObject({ difficulty: "easy", day: 21 });
+    expect(s.summarise(state).difficulty).toBe("easy");
+    // On Normal's numbers from the same start, the danger meter climbs faster.
+    const sameStart = { ...easy, difficulty: "normal" } as GameState;
+    expect(s.danger(s.advance(sameStart, 10).state).meter).toBeGreaterThan(s.danger(s.advance(easy, 10).state).meter);
+  });
+});
+
 describe("game lengths", () => {
   const allowing = (lengths: Partial<GameConfig["allowedGameLengths"]>) =>
     createSim({ ...config, allowedGameLengths: { "180-days": 0, "1-year": 0, career: 0, ...lengths } });
@@ -2803,8 +2975,8 @@ describe("game lengths", () => {
     expect(() => s.applyAction(ended, { type: "hire", pool: "ops" })).toThrow(expect.objectContaining({ code: "finished" }));
     // Ending a game that is already over leaves it as it was.
     expect(s.endGame(ended)).toEqual(ended);
-    const bankrupt = { ...state, status: "bankrupt" } as GameState;
-    expect(s.endGame(bankrupt)).toEqual(bankrupt);
+    const liquidated = { ...state, status: "liquidated" } as GameState;
+    expect(s.endGame(liquidated)).toEqual(liquidated);
   });
 });
 
@@ -2868,12 +3040,15 @@ describe("game end and summary", () => {
     expect(s.summarise(saved).ending).toBe("completed");
   });
 
-  it("counts going bankrupt on the final day as bankrupt", () => {
-    // 1000 cash at 20 a day on IaaS goes below zero on day 52.
-    const tight = createSim({ ...config, finalDay: 52 });
-    const { state } = tight.advance(tight.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1 }), 100);
-    expect(state).toMatchObject({ day: 52, status: "bankrupt" });
-    expect(tight.summarise(state).ending).toBe("bankrupt");
+  it("counts liquidation on the final day as liquidation, and a rescue on it as finishing", () => {
+    // 1000 cash at 20 a day on IaaS goes below zero on day 52, and again on day 87 after the rescue.
+    const play = (finalDay: number) => {
+      const tight = createSim({ ...config, finalDay });
+      const { state } = tight.advance(tight.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1 }), 200);
+      return { state, ending: tight.summarise(state).ending };
+    };
+    expect(play(87)).toMatchObject({ state: { day: 87, status: "liquidated" }, ending: "liquidation" });
+    expect(play(52)).toMatchObject({ state: { day: 52, status: "finished", rescue: { day: 52 } }, ending: "completed" });
   });
 
   it("summarises a completed game: final figures, and spend totals equal to the sum of daily charges", () => {
@@ -2968,18 +3143,18 @@ describe("game end and summary", () => {
     expect(day11(migrated, pricier) - day11(state, s)).toBe(5000);
   });
 
-  it("summarises a bankrupt game", () => {
-    const { state, log } = sim.advance(start(), 100);
+  it("summarises a liquidated game", () => {
+    const { state, log } = sim.advance(start(), 200);
     const summary = sim.summarise(state);
-    expect(summary).toMatchObject({ ending: "bankrupt", day: 52, cash: -20, finalDay: 180 });
-    expect(summary.days).toHaveLength(52);
+    expect(summary).toMatchObject({ ending: "liquidation", day: 87, cash: -20, finalDay: 180 });
+    expect(summary.days).toHaveLength(87);
     expect(summary.days.at(-1)!.cash).toBe(-20);
     expect(summary.spend.infrastructure).toBe(charges(log, "infrastructure"));
-    expect(summary.totalSpend).toBe(1020);
+    expect(summary.totalSpend).toBe(1720);
     // Everyone free, so no income: all loss.
-    expect(summary).toMatchObject({ income: 0, profit: -1020, priceChanges: 0, loan: null, satisfaction: 100 });
-    expect(summary.incomeVsCosts).toHaveLength(52);
-    expect(summary.incomeVsCosts.at(-1)).toMatchObject({ day: 52, totalIncome: 0, totalCosts: 1020 });
+    expect(summary).toMatchObject({ income: 0, profit: -1720, priceChanges: 0, loan: null, satisfaction: 100 });
+    expect(summary.incomeVsCosts).toHaveLength(87);
+    expect(summary.incomeVsCosts.at(-1)).toMatchObject({ day: 87, totalIncome: 0, totalCosts: 1720 });
     expect(summary.peak.users).toBe(Math.max(...summary.days.map((d) => d.users)));
   });
 
@@ -3262,10 +3437,10 @@ describe("default config", () => {
     }
   });
 
-  it("bankrupts a company that hires far more than it needs", () => {
+  it("liquidates a company that hires far more than it needs", () => {
     const start = sim180.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 7 });
     const state = sim180.advance(withStaff(start, { developers: 12, ops: 2 }), defaultConfig.finalDay - 1).state;
-    expect(state.status).toBe("bankrupt");
+    expect(state.status).toBe("liquidated");
     expect(state.day).toBeLessThan(defaultConfig.finalDay);
   });
 
@@ -6496,5 +6671,114 @@ describe("racks, cabling, power and cooling", () => {
       expect(done.racks).toEqual([]);
       expect(sim.racks(done)).toBeNull();
     });
+  });
+});
+
+describe("ticks and pauses", () => {
+  // A patch on day 10 that breaks in on IaaS with no ops: an event that hurts. Games start on day 1, so it's the second
+  // day of the week played from day 8.
+  const patch: EventConfig = {
+    id: "patch",
+    name: "OS security patch",
+    description: "A hole in the OS.",
+    layer: "os",
+    schedule: { type: "fixed", days: [10] },
+    days: 1,
+    effects: {
+      onprem: { opsNeeded: 1, detail: "Patched.", shortOfOps: { detail: "Attackers got in.", downtimeHours: 6 } },
+      iaas: { opsNeeded: 1, detail: "Patched.", shortOfOps: { detail: "Attackers got in.", downtimeHours: 6 } },
+      paas: { detail: "The provider patched it." },
+      saas: { detail: "The provider patched it." },
+    },
+  };
+  const s = createSim({
+    ...config,
+    startingCash: 1_000_000,
+    allowedGameLengths: { "180-days": 1, "1-year": 0, career: 1 },
+    events: [patch],
+  });
+  const begin = (gameLength: string) =>
+    withStaff(s.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, gameLength }), { ops: 0 });
+
+  it("plays a day a tick, or a week in a career", () => {
+    expect(s.tickDays(begin("180-days"))).toBe(1);
+    expect(s.tickDays(begin("career"))).toBe(7);
+    const day = s.tick(s.advance(begin("180-days"), 1).state);
+    expect(day).toMatchObject({ days: 1, pauses: [] });
+    expect(day.state.day).toBe(3);
+    expect(day.log.map((d) => d.day)).toEqual([3]);
+    const week = s.tick(s.advance(begin("career"), 1).state);
+    expect(week).toMatchObject({ days: 7, pauses: [] });
+    expect(week.state.day).toBe(9);
+    expect(week.log.map((d) => d.day)).toEqual([3, 4, 5, 6, 7, 8, 9]);
+  });
+
+  it("plays a week one day at a time: the same days as advance", () => {
+    const start = s.advance(begin("career"), 1).state;
+    expect(s.tick(start).state).toEqual(s.advance(start, 7).state);
+  });
+
+  it("stops a career's week on the day a pause trigger fires, with why", () => {
+    const start = s.advance(begin("career"), 7).state;
+    expect(start.day).toBe(8);
+    const { state, days, pauses, log } = s.tick(start);
+    expect(days).toBe(2);
+    expect(state.day).toBe(10);
+    expect(log.map((d) => d.day)).toEqual([9, 10]);
+    expect(pauses).toEqual([{ kind: "event", id: "event-patch", text: "OS security patch" }]);
+    // Playing on starts a new week from there, and the patch doesn't stop it again.
+    const on = s.tick(state);
+    expect(on.log[0]!.day).toBe(11);
+    expect(on.pauses.map((p) => p.id)).not.toContain("event-patch");
+  });
+
+  it("pauses when the launch is over and when a feature is built", () => {
+    // Users arriving over three days: time stops once the last of them are in.
+    const ramped = createSim({ ...s.config, launch: { rampShares: [0.2, 0.3, 0.5] } });
+    let launching = ramped.tick(ramped.newGame({ companyName: "Acme", productType: "ecommerce", model: "saas", seed: 42 }));
+    expect(launching.pauses).toEqual([]);
+    while (ramped.launch(launching.state).status === "launching") launching = ramped.tick(launching.state);
+    expect(launching.pauses).toEqual([{ kind: "finished", id: "launch", text: "Your launch is over" }]);
+    const feature = s.config.productTypes.ecommerce.features[0]!;
+    const building = withStaff(s.applyAction(s.advance(begin("180-days"), 1).state, { type: "buildFeature", feature: feature.id }), {
+      ops: 0,
+      developers: 50,
+    });
+    let tick = s.tick(building);
+    while (!tick.pauses.length && tick.state.day < 100) tick = s.tick(tick.state);
+    expect(tick.pauses).toContainEqual({ kind: "finished", id: `feature-${feature.id}`, text: `${feature.name} is built` });
+  });
+
+  it("pauses when cash gets low, not every day after, and again the day before it runs out", () => {
+    const start = s.advance(begin("180-days"), 1).state;
+    const burn = -s.runway(start).dailyNet;
+    expect(burn).toBeGreaterThan(0);
+    // Six days' cash: after a day, five are left.
+    const low = s.tick({ ...start, cash: burn * 6.5 });
+    expect(low.pauses).toEqual([expect.objectContaining({ kind: "lowCash", id: "low-cash" })]);
+    expect(low.pauses[0]!.text).toMatch(/^Cash runs out in about \d days?$/);
+    expect(s.tick(low.state).pauses).toEqual([]);
+    const lastDay = s.tick({ ...start, cash: burn * 1.5 });
+    expect(lastDay.pauses).toEqual([{ kind: "lowCash", id: "low-cash", text: "Cash runs out tomorrow" }]);
+  });
+
+  it("stops a career's week when a holiday that hits the product is announced, with its date", () => {
+    const real = createSim({ ...defaultConfig, allowedGameLengths: { "180-days": 0, "1-year": 0, career: 1 } });
+    const shop = real.newGame({ companyName: "Acme", productType: "ecommerce", model: "saas", seed: 3, gameLength: "career", startDate: "2026-11-01" });
+    // Black Friday, on day 27, is announced 14 days ahead: day 13, in the week played from day 8.
+    const start = real.advance(shop, 7).state;
+    expect(start.day).toBe(8);
+    const { state, pauses } = real.tick(start);
+    expect(state.day).toBe(13);
+    expect(pauses).toContainEqual({
+      kind: "calendar",
+      id: "holiday-blackFriday",
+      text: "Holiday coming in 14 days: Black Friday, on Friday 27 November 2026",
+    });
+  });
+
+  it("refuses a game that has ended", () => {
+    const ended = s.endGame(begin("career"));
+    expect(() => s.tick(ended)).toThrow(expect.objectContaining({ code: "finished" }));
   });
 });

@@ -1,4 +1,5 @@
 import {
+  DIFFICULTY_IDS,
   GAME_LENGTH_IDS,
   MANAGED_SERVICES,
   type DangerRisk,
@@ -10,6 +11,7 @@ import {
   STAFF_GRADES,
   STAFF_POOLS,
   type CustomerTypeId,
+  type DifficultyId,
   type GameLengthId,
   type ManagedService,
   type MigrationPhase,
@@ -27,7 +29,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 30;
+export const GAME_STATE_VERSION = 33;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -52,8 +54,8 @@ export interface DaySpend extends Spend {
   /** Money borrowed on the day: a bank loan, if one was taken then. Not income: it's paid back as debt. */
   borrowed: number;
   /**
-   * Money from funders on the day: friends and family's and a grant's, less a withdrawn grant paid back. Not income:
-   * friends and family bought shares with it, and a grant is a gift with a condition.
+   * Money from funders on the day: friends and family's, a grant's and a rescue buyout's, less a withdrawn grant paid
+   * back and a buy-back. Not income: shares were bought with it, and a grant is a gift with a condition.
    */
   raised: number;
   /** Of the day's debt, the interest: the only part of a loan repayment that counts against profit. */
@@ -135,7 +137,7 @@ export type FunderId = (typeof FUNDER_IDS)[number];
 /** Someone who owns shares in the company. */
 export interface Shareholder {
   /** "student" for the student, who owns every share at the start; otherwise the funder who bought them. */
-  id: "student" | "friendsAndFamily";
+  id: "student" | "friendsAndFamily" | "vulture";
   shares: number;
   /** The day they got their shares: 1 for the student. */
   day: number;
@@ -174,6 +176,35 @@ export interface GrantFunding {
 export interface Funding {
   friendsAndFamily: FriendsAndFamilyFunding | null;
   grant: GrantFunding | null;
+}
+
+/** People of one grade let go from one team in a rescue buyout's cost cuts. */
+export interface StaffCut {
+  pool: StaffPool;
+  grade: StaffGrade;
+  count: number;
+}
+
+/**
+ * The rescue buyout, once it has happened: the first time cash ran out, a vulture VC put in cash for new shares and
+ * forced cost cuts (see RescueConfig). Running out again is liquidation.
+ */
+export interface Rescue {
+  day: number;
+  /** Cash the vulture VC put in: the losses, plus the breathing space. */
+  amount: number;
+  /** Of it, what took cash below £0. */
+  losses: number;
+  /** The new shares it got for it, and its share of the company then, 0–1. */
+  shares: number;
+  share: number;
+  /** Staff let go in the cuts, and hires cancelled before they started. */
+  cuts: StaffCut[];
+  hiresCancelled: number;
+  /** What the cuts save a day in pay. */
+  savedPerDay: number;
+  /** The day the student bought the vulture VC's shares back and what it cost, or null. */
+  boughtBack: { day: number; price: number } | null;
 }
 
 /** A day an event fires on: a fixed day from config, or the day a random event came up on the encounter list. */
@@ -311,14 +342,14 @@ export interface PriceChange {
 }
 
 /**
- * A bankrupt game is over, and so is a finished one: one that has played the configured final day. Either way it
- * accepts no more actions or advances. The final day is the last day played, so a 180-day game plays day 180 in full
+ * A liquidated game is over (cash ran out after a rescue buyout), and so is a finished one: one that has played the
+ * configured final day. Either way it accepts no more actions or advances. The final day is the last day played, so a 180-day game plays day 180 in full
  * (billed, with its events) and finishes at the end of it. A game the teacher ends early is finished too.
  */
-export type GameStatus = "playing" | "bankrupt" | "finished";
+export type GameStatus = "playing" | "liquidated" | "finished";
 
 /** How a game ended, for the summary: "ended" when the teacher ended it before its final day. */
-export type GameEnding = "completed" | "bankrupt" | "ended";
+export type GameEnding = "completed" | "liquidation" | "ended";
 
 /** Plain, JSON-serialisable game state. The server stores it as-is. */
 export interface GameState {
@@ -329,10 +360,17 @@ export interface GameState {
   model: ModelId;
   /** The game length the student picked when starting the company. */
   gameLength: GameLengthId;
+  /** The difficulty the student picked when starting the company. The game plays on that difficulty's numbers. */
+  difficulty: DifficultyId;
   /** The last day played: the game finishes once it has been played. Set from the game length at the start. */
   finalDay: number;
   /** True once the teacher has ended the game, scored as it stood. */
   endedByTeacher: boolean;
+  /**
+   * The real date of day 1, "YYYY-MM-DD": a random date in the year the game started. Day d is d − 1 days after it.
+   * See gameDate for a day's date and year.
+   */
+  startDate: string;
   day: number;
   cash: number;
   rng: number;
@@ -406,6 +444,8 @@ export interface GameState {
   shareholders: Shareholder[];
   /** Friends and family and the grant, once answered. */
   funding: Funding;
+  /** The rescue buyout, once cash has run out once; null before. */
+  rescue: Rescue | null;
   /** Loans repaid before the latest was taken, oldest first, for the summary. */
   pastLoans: Loan[];
   /** The interest in every loan repayment so far: of the debt spend, the part that counts against profit. */
@@ -514,6 +554,8 @@ export type Action =
   | { type: "acceptFunding"; funder: FunderId }
   /** Turns a funder's offer down for good. */
   | { type: "declineFunding"; funder: FunderId }
+  /** Buys all the vulture VC's shares back after a rescue buyout, at its price, at once. Refused without the cash. */
+  | { type: "buyBack" }
   /**
    * Pays off the loan being repaid, at once, with what's left of the money borrowed: the interest still to come is
    * saved. Refused without enough cash.
@@ -540,6 +582,12 @@ export interface NewGameParams {
   shares?: number;
   /** One of the game lengths the config allows. Left out, the first it allows (180 days by default). */
   gameLength?: string;
+  /** One of the difficulties the config allows. Left out, Normal if allowed, otherwise the easiest allowed. */
+  difficulty?: string;
+  /** The year the game starts in: day 1 is a random date in it, drawn from the seed. Left out, the config's. */
+  startYear?: number;
+  /** Day 1's date exactly, "YYYY-MM-DD", in place of a random one: for tests and replays. */
+  startDate?: string;
 }
 
 export interface LogEntry {
@@ -550,14 +598,15 @@ export interface LogEntry {
   /** Of a loan repayment (debt), the interest in it. */
   interest?: number;
   /**
-   * Set on entries that need to stand out, such as an outage, bankruptcy or the launch. "income" marks money coming in, which the
+   * Set on entries that need to stand out, such as an outage, a rescue buyout, liquidation or the launch. "income" marks money coming in, which the
    * ledger counts as income rather than spend. "loan" marks the bank loan: money coming in with it is borrowed, which
    * is cash but not income. "funding" marks money from friends and family or a grant, and a withdrawn grant paid
-   * back: cash, but neither income nor a charge.
+   * back or a buy-back; "rescue", the rescue buyout. Either is cash, but neither income nor a charge.
    */
   kind?:
     | "outage"
-    | "bankrupt"
+    | "rescue"
+    | "liquidation"
     | "finished"
     | "feature"
     | "migration"
@@ -571,7 +620,8 @@ export interface LogEntry {
     | "launch"
     | "staff"
     | "api"
-    | "danger";
+    | "danger"
+    | "calendar";
 }
 
 export interface DayLog {
@@ -602,6 +652,10 @@ export class SimError extends Error {
 /** Whether something stored is a game from this version. Anything else is refused, not upgraded. */
 export function isCurrentState(saved: unknown): saved is GameState {
   return typeof saved === "object" && saved !== null && (saved as { version?: unknown }).version === GAME_STATE_VERSION;
+}
+
+export function isDifficultyId(v: string): v is DifficultyId {
+  return (DIFFICULTY_IDS as readonly string[]).includes(v);
 }
 
 export function isGameLengthId(v: string): v is GameLengthId {

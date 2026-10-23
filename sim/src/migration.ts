@@ -100,7 +100,7 @@ export interface MigrationQuote {
   cashLeft: number;
   /**
    * A warning when the cash left would cover less than lowCashDays of today's running costs (staff and the current
-   * bill), or none. Migrating that short of cash is how companies go bankrupt mid-move.
+   * bill), or none. Migrating that short of cash is how companies run out of cash mid-move.
    */
   warning: string | null;
 }
@@ -167,7 +167,7 @@ export function createMigration(
   function startMigration(state: GameState, model: string): GameState {
     const started = planMigration(state, model);
     // The upfront bill lands on the first day, so a migration that costs more up front than the company has is
-    // refused rather than bankrupting it.
+    // refused rather than running it out of cash.
     const upfront = infra.upfrontCost(started.migration!.to, started.migration!);
     if (upfront > state.cash) {
       throw new SimError(
@@ -229,7 +229,7 @@ export function createMigration(
         ? `You can't afford this: it costs ${pounds(total)} and you have ${pounds(state.cash)}.`
         : cashLeft < lowCash
           ? `This would leave you ${pounds(cashLeft)}, about ${Math.floor(cashLeft / Math.max(1, running))} days of running costs before any income. ` +
-            `Migrating this short of cash is how companies go bankrupt mid-move: take the bank loan first, or wait until you have more.`
+            `Migrating this short of cash is how companies run out of cash mid-move: take the bank loan first, or wait until you have more.`
           : null;
     return {
       from: state.model,

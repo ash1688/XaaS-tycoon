@@ -24,7 +24,7 @@ export type ValuationDriverId =
   | "payingUsers"
   | "netCash"
   | "minimum"
-  | "bankrupt";
+  | "liquidation";
 
 /** One thing pushing the valuation up or down, in pounds. The drivers add up to the valuation. */
 export interface ValuationDriver {
@@ -52,7 +52,7 @@ export interface ValuationView {
   recentUptime: number;
   /**
    * Revenue first, then growth, satisfaction, uptime, paying users, net cash and any top-up to the minimum, or for a
-   * bankrupt company what takes it to nothing.
+   * liquidated company what takes it to nothing.
    */
   drivers: ValuationDriver[];
 }
@@ -133,7 +133,11 @@ export interface FundingView {
 
 const DAYS_PER_YEAR = 365;
 const HOURS_PER_DAY = 24;
-const NAMES: Record<Shareholder["id"], string> = { student: "You", friendsAndFamily: "Friends and family" };
+const NAMES: Record<Shareholder["id"], string> = {
+  student: "You",
+  friendsAndFamily: "Friends and family",
+  vulture: "Vulture VC",
+};
 const FUNDER_NAMES: Record<FunderId, string> = { friendsAndFamily: "Friends and family", grant: "The grant" };
 const percent = (share: number) => `${Math.round(share * 1000) / 10}%`;
 const round1 = (n: number) => Math.round(n * 10) / 10;
@@ -297,9 +301,9 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
       detail: owed ? `${pounds(state.cash)} cash, less ${pounds(owed)} of the loan still to pay back` : `${pounds(state.cash)} cash`,
     });
     const formula = drivers.reduce((sum, d) => sum + d.amount, 0);
-    // A bankrupt company is worth nothing: the minimum is for one still trading, so wrecking it can't score.
-    if (state.status === "bankrupt") {
-      drivers.push({ id: "bankrupt", label: "Bankrupt", amount: -formula, detail: "A bankrupt company is worth nothing" });
+    // A liquidated company is worth nothing: the minimum is for one still trading, so wrecking it can't score.
+    if (state.status === "liquidated") {
+      drivers.push({ id: "liquidation", label: "Liquidation", amount: -formula, detail: "A company in liquidation is worth nothing" });
     } else if (formula < v.minimum) {
       drivers.push({
         id: "minimum",
@@ -308,7 +312,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
         detail: `A company is never valued below ${pounds(v.minimum)}`,
       });
     }
-    const value = state.status === "bankrupt" ? 0 : Math.max(v.minimum, formula);
+    const value = state.status === "liquidated" ? 0 : Math.max(v.minimum, formula);
     const shares = sharesInIssue(state);
     return {
       valuation: value,
@@ -388,7 +392,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
       minUptime,
       maxHoursDown,
       condition: `Keep uptime at ${minUptime}% or more for the ${days} days ${when}: at most ${maxHoursDown} hours down in all.`,
-      ifMissed: `Go over and the grant is withdrawn: all ${pounds(amount)} is paid back at once, which can bankrupt the company.`,
+      ifMissed: `Go over and the grant is withdrawn: all ${pounds(amount)} is paid back at once, which can run the company out of cash.`,
     };
   }
 

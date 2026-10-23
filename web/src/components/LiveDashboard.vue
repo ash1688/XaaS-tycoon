@@ -34,8 +34,8 @@ const confirming = ref<
 const busy = ref(false);
 let timer: ReturnType<typeof setInterval> | undefined;
 
-const STATUS_LABELS = { active: "Active", retired: "Retired", bankrupt: "Bankrupt", finished: "Finished" } as const;
-const STATUS_BADGES = { active: "", retired: "retired-badge", bankrupt: "warn-badge", finished: "done-badge" } as const;
+const STATUS_LABELS = { active: "Active", retired: "Retired", liquidated: "Liquidated", finished: "Finished" } as const;
+const STATUS_BADGES = { active: "", retired: "retired-badge", liquidated: "warn-badge", finished: "done-badge" } as const;
 
 // "Rent VMs (IaaS)" -> "IaaS": short enough for a table column.
 function modelName(id: string) {

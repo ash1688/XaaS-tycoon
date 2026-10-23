@@ -21,16 +21,19 @@ import {
   type SQL,
 } from "drizzle-orm";
 import {
+  allowedDifficulties,
   allowedGameLengths,
   applyOverrides,
   configFields,
   createSim,
   diffFromDefaults,
+  DIFFICULTIES,
   FUNDER_IDS,
   GAME_STATE_VERSION,
   gameLengthDays,
   gameLengthName,
   interestIn,
+  withDifficulty,
   isCurrentState,
   MANAGED_SERVICES,
   MIGRATION_PHASES,
@@ -86,6 +89,7 @@ import type {
   TeacherGamesView,
   TeacherGameView,
   TeacherSummaryView,
+  TimedFlowSpeedView,
   TimedFlowView,
   TimelineView,
   UiEventsBody,
@@ -112,13 +116,18 @@ export interface AppOptions {
   logger?: boolean;
   /** Companies still being played that one login code can have at once. Defaults to 3. */
   maxActiveCompanies?: number;
+  /**
+   * Day 1's date for every new game, "YYYY-MM-DD", in place of a random date this year: for tests and demonstrations.
+   * Unset, each game starts on a random date in the current year.
+   */
+  startDate?: string;
   /** How far back, in hours, the teacher's dashboard looks unless the teacher picks another window. Defaults to 3. */
   dashboardHours?: number;
   /**
-   * Timed flow: the game page plays a day every `seconds` on its own, with Play/Pause, by calling continue on a timer.
-   * Off unless set, so students press Continue a day at a time.
+   * Timed flow: the game page plays a tick every `seconds` at normal speed on its own, with Pause and speed settings,
+   * by calling continue on a timer. On unless set off; the teacher can also switch it off in the active preset.
    */
-  timedFlow?: TimedFlowView;
+  timedFlow?: TimedFlowOptions;
   /**
    * Which proxies to trust for the client's IP and protocol (Fastify's `trustProxy`): true, or a comma-separated list
    * of addresses, CIDRs or proxy-addr names such as "uniquelocal". Needed behind Dokploy's Traefik, so the teacher's cookie is marked Secure over HTTPS and rate limits see
@@ -146,6 +155,29 @@ export const DEFAULT_DASHBOARD_HOURS = 3;
 /** The widest window the dashboard can ask for: a week. */
 export const MAX_DASHBOARD_HOURS = 7 * 24;
 export const DEFAULT_TIMED_FLOW_SECONDS = 15;
+
+/** Whether the server allows timed flow, and the seconds a tick at normal speed. */
+export interface TimedFlowOptions {
+  enabled: boolean;
+  seconds: number;
+}
+
+/** The speeds a student can pick, as multiples of the normal speed's seconds a tick. */
+const TIMED_FLOW_SPEEDS: { id: TimedFlowSpeedView["id"]; name: string; times: number }[] = [
+  { id: "slow", name: "Slow", times: 2 },
+  { id: "normal", name: "Normal", times: 1 },
+  { id: "fast", name: "Fast", times: 1 / 3 },
+  { id: "fastest", name: "Fastest", times: 1 / 10 },
+];
+
+/** Timed flow as a game page sees it: on if both the server and the teacher's active preset allow it. */
+export function timedFlowView({ enabled, seconds }: TimedFlowOptions, presetAllows: boolean): TimedFlowView {
+  return {
+    enabled: enabled && presetAllows,
+    seconds,
+    speeds: TIMED_FLOW_SPEEDS.map(({ id, name, times }) => ({ id, name, seconds: Math.round(seconds * times * 100) / 100 })),
+  };
+}
 
 const CODE_PATTERN = /^\d{8}$/;
 
@@ -175,7 +207,7 @@ const MAX_CACHED_SIMS = 20;
  * SimError codes that are a 409: a game that has ended or that the student retired, or a price still locked after the
  * last change. The request was fine, but the game can't take it now.
  */
-const CONFLICT = new Set(["bankrupt", "finished", "retired", "price_locked"]);
+const CONFLICT = new Set(["liquidated", "finished", "retired", "price_locked"]);
 
 /** The SimError code for a game saved by an older version of the sim, which can't be loaded any more. */
 const OLD_VERSION = "old_version";
@@ -193,7 +225,9 @@ export async function buildApp(opts: AppOptions) {
   const base = baseSim.config;
   const maxActiveCompanies = opts.maxActiveCompanies ?? DEFAULT_MAX_ACTIVE_COMPANIES;
   const dashboardHours = opts.dashboardHours ?? DEFAULT_DASHBOARD_HOURS;
-  const timedFlow = opts.timedFlow ?? { enabled: false, seconds: DEFAULT_TIMED_FLOW_SECONDS };
+  const timedFlow = opts.timedFlow ?? { enabled: true, seconds: DEFAULT_TIMED_FLOW_SECONDS };
+  // A new game starts on the configured date, or a random one this year.
+  const startsOn = () => (opts.startDate ? { startDate: opts.startDate } : { startYear: new Date().getUTCFullYear() });
   const app = Fastify({ logger: opts.logger ?? false, trustProxy: opts.trustProxy ?? false });
 
   await app.register(cookie, { secret: opts.sessionSecret });
@@ -240,7 +274,7 @@ export async function buildApp(opts: AppOptions) {
   }
 
   app.setErrorHandler((err, _req, reply) => {
-    // A bankrupt or finished game is over: the request was fine, but the game can't take it any more. A game from an
+    // A liquidated or finished game is over: the request was fine, but the game can't take it any more. A game from an
     // older version is gone for good: it can't be loaded, so it can't be shown or played.
     if (err instanceof SimError) {
       const status = CONFLICT.has(err.code) ? 409 : err.code === OLD_VERSION ? 410 : 400;
@@ -315,6 +349,9 @@ export async function buildApp(opts: AppOptions) {
       model: state.model,
       gameLength: state.gameLength,
       gameLengthName: gameLengthName(sim.config, state.gameLength),
+      tickDays: sim.tickDays(state),
+      difficulty: state.difficulty,
+      difficultyName: DIFFICULTIES[state.difficulty].name,
       day: state.day,
       finalDay: state.finalDay,
       endedByTeacher: state.endedByTeacher,
@@ -365,11 +402,13 @@ export async function buildApp(opts: AppOptions) {
       valuation: sim.valuation(state),
       capTable: sim.capTable(state),
       funding: sim.funding(state),
+      rescue: sim.rescue(state),
       features: sim.features(state),
       migration: sim.migration(state),
       migrations: state.migrations,
       events: sim.events(state),
       danger: sim.danger(state),
+      calendar: sim.calendar(state),
       featureGaps: sim.featureGaps(state),
       api: sim.api(state),
     };
@@ -382,7 +421,7 @@ export async function buildApp(opts: AppOptions) {
     users: state.users,
     uptime: sim.uptime(state),
     migratingTo: state.migration?.to ?? null,
-    // Denormalised for the dashboard, like cash: "bankrupt" or "finished" once the game is over.
+    // Denormalised for the dashboard, like cash: "liquidated" or "finished" once the game is over.
     ...(state.status !== "playing" && { status: state.status }),
     state,
   });
@@ -405,7 +444,9 @@ export async function buildApp(opts: AppOptions) {
   });
 
   // The numbers a game shows come from its own config: the current one for a new game, or the one a game started with.
-  function metaFor(config: GameConfig): MetaView {
+  // Timed flow is how the class plays rather than a game's numbers, so it follows the active preset (`current`): the
+  // teacher switching it off reaches games already being played.
+  function metaFor(config: GameConfig, current: GameConfig): MetaView {
     const sim = simFor(config);
     return {
       startingCash: config.startingCash,
@@ -415,9 +456,15 @@ export async function buildApp(opts: AppOptions) {
         name: gameLengthName(config, id),
         finalDay: gameLengthDays(config, id),
       })),
+      difficulties: allowedDifficulties(config).map((id) => ({
+        id,
+        name: DIFFICULTIES[id].name,
+        blurb: DIFFICULTIES[id].blurb,
+        startingCash: withDifficulty(config, id).startingCash,
+      })),
       maxCompanyNameLength: config.maxCompanyNameLength,
       maxActiveCompanies,
-      timedFlow,
+      timedFlow: timedFlowView(timedFlow, current.timedFlow === 1),
       productTypes: PRODUCT_TYPE_IDS.map((id) => {
         const { name, profile, features } = config.productTypes[id];
         return {
@@ -457,7 +504,10 @@ export async function buildApp(opts: AppOptions) {
   }
 
   // What a game started now would use.
-  app.get("/api/meta", async (): Promise<MetaView> => metaFor((await newGameSetup()).config));
+  app.get("/api/meta", async (): Promise<MetaView> => {
+    const { config } = await newGameSetup();
+    return metaFor(config, config);
+  });
 
   // --- student (identified by login code) ---
 
@@ -489,6 +539,7 @@ export async function buildApp(opts: AppOptions) {
             // Shares in issue at the start. The sim checks it's in the game's range.
             shares: { type: "integer" },
             gameLength: { type: "string" },
+            difficulty: { type: "string" },
           },
           additionalProperties: false,
         },
@@ -497,9 +548,9 @@ export async function buildApp(opts: AppOptions) {
     async (req, reply) => {
       const code = await findCode(req.params.code);
       if (!code) return sendError(reply, 404, "unknown_code", "That code wasn't recognised. Check it with your teacher.");
-      const { name, productType, model, takeLoan = false, gameLength, shares } = req.body;
+      const { name, productType, model, takeLoan = false, gameLength, difficulty, shares } = req.body;
       // Locks the code so two creates at once can't both see room under the limit. Only games still being played
-      // count: finished, bankrupt and retired ones are history. Archiving is only the teacher's view, so it doesn't
+      // count: finished, liquidated and retired ones are history. Archiving is only the teacher's view, so it doesn't
       // change what counts.
       const row = await db.transaction(async (tx) => {
         await tx.select().from(loginCodes).where(eq(loginCodes.code, code.code)).for("update");
@@ -512,7 +563,17 @@ export async function buildApp(opts: AppOptions) {
         // changes later.
         const { preset, config } = await newGameSetup(tx);
         const sim = simFor(config);
-        const state = sim.newGame({ companyName: name, productType, model, seed: randomInt(2 ** 31), takeLoan, gameLength, shares });
+        const state = sim.newGame({
+          companyName: name,
+          productType,
+          model,
+          seed: randomInt(2 ** 31),
+          takeLoan,
+          gameLength,
+          difficulty,
+          shares,
+          ...startsOn(),
+        });
         const [inserted] = await tx
           .insert(companies)
           .values({
@@ -535,7 +596,15 @@ export async function buildApp(opts: AppOptions) {
         );
       }
       const company = view(row);
-      const started = { productType, model, takeLoan, gameLength: company.gameLength, shares: company.capTable.sharesInIssue, preset: row.preset };
+      const started = {
+        productType,
+        model,
+        takeLoan,
+        gameLength: company.gameLength,
+        difficulty: company.difficulty,
+        shares: company.capTable.sharesInIssue,
+        preset: row.preset,
+      };
       logGame(row, company.day, "start", started, company);
       return reply.code(201).send(company);
     },
@@ -551,7 +620,7 @@ export async function buildApp(opts: AppOptions) {
   app.get<{ Params: { code: string; id: string } }>("/api/codes/:code/companies/:id/meta", async (req, reply) => {
     const row = await findCompany(req.params.code, req.params.id);
     if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
-    return metaFor(simOf(row).config) satisfies MetaView;
+    return metaFor(simOf(row).config, (await newGameSetup()).config) satisfies MetaView;
   });
 
   // What migrating to the target would cost, for the confirm step. Changes nothing.
@@ -601,11 +670,11 @@ export async function buildApp(opts: AppOptions) {
   });
 
   app.post<{ Params: { code: string; id: string } }>("/api/codes/:code/companies/:id/continue", async (req, reply) => {
-    const result = await updateCompany(req.params.code, req.params.id, "continue", {}, (sim, state) =>
-      sim.advance(state, 1),
-    );
+    // One tick: a day, or a week in a career, stopping on the day something needs the student.
+    const result = await updateCompany(req.params.code, req.params.id, "continue", {}, (sim, state) => sim.tick(state));
     if (!result) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
-    return { company: result.company, log: result.log } satisfies ContinueResult;
+    const { company, log, days, pauses } = result;
+    return { company, log, days, pauses } satisfies ContinueResult;
   });
 
   app.post<{ Params: { code: string; id: string }; Body: ActionBody }>(
@@ -636,6 +705,7 @@ export async function buildApp(opts: AppOptions) {
                 "takeLoan",
                 "acceptFunding",
                 "declineFunding",
+                "buyBack",
                 "buyApi",
                 "switchServer",
                 "setApiInstances",
