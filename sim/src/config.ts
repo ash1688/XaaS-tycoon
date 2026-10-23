@@ -917,6 +917,11 @@ export interface GameConfig {
    * Numbers rather than flags so the config page can store them like every other setting.
    */
   allowedGameLengths: Record<GameLengthId, number>;
+  /**
+   * 1 if time runs on its own on the game page, with pause and speed settings; 0 for Continue only. The server reads it
+   * from the active preset, so switching it off reaches games already being played.
+   */
+  timedFlow: number;
   maxCompanyNameLength: number;
   launch: LaunchConfig;
   models: Record<ModelId, ModelConfig>;
@@ -952,6 +957,8 @@ export const defaultConfig: GameConfig = {
   // A normal lesson plays 180 days. The longer lengths could take hours, so the teacher turns them on for clubs,
   // homework or extension work.
   allowedGameLengths: { "180-days": 1, "1-year": 0, career: 0 },
+  // Time runs on its own and pauses itself when something needs the student.
+  timedFlow: 1,
   maxCompanyNameLength: 40,
   // Users trickle in over 3 days, building up. SaaS starts on day 1; a platform set up or VMs rented on day 1 start on
   // day 2; on-prem kit bought on day 1 arrives on day 5, so it starts a few days after the cloud models.

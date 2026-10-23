@@ -426,12 +426,37 @@ describe("continue", () => {
     const res = await app.inject({ method: "POST", url: `${url}/continue` });
     expect(res.statusCode).toBe(200);
     const body = res.json<ContinueResult>();
-    expect(body.company).toMatchObject({ day: 2, cash: 975 });
+    expect(body.company).toMatchObject({ day: 2, cash: 975, tickDays: 1 });
+    expect(body).toMatchObject({ days: 1, pauses: [] });
     expect(body.log).toHaveLength(1);
     expect(body.log[0]!.day).toBe(2);
 
     // Resuming later (a fresh request, as from another machine) sees the saved state.
     expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({ day: 2, cash: 975 });
+  });
+
+  it("plays a week a press in a career, stopping on the day something needs the student, with why", async () => {
+    await useOverrides({ "allowedGameLengths.career": 1 });
+    const code = await newCode();
+    const company = (
+      await newCompany(code, { name: "Lifer", productType: "social", model: "saas", gameLength: "career" })
+    ).json<CompanyView>();
+    expect(company.tickDays).toBe(7);
+    const url = `/api/codes/${code}/companies/${company.id}/continue`;
+
+    // £1,000 of cash runs low inside the first week: time stops that day, with why.
+    const first = (await app.inject({ method: "POST", url })).json<ContinueResult>();
+    expect(first.days).toBeGreaterThan(0);
+    expect(first.days).toBeLessThan(7);
+    expect(first.pauses).toContainEqual({ kind: "lowCash", id: "low-cash", text: expect.stringMatching(/^Cash runs out/) });
+    expect(first.company.day).toBe(1 + first.days);
+    expect(first.log.map((d) => d.day)).toEqual(Array.from({ length: first.days }, (_, i) => 2 + i));
+
+    // The next press plays on from there, up to a week.
+    const second = (await app.inject({ method: "POST", url })).json<ContinueResult>();
+    expect(second.log[0]!.day).toBe(first.company.day + 1);
+    expect(second.days).toBeLessThanOrEqual(7);
+    expect(second.company.day).toBe(first.company.day + second.days);
   });
 
   it("serialises concurrent presses so each advances one day", async () => {
@@ -2697,22 +2722,41 @@ describe("provider and SaaS events", () => {
 });
 
 describe("meta", () => {
-  it("reports timed flow as off by default, with the default interval", async () => {
+  const SPEEDS_AT_15 = [
+    { id: "slow", name: "Slow", seconds: 30 },
+    { id: "normal", name: "Normal", seconds: 15 },
+    { id: "fast", name: "Fast", seconds: 5 },
+    { id: "fastest", name: "Fastest", seconds: 1.5 },
+  ];
+
+  it("reports timed flow as on by default, with the default interval and its speeds", async () => {
     const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
-    expect(meta.timedFlow).toEqual({ enabled: false, seconds: 15 });
+    expect(meta.timedFlow).toEqual({ enabled: true, seconds: 15, speeds: SPEEDS_AT_15 });
   });
 
-  it("reports timed flow and its interval when the server turns it on", async () => {
+  it("lets the teacher switch timed flow off, reaching games already being played", async () => {
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    const gameMeta = async () =>
+      (await app.inject({ method: "GET", url: `/api/codes/${code}/companies/${company.id}/meta` })).json<MetaView>().timedFlow;
+    expect((await gameMeta()).enabled).toBe(true);
+    await useOverrides({ timedFlow: 0 });
+    expect((await gameMeta()).enabled).toBe(false);
+    expect((await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>().timedFlow.enabled).toBe(false);
+  });
+
+  it("reports timed flow off when the server switches it off, whatever the preset says", async () => {
     const timed = await buildApp({
       db: testDb.db,
       teacherPassword: PASSWORD,
       sessionSecret: "x".repeat(32),
       sim,
-      timedFlow: { enabled: true, seconds: 5 },
+      timedFlow: { enabled: false, seconds: 3 },
     });
     try {
       const meta = (await timed.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
-      expect(meta.timedFlow).toEqual({ enabled: true, seconds: 5 });
+      expect(meta.timedFlow).toMatchObject({ enabled: false, seconds: 3 });
+      expect(meta.timedFlow.speeds.map((s) => s.seconds)).toEqual([6, 3, 1, 0.3]);
     } finally {
       await timed.close();
     }

@@ -395,6 +395,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     const name = l === "180-days" ? "the short game" : gameLengthName(base, l);
     add(`allowedGameLengths.${l}`, "Events", "Game length", `Allow ${name}`, "Students can pick this length when starting a company. A change only affects new games.", TOGGLE);
   }
+  add("timedFlow", "Events", "Game length", "Timed flow", "Time runs on its own, with pause and speed settings, and pauses itself when something needs the student. Off, students play each day (or week, in a career) with Continue. A change reaches games already being played.", TOGGLE);
   add("encounters.dailyRise", "Events", "Danger meter", "Daily rise", "How much the danger meter rises on a well-run day after launch. A random event fires when it reaches the next threshold on the encounter list.", range(0, 20, 0.1));
   for (const r of DANGER_RISKS) {
     add(`encounters.riskRise.${r}`, "Events", "Danger meter", `Extra rise: ${RISK_LABELS[r]}`, "Added to the day's rise on a day with this risk.", range(0, 20, 0.1));

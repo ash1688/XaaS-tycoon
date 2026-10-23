@@ -99,9 +99,9 @@ describe("runScript", () => {
     const turn = runScript(sim, start(), "instances 2; managed database small; next 30; letgo ops; hire ops 2", who);
     expect(turn.lines.slice(-4)).toEqual([
       "> letgo ops",
-      "not run: time stopped on day 2, so look first",
+      "not run: time stopped on day 4, so look first",
       "> hire ops 2",
-      "not run: time stopped on day 2, so look first",
+      "not run: time stopped on day 4, so look first",
     ]);
     expect(turn.state.staff.ops).toEqual({ junior: 0, mid: 1, senior: 0 });
   });
@@ -161,6 +161,21 @@ describe("advanceUntil", () => {
     expect(turn.lines).toContainEqual(expect.stringMatching(/^  day \d+: Paying users lost: [\d,]+ left and [\d,]+ dropped to free, because your price is above/));
     expect(turn.lines.at(-2)).toMatch(/^  users [\d,]+→[\d,]+ \(paid [\d,]+→[\d,]+, free [\d,]+→[\d,]+\)$/);
     expect(turn.lines.at(-1)).toMatch(/^stopped on day|^advanced to day/);
+  });
+
+  it("plays a week a tick in a career, logging one Continue a week, and stops mid-week on the day something needs you", () => {
+    const careers = createSim({ ...defaultConfig, allowedGameLengths: { "180-days": 0, "1-year": 0, career: 1 } });
+    const career = careers.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3, gameLength: "career" });
+    expect(renderCommands(careers, career)).toMatch(/next \[days\]\s+\(play ticks of a week \(this is a career\)/);
+    // The launch is over on day 3, two days into the first week: time stops there.
+    const launch = advanceUntil(careers, career, 7, who);
+    expect(launch.state.day).toBe(3);
+    expect(launch.lines.at(-1)).toBe("stopped on day 3: Your launch is over");
+    // A quiet stretch then plays whole weeks: "next 10" is two of them, one Continue each.
+    const weeks = advanceUntil(careers, launch.state, 10, who);
+    expect(weeks.state.day).toBe(17);
+    expect(weeks.lines.at(-1)).toBe("advanced to day 17");
+    expect(weeks.rows.map((r) => r.type)).toEqual(["continue", "continue"]);
   });
 
   it("plays to the end and logs the ending", () => {
@@ -226,7 +241,7 @@ describe("rendering", () => {
   it("shows a longer game's length and final day", () => {
     const yearly = createSim({ ...defaultConfig, allowedGameLengths: { "180-days": 0, "1-year": 1, career: 1 } });
     const career = yearly.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3, gameLength: "career" });
-    expect(renderStatus(yearly, career)).toMatch(/day 1\/17155 \(Career \(47 years, age 18 to 65\)\)/);
+    expect(renderStatus(yearly, career)).toMatch(/day 1\/17155 \(Career \(47 years, age 18 to 65\), a week a tick\)/);
   });
 
   it("shows the company and the commands that work now", () => {
@@ -288,7 +303,7 @@ describe("the paid API", () => {
     state = run(state, "rent database large").state;
     state = run(state, "buyapi").state;
     const turn = run(state, "next 7");
-    expect(turn.lines.at(-1)).toMatch(/API calls dropped/);
+    expect(turn.lines.at(-1)).toMatch(/API calls are being dropped/);
     expect(turn.lines.some((l) => /Shop API: [\d,]+ calls dropped/.test(l))).toBe(true);
   });
 
@@ -343,7 +358,7 @@ describe("shares and funding", () => {
     while (turn.state.funding.grant?.status === "accepted") turn = advanceUntil(short, turn.state, 20, who);
     // Launched on day 1, so the condition runs from the end of the ramp: days 4 to 8.
     expect(turn.state.day).toBe(8);
-    expect(turn.lines.at(-1)).toMatch(/^stopped on day 8: .*grant (met|withdrawn)/);
+    expect(turn.lines.at(-1)).toMatch(/^stopped on day 8: The grant( was withdrawn|'s condition is met)/);
     expect(turn.lines.join("\n")).toMatch(/day 8: Grant (condition met|withdrawn)/);
   });
 });

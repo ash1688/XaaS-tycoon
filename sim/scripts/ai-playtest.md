@@ -23,12 +23,15 @@ npm run -s play -- summary <game>
 - `look` shows the company and every command that works right now, with prices and allowed values.
 - `do` runs game commands separated by `;`. Every game command goes inside `do`, including `preview` and `quote`:
   `npm run -s play -- do <game> "preview 8; quote iaas"`.
-- `next [days]` (inside `do`) moves time on, 7 days by default, and **stops early** when something needs a
-  decision: an event that hurts, an outage, a new risk on the danger meter, a built feature, a server arriving,
-  staff starting, capacity running out, satisfaction falling, cash about to run out, the price lock ending, or paid
-  API calls starting to be dropped. Any commands after a stop are not run, and each says so ("not run: time
-  stopped"). Events that need nothing from you are shown but don't stop time. Each advance ends with how the users
-  changed, and each day shows paying users lost to a dear price, poor support or downtime.
+- `next [days]` (inside `do`) moves time on, 7 days by default, in ticks as the game page does: a tick is a day, or
+  a week in a career. It **stops early**, on the day itself, when the game pauses for the student: an event that
+  hurts or an outage, an alert (capacity over 100%, satisfaction falling below the poor mark, the grant withdrawn,
+  paid API calls starting to be dropped), a new offer, cash about to run out, or something finished (a feature
+  built, the launch over, servers ready, a migration step, the grant's condition met). The text interface also
+  stops for a new risk on the danger meter, staff starting, satisfaction falling hard and the price lock ending.
+  Any commands after a stop are not run, and each says so ("not run: time stopped"). Events that need nothing from
+  you are shown but don't stop time. Each advance ends with how the users changed, and each day shows paying users
+  lost to a dear price, poor support or downtime.
 - A refused command says why, and the rest of the batch still runs. A refused `letgo` or `move` also shows the
   grades that team has now.
 - Staff come in junior, mid and senior grades, each with its own pay and work a day, and each takes days to start

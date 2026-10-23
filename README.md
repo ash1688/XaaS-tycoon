@@ -55,8 +55,8 @@ The image is a multi-stage build: production dependencies only, running as the `
 | `RATE_LIMIT_LOGIN_FAILURES` | No | Wrong teacher passwords allowed per client IP in the window. Default 10. |
 | `RATE_LIMIT_WINDOW_MINUTES` | No | The rate limit window. Default 15. A blocked IP gets back in when it ends. |
 | `GAME_FINAL_DAY` | No | Ends games after this many days instead of 180. Leave unset in production. |
-| `TIMED_FLOW` | No | `on` gives the game page Play/Pause. Off unless set. |
-| `TIMED_FLOW_SECONDS` | No | Seconds per day with timed flow on. Default 15. |
+| `TIMED_FLOW` | No | `off` takes timed flow off the game page for every game, leaving Continue only. On unless set. |
+| `TIMED_FLOW_SECONDS` | No | Seconds a tick at normal speed with timed flow on. Default 15. |
 
 `DATABASE_URL` and `PORT` are set by the compose file. The server checks `DATABASE_URL`, `TEACHER_PASSWORD` and `SESSION_SECRET` before connecting to anything, and exits with a message naming the one that's missing.
 
@@ -105,13 +105,15 @@ The numbers are kept as **named presets**, such as "Easy mode" or "Lesson 3", ea
 How it fits with the env settings:
 
 - **`GAME_FINAL_DAY` sets the base.** The server's base config is the built-in defaults with `GAME_FINAL_DAY` applied. Default is that base, each number's default on the page shows it, and presets store only the numbers that differ from it, so the e2e tests (`GAME_FINAL_DAY=30`) still get 30-day games unless a test changes it. A game length saved in the active preset wins over `GAME_FINAL_DAY` for new games.
-- **Timed flow stays env-only.** `TIMED_FLOW` and `TIMED_FLOW_SECONDS` are how the server runs, not game balance, so they're not on the page.
+- **Timed flow has a switch on the page.** The **Timed flow** toggle (under Events, Game length) switches it off for the class. Unlike the numbers, it's read from the active preset, not the game's snapshot, so switching it off reaches games already being played (on their next page load). `TIMED_FLOW=off` switches it off for the whole server, whatever the preset says; `TIMED_FLOW_SECONDS` sets its speed.
 
 Adding a number to `GameConfig` (in `sim/src/config.ts`) means listing it in `configFields` in `sim/src/configSchema.ts`, with its group, explanation and range, or adding it to `CONFIG_EXCLUSIONS` with a reason. A test fails until it's one or the other.
 
-### Timed flow (off by default)
+### Timed flow
 
-The alpha plays one day per **Continue** click. A timed flow is built in but switched off: set `TIMED_FLOW=on` and the game page gets a **Play/Pause** button that plays a day every `TIMED_FLOW_SECONDS` (default 15), with a countdown to the next day. It's a server setting, read at startup and passed to the page through `/api/meta`, so you can try it by restarting the server, without rebuilding the web client. Each timed day calls the same continue endpoint as the button, one request at a time. It pauses while the tab is hidden and carries on when the student comes back, and stops when the game ends or a day fails. Actions such as hiring or starting a migration still work while it plays.
+Time runs on its own. The game page has **Play/Pause** and four speeds (Slow, Normal, Fast and Fastest: 2×, 1×, ⅓ and ⅒ of `TIMED_FLOW_SECONDS`, default 15, a tick), with a countdown to the next tick. A game opens paused, so the student can look before playing. A **tick** is a day, or a week in a career; **Continue** plays one tick too. The sim still plays one day at a time, and after every day it checks its **pause triggers**: an event that hurts or an outage, an alert (over capacity, satisfaction falling below the poor mark, the grant withdrawn, paid API calls dropped), a new offer, cash about to run out (5 days or fewer) or something finished (a feature built, the launch over, servers ready, a migration step, the grant's condition met). The tick stops on the day one fires, so a crisis on the second day of a career week stops the clock there, and the page pauses and shows why.
+
+It's read at startup and passed to the page through `/api/meta` (and each game's meta), so you can change it by restarting the server, without rebuilding the web client. Each tick calls the same continue endpoint as the button, one request at a time. It pauses while the tab is hidden and carries on when the student comes back, and stops when the game ends or a tick fails. Actions such as hiring or starting a migration still work while it plays. The student's speed is remembered in their browser.
 
 ## Tests
 
