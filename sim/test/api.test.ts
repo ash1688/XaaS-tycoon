@@ -308,12 +308,11 @@ describe("API income in the valuation", () => {
     state = { ...state, api: { ...state.api!, calls: 50_000 } };
     const { state: after, log } = sim.advance(state, 3);
     expect(apiIncome(log)).toBeGreaterThan(0);
-    // Every day since launch, within the valuation's window, users' and API income together.
-    const since = after.spendByDay.filter((d) => d.day > after.launchDay!);
-    const average = since.reduce((sum, d) => sum + d.income, 0) / since.length;
-    expect(sim.valuation(after).annualRevenue).toBe(Math.round(average * 365));
+    // Users' and API income together, over the valuation's window.
+    const days = sim.config.valuation.averageDays;
+    const earned = after.spendByDay.filter((d) => d.day > after.day - days).reduce((sum, d) => sum + d.income, 0);
+    expect(sim.valuation(after).annualRevenue).toBe(Math.round((earned / days) * 365));
     // Without the API's income those days, revenue would be lower.
-    const withoutApi = since.reduce((sum, d) => sum + d.income, 0) - apiIncome(log);
-    expect(sim.valuation(after).annualRevenue).toBeGreaterThan(Math.round((withoutApi / since.length) * 365));
+    expect(sim.valuation(after).annualRevenue).toBeGreaterThan(Math.round(((earned - apiIncome(log)) / days) * 365));
   });
 });

@@ -109,10 +109,12 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("loan.minTermDays", "Money", "Bank loan", "Shortest term", "The fewest repayment days a loan has, however late it's taken.", range(1, 3_650, 1));
   add("loan.minDays", "Money", "Bank loan", "No loans in the last days", "The bank won't lend with fewer days than this left in the game.", range(1, 365, 1));
   add("valuation.minimum", "Money", "Valuation", "Lowest valuation", "A company is never valued below this, even with no revenue.", POUNDS);
-  add("valuation.revenueDays", "Money", "Valuation", "Revenue averaged over", "Days of income earned that annual revenue is averaged from, so a price change can't move the valuation at once.", GAME_DAY);
+  add("valuation.averageDays", "Money", "Valuation", "Averaged over", "Days that revenue, paying users and satisfaction are averaged over for the valuation, so one day can't swing it and a price change can't move it at once.", GAME_DAY);
+  add("valuation.fallDays", "Money", "Valuation", "Falls in revenue counted over", "Revenue is the lower of its average over the days above and over this many, so income lost shows within these days but a rise counts slowly.", GAME_DAY);
   add("valuation.revenueMultiple", "Money", "Valuation", "Revenue multiple", "Annual revenue counts this many times over in the valuation, before growth, satisfaction and uptime move it.", MULTIPLIER);
+  add("valuation.minMultiple", "Money", "Valuation", "Lowest revenue multiple", "However badly growth, satisfaction and uptime are going, annual revenue counts at least this many times over.", MULTIPLIER);
   add("valuation.valuePerPayingUser", "Money", "Valuation", "Value per paying user", "Each paying user adds this to the valuation, so it can't be inflated by price alone.", range(0, 1_000, 1));
-  add("valuation.growthDays", "Money", "Valuation", "Growth measured over", "Days back to compare paying users with, for growth.", GAME_DAY);
+  add("valuation.growthDays", "Money", "Valuation", "Growth measured over", "Days back to compare average paying users with, for growth.", GAME_DAY);
   add("valuation.growthBaseUsers", "Money", "Valuation", "Growth measured from at least", "Growth is the change in paying users ÷ those then, or ÷ this many if there were fewer.", range(1, 100_000, 1));
   add("valuation.growthMultiple", "Money", "Valuation", "Multiple per 100% growth", "Added to the revenue multiple for each 100% growth in paying users over the period (taken off for a fall).", MULTIPLIER);
   add("valuation.maxGrowthMultiple", "Money", "Valuation", "Most growth adds", "The most growth can add to the multiple.", MULTIPLIER);

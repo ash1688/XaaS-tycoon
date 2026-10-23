@@ -38,7 +38,7 @@ test("pick the shares, see the valuation and cap table, take friends and family 
   await expect(capTable.getByTestId("cap-student").getByTestId("cap-share")).toHaveText("100%");
   const valuation = student.getByTestId("valuation-panel");
   await expect(valuation.getByTestId("your-share")).toHaveText("100%");
-  for (const driver of ["revenue", "growth", "satisfaction", "uptime", "payingUsers"]) {
+  for (const driver of ["revenue", "growth", "satisfaction", "uptime", "payingUsers", "netCash"]) {
     await expect(valuation.getByTestId(`driver-${driver}`)).toBeVisible();
   }
 

@@ -814,23 +814,36 @@ export interface SharesConfig {
 
 /**
  * What the company is worth: the formula valuation. Revenue counts at a multiple that growth, satisfaction and uptime
- * move; paying users count at a value each, so price-gouging can't inflate it. Never below the minimum.
+ * move; paying users count at a value each, so price-gouging can't inflate it; and cash counts, less what's still owed
+ * on a loan. Never below the minimum. Everything but cash and uptime is averaged over the last averageDays days, so
+ * one bad (or good) day can't swing it, and nor can timing the end of the game.
  *
- *   annual revenue = income earned a day (paying users and any paid API), averaged over the last revenueDays days
- *                    played since launch, × 365
- *                    (income earned, not today's price: a price change can't move it until the income comes in)
- *   growth = (paying users now − paying users growthDays ago) ÷ max(those then, growthBaseUsers)
+ *   annual revenue = income earned (paying users and any paid API) a day × 365: over the last averageDays days, or
+ *                    over the last fallDays if that's lower, each total ÷ its days
+ *                    (income earned, not today's price: a price change can't move it until the income comes in; days
+ *                    before launch count as nothing, so a new company's revenue builds up over its first weeks; a rise
+ *                    counts slowly but income lost shows within fallDays)
+ *   paying users = averaged over the last averageDays days played, or today's if fewer
+ *   satisfaction = averaged over the last averageDays days played
+ *   value per paying user = valuePerPayingUser × what they paid a month ÷ the fair price, at most valuePerPayingUser
+ *   growth = (paying users averaged − paying users averaged over the averageDays days to growthDays ago)
+ *            ÷ max(those then, growthBaseUsers), counting only days after the launch ramp and scaled by the
+ *            share of those earlier days that are, so it builds up from nothing over the weeks after launch
  *   multiple = revenueMultiple
  *            + growthMultiple × growth, between −maxGrowthPenalty and +maxGrowthMultiple
  *            − satisfactionPenalty × (goodSatisfaction − satisfaction) ÷ goodSatisfaction, below goodSatisfaction
  *            − uptimePenaltyPerPoint × (goodUptime − recent uptime %), below goodUptime, at most maxUptimePenalty
- *   valuation = max(minimum, annual revenue × max(0, multiple) + paying users × valuePerPayingUser)
+ *   valuation = max(minimum, annual revenue × max(minMultiple, multiple) + paying users × valuePerPayingUser
+ *                            + cash − the loan's money borrowed still to pay back)
  *
- * Recent uptime is over ConversionConfig's uptimeDays. Share price = valuation ÷ shares in issue.
+ * A bankrupt company is worth nothing, whatever the minimum. Recent uptime is over ConversionConfig's uptimeDays.
+ * Share price = valuation ÷ shares in issue.
  */
 export interface ValuationConfig {
-  revenueDays: number;
+  averageDays: number;
+  fallDays: number;
   revenueMultiple: number;
+  minMultiple: number;
   growthDays: number;
   growthBaseUsers: number;
   growthMultiple: number;
@@ -1316,22 +1329,25 @@ export const defaultConfig: GameConfig = {
   // tight start, for about £3,500 of interest. See LoanConfig for the interest formula.
   loan: { amount: 35_000, baseRate: 0.1, ratePerDay: 0.002, termDays: 120, termPerDay: 0.5, minTermDays: 60, minDays: 14 },
   shares: { min: 10_000, max: 100_000, default: 10_000 },
-  // Placeholders. A new company with no revenue is worth the £50k minimum, so friends and family's £15k on day 1 buys
-  // about 23% of it; a company making £500 a day with 2,000 paying users is worth about £590k, and the same £15k buys
-  // under 3%. Selling early costs far more of the company.
+  // A new company with no revenue is worth the £50k minimum, so friends and family's £15k on day 1 buys about 23% of
+  // it; a steady company making £500 a day with 2,000 paying users and £20k in the bank is worth about £150k, and the
+  // same £15k buys under 10%. Selling early costs far more of the company. Sensible straight play ends a 180-day game
+  // worth about £0.8–1.1M, roughly three times its cash and customers; see #134 for the calibration.
   valuation: {
-    revenueDays: 30,
-    revenueMultiple: 3,
+    averageDays: 30,
+    fallDays: 7,
+    revenueMultiple: 0.5,
+    minMultiple: 0.2,
     growthDays: 30,
     growthBaseUsers: 100,
-    growthMultiple: 2,
-    maxGrowthMultiple: 4,
-    maxGrowthPenalty: 1.5,
+    growthMultiple: 0.5,
+    maxGrowthMultiple: 0.5,
+    maxGrowthPenalty: 0.2,
     goodSatisfaction: 70,
-    satisfactionPenalty: 1.5,
+    satisfactionPenalty: 0.3,
     goodUptime: 99,
-    uptimePenaltyPerPoint: 0.5,
-    maxUptimePenalty: 1.5,
+    uptimePenaltyPerPoint: 0.05,
+    maxUptimePenalty: 0.1,
     valuePerPayingUser: 20,
     minimum: 50_000,
   },

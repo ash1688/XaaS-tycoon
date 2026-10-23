@@ -40,6 +40,9 @@ export const isOpen = (loan: Loan | null): boolean => !!loan && loan.paidOffDay 
 /** The money borrowed on a loan not yet paid back: what paying it off costs. */
 const principalLeft = (loan: Loan) => loan.amount - (loan.repaid - loan.interestPaid);
 
+/** The money borrowed still to pay back on a loan: what paying it off would cost. 0 with none being repaid. */
+export const loanOwed = (loan: Loan | null): number => (loan && isOpen(loan) ? principalLeft(loan) : 0);
+
 /**
  * Bank loans: one at a time, taken at the start or later, each repaid daily (debt) over its fixed term whatever
  * happens, or paid off early to save the interest still to come. Once one's repaid, another can be taken.
