@@ -52,4 +52,7 @@ test("a shop buys its paid API, serves calls from API servers, and switches an a
   await expect(panel.getByTestId("api-apiu")).toHaveText("6");
   await expect(panel.getByTestId("api-dropped")).toHaveCount(0);
   await expect(panel.getByTestId("api-served")).not.toHaveText("0");
+
+  // Tidy up, so later tests start with an empty dashboard: deleting the code deletes the game.
+  expect((await teacher.request.delete(`/api/teacher/codes/${code}`)).ok()).toBe(true);
 });
