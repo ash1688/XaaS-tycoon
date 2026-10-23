@@ -8,12 +8,14 @@ import type {
   ConfigOverrides,
   ConversionView,
   CustomerMixView,
+  CalendarView,
   DangerView,
   DayLog,
   EventView,
   FeatureGapView,
   FeatureView,
   FundingView,
+  DifficultyId,
   GameLengthId,
   GameSummary,
   LaunchView,
@@ -21,11 +23,13 @@ import type {
   LoanView,
   ManagedView,
   RacksView,
+  RescueView,
   MigrationPhase,
   MigrationQuote,
   CounterOdds,
   MigrationView,
   ModelComparison,
+  PauseReason,
   PricePreview,
   PriceWaveView,
   ModelId,
@@ -51,10 +55,24 @@ export interface ApiError {
   daysLeft?: number;
 }
 
-/** Timed flow: when enabled, the game page has Play/Pause and plays a day every `seconds`. */
+/** A timed flow speed the student can pick: how long each tick (a day, or a week in a career) waits. */
+export interface TimedFlowSpeedView {
+  id: "slow" | "normal" | "fast" | "fastest";
+  /** "Slow", "Normal". */
+  name: string;
+  seconds: number;
+}
+
+/**
+ * Timed flow: when enabled, the game page plays a tick every `seconds` at normal speed, with Pause and the speeds, and
+ * pauses itself when something needs the student. Off when the server or the teacher's active preset switches it off.
+ */
 export interface TimedFlowView {
   enabled: boolean;
+  /** Seconds a tick at normal speed. */
   seconds: number;
+  /** Slowest first. */
+  speeds: TimedFlowSpeedView[];
 }
 
 /** A game length a student can pick when starting a company. */
@@ -66,16 +84,29 @@ export interface GameLengthView {
   finalDay: number;
 }
 
+/** A difficulty a student can pick when starting a company. */
+export interface DifficultyView {
+  id: DifficultyId;
+  /** "Easy", "Normal" or "Hard". */
+  name: string;
+  /** One line on what it changes. */
+  blurb: string;
+  /** The cash a company starts with on it, before any loan. */
+  startingCash: number;
+}
+
 export interface MetaView {
   startingCash: number;
   /** The last day of the shortest game length, 180 by default: the bank loan is repaid by it. */
   finalDay: number;
   /** The game lengths the preset allows, shortest first: the first is picked unless the student chooses another. */
   gameLengths: GameLengthView[];
+  /** The difficulties the preset allows, easiest first. Normal is picked if allowed, otherwise the first. */
+  difficulties: DifficultyView[];
   maxCompanyNameLength: number;
   /** Companies still being played (status "active") that one login code can have at once. */
   maxActiveCompanies: number;
-  /** Whether the game page plays days on a timer, and how often. Off by default. */
+  /** Whether the game page plays ticks on a timer, and how often. */
   timedFlow: TimedFlowView;
   productTypes: {
     id: ProductTypeId;
@@ -138,10 +169,11 @@ export interface MetaView {
 
 /**
  * Where a game is. Only "active" games are still being played and count towards the code's limit; the others are its
- * history. "retired" is a game the student stopped playing, "bankrupt" one that ran out of cash, and "finished" one
+ * history. "retired" is a game the student stopped playing, "liquidated" one that ran out of cash a second time, after
+ * a rescue buyout, and "finished" one
  * that played the final day. All of them can still be viewed, with their summary.
  */
-export type CompanyStatus = "active" | "retired" | "bankrupt" | "finished";
+export type CompanyStatus = "active" | "retired" | "liquidated" | "finished";
 
 export interface CompanyView {
   id: string;
@@ -153,6 +185,11 @@ export interface CompanyView {
   /** The game length picked when the company started. */
   gameLength: GameLengthId;
   gameLengthName: string;
+  /** Days Continue and each timed tick play: 7 in a career, otherwise 1. */
+  tickDays: number;
+  /** The difficulty picked when the company started. */
+  difficulty: DifficultyId;
+  difficultyName: string;
   day: number;
   /** The game length's last day. */
   finalDay: number;
@@ -160,8 +197,8 @@ export interface CompanyView {
   endedByTeacher: boolean;
   cash: number;
   /**
-   * "active" while playing. Once the game is over it rejects Continue and actions, and shows its summary: "bankrupt"
-   * if cash went below zero, "finished" if it played the final day, or "retired" if the student retired it.
+   * "active" while playing. Once the game is over it rejects Continue and actions, and shows its summary:
+   * "liquidated" if cash went below zero a second time, after a rescue buyout, "finished" if it played the final day, or "retired" if the student retired it.
    */
   status: CompanyStatus;
   /** People on each team, every grade. Hires still to start aren't counted. */
@@ -319,6 +356,11 @@ export interface CompanyView {
    * answered and, for an accepted grant, how its uptime condition stands.
    */
   funding: FundingView;
+  /**
+   * The rescue buyout once cash has run out once: what the vulture VC put in, the shares it took and the forced cost
+   * cuts, with its stake now and its price to sell it back. Null before.
+   */
+  rescue: RescueView | null;
   /** The product's features, with each one's status (built, building or a SaaS add-on) and build progress. */
   features: FeatureView[];
   /**
@@ -338,6 +380,11 @@ export interface CompanyView {
    * on the encounter list, which stays hidden.
    */
   danger: DangerView;
+  /**
+   * The real calendar: the date and year of the day just played, the holidays on it, and the next of each holiday to
+   * come in the game, each with what it does to the company's product. Holidays sit outside the danger meter.
+   */
+  calendar: CalendarView;
   /**
    * Features the platform can't provide, each still slowing growth until the company migrates off that model. Shown
    * every day, not just the day the event fired.
@@ -377,7 +424,8 @@ export type CounterOddsView = CounterOdds;
 
 /**
  * GET .../summary: how the company did. Final cash, users and uptime, spend by category, migrations, and spend and
- * cash for each day played. ending is "completed" or "bankrupt", or null for a game still being played.
+ * cash for each day played. ending is "completed", "liquidation" or "ended", or null for a game still being played. rescue is the
+ * rescue buyout, if there was one.
  */
 export type SummaryView = GameSummary;
 
@@ -396,6 +444,8 @@ export interface NewCompanyBody {
   shares?: number;
   /** One of MetaView.gameLengths. Left out, the first of them. */
   gameLength?: string;
+  /** One of MetaView.difficulties. Left out, Normal if allowed, otherwise the first of them. */
+  difficulty?: string;
 }
 
 /** How many games a teacher's end request ended: those still being played. */
@@ -405,9 +455,14 @@ export interface EndGamesResult {
 
 export type ActionBody = Action;
 
+/** One tick played: a day, or a week in a career, stopped early on the day something needs the student. */
 export interface ContinueResult {
   company: CompanyView;
   log: DayLog[];
+  /** Days played. */
+  days: number;
+  /** Why time paused itself after the last day played; empty when nothing needs the student. */
+  pauses: PauseReason[];
 }
 
 export interface TeacherCodeView {

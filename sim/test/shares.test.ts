@@ -115,11 +115,11 @@ describe("valuation", () => {
     expect(total(v)).toBe(v.valuation);
   });
 
-  it("is nothing once the company is bankrupt, whatever the minimum", () => {
-    const v = sim.valuation({ ...trading(begin(), 2_000, 10), status: "bankrupt" });
+  it("is nothing once the company is in liquidation, whatever the minimum", () => {
+    const v = sim.valuation({ ...trading(begin(), 2_000, 10), status: "liquidated" });
     expect(v.valuation).toBe(0);
     expect(v.sharePrice).toBe(0);
-    expect(v.drivers.at(-1)).toMatchObject({ id: "bankrupt" });
+    expect(v.drivers.at(-1)).toMatchObject({ id: "liquidation" });
     expect(total(v)).toBe(0);
   });
 

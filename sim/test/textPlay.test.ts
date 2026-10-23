@@ -99,9 +99,9 @@ describe("runScript", () => {
     const turn = runScript(sim, start(), "instances 2; managed database small; next 30; letgo ops; hire ops 2", who);
     expect(turn.lines.slice(-4)).toEqual([
       "> letgo ops",
-      "not run: time stopped on day 2, so look first",
+      "not run: time stopped on day 4, so look first",
       "> hire ops 2",
-      "not run: time stopped on day 2, so look first",
+      "not run: time stopped on day 4, so look first",
     ]);
     expect(turn.state.staff.ops).toEqual({ junior: 0, mid: 1, senior: 0 });
   });
@@ -140,6 +140,22 @@ describe("advanceUntil", () => {
     expect(quiet).toBeGreaterThan(0);
   });
 
+  it("stops for viral growth, and shows whose job it is to carry the new users", () => {
+    const viral = defaultConfig.events.find((e) => e.id === "viralGrowth")!;
+    const s = createSim({ ...defaultConfig, finalDay: 40, events: [{ ...viral, encounter: undefined, schedule: { type: "fixed", days: [10] } }] });
+    const begun = s.newGame({ companyName: "Test Co", productType: "social", model: "paas", seed: 3, takeLoan: true });
+    let state = runCommand(s, begun, parseCommand("instances 3"), who).state;
+    state = runCommand(s, state, parseCommand("managed database medium"), who).state;
+    // Time stops for other things on the way, such as the launch.
+    let turn = advanceUntil(s, state, 30, who);
+    while (turn.state.day < 10) turn = advanceUntil(s, turn.state, 30, who);
+    expect(turn.lines.at(-1)).toBe("stopped on day 10: Viral growth");
+    expect(turn.lines.join("\n")).toMatch(/day 10: Viral growth: Runtime and scaling is the provider's job on PaaS\. [\d,]+ new free users signed up\./);
+    expect(renderStatus(s, turn.state)).toMatch(
+      /event today: Viral growth\. Runtime and scaling is the provider's job on PaaS\. [\d,]+ new free users signed up\. They're staying\./,
+    );
+  });
+
   it("shows the danger meter, and stops when a new risk makes it climb faster", () => {
     let state = run(start(), "instances 2").state;
     state = run(state, "managed database small").state;
@@ -161,6 +177,21 @@ describe("advanceUntil", () => {
     expect(turn.lines).toContainEqual(expect.stringMatching(/^  day \d+: Paying users lost: [\d,]+ left and [\d,]+ dropped to free, because your price is above/));
     expect(turn.lines.at(-2)).toMatch(/^  users [\d,]+→[\d,]+ \(paid [\d,]+→[\d,]+, free [\d,]+→[\d,]+\)$/);
     expect(turn.lines.at(-1)).toMatch(/^stopped on day|^advanced to day/);
+  });
+
+  it("plays a week a tick in a career, logging one Continue a week, and stops mid-week on the day something needs you", () => {
+    const careers = createSim({ ...defaultConfig, allowedGameLengths: { "180-days": 0, "1-year": 0, career: 1 } });
+    const career = careers.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3, gameLength: "career" });
+    expect(renderCommands(careers, career)).toMatch(/next \[days\]\s+\(play ticks of a week \(this is a career\)/);
+    // The launch is over on day 3, two days into the first week: time stops there.
+    const launch = advanceUntil(careers, career, 7, who);
+    expect(launch.state.day).toBe(3);
+    expect(launch.lines.at(-1)).toBe("stopped on day 3: Your launch is over");
+    // A quiet stretch then plays whole weeks: "next 10" is two of them, one Continue each.
+    const weeks = advanceUntil(careers, launch.state, 10, who);
+    expect(weeks.state.day).toBe(17);
+    expect(weeks.lines.at(-1)).toBe("advanced to day 17");
+    expect(weeks.rows.map((r) => r.type)).toEqual(["continue", "continue"]);
   });
 
   it("plays to the end and logs the ending", () => {
@@ -226,12 +257,19 @@ describe("rendering", () => {
   it("shows a longer game's length and final day", () => {
     const yearly = createSim({ ...defaultConfig, allowedGameLengths: { "180-days": 0, "1-year": 1, career: 1 } });
     const career = yearly.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3, gameLength: "career" });
-    expect(renderStatus(yearly, career)).toMatch(/day 1\/17155 \(Career \(47 years, age 18 to 65\)\)/);
+    expect(renderStatus(yearly, career)).toMatch(/day 1\/17155 \(Career \(47 years, age 18 to 65\), Normal, a week a tick\)/);
+  });
+
+  it("shows the game's difficulty", () => {
+    const any = createSim({ ...defaultConfig, allowedDifficulties: { easy: 1, normal: 1, hard: 1 } });
+    const hard = any.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3, difficulty: "hard" });
+    expect(renderStatus(any, hard)).toMatch(/day 1\/180 \(180 days, Hard\)/);
+    expect(renderSummary(any, hard)).toMatch(/"difficulty": "hard"/);
   });
 
   it("shows the company and the commands that work now", () => {
     const state = start();
-    expect(renderStatus(sim, state)).toMatch(/day 1\/40 \(40 days\)/);
+    expect(renderStatus(sim, state)).toMatch(/day 1\/40 \(40 days, Normal\)/);
     expect(renderCommands(sim, state)).toMatch(/^\s+end /m);
     const commands = renderCommands(sim, state);
     expect(commands).toMatch(/instances <1–20>/);
@@ -288,7 +326,7 @@ describe("the paid API", () => {
     state = run(state, "rent database large").state;
     state = run(state, "buyapi").state;
     const turn = run(state, "next 7");
-    expect(turn.lines.at(-1)).toMatch(/API calls dropped/);
+    expect(turn.lines.at(-1)).toMatch(/API calls are being dropped/);
     expect(turn.lines.some((l) => /Shop API: [\d,]+ calls dropped/.test(l))).toBe(true);
   });
 
@@ -376,7 +414,94 @@ describe("shares and funding", () => {
     while (turn.state.funding.grant?.status === "accepted") turn = advanceUntil(short, turn.state, 20, who);
     // Launched on day 1, so the condition runs from the end of the ramp: days 4 to 8.
     expect(turn.state.day).toBe(8);
-    expect(turn.lines.at(-1)).toMatch(/^stopped on day 8: .*grant (met|withdrawn)/);
+    expect(turn.lines.at(-1)).toMatch(/^stopped on day 8: The grant( was withdrawn|'s condition is met)/);
     expect(turn.lines.join("\n")).toMatch(/day 8: Grant (condition met|withdrawn)/);
+  });
+});
+
+describe("rescue buyout and liquidation", () => {
+  // Far more developers than the company can pay for: cash runs out within the 40 days.
+  const broke = (): GameState => sim.applyAction(start(), { type: "hire", pool: "developers", grade: "senior", count: 40 });
+
+  it("reads the rescue commands", () => {
+    expect(parseCommand("rescue")).toEqual({ kind: "rescue" });
+    expect(parseCommand("buyback")).toEqual({ kind: "action", action: { type: "buyBack" }, times: 1 });
+  });
+
+  it("stops time on the rescue, shows the cash, share taken and cuts, and offers the buy-back at its price", () => {
+    expect(run(start(), "rescue").lines[0]).toMatch(/no rescue yet/);
+    let turn = advanceUntil(sim, broke(), 40, who);
+    while (!turn.state.rescue) turn = advanceUntil(sim, turn.state, 40, who);
+    const { rescue } = turn.state;
+    expect(turn.lines.at(-1)).toMatch(new RegExp(`^stopped on day ${rescue.day}: Cash ran out: a vulture VC rescued the company for 75% of it`));
+    expect(turn.lines.join("\n")).toMatch(/vulture VC rescued Test Co: it put in £[\d,]+ .* 75% of the company/);
+    expect(turn.lines.join("\n")).toMatch(/Forced cost cuts: the vulture VC let go 11 senior developers/);
+    const view = sim.rescue(turn.state)!;
+    expect(renderStatus(sim, turn.state)).toMatch(/rescue: day \d+, a vulture VC put in £[\d,]+ for 75%; it owns 75% and sells it back for £[\d,]+/);
+    expect(renderStatus(sim, turn.state)).toMatch(/you 25%, vulture vc 75%/);
+    expect(renderCommands(sim, turn.state)).toContain(`buyback   (buy all the vulture VC's shares back from company cash: £${view.buyBackPrice!.toLocaleString("en-GB")}`);
+    const terms = run(turn.state, "rescue").lines.join("\n");
+    expect(terms).toMatch(/forced cuts: 11 senior developers/);
+    expect(terms).toMatch(/buy-back \(buyback\): £[\d,]+ for its 30,000 shares \(75%\)/);
+    const refused = run(turn.state, "buyback");
+    expect(refused.lines[0]).toMatch(/buyBack refused: The vulture VC wants £[\d,]+ for its shares/);
+    expect(refused.rows[0]).toMatchObject({ type: "buyBack", ok: false, error: "cant_afford" });
+    const rich = { ...turn.state, cash: view.buyBackPrice! };
+    const bought = run(rich, "buyback");
+    expect(bought.rows[0]).toMatchObject({ type: "buyBack", ok: true });
+    expect(renderStatus(sim, bought.state)).toMatch(/you bought it back on day \d+ for £/);
+  });
+
+  it("ends in liquidation the second time, and still shows the rescue after", () => {
+    const long = createSim({ ...defaultConfig, finalDay: 120 });
+    const begun = long.newGame({ companyName: "Test Co", productType: "social", model: "paas", seed: 3, takeLoan: true });
+    let turn = advanceUntil(long, long.applyAction(begun, { type: "hire", pool: "developers", grade: "senior", count: 40 }), 120, who);
+    while (turn.state.status === "playing") turn = advanceUntil(long, turn.state, 120, who);
+    expect(turn.state.status).toBe("liquidated");
+    expect(turn.lines.join("\n")).toMatch(/Cash ran out again, after the rescue buyout on day \d+: Test Co goes into liquidation/);
+    expect(turn.lines.at(-1)).toMatch(/^GAME OVER: liquidated on day \d+/);
+    expect(turn.rows.at(-1)).toMatchObject({ type: "end", params: { status: "liquidated" } });
+    const after = runScript(long, turn.state, "rescue; buyback", who).lines;
+    expect(after[1]).toMatch(/^rescue on day/);
+    expect(after.at(-1)).toBe("not run: the game is over");
+    expect(JSON.parse(renderSummary(long, turn.state))).toMatchObject({ ending: "liquidation", valuation: 0, rescue: { share: 0.75 } });
+  });
+});
+
+describe("the calendar", () => {
+  const full = createSim(defaultConfig);
+  const shop = (startDate: string) =>
+    full.newGame({ companyName: "Test Co", productType: "ecommerce", model: "saas", seed: 3, startDate });
+  /** Plays on until time stops for a holiday. */
+  const toHoliday = (state: GameState) => {
+    let turn = advanceUntil(full, state, 60, who);
+    while (!/holiday/i.test(turn.lines.at(-1)!)) turn = advanceUntil(full, turn.state, 60, who);
+    return turn;
+  };
+
+  it("reads the calendar command", () => {
+    expect(parseCommand("calendar")).toEqual({ kind: "calendar" });
+    expect(renderCommands(sim, start())).toContain("calendar");
+  });
+
+  it("shows the date and the next holiday in the status, and every holiday to come on asking", () => {
+    const state = shop("2026-11-01");
+    const status = renderStatus(full, state);
+    expect(status).toContain("| Sunday 1 November 2026 |");
+    expect(status).toContain("calendar: next: Black Friday in 26 days, day 27 (load ×2.2, growth ×2.5)");
+    const { lines } = runCommand(full, state, parseCommand("calendar"), who);
+    expect(lines[0]).toBe("calendar: Sunday 1 November 2026, year 1 of the game (started 2026)");
+    expect(lines).toContain("  Christmas: in 47 days, 18 Dec 2026–1 Jan 2027 (days 48–62), load ×1.5, growth ×1.4. Last-minute gifts, then the Boxing Day sales.");
+  });
+
+  it("stops time when a holiday that hits the product is announced, and when it starts", () => {
+    const announced = toHoliday(shop("2026-11-01"));
+    expect(announced.state.day).toBe(13);
+    expect(announced.lines.at(-1)).toContain("Holiday coming in 14 days: Black Friday, on Friday 27 November 2026");
+    expect(announced.lines.some((l) => l.includes("day 13: Black Friday is coming in 14 days"))).toBe(true);
+    const started = toHoliday(announced.state);
+    expect(started.state.day).toBe(27);
+    expect(started.lines.at(-1)).toContain("Holiday started: Black Friday, for 4 days");
+    expect(renderStatus(full, started.state)).toContain("Black Friday on now to day 30 (load ×2.2, growth ×2.5)");
   });
 });

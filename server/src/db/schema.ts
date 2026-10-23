@@ -41,7 +41,7 @@ export const companies = pgTable(
       .references(() => loginCodes.code, { onDelete: "cascade" }),
     name: text("name").notNull(),
     productType: text("product_type").notNull(),
-    // "active" while being played, then "retired", "bankrupt" or "finished" (see CompanyStatus). Only active games
+    // "active" while being played, then "retired", "liquidated" or "finished" (see CompanyStatus). Only active games
     // count towards a code's limit.
     status: text("status").notNull().default("active"),
     // Denormalised from state so the dashboard can list games without parsing JSON.

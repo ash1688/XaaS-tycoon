@@ -17,7 +17,7 @@ describe("balance harness", () => {
     expect(results).toHaveLength(MODEL_IDS.length * PRODUCT_TYPE_IDS.length * strategies.length * 2);
     expect(cells(results)).toHaveLength(MODEL_IDS.length * PRODUCT_TYPE_IDS.length * strategies.length);
     for (const r of results) {
-      expect(["finished", "bankrupt", "cant-start"]).toContain(r.outcome);
+      expect(["finished", "liquidated", "cant-start"]).toContain(r.outcome);
       if (r.outcome === "finished") expect(r.day).toBe(short.finalDay);
     }
   });

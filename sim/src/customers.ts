@@ -1,3 +1,4 @@
+import type { Calendar } from "./calendar.ts";
 import type { GameConfig, ProductTypeId } from "./config.ts";
 import type { Events } from "./events.ts";
 import type { Features } from "./features.ts";
@@ -17,6 +18,7 @@ export function createCustomers(
   events: Events,
   pricing: Pricing,
   support: Support,
+  calendar: Calendar,
 ) {
   /**
    * A new company: no users until it launches (see Launch), so no load. Its launch total is drawn evenly from the
@@ -37,34 +39,23 @@ export function createCustomers(
     };
   }
 
-  function inSpike(productType: ProductTypeId, day: number): boolean {
-    const spike = config.productTypes[productType].growth.seasonalSpike;
-    return !!spike && day >= spike.firstDay && (day - spike.firstDay) % spike.every < spike.length;
+  /** Load from a product's users on a given day, before random variation: any holidays on it move it. */
+  function baseLoad(state: Pick<GameState, "productType" | "startDate">, users: number, day: number): number {
+    return users * config.productTypes[state.productType].growth.loadPerUser * calendar.loadMultiplier(state, day);
   }
 
-  /** What the seasonal spike multiplies load and demand by on a day: 1 outside one. */
-  function spikeMultiplier(productType: ProductTypeId, day: number): number {
-    const spike = config.productTypes[productType].growth.seasonalSpike;
-    return spike && inSpike(productType, day) ? spike.loadMultiplier : 1;
-  }
-
-  /** Load from a product's users on a given day, before random variation. */
-  function baseLoad(productType: ProductTypeId, users: number, day: number): number {
-    return users * config.productTypes[productType].growth.loadPerUser * spikeMultiplier(productType, day);
-  }
-
-  /** CU and DBU demand from a product's users on a given day, before random variation. It spikes like load. */
-  function baseDemand(productType: ProductTypeId, users: number, day: number): UnitDemand {
-    const { cuPerUser, dbuPerUser } = config.productTypes[productType].demand;
-    const spike = spikeMultiplier(productType, day);
-    return { cu: users * cuPerUser * spike, dbu: users * dbuPerUser * spike };
+  /** CU and DBU demand from a product's users on a given day, before random variation. Holidays move it like load. */
+  function baseDemand(state: Pick<GameState, "productType" | "startDate">, users: number, day: number): UnitDemand {
+    const { cuPerUser, dbuPerUser } = config.productTypes[state.productType].demand;
+    const busy = calendar.loadMultiplier(state, day);
+    return { cu: users * cuPerUser * busy, dbu: users * dbuPerUser * busy };
   }
 
   /** Each factor scales the day's growth. Later mechanics (reputation) add their own here. */
   function growthFactors(state: GameState, day: number, outage: boolean): number[] {
-    const spike = config.productTypes[state.productType].growth.seasonalSpike;
     return [
-      spike && inSpike(state.productType, day) ? spike.growthMultiplier : 1,
+      // Any holidays on today.
+      calendar.growthMultiplier(state, day),
       outage ? config.outage.growthMultiplier : 1,
       // Each feature built before today, and each add-on bought.
       ...features.activeGrowth(state),

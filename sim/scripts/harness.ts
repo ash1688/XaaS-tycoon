@@ -113,7 +113,7 @@ export interface GameResult {
   strategy: string;
   seed: number;
   /** "cant-start" when the model costs more up front than the company has (on-prem without the loan). */
-  outcome: "finished" | "bankrupt" | "cant-start";
+  outcome: "finished" | "liquidated" | "cant-start";
   /** The last day played. */
   day: number;
   /** The day it launched: its first users arrived, starting the ramp. Null if it never did. */
@@ -136,6 +136,8 @@ export interface GameResult {
   firstOverload: { tier: "cu" | "dbu"; day: number } | null;
   /** The day the loan was taken, or null. */
   loanDay: number | null;
+  /** The day a vulture VC rescued it, the first time cash ran out, or null. */
+  rescueDay: number | null;
   /** The model it ended on, and the day a migration started, if one did. */
   endModel: ModelId;
   migrationDay: number | null;
@@ -216,21 +218,23 @@ function dailyGrowth(sim: Sim, state: GameState): number {
   return Math.max(1, daily);
 }
 
-/** Whether the product's seasonal peak is on any day from tomorrow until servers added today would be ready. */
-function peakSoon(sim: Sim, state: GameState): boolean {
-  const spike = sim.config.productTypes[state.productType].growth.seasonalSpike;
-  if (!spike) return false;
+/**
+ * What holidays multiply the product's load by at their busiest from tomorrow until servers added today would be
+ * ready: 1 with none due. Planning ahead, it counts holidays still to start (a student sees them coming on the
+ * calendar); reacting, only one already on, as a student sees from the load.
+ */
+function peakSoon(sim: Sim, state: GameState, ahead: boolean): number {
   const lead = sim.config.models[state.model].servers?.readyDays ?? 0;
-  for (let day = state.day + 1; day <= state.day + lead + 1; day++) {
-    if (day >= spike.firstDay && (day - spike.firstDay) % spike.every < spike.length) return true;
-  }
-  return false;
+  const last = state.day + lead + 1;
+  const { on, upcoming } = sim.calendar(state);
+  const due = [...on.filter((h) => h.endDay > state.day), ...(ahead ? upcoming.filter((h) => h.startDay <= last) : [])];
+  return Math.max(1, ...due.map((h) => h.effect?.loadMultiplier ?? 1));
 }
 
 /**
  * The units view, with demand replaced by what the bot plans for: the users' usual demand (until the launch ramp
- * ends, the launch total's), times how far ahead it plans, and times the product's seasonal peak when one is due before
- * new servers would be ready (a shop knows when its sales are). So it doesn't buy servers for a two-day traffic spike
+ * ends, the launch total's), times how far ahead it plans, and times any holiday peak on now, or when planning ahead,
+ * due before new servers would be ready (a shop knows when Black Friday is). So it doesn't buy servers for a two-day traffic spike
  * that triples demand.
  */
 function plannedUnits(sim: Sim, state: GameState, strategy: Strategy): UnitsView | null {
@@ -240,7 +244,7 @@ function plannedUnits(sim: Sim, state: GameState, strategy: Strategy): UnitsView
   const launch = sim.launch(state);
   // Until all its launch users are in, it plans for the most there might be: like a student, it can't see the total.
   const users = launch.status === "launched" ? state.users : Math.max(state.users, product.growth.launchUsersMax);
-  const peak = strategy.scaling === "ahead" && peakSoon(sim, state) ? (product.growth.seasonalSpike?.loadMultiplier ?? 1) : 1;
+  const peak = peakSoon(sim, state, strategy.scaling === "ahead");
   const plan = users * peak * ahead(sim, state);
   const dbu = plan * product.demand.dbuPerUser;
   const cacheable = dbu * sim.config.servers.cacheableShare;
@@ -446,7 +450,7 @@ export function playGame(sim: Sim, { model, productType, strategy, seed }: GameS
     productType,
     strategy: strategy.id,
     seed,
-    outcome: summary.ending === "bankrupt" ? "bankrupt" : "finished",
+    outcome: summary.ending === "liquidation" ? "liquidated" : "finished",
     day: summary.day,
     launchDay: state.launchDay,
     cash: summary.cash,
@@ -463,6 +467,7 @@ export function playGame(sim: Sim, { model, productType, strategy, seed }: GameS
     outageDays: summary.outageDays,
     firstOverload,
     loanDay: summary.loan?.day ?? null,
+    rescueDay: summary.rescue?.day ?? null,
     endModel: summary.model,
     migrationDay,
     spend: { ...summary.spend },
@@ -507,6 +512,7 @@ function emptyResult(model: ModelId, productType: ProductTypeId, strategy: strin
     outageDays: 0,
     firstOverload: null,
     loanDay: null,
+    rescueDay: null,
     endModel: model,
     migrationDay: null,
     spend: {},
@@ -567,15 +573,28 @@ export function cells(results: GameResult[]): Cell[] {
   return [...byKey.values()];
 }
 
-/** "finished", "bankrupt d84" (median day), "2/5 bankrupt d70–d95", or "can't start". */
+/** "d84", or "d70–95" for a range of days. */
+const daysText = (days: number[]) =>
+  Math.min(...days) === Math.max(...days) ? `d${days[0]}` : `d${Math.min(...days)}–${Math.max(...days)}`;
+
+/**
+ * "finished", "liquidated d84", "2/5 liquidated d70–d95", or "can't start", then any rescues: "finished, rescued d60",
+ * "finished, 1/5 rescued d60".
+ */
 function outcome(games: GameResult[]): string {
   if (games.every((g) => g.outcome === "cant-start")) return "can't start";
-  const bust = games.filter((g) => g.outcome === "bankrupt");
-  if (!bust.length) return "finished";
-  const days = bust.map((g) => g.day);
-  const when = Math.min(...days) === Math.max(...days) ? `d${days[0]}` : `d${Math.min(...days)}–${Math.max(...days)}`;
-  return bust.length === games.length ? `bankrupt ${when}` : `${bust.length}/${games.length} bankrupt ${when}`;
+  const bust = games.filter((g) => g.outcome === "liquidated");
+  const rescued = games.flatMap((g) => (g.rescueDay === null ? [] : [g.rescueDay]));
+  const ended = !bust.length
+    ? "finished"
+    : `${bust.length === games.length ? "" : `${bust.length}/${games.length} `}liquidated ${daysText(bust.map((g) => g.day))}`;
+  if (!rescued.length) return ended;
+  return `${ended}, ${rescued.length === games.length ? "" : `${rescued.length}/${games.length} `}rescued ${daysText(rescued)}`;
 }
+
+/** "†" if any game was liquidated, else "‡" if any was rescued. */
+const endMark = (games: GameResult[]) =>
+  games.some((g) => g.outcome === "liquidated") ? " †" : games.some((g) => g.rescueDay !== null) ? " ‡" : "";
 
 /** The tier that ran over first in most games, and the median day: "DBU d31", or "—". */
 function firstOverload(games: GameResult[]): string {
@@ -638,12 +657,12 @@ function cashOf(all: Cell[], strategy: string, model: ModelId, productType: Prod
   return g.length ? median(g.map((x) => x.cash)) : null;
 }
 
-/** A short marker for a model × product: the final cash, with "†" if any game went bankrupt. */
+/** A short marker for a model × product: the final cash, with "†" if any game was liquidated, "‡" if rescued. */
 function cashMark(all: Cell[], strategy: string, model: ModelId, productType: ProductTypeId): string {
   const cell = all.find((c) => c.strategy === strategy && c.model === model && c.productType === productType);
   const p = cashOf(all, strategy, model, productType);
   if (p === null || !cell) return "can't start";
-  return `${money(p)}${cell.games.some((g) => g.outcome === "bankrupt") ? " †" : ""}`;
+  return `${money(p)}${endMark(cell.games)}`;
 }
 
 export interface ReportOptions {
@@ -660,7 +679,7 @@ export function renderReport(results: GameResult[], { title = "Balance report", 
   const used = strategies.filter((s) => results.some((r) => r.strategy === s.id));
   const out: string[] = [`# ${title}`, ""];
   out.push(`${results.length} games: ${models.length} models × ${products.length} products × ${used.length} strategies × ${seeds.length} seeds (${seeds.join(", ")}).`);
-  out.push("Money and users are medians across seeds; satisfaction and uptime are means. † = at least one seed went bankrupt.");
+  out.push("Money and users are medians across seeds; satisfaction and uptime are means. † = at least one seed was liquidated; ‡ = at least one was rescued by a vulture VC.");
   out.push("Models are compared on final cash: profit counts loan repayments as costs, the amount borrowed included.", "");
 
   if (used.some((s) => s.id === "sensible")) {
@@ -681,7 +700,7 @@ export function renderReport(results: GameResult[], { title = "Balance report", 
       if (v === null) return "can't start";
       if (base === null) return money(v);
       const cell = all.find((c) => c.strategy === s.id && c.model === m && c.productType === p)!;
-      return `${v - base >= 0 ? "+" : ""}${money(v - base)}${cell.games.some((g) => g.outcome === "bankrupt") ? " †" : ""}`;
+      return `${v - base >= 0 ? "+" : ""}${money(v - base)}${endMark(cell.games)}`;
     })];
   }))), "");
 
