@@ -126,8 +126,10 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("valuation.maxUptimePenalty", "Money", "Valuation", "Most poor uptime takes", "The most poor uptime can take off the multiple.", MULTIPLIER);
   add("funding.friendsAndFamily.amount", "Money", "Friends and family", "Amount", "What friends and family put in, once, for new shares at the share price.", POUNDS);
   add("funding.grant.amount", "Money", "Grant", "Amount", "What the grant gives, once, for no shares.", POUNDS);
-  add("funding.grant.days", "Money", "Grant", "Condition lasts", "Days after accepting the grant that its uptime condition applies.", GAME_DAY);
-  add("funding.grant.minUptime", "Money", "Grant", "Uptime needed", "Uptime % the company must keep over those days, or the grant is withdrawn and paid back.", range(0, 100, 0.1));
+  add("funding.grant.days", "Money", "Grant", "Condition lasts", "Days the grant's uptime condition applies, from the day after it's accepted or after the launch ramp, whichever is later.", GAME_DAY);
+  for (const m of MODEL_IDS) {
+    add(`funding.grant.minUptime.${m}`, "Money", "Grant", `Uptime needed (${MODEL_LABELS[m]})`, "Uptime % a company on this model must keep over those days, or the grant is withdrawn and paid back.", range(0, 100, 0.1));
+  }
   add("billing.daysPerMonth", "Money", "", "Days in a billing month", "Monthly costs are charged a day at a time: the monthly cost ÷ this.", range(28, 31, 1));
   for (const m of MODEL_IDS) {
     const s = MODEL_LABELS[m];

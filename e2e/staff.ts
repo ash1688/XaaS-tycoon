@@ -1,4 +1,5 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
+import { defaultConfig } from "@xaas/sim";
 import postgres from "postgres";
 import { E2E_DATABASE_URL, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
 
@@ -43,6 +44,13 @@ const FIRST_SETUP: Record<string, object[]> = {
 /** Round two's launch users for each product: what the specs' sums were worked out with. */
 const ROUND_TWO_LAUNCH: Record<string, number> = { ecommerce: 3_000, social: 4_000, video: 1_600 };
 
+/** Users arrived by the end of ramp day k out of a launch total, worked out as the sim does (see createLaunch). */
+function arrivedBy(launchUsers: number, k: number) {
+  const shares = defaultConfig.launch.rampShares;
+  const total = shares.reduce((sum, s) => sum + s, 0);
+  return Math.round((launchUsers * shares.slice(0, k).reduce((sum, s) => sum + s, 0)) / total);
+}
+
 /**
  * Pins a new company's launch total in the test database. Each game draws its own from a range, so a spec whose sums
  * depend on the users pins round two's number for its product instead.
@@ -51,15 +59,22 @@ export async function pinLaunchUsers(id: string, users: number) {
   const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
   try {
     const [row] = await sql`select state from companies where id = ${id}`;
-    const state = row!.state as { launchUsers: number; launchDay: number | null; users: number; paidUsers: number };
-    // A company that can serve users at once (SaaS) has had its first day's share already: rescale it to the new total.
-    const scale = users / state.launchUsers;
+    const state = row!.state as {
+      day: number;
+      launchUsers: number;
+      launchDay: number | null;
+      users: number;
+      paidUsers: number;
+    };
+    // A company that can serve users at once (SaaS) has had its first day's share already: swap it for the new
+    // total's share. Rescaling the old share instead rounds twice, so the ramp could end a user over or under.
+    const arrived = state.launchDay === null ? 0 : arrivedBy(users, state.day - state.launchDay + 1);
     const pinned = {
       ...state,
       launchUsers: users,
       ...(state.launchDay !== null && {
-        users: Math.round(state.users * scale),
-        paidUsers: Math.round(state.paidUsers * scale),
+        users: arrived,
+        paidUsers: Math.round(state.paidUsers * (arrived / state.users)),
       }),
     };
     await sql`update companies set state = ${sql.json(pinned)} where id = ${id}`;

@@ -1,0 +1,2 @@
+# Vitest writes snapshots with LF; keep them LF on checkout so running the tests on Windows leaves them unchanged.
+*.snap text eol=lf

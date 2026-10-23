@@ -1513,7 +1513,8 @@ describe("shares and funding", () => {
     const { company, act } = await setup();
     expect(company.funding.grantOffer).toMatchObject({
       amount: sim.config.funding.grant.amount,
-      condition: expect.stringContaining("Keep uptime at 99% or more"),
+      minUptime: sim.config.funding.grant.minUptime.iaas,
+      condition: expect.stringContaining(`Keep uptime at ${sim.config.funding.grant.minUptime.iaas}% or more`),
       ifMissed: expect.stringContaining("withdrawn"),
     });
     const declined = (await act({ type: "declineFunding", funder: "grant" })).json<CompanyView>();

@@ -26,8 +26,11 @@ npm run -s play -- summary <game>
 - `next [days]` (inside `do`) moves time on, 7 days by default, and **stops early** when something needs a
   decision: an event that hurts, an outage, a new risk on the danger meter, a built feature, a server arriving,
   staff starting, capacity running out, satisfaction falling, cash about to run out, the price lock ending, or paid
-  API calls starting to be dropped. Any commands after a stop are skipped. Events that need nothing from you are
-  shown but don't stop time.
+  API calls starting to be dropped. Any commands after a stop are not run, and each says so ("not run: time
+  stopped"). Events that need nothing from you are shown but don't stop time. Each advance ends with how the users
+  changed, and each day shows paying users lost to a dear price, poor support or downtime.
+- A refused command says why, and the rest of the batch still runs. A refused `letgo` or `move` also shows the
+  grades that team has now.
 - Staff come in junior, mid and senior grades, each with its own pay and work a day, and each takes days to start
   after hiring (shown under staff until they do). `hire <pool> [grade] [n]` and `letgo <pool> [grade] [n]` take a
   grade; without one it's mids. Time also stops when hires start.

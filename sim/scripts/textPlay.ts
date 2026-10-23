@@ -281,7 +281,9 @@ function fundingStatus(sim: Sim, state: GameState): string {
   const grant = f.grantOffer
     ? `offer ${money(f.grantOffer.amount)} if uptime ≥ ${f.grantOffer.minUptime}% for ${f.grantOffer.days} days`
     : g!.status === "accepted"
-      ? `${g!.hoursDown}h of ${g!.maxHoursDown}h down allowed used, ${g!.daysLeft} days left`
+      ? g!.untilDay === null
+        ? `${g!.maxHoursDown}h down allowed over ${g!.days} days, starting once the launch is over`
+        : `${g!.hoursDown}h of ${g!.maxHoursDown}h down allowed used, ${state.day < g!.fromDay! ? `starting day ${g!.fromDay}, ` : ""}${g!.daysLeft} days left`
       : g!.status;
   return `friends and family ${ff} | grant ${grant}`;
 }
@@ -582,10 +584,55 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
       if (!(err instanceof SimError)) throw err;
       rows.push(logRow(sim, current, who, command.action.type, actionParams(command.action), err.code));
       const what = command.times > 1 ? `${command.action.type}: ${done} of ${command.times} done, then refused: ` : `${command.action.type} refused: `;
-      return { state: current, rows, lines: [what + err.message] };
+      return { state: current, rows, lines: [what + err.message + teamNow(sim, current, command.action, err)] };
     }
   }
   return { state: current, rows, lines: [`${command.action.type}${command.times > 1 ? ` ×${done}` : ""}: done`] };
+}
+
+/** After a refused letgo or move for want of staff, who the team has now, so the player can pick a grade they have. */
+function teamNow(sim: Sim, state: GameState, action: Action, err: SimError): string {
+  if (err.code !== "no_staff" || (action.type !== "letGo" && action.type !== "moveStaff")) return "";
+  const pool = action.type === "letGo" ? action.pool : (action.from ?? (action.to === "developers" ? "ops" : "developers"));
+  const team = sim.staff(state).find((p) => p.pool === pool);
+  return team ? ` (${pool} now: ${team.grades.map((x) => `${x.count} ${x.grade}`).join(", ")})` : "";
+}
+
+/**
+ * Runs a script of commands joined with ';', as a playtester's "do" does. Each command's result follows it. A command
+ * that is refused, or never runs because time stopped or the game ended, says why, and the rest still say so.
+ */
+export function runScript(sim: Sim, state: GameState, script: string, who: Player): Turn {
+  let current = state;
+  const rows: LogRow[] = [];
+  const lines: string[] = [];
+  let skipped: string | null = null;
+  for (const text of script.split(";").map((t) => t.trim()).filter(Boolean)) {
+    if (skipped) {
+      lines.push(`> ${text}`, `not run: ${skipped}`);
+      continue;
+    }
+    try {
+      const command = parseCommand(text);
+      // Once the game is over, only what changes nothing still works: the valuation and who owns the company.
+      if (current.status !== "playing" && command.kind !== "valuation" && command.kind !== "funding") {
+        skipped = "the game is over";
+        lines.push(`> ${text}`, `not run: ${skipped}`);
+        continue;
+      }
+      const turn = command.kind === "next" ? advanceUntil(sim, current, command.days, who) : runCommand(sim, current, command, who);
+      current = turn.state;
+      rows.push(...turn.rows);
+      lines.push(`> ${text}`, ...turn.lines);
+      // An advance that stopped early leaves the rest of the script unplayed: the player should look first.
+      if (command.kind === "next" && turn.lines.at(-1)?.startsWith("stopped")) skipped = `time stopped on day ${current.day}, so look first`;
+      else if (current.status !== "playing") skipped = "the game is over";
+    } catch (err) {
+      if (!(err instanceof SimError)) throw err;
+      lines.push(`> ${text}`, `refused: ${err.message}`);
+    }
+  }
+  return { state: current, rows, lines };
 }
 
 /** The valuation's drivers, in pounds, and the cap table. */
@@ -620,8 +667,14 @@ function fundingLines(sim: Sim, state: GameState): string[] {
   else {
     const t = f.grant!;
     lines.push(
-      `grant: ${t.status} on day ${t.day}` +
-        (t.status === "accepted" ? `; ${t.hoursDown}h down of ${t.maxHoursDown}h allowed, ${t.hoursLeft}h left, until day ${t.untilDay}` : ""),
+      `grant: ${t.status === "declined" ? "declined" : "accepted"} on day ${t.day}` +
+        (t.status === "met" ? `; condition met on day ${t.untilDay}` : "") +
+        (t.status === "withdrawn" ? `; withdrawn, ${t.hoursDown}h down of ${t.maxHoursDown}h allowed` : "") +
+        (t.status !== "accepted"
+          ? ""
+          : t.untilDay === null
+            ? `; ${t.maxHoursDown}h down allowed over ${t.days} days, starting once the launch is over`
+            : `; ${t.hoursDown}h down of ${t.maxHoursDown}h allowed, ${t.hoursLeft}h left, day ${t.fromDay} to day ${t.untilDay}`),
     );
   }
   return lines;
@@ -704,14 +757,28 @@ export function advanceUntil(sim: Sim, state: GameState, days: number, who: Play
   } else {
     lines.push(stop ?? `advanced to day ${current.day}`);
   }
+  const users = usersChange(state, current);
+  if (users) lines.splice(lines.length - 1, 0, users);
   return { state: current, lines, rows };
 }
+
+/** How the users changed over the days just played, if they did: "users 1,200→1,150 (paid 300→250, free 900→900)". */
+function usersChange(before: GameState, after: GameState): string | null {
+  if (after.users === before.users && after.paidUsers === before.paidUsers) return null;
+  const n = (x: number) => x.toLocaleString("en-GB");
+  const free = (st: GameState) => st.users - st.paidUsers;
+  return `  users ${n(before.users)}→${n(after.users)} (paid ${n(before.paidUsers)}→${n(after.paidUsers)}, free ${n(free(before))}→${n(free(after))})`;
+}
+
+/** The sim logs payers lost each day to a dear price, unhappy support or downtime with no kind: shown every day too. */
+const shown = (e: DayLog["entries"][number], stopping: boolean) =>
+  e.kind ? SHOWN_KINDS.has(e.kind) || (stopping && STOPPING_KINDS.has(e.kind)) : e.text.startsWith("Paying users lost");
 
 /** The day's log, keeping the lines worth reading. On a day that stops time, feature and migration lines too. */
 function dayLines(log: DayLog[], stopping: boolean): string[] {
   return log.flatMap(({ day, entries }) =>
     entries
-      .filter((e) => e.kind && (SHOWN_KINDS.has(e.kind) || (stopping && STOPPING_KINDS.has(e.kind))))
+      .filter((e) => shown(e, stopping))
       .map((e) => `  day ${day}: ${e.text}${e.cashDelta ? ` (${e.cashDelta > 0 ? "+" : ""}${money(e.cashDelta)})` : ""}`),
   );
 }

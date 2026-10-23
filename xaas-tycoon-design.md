@@ -178,63 +178,13 @@ Docker is used both locally (docker compose for Postgres and the app) and on the
 
 **In:** model choice and migration, staff counters, features and SaaS add-ons, users vs capacity with outages, cash and bankruptcy, the four scripted events, the responsibility stack, login codes, the live staff dashboard, and the day-180 summary screen.
 
-**Deferred to beta:** buildings, investors, the IPO, scoring and the debrief questions (below).
+**Deferred to beta:** buildings, investors, the IPO, scoring and the debrief questions (see [xaas-beta-design.md](xaas-beta-design.md)).
 
 ---
 
-## Beta and later (from the original notes)
+## Beta and later
 
-### Buildings and progression
-
-Players unlock bigger premises as they grow. **Rack space only matters for kit you own.** IaaS, PaaS and SaaS use no floor space, so moving to the cloud lets a student stay in a smaller building longer. Staff still need desks either way.
-
-| Building | Rack space | Desks | Notes |
-|---|---|---|---|
-| Garage | 1 small rack | 2 | Cheap, cramped, power trips if overloaded |
-| Small office | 2 racks | 6 | First real step up |
-| Medium office | 4 racks | 12 | Needs a server room, so cooling costs appear |
-| Large office | 8 racks | 25 | Rent starts to hurt |
-| Warehouse + office | Lots | Lots | Effectively your own data centre, with big fixed costs |
-
-*Figures are placeholders for balancing.* Power and cooling costs scale with the number of racks, reinforcing why companies move off-prem.
-
-### Investors and funders
-
-Each investor offers money with a target. **Missing a target never causes a game over on its own.**
-
-| Investor | Money | Target | Consequence of missing |
-|---|---|---|---|
-| Friends and family | Small | Gentle (e.g. 500 users by day 30) | Stop funding you |
-| Angel investor | Medium | Revenue figure | Lose extra equity |
-| Venture capital | Large | Aggressive user growth | Forced cost cuts (staff removed) or forced decisions |
-| Bank loan | Medium | None, fixed daily repayments | Repayments continue regardless; teaches debt vs equity |
-| Grant / funder | Small | Condition, e.g. 99% uptime or sustainability | Funding withdrawn |
-
-- **Escalation:** first miss is a warning, second costs equity or staff, third pulls remaining funding.
-- **Lingering effects:** missed uptime damages reputation, which slows growth and makes the next target harder.
-- **Tougher terms:** missing targets means future investors offer less money for more equity.
-
-The only true game-over is **running out of cash** (bankruptcy). *Alternative:* a **rescue buyout**, where you're bailed out but lose most of your equity.
-
-### IPO (win condition)
-
-To float, the company must pass a readiness check:
-
-- **Users and revenue** above a threshold
-- **Uptime record**, e.g. 99% over the last 30 days
-- **Predictable costs.** Big spending swings count against you (capex vs opex discussion).
-- **Security and compliance audit.** On IaaS you must have patched everything yourself; PaaS/SaaS providers cover more.
-- **Profitability**, or a clear path to it
-
-Applying before you're ready causes a failed float: you lose time and some reputation, but can try again.
-
-### Scoring
-
-**Final score = company valuation × share of company the student still owns.** Valuation is based on users, revenue, uptime and growth. If the session ends before an IPO, the company is valued as it stands, so every student gets a score.
-
-### Debrief (parked)
-
-Students justify their final infrastructure setup (possible assessment evidence). Suggested prompts: why did you choose your model; which layers were you responsible for, and what did that cost you; would you choose differently for a different product type, and why?
+The beta plan has its own file: [xaas-beta-design.md](xaas-beta-design.md).
 
 ---
 
