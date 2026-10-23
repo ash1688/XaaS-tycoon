@@ -3,6 +3,7 @@
 // decision. Every game writes the same rows as the classroom playtest log, so the same analysis runs on both.
 // A tool for testing the game, not part of it. See play.ts for the command line.
 import {
+  DIFFICULTIES,
   gameLengthName,
   MANAGED_SERVICES,
   MODEL_IDS,
@@ -157,7 +158,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const status = state.endedByTeacher ? "ENDED BY TEACHER" : state.status.toUpperCase();
   lines.push(
     `== ${state.companyName} | ${state.productType} on ${state.model} | day ${state.day}/${state.finalDay} ` +
-      `(${gameLengthName(sim.config, state.gameLength)}) | ${status}`,
+      `(${gameLengthName(sim.config, state.gameLength)}, ${DIFFICULTIES[state.difficulty].name}) | ${status}`,
   );
   lines.push(
     `cash ${money(state.cash)} | income ${money(dailyIncome(sim, state))}/day | costs ${money(dailyCosts(sim, state))}/day | runway ${lasts}`,

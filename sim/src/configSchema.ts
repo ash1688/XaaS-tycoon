@@ -7,6 +7,8 @@
 import {
   CUSTOMER_TYPE_IDS,
   DANGER_RISKS,
+  DIFFICULTIES,
+  DIFFICULTY_IDS,
   GAME_LENGTH_IDS,
   MIGRATION_PHASES,
   MODEL_IDS,
@@ -395,6 +397,9 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     const name = l === "180-days" ? "the short game" : gameLengthName(base, l);
     add(`allowedGameLengths.${l}`, "Events", "Game length", `Allow ${name}`, "Students can pick this length when starting a company. A change only affects new games.", TOGGLE);
   }
+  for (const d of DIFFICULTY_IDS) {
+    add(`allowedDifficulties.${d}`, "Events", "Difficulty", `Allow ${DIFFICULTIES[d].name}`, `Students can pick this difficulty when starting a company. ${DIFFICULTIES[d].blurb} A change only affects new games.`, TOGGLE);
+  }
   add("encounters.dailyRise", "Events", "Danger meter", "Daily rise", "How much the danger meter rises on a well-run day after launch. A random event fires when it reaches the next threshold on the encounter list.", range(0, 20, 0.1));
   for (const r of DANGER_RISKS) {
     add(`encounters.riskRise.${r}`, "Events", "Danger meter", `Extra rise: ${RISK_LABELS[r]}`, "Added to the day's rise on a day with this risk.", range(0, 20, 0.1));
@@ -507,6 +512,10 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
   if (GAME_LENGTH_IDS.every((l) => config.allowedGameLengths[l] !== 1)) {
     const changed = GAME_LENGTH_IDS.find((l) => `allowedGameLengths.${l}` in overrides) ?? GAME_LENGTH_IDS[0];
     errors[`allowedGameLengths.${changed}`] = "At least one game length must be allowed.";
+  }
+  if (DIFFICULTY_IDS.every((d) => config.allowedDifficulties[d] !== 1)) {
+    const changed = DIFFICULTY_IDS.find((d) => `allowedDifficulties.${d}` in overrides) ?? "normal";
+    errors[`allowedDifficulties.${changed}`] = "At least one difficulty must be allowed.";
   }
   for (const [low, high, message] of pairs) {
     if ((getAt(config, high) as number) < (getAt(config, low) as number)) {

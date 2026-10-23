@@ -226,12 +226,19 @@ describe("rendering", () => {
   it("shows a longer game's length and final day", () => {
     const yearly = createSim({ ...defaultConfig, allowedGameLengths: { "180-days": 0, "1-year": 1, career: 1 } });
     const career = yearly.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3, gameLength: "career" });
-    expect(renderStatus(yearly, career)).toMatch(/day 1\/17155 \(Career \(47 years, age 18 to 65\)\)/);
+    expect(renderStatus(yearly, career)).toMatch(/day 1\/17155 \(Career \(47 years, age 18 to 65\), Normal\)/);
+  });
+
+  it("shows the game's difficulty", () => {
+    const any = createSim({ ...defaultConfig, allowedDifficulties: { easy: 1, normal: 1, hard: 1 } });
+    const hard = any.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3, difficulty: "hard" });
+    expect(renderStatus(any, hard)).toMatch(/day 1\/180 \(180 days, Hard\)/);
+    expect(renderSummary(any, hard)).toMatch(/"difficulty": "hard"/);
   });
 
   it("shows the company and the commands that work now", () => {
     const state = start();
-    expect(renderStatus(sim, state)).toMatch(/day 1\/40 \(40 days\)/);
+    expect(renderStatus(sim, state)).toMatch(/day 1\/40 \(40 days, Normal\)/);
     expect(renderCommands(sim, state)).toMatch(/^\s+end /m);
     const commands = renderCommands(sim, state);
     expect(commands).toMatch(/instances <1–20>/);
