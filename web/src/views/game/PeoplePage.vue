@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { formatCash } from "../../api";
-import { useGame } from "../../game";
+import { days, useGame } from "../../game";
 import StaffPanel from "../../panels/StaffPanel.vue";
 
 // People: the staff, and what each team does.
@@ -16,7 +16,7 @@ const game = useGame();
         <li>
           <strong>Developers</strong>
           <span class="muted">
-            Build features, one developer-day of work each a day. On SaaS they configure add-ons instead.
+            Build features, a developer-day of work each a day for a mid. On SaaS they configure add-ons instead.
           </span>
         </li>
         <li>
@@ -48,9 +48,23 @@ const game = useGame();
         </tbody>
       </table>
       <p class="muted">
-        Day rates:
+        Day rates for a mid:
         {{ game.meta.staff.map((s) => `${s.name.toLowerCase()} ${formatCash(s.dayRate)}`).join(", ") }}.
       </p>
+      <table class="compare grades-table" data-testid="grades">
+        <caption class="muted">Grades, the same in every team</caption>
+        <thead>
+          <tr><th scope="col">Grade</th><th scope="col">Pay</th><th scope="col">Work</th><th scope="col">Starts</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="g in game.meta.grades" :key="g.id">
+            <th scope="row">{{ g.name }}</th>
+            <td>{{ g.payMultiplier }}× a mid's</td>
+            <td>{{ g.output }}× a mid's</td>
+            <td>{{ g.leadDays === 0 ? "at once" : days(g.leadDays) + " after hiring" }}</td>
+          </tr>
+        </tbody>
+      </table>
     </section>
   </div>
 </template>

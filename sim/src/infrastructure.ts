@@ -4,7 +4,8 @@ import type { EventToday, Events } from "./events.ts";
 import { count, pounds, risen } from "./finance.ts";
 import { vary } from "./rng.ts";
 import type { Servers, UnitCapacity, UnitsView } from "./servers.ts";
-import type { GameState, LogEntry, Server, UnitDemand } from "./state.ts";
+import { staffOutput } from "./staff.ts";
+import type { GameState, LogEntry, Rack, Server, UnitDemand } from "./state.ts";
 
 /** Demand rounded to the hundredth of a unit, so state stays tidy. */
 const tidy = (n: number) => Math.round(n * 100) / 100;
@@ -41,18 +42,19 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
    * What adopting a model costs up front: its upfront cost and, on a model that buys its servers, the kit at what it
    * was bought for: the setup a migration builds there, or any starter kit a config gives a new company (the default
    * gives none: a company buys its own, charged as it buys). The model's upfront cost is the rest of the setup (the
-   * server room), so nothing is charged twice.
+   * server room), so nothing is charged twice. On a model with racks, the racks the kit goes in (the server room's
+   * own, and any more it needs) are bought too, and everything bought is charged its cabling.
    */
-  function upfrontEntries(modelId: ModelId, setup?: Server[]): LogEntry[] {
+  function upfrontEntries(modelId: ModelId, setup?: { servers: Server[]; racks: Rack[] }): LogEntry[] {
     const { name, upfrontCost } = config.models[modelId];
     const model: LogEntry[] =
       upfrontCost === 0 ? [] : [{ text: `Upfront cost: ${name}`, cashDelta: -upfrontCost, category: "infrastructure" }];
-    const kit = setup ? servers.kitEntries(modelId, setup, "New setup") : servers.starterPurchases(modelId);
+    const kit = setup ? servers.kitEntries(modelId, setup.servers, "New setup", setup.racks) : servers.starterPurchases(modelId);
     return [...model, ...kit];
   }
 
   /** Everything adopting a model costs up front, with its starter kit or a migration's setup. */
-  const upfrontCost = (modelId: ModelId, setup?: Server[]) =>
+  const upfrontCost = (modelId: ModelId, setup?: { servers: Server[]; racks: Rack[] }) =>
     -upfrontEntries(modelId, setup).reduce((sum, e) => sum + e.cashDelta, 0);
 
   /**
@@ -67,6 +69,14 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     return demand;
   }
 
+  /** A model's power and cooling for some days, as its own charge (power). Not raised by provider price rises. */
+  function powerEntries(modelId: ModelId, days = 1): LogEntry[] {
+    const { name, powerAndCooling } = config.models[modelId];
+    if (powerAndCooling <= 0) return [];
+    const text = `${name} power and cooling (${pounds(powerAndCooling)} a day)`;
+    return [{ text, cashDelta: -Math.round(powerAndCooling * days), category: "power" }];
+  }
+
   /** A model's monthly and per-user prices, after any provider price rises. */
   function modelPrices(state: GameState, modelId: ModelId) {
     const rise = state.priceRises[modelId] ?? 1;
@@ -75,8 +85,8 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
   }
 
   /**
-   * A model's running costs for some days: its monthly cost, plus its per-user cost on the given users, plus the rent
-   * on its servers, each billed as days ÷ daysPerMonth of a month and rounded to the pound. Advance bills one day at a
+   * A model's running costs for some days: its monthly cost, plus its per-user cost on the given users, its power and
+   * cooling (a day's worth a day), plus the rent on its servers, each billed as days ÷ daysPerMonth of a month and rounded to the pound. Advance bills one day at a
    * time; billing part of a month (say when leaving a model) uses the same rule. Prices include any provider price
    * rises. The model a migration is moving to is priced with the setup being built there (see Servers.serversOn).
    */
@@ -99,7 +109,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
         category: "infrastructure",
       });
     }
-    return [...entries, ...servers.serverEntries(state, modelId, days)];
+    return [...entries, ...powerEntries(modelId, days), ...servers.serverEntries(state, modelId, days)];
   }
 
   /** What a day of a model's running costs comes to, on the given users. */
@@ -108,7 +118,8 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
 
   function monthlyInfrastructureCost(state: GameState): number {
     const { monthlyCost, monthlyCostPerUser } = modelPrices(state, state.model);
-    return Math.round(monthlyCost + state.users * monthlyCostPerUser + servers.monthlyServerCost(state));
+    const power = config.models[state.model].powerAndCooling * config.billing.daysPerMonth;
+    return Math.round(monthlyCost + state.users * monthlyCostPerUser + power + servers.monthlyServerCost(state));
   }
 
   /**
@@ -117,7 +128,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
    */
   function capacityFactors(state: GameState): number[] {
     const needed = servers.opsNeeded(state);
-    const staffed = needed === 0 ? 1 : Math.min(state.ops, needed) / needed;
+    const staffed = needed === 0 ? 1 : Math.min(staffOutput(config, state, "ops"), needed) / needed;
     const { unstaffedShare } = config.capacity;
     return [unstaffedShare + (1 - unstaffedShare) * staffed];
   }

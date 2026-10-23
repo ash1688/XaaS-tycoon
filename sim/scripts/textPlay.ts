@@ -3,20 +3,25 @@
 // decision. Every game writes the same rows as the classroom playtest log, so the same analysis runs on both.
 // A tool for testing the game, not part of it. See play.ts for the command line.
 import {
+  gameLengthName,
   MANAGED_SERVICES,
   MODEL_IDS,
+  RACK_SIZES,
   SERVER_SIZES,
   SERVER_TYPES,
   SimError,
+  STAFF_GRADES,
   STAFF_POOLS,
   type Action,
   type DayLog,
   type GameState,
   type ManagedService,
   type ModelId,
+  type RackSize,
   type ServerSize,
   type ServerType,
   type Sim,
+  type StaffGrade,
   type StaffPool,
 } from "../src/index.ts";
 
@@ -53,6 +58,9 @@ export interface Player {
   player: string;
   playstyle?: string;
 }
+
+/** What each server type's units are, so they don't read as rack units (U). */
+const UNIT: Record<ServerType, string> = { app: "CU", database: "DBU", cache: "CH", loadBalancer: "apps", api: "APIU" };
 
 const money = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
 const pct = (n: number) => `${Math.round(n)}%`;
@@ -94,6 +102,7 @@ export function runway(sim: Sim, state: GameState): number | null {
 export function logRow(sim: Sim, state: GameState, who: Player, type: string, params: Record<string, unknown>, error: string | null = null): LogRow {
   const { tier, use } = tierUse(sim, state);
   const loan = sim.loan(state);
+  const heads = (pool: StaffPool) => sim.staff(state).find((p) => p.pool === pool)!.headcount;
   return {
     at: new Date().toISOString(),
     player: who.player,
@@ -113,9 +122,9 @@ export function logRow(sim: Sim, state: GameState, who: Player, type: string, pa
     tier,
     tierUse: use,
     model: state.model,
-    developers: state.developers,
-    ops: state.ops,
-    support: state.support,
+    developers: heads("developers"),
+    ops: heads("ops"),
+    support: heads("support"),
     loan: !loan ? "none" : loan.remaining > 0 ? "repaying" : "repaid",
     loanRemaining: loan ? Math.round(loan.remaining) : null,
     params,
@@ -128,9 +137,13 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const fair = sim.fairPrice(state);
   const lock = sim.priceLockDaysLeft(state);
   const left = runway(sim, state);
-  const daysToPlay = sim.config.finalDay - state.day;
-  const lasts = left === null ? "not losing money" : left > daysToPlay ? `lasts past day ${sim.config.finalDay}` : `${left} days`;
-  lines.push(`== ${state.companyName} | ${state.productType} on ${state.model} | day ${state.day}/${sim.config.finalDay} | ${state.status.toUpperCase()}`);
+  const daysToPlay = state.finalDay - state.day;
+  const lasts = left === null ? "not losing money" : left > daysToPlay ? `lasts past day ${state.finalDay}` : `${left} days`;
+  const status = state.endedByTeacher ? "ENDED BY TEACHER" : state.status.toUpperCase();
+  lines.push(
+    `== ${state.companyName} | ${state.productType} on ${state.model} | day ${state.day}/${state.finalDay} ` +
+      `(${gameLengthName(sim.config, state.gameLength)}) | ${status}`,
+  );
   lines.push(
     `cash ${money(state.cash)} | income ${money(dailyIncome(sim, state))}/day | costs ${money(dailyCosts(sim, state))}/day | runway ${lasts}`,
   );
@@ -148,7 +161,8 @@ export function renderStatus(sim: Sim, state: GameState): string {
   lines.push(
     `satisfaction ${pct(state.satisfaction)} | uptime ${sim.uptime(state).toFixed(1)}% | tickets ${Math.round(sim.usualTickets(state))}/day vs ${Math.round(sim.dailyClearance(state))} cleared, backlog ${Math.round(state.backlog)}`,
   );
-  lines.push(`staff: developers ${state.developers}, ops ${state.ops} (need ${sim.opsNeededNow(state)}), support ${state.support} | staff cost ${money(sim.dailyStaffCost(state))}/day`);
+  lines.push(`power and cooling ${money(sim.powerAndCooling(state.model))}/day`);
+  lines.push(...staffLines(sim, state));
 
   const launch = sim.launch(state);
   if (launch.status !== "launched") {
@@ -185,10 +199,15 @@ export function renderStatus(sim: Sim, state: GameState): string {
       `servers: ${servers
         .map(
           (s) =>
-            `#${s.id} ${s.size} ${s.type} ${s.units}${s.apiu ? " APIU (switched)" : "u"}${s.status === "pending" ? ` (arrives in ${s.daysLeft}d)` : ""}`,
+            `#${s.id} ${s.size} ${s.type} ${s.units} ${s.apiu ? "APIU (switched)" : UNIT[s.type]}${s.rack !== null ? ` in rack #${s.rack}` : ""}${s.status === "pending" ? ` (arrives in ${s.daysLeft}d)` : ""}`,
         )
         .join(", ")}`,
     );
+  }
+  const racks = sim.racks(state);
+  if (racks) {
+    const list = racks.racks.map((r) => `#${r.id} ${r.size} ${r.used}/${r.units}U`).join(", ");
+    lines.push(`racks: ${list || "none"} | ${racks.free}U free, most in one rack ${racks.mostFree}U`);
   }
 
   const api = sim.api(state);
@@ -212,7 +231,11 @@ export function renderStatus(sim: Sim, state: GameState): string {
   );
 
   const loan = sim.loan(state);
-  if (loan) lines.push(`loan: ${money(loan.remaining)} left, ${money(loan.dailyRepayment)}/day for ${loan.daysLeft} more days`);
+  if (loan?.remaining) {
+    lines.push(
+      `loan: ${money(loan.remaining)} left, ${money(loan.dailyRepayment)}/day for ${loan.daysLeft} more days (to day ${loan.lastDay}); paying off now costs ${money(loan.payoff)}, saving ${money(loan.interestSaved)} interest`,
+    );
+  } else if (loan) lines.push(`loan: repaid${loan.paidOffDay !== null ? ` early on day ${loan.paidOffDay}` : ""}`);
   const migration = sim.migration(state);
   if (migration) lines.push(`migration: ${migration.from}→${migration.to}, ${migration.phase}, ${migration.daysLeft} days left`);
   for (const e of sim.events(state)) lines.push(`event today: ${e.name}. ${e.outcome}`);
@@ -220,11 +243,33 @@ export function renderStatus(sim: Sim, state: GameState): string {
   return lines.join("\n");
 }
 
+/**
+ * Staff by pool: headcount by grade, their work a day in mids (what's measured against ops needed, build days and
+ * tickets), each grade's pay, and hires still to start.
+ */
+function staffLines(sim: Sim, state: GameState): string[] {
+  const g = sim.config.staffGrades;
+  const lines = [
+    `staff: cost ${money(sim.dailyStaffCost(state))}/day | grades: ${STAFF_GRADES.map((grade) => `${grade} work ${g[grade].output}, starts ${g[grade].leadDays}d after hiring`).join("; ")}`,
+  ];
+  for (const p of sim.staff(state)) {
+    const grades = p.grades.map((x) => `${x.count} ${x.grade}`).join(", ");
+    const pay = p.grades.map((x) => money(x.dayRate)).join("/");
+    const need = p.pool === "ops" ? `, need ${sim.opsNeededNow(state)}` : "";
+    const hiring = p.hiring.length
+      ? ` | hired, not started: ${p.hiring.map((h) => `${h.count} ${h.grade} on day ${h.arrivesOn} (${h.daysLeft}d)`).join(", ")}`
+      : "";
+    lines.push(`  ${p.pool} ${p.headcount} (${grades}) work ${p.output}${need} | pay junior/mid/senior ${pay}/day${hiring}`);
+  }
+  return lines;
+}
+
 /** Every command that does something right now, with the values it takes. */
 export function renderCommands(sim: Sim, state: GameState): string {
   const lines = ["commands (join several with ';'):"];
   const pools = STAFF_POOLS.join("|");
-  lines.push(`  hire <${pools}> [n] | letgo <${pools}> [n] | move <to> [from]`);
+  const grades = STAFF_GRADES.join("|");
+  lines.push(`  hire <${pools}> [${grades}] [n] | letgo <${pools}> [${grades}] [n] | move <to> [from] [${grades}]   (grade defaults to mid)`);
   if (sim.priceLockDaysLeft(state) === 0) lines.push(`  price <0.01–${sim.config.pricing.maxPrice}>`);
   lines.push(`  preview <price>   (what a price would do; changes nothing)`);
   const notStarted = sim.features(state).filter((f) => f.status === "notStarted");
@@ -237,15 +282,22 @@ export function renderCommands(sim: Sim, state: GameState): string {
     );
   }
   const options = sim.serverOptions(state);
+  const racks = sim.racks(state);
   if (options.length) {
     const verb = state.model === "onprem" ? "buy" : "rent";
-    lines.push(`  ${verb} <${SERVER_TYPES.join("|")}> <${SERVER_SIZES.join("|")}>`);
+    lines.push(`  ${verb} <${SERVER_TYPES.filter((t) => options.some((o) => o.type === t)).join("|")}> <${SERVER_SIZES.join("|")}>${racks ? " [rack id]   (goes in the first rack with room unless you pick one)" : ""}`);
+    if (racks) {
+      lines.push(
+        `    rack space: ${SERVER_SIZES.map((size) => `${size} ${racks.serverUnits[size]}U`).join(", ")}; most free in one rack ${racks.mostFree}U` +
+          `${options[0]!.cabling > 0 ? `; ${money(options[0]!.cabling)} cabling on each` : ""}`,
+      );
+    }
     for (const type of SERVER_TYPES) {
       const sizes = options.filter((o) => o.type === type);
       if (sizes.length) {
         lines.push(
           `    ${type}: ${sizes
-            .map((o) => `${o.size} ${o.units}u ${o.price !== null ? `${money(o.price)} once` : `${money(o.monthlyCost)}/month`}`)
+            .map((o) => `${o.size} ${o.units} ${UNIT[o.type]} ${o.price !== null ? `${money(o.price)} once` : `${money(o.monthlyCost)}/month`}`)
             .join(", ")}`,
         );
       }
@@ -255,14 +307,20 @@ export function renderCommands(sim: Sim, state: GameState): string {
       lines.push(`  switch <app server id> <cu|apiu>   (an app server gives CU or APIU, as many of either)`);
     }
   }
+  if (racks) {
+    lines.push(
+      `  rack <${RACK_SIZES.join("|")}>   ${racks.options.map((o) => `${o.size} ${o.units}U ${money(o.price)} + ${money(o.cabling)} cabling`).join(", ")}`,
+    );
+    if (racks.racks.some((r) => r.servers.length === 0)) lines.push(`  sellrack <rack id>   (empty racks only)`);
+  }
   const managed = sim.managed(state);
   if (managed) {
     lines.push(`  instances <1–${managed.maxInstances}>   (${money(managed.instanceMonthlyCost)}/month each)`);
     lines.push(`  managed <${MANAGED_SERVICES.join("|")}> <${SERVER_SIZES.join("|")}|off>   (the cache can be off; the database can't)`);
     lines.push(
-      `    database: ${managed.databaseOptions.map((o) => `${o.size} ${o.units}u ${money(o.monthlyCost)}/month`).join(", ")}`,
+      `    database: ${managed.databaseOptions.map((o) => `${o.size} ${o.units} DBU ${money(o.monthlyCost)}/month`).join(", ")}`,
     );
-    lines.push(`    cache: ${managed.cacheOptions.map((o) => `${o.size} ${o.units}u ${money(o.monthlyCost)}/month`).join(", ")}`);
+    lines.push(`    cache: ${managed.cacheOptions.map((o) => `${o.size} ${o.units} CH ${money(o.monthlyCost)}/month`).join(", ")}`);
     if (state.api) {
       lines.push(
         `  apiinstances <0–${managed.maxInstances}>   (${managed.apiInstanceUnits} APIU, ${money(managed.apiInstanceMonthlyCost)}/month each)`,
@@ -276,9 +334,14 @@ export function renderCommands(sim: Sim, state: GameState): string {
   if (!sim.migration(state)) lines.push(`  quote <${MODEL_IDS.filter((m) => m !== state.model).join("|")}> | migrate <model>`);
   const loanQuote = sim.loanQuote(state);
   if (loanQuote) {
-    lines.push(`  loan   (${money(loanQuote.amount)} now, ${money(loanQuote.dailyRepayment)}/day for ${loanQuote.days} days)`);
+    lines.push(
+      `  loan   (${money(loanQuote.amount)} now at ${Math.round(loanQuote.rate * 1000) / 10}%, ${money(loanQuote.dailyRepayment)}/day for ${loanQuote.days} days, to day ${loanQuote.lastDay}: ${money(loanQuote.interest)} interest)`,
+    );
   }
+  const loan = sim.loan(state);
+  if (loan?.remaining) lines.push(`  repayloan   (pay off the loan now: ${money(loan.payoff)}, saving ${money(loan.interestSaved)} interest)`);
   lines.push(`  next [days]   (advance up to that many days, default 7; stops early when something needs you)`);
+  lines.push(`  end   (as the teacher: end the game now, scored as it stands)`);
   return lines.join("\n");
 }
 
@@ -287,7 +350,9 @@ export type Command =
   | { kind: "action"; action: Action; times: number }
   | { kind: "preview"; price: number }
   | { kind: "quote"; model: string }
-  | { kind: "next"; days: number };
+  | { kind: "next"; days: number }
+  /** The teacher ends the game, as from the staff panel. */
+  | { kind: "end" };
 
 function oneOf<T extends string>(word: string | undefined, values: readonly T[], what: string): T {
   if (word && (values as readonly string[]).includes(word)) return word as T;
@@ -319,14 +384,22 @@ export function parseCommand(text: string): Command {
   };
   const service = (w: string | undefined) => oneOf<ManagedService>(w, MANAGED_SERVICES, "a managed service");
   const pool = (w: string | undefined) => oneOf<StaffPool>(w, STAFF_POOLS, "a staff pool");
+  // An optional grade before the count: "hire support junior 5", "hire support 5" (mids).
+  const staffArgs = (rest: string[]): { grade?: StaffGrade; count: number } => {
+    const grade = rest[0] !== undefined && /^[a-z]/.test(rest[0]) ? oneOf<StaffGrade>(rest[0], STAFF_GRADES, "a grade") : undefined;
+    return { ...(grade ? { grade } : {}), count: count(grade ? rest[1] : rest[0]) };
+  };
   const one = (action: Action): Command => ({ kind: "action", action, times: 1 });
   switch (verb) {
     case "hire":
-      return { kind: "action", action: { type: "hire", pool: pool(args[0]) }, times: count(args[1]) };
+      return one({ type: "hire", pool: pool(args[0]), ...staffArgs(args.slice(1)) });
     case "letgo":
-      return { kind: "action", action: { type: "letGo", pool: pool(args[0]) }, times: count(args[1]) };
-    case "move":
-      return one({ type: "moveStaff", to: pool(args[0]), ...(args[1] ? { from: pool(args[1]) } : {}) });
+      return one({ type: "letGo", pool: pool(args[0]), ...staffArgs(args.slice(1)) });
+    case "move": {
+      // "move ops", "move ops developers", "move ops developers senior".
+      const grade = args[2] ? { grade: oneOf<StaffGrade>(args[2], STAFF_GRADES, "a grade") } : {};
+      return one({ type: "moveStaff", to: pool(args[0]), ...(args[1] ? { from: pool(args[1]) } : {}), ...grade });
+    }
     case "price":
       return one({ type: "setPrice", price: number(args[0], "a price") });
     case "preview":
@@ -336,7 +409,16 @@ export function parseCommand(text: string): Command {
     case "addon":
       return one({ type: "buyAddon", feature: args[0] ?? "" });
     case "buy":
-      return one({ type: "buyServer", server: type(args[0]), size: size(args[1]) });
+      return one({
+        type: "buyServer",
+        server: type(args[0]),
+        size: size(args[1]),
+        ...(args[2] !== undefined && { rack: number(args[2], "a rack id") }),
+      });
+    case "rack":
+      return one({ type: "buyRack", size: oneOf<RackSize>(args[0], RACK_SIZES, "a rack size") });
+    case "sellrack":
+      return one({ type: "sellRack", id: number(args[0], "a rack id") });
     case "rent":
       return one({ type: "rentServer", server: type(args[0]), size: size(args[1]) });
     case "sell":
@@ -359,8 +441,12 @@ export function parseCommand(text: string): Command {
       return one({ type: "switchServer", id: number(args[0], "a server id"), gives: oneOf(args[1], ["cu", "apiu"] as const, "what it gives") });
     case "apiinstances":
       return one({ type: "setApiInstances", count: number(args[0], "an API instance count") });
+    case "repayloan":
+      return one({ type: "repayLoan" });
     case "next":
       return { kind: "next", days: args[0] === undefined ? 7 : count(args[0]) };
+    case "end":
+      return { kind: "end" };
     default:
       throw new SimError("bad_command", `Unknown command "${verb ?? ""}". Run "look" for the commands that work now.`);
   }
@@ -406,6 +492,12 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
       ],
     };
   }
+  if (command.kind === "end") {
+    const ended = sim.endGame(state);
+    // Logged as the classroom server logs a game the teacher ends.
+    const row = logRow(sim, ended, who, "end", { status: ended.status, endedBy: "teacher" });
+    return { state: ended, rows: [row], lines: [`GAME OVER: ended by the teacher on day ${ended.day}`] };
+  }
   if (command.kind !== "action") throw new Error("Advance with advanceUntil.");
   let current = state;
   const rows: LogRow[] = [];
@@ -429,7 +521,7 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
  * Log entry kinds worth showing every day they appear. Feature, migration and API entries show only on days they stop
  * time.
  */
-const SHOWN_KINDS = new Set(["outage", "event", "bankrupt", "finished", "support", "price", "launch"]);
+const SHOWN_KINDS = new Set(["outage", "event", "bankrupt", "finished", "support", "price", "launch", "staff"]);
 const STOPPING_KINDS = new Set(["feature", "migration", "api"]);
 
 const builtCount = (state: GameState) => Object.values(state.features).filter((f) => f.status !== "building").length;
@@ -453,6 +545,7 @@ function stopReasons(sim: Sim, before: GameState, after: GameState): string[] {
   else if (migBefore && migAfter && migAfter.phase !== migBefore.phase) reasons.push(`migration now ${migAfter.phase}`);
   const pending = (st: GameState) => sim.servers(st).filter((x) => x.status === "pending").length;
   if (pending(after) < pending(before)) reasons.push("server arrived");
+  if (after.hiring.length < before.hiring.length) reasons.push("staff started");
   const { use } = tierUse(sim, after);
   const { use: useBefore } = tierUse(sim, before);
   if (use !== null && use > 100 && (useBefore === null || useBefore <= 100)) reasons.push(`capacity over 100% (${use}%)`);
@@ -470,7 +563,7 @@ function stopReasons(sim: Sim, before: GameState, after: GameState): string[] {
 
 /**
  * Plays up to `days` days, one at a time, and stops early when something needs a decision: an event, outage, built
- * feature, migration step, the launch, a server arriving, capacity running out, satisfaction falling hard, cash about to
+ * feature, migration step, the launch, a server arriving, staff starting, capacity running out, satisfaction falling hard, cash about to
  * run out, the price unlocking, or API calls starting to be dropped. Returns the notable lines of each day played and why it stopped.
  */
 export function advanceUntil(sim: Sim, state: GameState, days: number, who: Player): Turn {

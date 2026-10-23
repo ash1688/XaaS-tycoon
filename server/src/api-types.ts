@@ -10,11 +10,13 @@ import type {
   EventView,
   FeatureGapView,
   FeatureView,
+  GameLengthId,
   GameSummary,
   LaunchView,
   LoanQuote,
   LoanView,
   ManagedView,
+  RacksView,
   MigrationPhase,
   MigrationQuote,
   MigrationView,
@@ -29,7 +31,9 @@ import type {
   ServerView,
   Spend,
   StackLayer,
+  StaffGrade,
   StaffPool,
+  StaffPoolView,
   UnitsView,
 } from "@xaas/sim";
 
@@ -46,9 +50,21 @@ export interface TimedFlowView {
   seconds: number;
 }
 
+/** A game length a student can pick when starting a company. */
+export interface GameLengthView {
+  id: GameLengthId;
+  /** "180 days", "1 year" or the career's name. */
+  name: string;
+  /** The last day played. */
+  finalDay: number;
+}
+
 export interface MetaView {
   startingCash: number;
+  /** The last day of the shortest game length, 180 by default: the bank loan is repaid by it. */
   finalDay: number;
+  /** The game lengths the preset allows, shortest first: the first is picked unless the student chooses another. */
+  gameLengths: GameLengthView[];
   maxCompanyNameLength: number;
   /** Companies still being played (status "active") that one login code can have at once. */
   maxActiveCompanies: number;
@@ -70,12 +86,20 @@ export interface MetaView {
     stack: StackLayer[];
     /** Ops staff a new company on the model needs: the few PaaS and SaaS always need. Its servers' ops are on top. */
     opsNeeded: number;
-    /** Charged on adopting the model: on-prem, the server room. Servers are bought or rented on top. */
+    /**
+     * Charged on adopting the model: on-prem, the server room with its rack and cabling. Servers are bought or rented
+     * on top.
+     */
     upfrontCost: number;
     monthlyCost: number;
     monthlyCostPerUser: number;
+    /** Power and cooling a day, charged whatever the company runs: highest on-prem. */
+    powerAndCooling: number;
   }[];
+  /** Each pool, with a mid's day rate: a grade's pay is that × its pay multiplier. */
   staff: { id: StaffPool; name: string; personName: string; dayRate: number }[];
+  /** Junior, mid and senior: pay and work a day against a mid's, and days from hiring to starting work. */
+  grades: { id: StaffGrade; name: string; payMultiplier: number; output: number; leadDays: number }[];
   /** Developers a SaaS company needs to configure add-ons before it can buy one. */
   minConfigDevelopers: number;
   /** Tickets one support person clears a day. */
@@ -117,21 +141,33 @@ export interface CompanyView {
   preset: string;
   productType: ProductTypeId;
   model: ModelId;
+  /** The game length picked when the company started. */
+  gameLength: GameLengthId;
+  gameLengthName: string;
   day: number;
+  /** The game length's last day. */
   finalDay: number;
+  /** True once the teacher has ended the game early (its status is then "finished"). */
+  endedByTeacher: boolean;
   cash: number;
   /**
    * "active" while playing. Once the game is over it rejects Continue and actions, and shows its summary: "bankrupt"
    * if cash went below zero, "finished" if it played the final day, or "retired" if the student retired it.
    */
   status: CompanyStatus;
+  /** People on each team, every grade. Hires still to start aren't counted. */
   developers: number;
   ops: number;
   /** Support staff: they answer customers' tickets, on every model. */
   support: number;
   /**
-   * Ops staff the company needs: on a model with servers, for the servers it has (on IaaS ready or not, on-prem once
-   * they've arrived).
+   * Each pool by grade: who's on the team, their work a day in mids (what's measured against ops needed, a build's
+   * developer-days and tickets cleared), and hires still to start.
+   */
+  staff: StaffPoolView[];
+  /**
+   * Ops staff the company needs, in mids' work: on a model with servers, for the servers it has (on IaaS ready or
+   * not, on-prem once they've arrived).
    */
   opsNeeded: number;
   /**
@@ -218,6 +254,14 @@ export interface CompanyView {
    */
   managed: ManagedView | null;
   /**
+   * On-prem: the company's racks (size, the rack units (U) each holds and its servers take, and what each would sell
+   * back for), the U each server size takes, and the racks it can buy with their price and cabling. Null on IaaS, PaaS
+   * and SaaS, which have no racks.
+   */
+  racks: RacksView | null;
+  /** What the current model charges a day for power and cooling: highest on-prem. */
+  powerAndCooling: number;
+  /**
    * On SaaS: unlimited, provider-managed capacity, paid for through the per-user fee (free users included), shown as
    * that bill. Null on other models.
    */
@@ -229,16 +273,18 @@ export interface CompanyView {
   monthlyInfrastructureCost: number;
   /** What the active add-ons cost per month at today's users. */
   monthlyAddonCost: number;
-  /** Total spent so far in each category. Debt is the bank loan's repayments. */
+  /** Total spent so far in each category. Debt is the bank loans' repayments. */
   spend: Spend;
+  /** Of the debt spend, the interest: the part that counts against profit. */
+  interestPaid: number;
   /**
-   * The bank loan once taken (kept once repaid), or null: amount, the day it was taken, rate, daily repayment, total,
-   * repaid so far, what's left to repay and the repayments left.
+   * The latest bank loan (kept once repaid), or null: amount, the day it was taken, rate, term, daily repayment, total,
+   * repaid so far, what's left to repay, the repayments left, and what paying it off now would cost and save.
    */
   loan: LoanView | null;
   /**
-   * What taking the bank loan now would cost, to show before accepting: amount, rate, interest, total repaid, the daily
-   * repayment and the days to repay it. Null when it can't be taken: one has been, or there are too few days left.
+   * What taking a bank loan now would cost, to show before accepting: amount, rate, interest, total repaid, the daily
+   * repayment and the days of its term. Null when one can't be taken: one is being repaid, or the game is nearly over.
    */
   loanQuote: LoanQuote | null;
   /**
@@ -308,6 +354,13 @@ export interface NewCompanyBody {
   model: string;
   /** Take the bank loan at the start, on the terms in MetaView.startLoan. */
   takeLoan?: boolean;
+  /** One of MetaView.gameLengths. Left out, the first of them. */
+  gameLength?: string;
+}
+
+/** How many games a teacher's end request ended: those still being played. */
+export interface EndGamesResult {
+  ended: number;
 }
 
 export type ActionBody = Action;
@@ -335,6 +388,8 @@ export interface TeacherGameView {
   migratingTo: ModelId | null;
   day: number;
   finalDay: number;
+  /** True once the teacher has ended the game early (its status is then "finished"). */
+  endedByTeacher: boolean;
   cash: number;
   users: number;
   /** Percentage of time up across every day played. */
@@ -354,7 +409,7 @@ export interface TeacherGameView {
   profit: number;
   /** Customer satisfaction now, 0–100, rounded. */
   satisfaction: number;
-  /** Left to repay on the bank loan: null if it wasn't taken, 0 once repaid. */
+  /** Left to repay on the latest bank loan: null if none was taken, 0 once repaid. */
   loanRemaining: number | null;
 }
 

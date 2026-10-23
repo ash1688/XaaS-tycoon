@@ -9,13 +9,25 @@ export type ProductTypeId = (typeof PRODUCT_TYPE_IDS)[number];
 
 export const STAFF_POOLS = ["developers", "ops", "support"] as const;
 export type StaffPool = (typeof STAFF_POOLS)[number];
+export const STAFF_GRADES = ["junior", "mid", "senior"] as const;
+export type StaffGrade = (typeof STAFF_GRADES)[number];
 
 /** A migration runs through these phases in order. Saved in game state, so don't rename. */
 export const MIGRATION_PHASES = ["planning", "testing", "moving"] as const;
 export type MigrationPhase = (typeof MIGRATION_PHASES)[number];
 
+/**
+ * How long a game runs before it ends, if the company doesn't go bankrupt first. The student picks one of the lengths
+ * the preset allows when starting a company. Saved in game state, so don't rename. (Until IPO comes with the IPO.)
+ */
+export const GAME_LENGTH_IDS = ["180-days", "1-year", "career"] as const;
+export type GameLengthId = (typeof GAME_LENGTH_IDS)[number];
+
+/** A career runs from founding the company at 18 to retiring at 65. */
+export const CAREER_YEARS = 65 - 18;
+
 /** Every charge is tagged with one of these, so students can see where their money goes. */
-export const SPEND_CATEGORIES = ["staff", "infrastructure", "addons", "debt"] as const;
+export const SPEND_CATEGORIES = ["staff", "infrastructure", "cabling", "power", "addons", "debt"] as const;
 export type SpendCategory = (typeof SPEND_CATEGORIES)[number];
 
 /**
@@ -29,6 +41,10 @@ export type ServerType = (typeof SERVER_TYPES)[number];
 /** Every server type comes in these sizes, smallest first. Saved in game state, so don't rename. */
 export const SERVER_SIZES = ["small", "medium", "large", "massive"] as const;
 export type ServerSize = (typeof SERVER_SIZES)[number];
+
+/** Racks come in these sizes, smallest first. Saved in game state, so don't rename. */
+export const RACK_SIZES = ["small", "medium", "large"] as const;
+export type RackSize = (typeof RACK_SIZES)[number];
 
 /** The capacity tiers servers are measured in: compute units, database units and cache hits. */
 export const UNIT_TIERS = ["cu", "dbu", "ch"] as const;
@@ -52,8 +68,13 @@ export interface ModelConfig {
    * (racks, networking, power and cooling): the servers are bought on top, one at a time, at their purchase prices.
    */
   upfrontCost: number;
-  /** Fixed provider bill (or power and upkeep on-prem) per month, billed as a daily share (opex). */
+  /** Fixed provider bill (on-prem, the premises and bandwidth) per month, billed as a daily share (opex). */
   monthlyCost: number;
+  /**
+   * Power and cooling a day, charged on every day played whatever the company runs (power). Highest on-prem, where you
+   * run the kit yourself, and falling through IaaS and PaaS to SaaS.
+   */
+  powerAndCooling: number;
   /** Extra per user per month, billed as a daily share on that day's users. SaaS charges per user. */
   monthlyCostPerUser: number;
   /**
@@ -96,6 +117,22 @@ export interface ServerPurchaseConfig {
   price: Record<ServerType, Record<ServerSize, number>>;
   /** Share of the purchase price you get back on selling a server (0.4 = 40%). */
   sellBackShare: number;
+  /** Cabling: charged on top of the price for each piece of hardware bought, a server or a rack (cabling). */
+  cablingCost: number;
+}
+
+/**
+ * Racks, on a model that buys its servers. Each server is installed in a rack and takes rack units (U) by its size,
+ * from the day it's ordered, so a server can't be bought without a rack that has room for it. Racks are bought
+ * outright, installed at once, and sold back like servers once they're empty.
+ */
+export interface RacksConfig {
+  /** Each size of rack: the U it holds and its purchase price. */
+  sizes: Record<RackSize, { units: number; price: number }>;
+  /** The U a server of each size takes, whatever its type. */
+  serverUnits: Record<ServerSize, number>;
+  /** Racks a company gets on adopting the model, bought with its upfront cost: what the server room comes with. */
+  starter: RackSize[];
 }
 
 /**
@@ -123,6 +160,8 @@ export interface ModelServersConfig {
   opsPerServer?: Record<ServerType, number>;
   /** Set on a model that buys its servers rather than renting them. */
   purchase?: ServerPurchaseConfig;
+  /** Set on a model whose servers go in racks (on-prem). */
+  racks?: RacksConfig;
   /** Set on a model whose platform runs the servers for you (PaaS). */
   managed?: ManagedServersConfig;
   /**
@@ -188,10 +227,25 @@ export interface StaffPoolConfig {
   name: string;
   /** One person, for buttons: "developer". */
   personName: string;
-  /** Fixed cost per person per day. */
+  /** Fixed cost per mid per day. Each grade's pay is this × its pay multiplier. */
   dayRate: number;
-  /** Headcount a new company starts with. */
+  /** Mids a new company starts with, on the team from day 1. */
   startingCount: number;
+}
+
+/**
+ * A grade of staff, the same in every pool. Output is work a day against a mid's: developer-days for developers,
+ * tickets (× ticketsPerPerson) for support, and cover towards ops needed for ops.
+ */
+export interface StaffGradeConfig {
+  /** For headings and buttons: "Junior". */
+  name: string;
+  /** Pay as a multiple of the pool's day rate (a mid's). */
+  payMultiplier: number;
+  /** Work a day as a multiple of a mid's. */
+  output: number;
+  /** Days from hiring to starting work: hired after day 10 with 3, they work and are paid from day 13. */
+  leadDays: number;
 }
 
 /** A run of busy days that repeats, like a sale season. */
@@ -630,19 +684,22 @@ export interface LaunchConfig {
 }
 
 /**
- * The bank loan: one per company, taken when the game starts or at any point after. It's repaid in equal daily
- * repayments (debt) from the next day played to the final day, whatever happens, so the later it's taken the fewer
- * days there are to repay it, and the bank charges more interest too.
+ * Bank loans: one at a time, taken when the game starts or at any point after, and another once the last is repaid.
+ * Each is repaid in equal daily repayments (debt) over a fixed term from the next day played, whatever happens and
+ * whatever the game's length, so it can run past the final day. The later it's taken, the shorter the term and the
+ * more interest the bank charges. Paying one off early costs the money borrowed not yet paid back, and saves the
+ * interest still to come.
  *
  * Interest is simple, on the whole amount, at a rate set by the day the loan is taken (day 1 at the start):
  *
  *   rate = baseRate + ratePerDay × (day − 1)
- *   days = finalDay − day                             (repayment days left)
+ *   days = max(minTermDays, termDays − termPerDay × (day − 1)), rounded      (the term)
  *   dailyRepayment = amount × (1 + rate) ÷ days, rounded up to the pound like every charge
  *   total repaid = dailyRepayment × days; interest = total repaid − amount
  *
- * With the defaults over 180 days: taken at the start, 10% (£216 a day for 179 days, £38,664 in all); on day 60,
- * 21.8% (£356 a day for 120 days, £42,720); on day 120, 33.8% (£781 a day for 60 days, £46,860).
+ * Each repayment is interest and principal in the loan's own proportion. With the defaults: taken at the start, 10%
+ * (£321 a day for 120 days, £38,520 in all); on day 61, 22% (£475 a day for 90 days, £42,750); on day 121, 34%
+ * (£782 a day for 60 days, £46,920).
  */
 export interface LoanConfig {
   /** What the bank lends. */
@@ -651,7 +708,13 @@ export interface LoanConfig {
   baseRate: number;
   /** Added to the rate for each day later it's taken (0.002 = 0.2 percentage points a day). */
   ratePerDay: number;
-  /** The bank won't lend with fewer repayment days than this left. */
+  /** The term of a loan taken at the start: its repayment days. */
+  termDays: number;
+  /** Taken off the term for each day later it's taken. */
+  termPerDay: number;
+  /** The shortest term, however late it's taken. */
+  minTermDays: number;
+  /** The bank won't lend with fewer days than this left in the game. */
   minDays: number;
 }
 
@@ -689,13 +752,22 @@ export interface ApiConfig {
 
 export interface GameConfig {
   startingCash: number;
-  /** The last day played. The game ends once it has been played, so day finalDay is played in full. */
+  /**
+   * The last day played in a 180-day game: the game ends once it has been played, so day finalDay is played in full.
+   * Longer lengths have fixed days (see gameLengthDays). The bank loan is repaid by this day whatever the length.
+   */
   finalDay: number;
+  /**
+   * Which game lengths students can pick from when starting a company: 1 if allowed, 0 if not. At least one must be.
+   * Numbers rather than flags so the config page can store them like every other setting.
+   */
+  allowedGameLengths: Record<GameLengthId, number>;
   maxCompanyNameLength: number;
   launch: LaunchConfig;
   models: Record<ModelId, ModelConfig>;
   productTypes: Record<ProductTypeId, ProductTypeConfig>;
   staff: Record<StaffPool, StaffPoolConfig>;
+  staffGrades: Record<StaffGrade, StaffGradeConfig>;
   capacity: CapacityConfig;
   servers: ServersConfig;
   outage: OutageConfig;
@@ -716,6 +788,9 @@ export const defaultConfig: GameConfig = {
   // costs. On-prem's server room and first kit leave too little to buy more kit for weeks without the bank loan.
   startingCash: 15_000,
   finalDay: 180,
+  // A normal lesson plays 180 days. The longer lengths could take hours, so the teacher turns them on for clubs,
+  // homework or extension work.
+  allowedGameLengths: { "180-days": 1, "1-year": 0, career: 0 },
   maxCompanyNameLength: 40,
   // Users trickle in over 3 days, building up. SaaS starts on day 1; a platform set up or VMs rented on day 1 start on
   // day 2; on-prem kit bought on day 1 arrives on day 8, so it starts nearly a week after the cloud models.
@@ -725,11 +800,14 @@ export const defaultConfig: GameConfig = {
       name: "Own servers (on-prem)",
       blurb: "Buy and run your own kit.",
       comparison: { upfrontCost: "High", monthlyCost: "Low–medium", opsNeeded: "High", control: "Full" },
-      // The server room: racks, networking, power and cooling. The servers are bought on top: a first app server and
-      // database of a size that leaves room to grow (£2,200 for large ones) make on-prem by far the dearest to start.
-      upfrontCost: 3_000,
-      // The premises, bandwidth and the room's own power. Each server's power and upkeep is on top.
-      monthlyCost: 1_000,
+      // The server room: networking and fit-out. It comes with a medium rack (bought on top, with its cabling); the
+      // servers are bought on top too: a first app server and database of a size that leaves room to grow (£2,200 for
+      // large ones) make on-prem by far the dearest to start.
+      upfrontCost: 2_500,
+      // The premises and bandwidth. Power and cooling, and each server's power and upkeep, are on top.
+      monthlyCost: 400,
+      // Running and cooling the room yourself: the dearest of any model. Placeholder.
+      powerAndCooling: 25,
       monthlyCostPerUser: 0,
       exitPenalty: 0,
       // A server costs about five weeks' rent of the same VM and a tenth of that rent a month to run, so it pays for
@@ -747,6 +825,15 @@ export const defaultConfig: GameConfig = {
             api: { small: 400, medium: 550, large: 1_000, massive: 1_400 },
           },
           sellBackShare: 0.4,
+          // Placeholder: per server or rack bought.
+          cablingCost: 50,
+        },
+        // Placeholders. The server room's medium rack holds a first setup with room to grow a little; a growing
+        // company needs more racks as well as more servers. Bigger racks cost less per U.
+        racks: {
+          sizes: { small: { units: 12, price: 300 }, medium: { units: 24, price: 500 }, large: { units: 42, price: 800 } },
+          serverUnits: { small: 1, medium: 2, large: 4, massive: 8 },
+          starter: ["medium"],
         },
         monthlyCost: {
           app: { small: 30, medium: 45, large: 80, massive: 110 },
@@ -765,7 +852,9 @@ export const defaultConfig: GameConfig = {
       comparison: { upfrontCost: "Low", monthlyCost: "Medium", opsNeeded: "Medium", control: "High" },
       upfrontCost: 2_000,
       // The account, storage and bandwidth. The VMs are rented on top.
-      monthlyCost: 1_000,
+      monthlyCost: 700,
+      // The provider's power and cooling, passed on. Placeholder.
+      powerAndCooling: 10,
       monthlyCostPerUser: 0,
       exitPenalty: 3_000,
       // Bigger VMs cost less per unit (a small app server £50 a CU, a massive one £37), and caches are the cheap way to
@@ -788,7 +877,9 @@ export const defaultConfig: GameConfig = {
       comparison: { upfrontCost: "Low", monthlyCost: "Medium–high", opsNeeded: "Low", control: "Medium" },
       upfrontCost: 1_000,
       // The platform account. Instances and managed services are billed on top.
-      monthlyCost: 1_500,
+      monthlyCost: 1_300,
+      // The provider's power and cooling, passed on. Placeholder.
+      powerAndCooling: 6,
       monthlyCostPerUser: 0,
       // A small, fixed team to deploy and keep the service running, however many instances: the platform runs them.
       opsNeeded: 1,
@@ -819,7 +910,9 @@ export const defaultConfig: GameConfig = {
       blurb: "Build inside someone else's SaaS platform, like a shop on Shopify.",
       comparison: { upfrontCost: "Low", monthlyCost: "Per user, plus add-ons", opsNeeded: "Very low", control: "Low" },
       upfrontCost: 500,
-      monthlyCost: 1_000,
+      monthlyCost: 900,
+      // Your share of the provider's power and cooling: the least of any model. Placeholder.
+      powerAndCooling: 3,
       // Every user, free ones included. There are no servers and no capacity limit: the provider scales. Cheap for a shop
       // whose users mostly pay, dear for a social network whose users are mostly free.
       monthlyCostPerUser: 0.35,
@@ -1002,6 +1095,13 @@ export const defaultConfig: GameConfig = {
     // One to start, enough for the first few weeks: more are needed as users grow.
     support: { name: "Support staff", personName: "support person", dayRate: 100, startingCount: 1 },
   },
+  // A senior does about twice a junior's work for about 1.7× the pay: cheaper per unit of work, dearer up front, and
+  // slowest to arrive. Placeholders from the beta design.
+  staffGrades: {
+    junior: { name: "Junior", payMultiplier: 0.75, output: 0.65, leadDays: 3 },
+    mid: { name: "Mid", payMultiplier: 1, output: 1, leadDays: 7 },
+    senior: { name: "Senior", payMultiplier: 1.3, output: 1.35, leadDays: 14 },
+  },
   capacity: { unstaffedShare: 0.4 },
   // Each size gives a set number of units. A CU serves the same users whatever the size, so the sizes are 6/10/20/30 to
   // match the design notes' users per server: at a shop's 0.002 CU each, a small app server serves 3,000 shoppers, a
@@ -1041,8 +1141,8 @@ export const defaultConfig: GameConfig = {
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25, paidChurnPerHour: 0.001 },
   billing: { daysPerMonth: 30 },
   // Enough for on-prem to buy kit ahead of demand from the start, or to see an IaaS, PaaS or SaaS company through a
-  // tight start, for about £3,700 of interest. See LoanConfig for the interest formula.
-  loan: { amount: 35_000, baseRate: 0.1, ratePerDay: 0.002, minDays: 14 },
+  // tight start, for about £3,500 of interest. See LoanConfig for the interest formula.
+  loan: { amount: 35_000, baseRate: 0.1, ratePerDay: 0.002, termDays: 120, termPerDay: 0.5, minTermDays: 60, minDays: 14 },
   pricing: {
     maxPrice: 1_000,
     growthSensitivity: 1,
@@ -1265,3 +1365,22 @@ export const defaultConfig: GameConfig = {
     },
   ],
 };
+
+/** The last day played in a game of a length: day finalDay, 365 or a career's 47 years of 365 days. */
+export function gameLengthDays(config: GameConfig, length: GameLengthId): number {
+  if (length === "1-year") return 365;
+  if (length === "career") return CAREER_YEARS * 365;
+  return config.finalDay;
+}
+
+/** The game lengths a config lets students pick, shortest first. */
+export function allowedGameLengths(config: GameConfig): GameLengthId[] {
+  return GAME_LENGTH_IDS.filter((id) => config.allowedGameLengths[id] === 1);
+}
+
+/** A game length's name for the screens: "180 days" (or however many the config's shortest game has). */
+export function gameLengthName(config: GameConfig, length: GameLengthId): string {
+  if (length === "1-year") return "1 year";
+  if (length === "career") return `Career (${CAREER_YEARS} years, age 18 to 65)`;
+  return `${config.finalDay} days`;
+}

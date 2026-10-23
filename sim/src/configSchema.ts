@@ -5,13 +5,17 @@
 // id, other lists by position: "models.iaas.monthlyCost", "productTypes.video.features.hd.devDays",
 // "events.osPatch.schedule.days.0". Overrides are a flat map of path to number: only the numbers that differ.
 import {
+  GAME_LENGTH_IDS,
   MIGRATION_PHASES,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
+  RACK_SIZES,
   SERVER_SIZES,
   SERVER_TYPES,
+  STAFF_GRADES,
   STAFF_POOLS,
   defaultConfig,
+  gameLengthName,
   type GameConfig,
 } from "./config.ts";
 
@@ -31,6 +35,8 @@ export interface ConfigField {
   min: number;
   max: number;
   step: number;
+  /** "toggle" for a setting that's on (1) or off (0), drawn as a checkbox. */
+  kind?: "toggle";
 }
 
 /** Path → number, for only the numbers that differ from the base config. */
@@ -48,8 +54,9 @@ export const CONFIG_EXCLUSIONS: Record<string, string> = {
 
 const MODEL_LABELS = { onprem: "On-prem", iaas: "IaaS", paas: "PaaS", saas: "SaaS" } as const;
 
-type Range = Pick<ConfigField, "min" | "max" | "step">;
+type Range = Pick<ConfigField, "min" | "max" | "step" | "kind">;
 const range = (min: number, max: number, step: number): Range => ({ min, max, step });
+const TOGGLE = { ...range(0, 1, 1), kind: "toggle" as const };
 
 const POUNDS = range(0, 1_000_000, 100);
 const PER_USER = range(0, 10, 0.01);
@@ -83,10 +90,13 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
 
   // Money
   add("startingCash", "Money", "", "Starting cash", "Cash each new company starts with.", range(0, 10_000_000, 1_000));
-  add("loan.amount", "Money", "Bank loan", "Loan amount", "What the bank lends. One loan per company, at the start or later.", range(0, 10_000_000, 1_000));
-  add("loan.baseRate", "Money", "Bank loan", "Interest at the start", "Interest on a loan taken when the game starts, as a share of the amount (0.1 = 10%), repaid with it in equal daily repayments by the final day.", range(0, 5, 0.01));
+  add("loan.amount", "Money", "Bank loan", "Loan amount", "What the bank lends. One loan at a time, at the start or later, and another once it's repaid.", range(0, 10_000_000, 1_000));
+  add("loan.baseRate", "Money", "Bank loan", "Interest at the start", "Interest on a loan taken when the game starts, as a share of the amount (0.1 = 10%), repaid with it in equal daily repayments over the loan's term.", range(0, 5, 0.01));
   add("loan.ratePerDay", "Money", "Bank loan", "Extra interest per day later", "Added to the interest rate for each day later the loan is taken (0.002 = 0.2 percentage points a day).", range(0, 0.1, 0.0005));
-  add("loan.minDays", "Money", "Bank loan", "Fewest repayment days", "The bank won't lend with fewer days than this left to repay it.", range(1, 365, 1));
+  add("loan.termDays", "Money", "Bank loan", "Term at the start", "Repayment days for a loan taken when the game starts, whatever the game's length.", range(1, 3_650, 1));
+  add("loan.termPerDay", "Money", "Bank loan", "Shorter term per day later", "Days taken off the term for each day later the loan is taken (0.5 = a day shorter every two days).", range(0, 10, 0.05));
+  add("loan.minTermDays", "Money", "Bank loan", "Shortest term", "The fewest repayment days a loan has, however late it's taken.", range(1, 3_650, 1));
+  add("loan.minDays", "Money", "Bank loan", "No loans in the last days", "The bank won't lend with fewer days than this left in the game.", range(1, 365, 1));
   add("billing.daysPerMonth", "Money", "", "Days in a billing month", "Monthly costs are charged a day at a time: the monthly cost ÷ this.", range(28, 31, 1));
   for (const m of MODEL_IDS) {
     const s = MODEL_LABELS[m];
@@ -94,7 +104,8 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
       ? "Charged once on moving to this model: the server room. The servers are bought on top, at their purchase prices."
       : "Charged once on moving to this model.";
     add(`models.${m}.upfrontCost`, "Money", s, "Upfront cost", upfrontHelp, POUNDS);
-    add(`models.${m}.monthlyCost`, "Money", s, "Monthly cost", "The provider's fixed bill (power and upkeep on-prem), billed daily.", range(0, 200_000, 100));
+    add(`models.${m}.monthlyCost`, "Money", s, "Monthly cost", "The provider's fixed bill (the premises and bandwidth on-prem), billed daily.", range(0, 200_000, 100));
+    add(`models.${m}.powerAndCooling`, "Money", s, "Power and cooling a day", "Charged every day played, whatever the company runs. Highest on-prem, where you run the kit yourself.", range(0, 10_000, 1));
     add(`models.${m}.monthlyCostPerUser`, "Money", s, "Monthly cost per user", "Extra per user per month, billed daily on that day's users.", PER_USER);
     add(`models.${m}.exitPenalty`, "Money", s, "Exit penalty", "The provider's fee for leaving, charged when a migration away completes.", POUNDS);
   }
@@ -116,7 +127,13 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
       }
     }
     if (servers.purchase) {
-      add(`models.${m}.servers.purchase.sellBackShare`, "Money", MODEL_LABELS[m], "Sell-back share", "Share of what a server cost that selling it back refunds (0.4 = 40%), so bought kit is sold at a loss.", SHARE);
+      add(`models.${m}.servers.purchase.sellBackShare`, "Money", MODEL_LABELS[m], "Sell-back share", "Share of what a server or rack cost that selling it back refunds (0.4 = 40%), so bought kit is sold at a loss.", SHARE);
+      add(`models.${m}.servers.purchase.cablingCost`, "Money", MODEL_LABELS[m], "Cabling", "Charged on top of the price for each server or rack bought.", range(0, 100_000, 5));
+    }
+    if (servers.racks) {
+      for (const size of RACK_SIZES) {
+        add(`models.${m}.servers.racks.sizes.${size}.price`, "Money", MODEL_LABELS[m], `Rack (${size}): purchase price`, "What buying a rack of this size costs, charged at once (capex).", range(0, 1_000_000, 50));
+      }
     }
   }
   add("pricing.maxPrice", "Money", "", "Highest monthly price", "The most a student can charge each paying user a month. High on purpose.", range(1, 100_000, 1));
@@ -267,6 +284,14 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     } else {
       add(`models.${m}.servers.readyDays`, "Infrastructure", MODEL_LABELS[m], "Days until a server is ready", "Days from adding a server to it being ready (1 = the next day). It serves from the day after.", range(0, 60, 1));
     }
+    if (servers.racks) {
+      for (const size of RACK_SIZES) {
+        add(`models.${m}.servers.racks.sizes.${size}.units`, "Infrastructure", MODEL_LABELS[m], `Rack (${size}): rack units (U)`, "The U a rack of this size holds. Every server is installed in a rack with room for it.", range(1, 100, 1));
+      }
+      for (const size of SERVER_SIZES) {
+        add(`models.${m}.servers.racks.serverUnits.${size}`, "Infrastructure", MODEL_LABELS[m], `Server (${size}): rack units (U)`, "The U a server of this size takes in its rack, from the day it's ordered.", range(0, 100, 1));
+      }
+    }
     if (servers.managed) {
       add(`models.${m}.servers.managed.maxInstances`, "Infrastructure", MODEL_LABELS[m], "Most app instances", "The most app instances a company can run on the platform.", range(1, 100, 1));
       for (const t of ["database", "cache"] as const) {
@@ -284,8 +309,14 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   // People
   for (const pool of STAFF_POOLS) {
     const s = base.staff[pool]?.name ?? pool;
-    add(`staff.${pool}.dayRate`, "People", s, "Day rate", "Cost per person per day.", range(0, 2_000, 10));
-    add(`staff.${pool}.startingCount`, "People", s, "Starting headcount", "How many a new company starts with.", HEADCOUNT);
+    add(`staff.${pool}.dayRate`, "People", s, "Day rate", "Cost per mid per day. Juniors and seniors are paid this × their grade's pay multiplier.", range(0, 2_000, 10));
+    add(`staff.${pool}.startingCount`, "People", s, "Starting headcount", "How many mids a new company starts with.", HEADCOUNT);
+  }
+  for (const grade of STAFF_GRADES) {
+    const g = base.staffGrades[grade]?.name ?? grade;
+    add(`staffGrades.${grade}.payMultiplier`, "People", `${g} staff`, "Pay multiplier", "Pay as a multiple of each team's day rate (a mid's).", MULTIPLIER);
+    add(`staffGrades.${grade}.output`, "People", `${g} staff`, "Output", "Work a day as a multiple of a mid's: developer-days, tickets cleared, or cover towards ops needed.", MULTIPLIER);
+    add(`staffGrades.${grade}.leadDays`, "People", `${g} staff`, "Lead time (days)", "Days from hiring to starting work (0 = at once). They're paid only once they start.", range(0, 60, 1));
   }
   for (const m of MODEL_IDS) {
     add(`models.${m}.opsNeeded`, "People", MODEL_LABELS[m], "Ops needed", "Ops staff this model needs to keep the service running, however big it gets. Too few cuts capacity on a model with servers.", HEADCOUNT);
@@ -314,7 +345,11 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("migration.overrun.maxDays", "Migration", "", "Overrun: most extra days", "An overrun adds between the fewest and most extra days.", range(0, 60, 1));
 
   // Events
-  add("finalDay", "Events", "", "Game length (days)", "The last day played. The game ends once it has been played.", range(2, 365, 1));
+  add("finalDay", "Events", "Game length", "Short game length (days)", "The last day played in the shortest game length (180 days by default). The game ends once it has been played. The bank loan is repaid by this day in every length.", range(2, 365, 1));
+  for (const l of GAME_LENGTH_IDS) {
+    const name = l === "180-days" ? "the short game" : gameLengthName(base, l);
+    add(`allowedGameLengths.${l}`, "Events", "Game length", `Allow ${name}`, "Students can pick this length when starting a company. A change only affects new games.", TOGGLE);
+  }
   for (const event of base.events) {
     const at = `events.${event.id}`;
     const s = event.name;
@@ -393,7 +428,8 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
   const pairs: [low: string, high: string, message: string][] = [
     ["migration.overrun.minDays", "migration.overrun.maxDays", "The most extra days can't be fewer than the fewest."],
     ["support.poorSatisfaction", "support.goodSatisfaction", "Good satisfaction can't be below poor satisfaction."],
-    ["loan.minDays", "finalDay", "The fewest repayment days can't be more than the game's length."],
+    ["loan.minDays", "finalDay", "The days with no loans can't be more than the game's length."],
+    ["loan.minTermDays", "loan.termDays", "The term at the start can't be shorter than the shortest term."],
     // A new company starts at the fair price, so it has to be one the student could set.
     ...PRODUCT_TYPE_IDS.filter((p) => base.productTypes[p]).map((p): [string, string, string] => [
       `productTypes.${p}.pricing.fairPrice`,
@@ -405,6 +441,14 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
       `productTypes.${p}.growth.launchUsersMax`,
       "The most launch users can't be fewer than the fewest.",
     ]),
+    // Every server has to fit in the biggest rack, or it could never be bought.
+    ...MODEL_IDS.filter((m) => base.models[m]?.servers?.racks).flatMap((m) =>
+      SERVER_SIZES.map((size): [string, string, string] => [
+        `models.${m}.servers.racks.serverUnits.${size}`,
+        `models.${m}.servers.racks.sizes.${RACK_SIZES[RACK_SIZES.length - 1]}.units`,
+        "Every server has to fit in the biggest rack.",
+      ]),
+    ),
     ...base.events
       .filter((e) => e.schedule.type === "seeded")
       .map((e): [string, string, string] => [
@@ -413,6 +457,10 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
         "The latest day can't be before the earliest day.",
       ]),
   ];
+  if (GAME_LENGTH_IDS.every((l) => config.allowedGameLengths[l] !== 1)) {
+    const changed = GAME_LENGTH_IDS.find((l) => `allowedGameLengths.${l}` in overrides) ?? GAME_LENGTH_IDS[0];
+    errors[`allowedGameLengths.${changed}`] = "At least one game length must be allowed.";
+  }
   for (const [low, high, message] of pairs) {
     if ((getAt(config, high) as number) < (getAt(config, low) as number)) {
       errors[high in overrides ? high : low] = message;

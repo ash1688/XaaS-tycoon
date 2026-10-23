@@ -28,7 +28,7 @@ const apiIncome = (log: DayLog[]) =>
 /** A launched shop with plenty of cash and room for its users, on a model with or without servers. */
 function shop(model: ModelId = "iaas", s: typeof sim = sim): GameState {
   let state = s.newGame({ companyName: "Shop Ltd", productType: "ecommerce", model, seed: 3 });
-  state = { ...state, cash: 1_000_000, ops: 3 };
+  state = { ...state, cash: 1_000_000, staff: { ...state.staff, ops: { junior: 0, mid: 3, senior: 0 } } };
   if (model === "iaas") {
     state = act(state, { type: "rentServer", server: "app", size: "massive" }, { type: "rentServer", server: "database", size: "massive" });
   } else if (model === "paas") {
@@ -107,7 +107,7 @@ describe("calls against APIU", () => {
     let state = act(shop(), { type: "buyApi" }, { type: "rentServer", server: "api", size: "large" });
     state = sim.advance(state).state;
     expect(sim.api(state)!.apiu!.capacity).toBe(20);
-    expect(sim.api({ ...state, ops: 0 })!.apiu!.capacity).toBe(20 * defaultConfig.capacity.unstaffedShare);
+    expect(sim.api({ ...state, staff: { ...state.staff, ops: { junior: 0, mid: 0, senior: 0 } } })!.apiu!.capacity).toBe(20 * defaultConfig.capacity.unstaffedShare);
   });
 });
 
@@ -282,5 +282,21 @@ describe("a product's API is data-driven", () => {
     const state = own.newGame({ companyName: "Friends", productType: "social", model: "saas", seed: 1 });
     expect(own.api(state)).toMatchObject({ name: "Social API", price: 1_000 });
     expect(own.api(own.applyAction(state, { type: "buyApi" }))!.owned).toBe(true);
+  });
+});
+
+describe("API servers on-prem", () => {
+  it("need rack space like any other server", () => {
+    let state = sim.newGame({ companyName: "Shop Ltd", productType: "ecommerce", model: "onprem", seed: 3, takeLoan: true });
+    state = act({ ...state, cash: 1_000_000 }, { type: "buyApi" }, { type: "buyServer", server: "api", size: "small" });
+    const api = state.servers.find((s) => s.type === "api")!;
+    expect(state.racks.map((r) => r.id)).toContain(api.rack);
+    expect(sim.servers(state).find((s) => s.id === api.id)).toMatchObject({ rack: api.rack, status: "pending" });
+    // Fill the racks with massive API servers: the next is refused for want of space.
+    let error = "no error";
+    for (let i = 0; i < 100 && error === "no error"; i++) {
+      error = code(() => (state = sim.applyAction(state, { type: "buyServer", server: "api", size: "massive" })));
+    }
+    expect(error).toBe("no_rack_space");
   });
 });

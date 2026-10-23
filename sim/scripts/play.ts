@@ -2,12 +2,12 @@
 // a JSON file between calls, and every game writes a playtest log beside it (<game>.log.json) in the classroom
 // export's format. See textPlay.ts.
 //
-//   npm run play -- new <game.json> --product social --model paas [--loan] [--seed 1] [--player "AI 1"] [--playstyle min-maxer]
+//   npm run play -- new <game.json> --product social --model paas [--loan] [--length 1-year] [--seed 1] [--player "AI 1"] [--playstyle min-maxer]
 //   npm run play -- look <game.json>
 //   npm run play -- do <game.json> "hire support 3; price 6; next 7"
 //   npm run play -- summary <game.json>
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { createSim, SimError, type GameState } from "../src/index.ts";
+import { createSim, defaultConfig, GAME_LENGTH_IDS, SimError, type GameState } from "../src/index.ts";
 import {
   advanceUntil,
   logRow,
@@ -25,7 +25,11 @@ interface SavedGame extends Player {
   state: GameState;
 }
 
-const sim = createSim();
+// The default config, with every game length allowed so a playtester can try any of them.
+const sim = createSim({
+  ...defaultConfig,
+  allowedGameLengths: Object.fromEntries(GAME_LENGTH_IDS.map((l) => [l, 1])) as typeof defaultConfig.allowedGameLengths,
+});
 const logPath = (file: string) => file.replace(/\.json$/, "") + ".log.json";
 
 function load(file: string): SavedGame {
@@ -55,12 +59,14 @@ function newGame(file: string, args: string[]) {
     model: flag(args, "model") ?? "",
     seed,
     takeLoan: args.includes("--loan"),
+    gameLength: flag(args, "length"),
   });
   const game: SavedGame = { player, playstyle, seed, state };
   const row = logRow(sim, state, game, "start", {
     model: state.model,
     productType: state.productType,
     takeLoan: args.includes("--loan"),
+    gameLength: state.gameLength,
     seed,
     ...(playstyle ? { playstyle } : {}),
   });
@@ -102,7 +108,7 @@ function play(file: string, script: string) {
 function main(argv: string[]) {
   const [verb, file, ...rest] = argv;
   if (!verb || !file) {
-    console.log('Usage: play <new|look|do|summary> <game.json> [...]. "new" takes --product, --model, --loan, --seed, --player, --playstyle.');
+    console.log('Usage: play <new|look|do|summary> <game.json> [...]. "new" takes --product, --model, --loan, --length, --seed, --player, --playstyle.');
     process.exitCode = 1;
     return;
   }

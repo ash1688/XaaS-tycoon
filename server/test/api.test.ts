@@ -64,6 +64,7 @@ const sim = createSim({
       upfrontCost: 0,
       monthlyCost: 750,
       monthlyCostPerUser: 0,
+      powerAndCooling: 0,
       exitPenalty: 200,
       servers: {
         ...iaasServers,
@@ -84,6 +85,7 @@ const sim = createSim({
       upfrontCost: 100,
       monthlyCost: 300,
       monthlyCostPerUser: 0,
+      powerAndCooling: 0,
       servers: {
         ...paasServers,
         monthlyCost: {
@@ -106,6 +108,12 @@ const sim = createSim({
     developers: { ...defaultConfig.staff.developers, dayRate: 10, startingCount: 0 },
     ops: { ...defaultConfig.staff.ops, dayRate: 4, startingCount: 0 },
     support: { ...defaultConfig.staff.support, dayRate: 3, startingCount: 0 },
+  },
+  // Mids (the default hire) and seniors start at once, so tests needn't wait; juniors wait 3 days, to test lead times.
+  staffGrades: {
+    junior: { ...defaultConfig.staffGrades.junior, leadDays: 3 },
+    mid: { ...defaultConfig.staffGrades.mid, leadDays: 0 },
+    senior: { ...defaultConfig.staffGrades.senior, leadDays: 0 },
   },
   // No scripted events, so continue charges and outages are only the ones a test sets up.
   events: [],
@@ -476,7 +484,7 @@ describe("staff actions", () => {
     await act({ type: "hire", pool: "developers" });
     const body = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
     expect(body.company).toMatchObject({ day: 2, cash: 1000 - 25 - 20, developers: 2 });
-    expect(body.log[0]!.entries).toContainEqual({ text: "Developers pay (2)", cashDelta: -20, category: "staff" });
+    expect(body.log[0]!.entries).toContainEqual({ text: "Developers pay (2 mids)", cashDelta: -20, category: "staff" });
   });
 
   it("hires and lets go several at once, within limits", async () => {
@@ -527,6 +535,41 @@ describe("staff actions", () => {
     });
     expect(res.statusCode).toBe(404);
     expect(res.json()).toMatchObject({ error: "unknown_company" });
+  });
+
+  it("hires by grade: each grade's pay and work, and juniors shown waiting until they start", async () => {
+    const { url, act } = await setup();
+    // A senior support person is £3 × 1.3 = £3.90, rounded to £4, and clears 1.35 × 30 tickets.
+    const senior = (await act({ type: "hire", pool: "support", grade: "senior" })).json<CompanyView>();
+    expect(senior).toMatchObject({ support: 1, dailyStaffCost: 4, dailyClearance: 40.5 });
+    const waiting = (await act({ type: "hire", pool: "support", grade: "junior", count: 2 })).json<CompanyView>();
+    expect(waiting).toMatchObject({ support: 1, dailyStaffCost: 4 });
+    expect(waiting.staff.find((p) => p.pool === "support")).toMatchObject({
+      headcount: 1,
+      output: 1.35,
+      grades: [
+        { grade: "junior", count: 0, dayRate: 2, output: 0.65, leadDays: 3 },
+        { grade: "mid", count: 0, dayRate: 3 },
+        { grade: "senior", count: 1, dayRate: 4, output: 1.35 },
+      ],
+      hiring: [{ grade: "junior", count: 2, arrivesOn: 4, daysLeft: 3 }],
+    });
+    // Juniors can't be let go before they start.
+    expect((await act({ type: "letGo", pool: "support", grade: "junior" })).json()).toMatchObject({ error: "no_staff" });
+    let played: ContinueResult | undefined;
+    for (let i = 0; i < 3; i++) played = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    expect(played!.company).toMatchObject({ day: 4, support: 3, dailyStaffCost: 8 });
+    expect(played!.log[0]!.entries).toContainEqual({ text: "2 junior support staff started work.", cashDelta: 0, kind: "staff" });
+    expect((await act({ type: "hire", pool: "support", grade: "intern" })).statusCode).toBe(400);
+  });
+
+  it("lists the grades in the game's meta", async () => {
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.grades).toEqual([
+      { id: "junior", name: "Junior", payMultiplier: 0.75, output: 0.65, leadDays: 3 },
+      { id: "mid", name: "Mid", payMultiplier: 1, output: 1, leadDays: 0 },
+      { id: "senior", name: "Senior", payMultiplier: 1.3, output: 1.35, leadDays: 0 },
+    ]);
   });
 
   it("serialises concurrent hires so none are lost", async () => {
@@ -597,7 +640,7 @@ describe("support and satisfaction", () => {
     const { company, log } = await play(3);
     expect(company).toMatchObject({ backlog: 0, satisfaction: 100 });
     expect(company.clearedToday).toBe(company.ticketsToday);
-    expect(log[0]!.entries).toContainEqual({ text: "Support staff pay (1)", cashDelta: -3, category: "staff" });
+    expect(log[0]!.entries).toContainEqual({ text: "Support staff pay (1 mid)", cashDelta: -3, category: "staff" });
   });
 
   it("recovers satisfaction once support clears the backlog", async () => {
@@ -669,6 +712,92 @@ describe("games from an older version", () => {
     }
     const list = (await app.inject({ method: "GET", url: `/api/codes/${code}` })).json<{ companies: CompanyView[] }>();
     expect(list.companies.map((c) => c.name).sort()).toEqual(["One", "Three", "Two"]);
+  });
+});
+
+describe("game lengths", () => {
+  const ALL_LENGTHS = { "allowedGameLengths.1-year": 1, "allowedGameLengths.career": 1 };
+
+  it("offers only 180 days by default, and refuses a length the preset doesn't allow", async () => {
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.gameLengths).toEqual([{ id: "180-days", name: "180 days", finalDay: 180 }]);
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    expect(company).toMatchObject({ gameLength: "180-days", gameLengthName: "180 days", finalDay: 180, endedByTeacher: false });
+    const refused = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "iaas", gameLength: "1-year" });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toMatchObject({ error: "game_length_not_allowed", message: expect.stringContaining("180 days") });
+  });
+
+  it("starts a game of a length the preset allows, which keeps its final day", async () => {
+    await useOverrides(ALL_LENGTHS);
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.gameLengths.map((l) => [l.id, l.finalDay])).toEqual([
+      ["180-days", 180],
+      ["1-year", 365],
+      ["career", 17_155],
+    ]);
+    const code = await newCode();
+    const created = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "iaas", gameLength: "1-year" });
+    expect(created.statusCode).toBe(201);
+    expect(created.json<CompanyView>()).toMatchObject({ gameLength: "1-year", finalDay: 365 });
+    const career = (await newCompany(code, { name: "Lifer", productType: "social", model: "saas", gameLength: "career" })).json<CompanyView>();
+    expect(career).toMatchObject({ gameLength: "career", finalDay: 17_155 });
+    const games = (await app.inject({ method: "GET", url: "/api/teacher/games", cookies: await teacherCookie() })).json<TeacherGamesView>();
+    expect(games.codes[0]!.companies.map((c) => c.finalDay).sort()).toEqual([17_155, 365]);
+  });
+
+  it("lets the teacher end one game, which then shows its summary and can't be played", async () => {
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    await app.inject({ method: "POST", url: `${url}/continue` });
+    const endUrl = `/api/teacher/companies/${company.id}/end`;
+    expect((await app.inject({ method: "POST", url: endUrl })).statusCode).toBe(401);
+    const cookies = await teacherCookie();
+    const ended = await app.inject({ method: "POST", url: endUrl, cookies });
+    expect(ended.statusCode).toBe(200);
+    expect(ended.json()).toEqual({ ended: 1 });
+    const after = (await app.inject({ method: "GET", url })).json<CompanyView>();
+    expect(after).toMatchObject({ status: "finished", endedByTeacher: true, day: 2 });
+    const summary = (await app.inject({ method: "GET", url: `${url}/summary` })).json<SummaryView>();
+    expect(summary).toMatchObject({ ending: "ended", day: 2, finalDay: 180 });
+    const next = await app.inject({ method: "POST", url: `${url}/continue` });
+    expect(next.statusCode).toBe(409);
+    expect(next.json()).toMatchObject({ error: "finished", message: expect.stringContaining("Your teacher ended Acme early") });
+    // Ending it again ends nothing more.
+    expect((await app.inject({ method: "POST", url: endUrl, cookies })).json()).toEqual({ ended: 0 });
+    const games = (await app.inject({ method: "GET", url: "/api/teacher/games", cookies })).json<TeacherGamesView>();
+    expect(games.codes[0]!.companies[0]).toMatchObject({ status: "finished", endedByTeacher: true });
+    for (const id of ["00000000-0000-0000-0000-000000000000", "nope"]) {
+      expect((await app.inject({ method: "POST", url: `/api/teacher/companies/${id}/end`, cookies })).statusCode).toBe(404);
+    }
+  });
+
+  it("lets the teacher end every game still being played under a code, leaving others alone", async () => {
+    const code = await newCode();
+    const other = await newCode();
+    const ids: string[] = [];
+    for (const name of ["One", "Two", "Retired"]) {
+      ids.push((await newCompany(code, { name, productType: "ecommerce", model: "iaas" })).json<CompanyView>().id);
+    }
+    await app.inject({ method: "POST", url: `/api/codes/${code}/companies/${ids[2]}/retire` });
+    const elsewhere = (await newCompany(other)).json<CompanyView>();
+    const cookies = await teacherCookie();
+    expect((await app.inject({ method: "POST", url: `/api/teacher/codes/${code}/end` })).statusCode).toBe(401);
+    const ended = await app.inject({ method: "POST", url: `/api/teacher/codes/${code}/end`, cookies });
+    expect(ended.json()).toEqual({ ended: 2 });
+    const list = (await app.inject({ method: "GET", url: `/api/codes/${code}` })).json<{ companies: CompanyView[] }>();
+    expect(Object.fromEntries(list.companies.map((c) => [c.name, [c.status, c.endedByTeacher]]))).toEqual({
+      One: ["finished", true],
+      Two: ["finished", true],
+      Retired: ["retired", false],
+    });
+    const untouched = (await app.inject({ method: "GET", url: `/api/codes/${other}/companies/${elsewhere.id}` })).json<CompanyView>();
+    expect(untouched.status).toBe("active");
+    // Ended games are history, so they don't count towards the limit.
+    expect((await newCompany(code, { name: "Again", productType: "ecommerce", model: "iaas" })).statusCode).toBe(201);
+    expect((await app.inject({ method: "POST", url: "/api/teacher/codes/99999999/end", cookies })).statusCode).toBe(404);
   });
 });
 
@@ -883,8 +1012,10 @@ describe("servers on-prem", () => {
 
   it("starts with the starter kit bought on top of the server room, and offers kit to buy", async () => {
     const { company } = await setup();
-    expect(company.cash).toBe(100_000 - 3_000 - 1_000 - 1_200);
+    // The server room (£2,500) with its medium rack (£500), the kit, and cabling for the rack and 2 servers.
+    expect(company.cash).toBe(100_000 - 2_500 - 500 - 1_000 - 1_200 - 150);
     expect(company.spend.infrastructure).toBe(5_200);
+    expect(company.spend.cabling).toBe(150);
     expect(company.servers).toEqual([
       expect.objectContaining({ id: 1, type: "app", size: "large", status: "ready", daysLeft: 0, paid: 1_000, sellBack: 400 }),
       expect.objectContaining({ id: 2, type: "database", size: "large", status: "ready", daysLeft: 0, paid: 1_200, sellBack: 480 }),
@@ -902,7 +1033,7 @@ describe("servers on-prem", () => {
       }),
     );
     const meta = (await ownApp.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
-    expect(meta.models.find((m) => m.id === "onprem")!.upfrontCost).toBe(5_200);
+    expect(meta.models.find((m) => m.id === "onprem")).toMatchObject({ upfrontCost: 5_350, powerAndCooling: 25 });
   });
 
   it("buys kit, charging it at once, on order with the days left until it arrives", async () => {
@@ -910,7 +1041,7 @@ describe("servers on-prem", () => {
     const res = await act({ type: "buyServer", server: "app", size: "small" });
     expect(res.statusCode).toBe(200);
     const bought = res.json<CompanyView>();
-    expect(bought.cash).toBe(before.cash - onprem.purchase!.price.app.small);
+    expect(bought.cash).toBe(before.cash - onprem.purchase!.price.app.small - onprem.purchase!.cablingCost);
     expect(bought.servers.at(-1)).toMatchObject({ id: 3, type: "app", size: "small", status: "pending", daysLeft: 7 });
     // On order: no capacity and no ops needed until it arrives (its share shows in opsNeededOnceReady).
     expect({ ...bought.units, loadBalancerOnceReady: null }).toEqual({ ...before.units, loadBalancerOnceReady: null });
@@ -929,7 +1060,7 @@ describe("servers on-prem", () => {
     expect(onOrder.json()).toMatchObject({ error: "on_order" });
     const sold = await act({ type: "sellServer", id: 2 });
     expect(sold.statusCode).toBe(200);
-    expect(sold.json<CompanyView>().cash).toBe(before.cash - onprem.purchase!.price.cache.small + 480);
+    expect(sold.json<CompanyView>().cash).toBe(before.cash - onprem.purchase!.price.cache.small - onprem.purchase!.cablingCost + 480);
     expect((await get()).servers.map((s) => s.id)).toEqual([1, 3]);
   });
 
@@ -954,6 +1085,47 @@ describe("servers on-prem", () => {
     expect(refused.statusCode).toBe(400);
     expect(refused.json()).toMatchObject({ error: "not_for_sale" });
     expect(iaas.company.servers.every((s) => s.paid === null && s.sellBack === null)).toBe(true);
+  });
+
+  it("buys racks and installs servers in them, with cabling and power and cooling as costs of their own", async () => {
+    const { company: before, act, get, next } = await setup();
+    // The starter kit's large app server and database take 8U of the server room's medium rack (24U).
+    expect(before.racks).toMatchObject({ units: 24, used: 8, free: 16, mostFree: 16 });
+    expect(before.racks!.racks).toEqual([expect.objectContaining({ id: 1, size: "medium", servers: [1, 2] })]);
+    expect(before.servers.map((s) => s.rack)).toEqual([1, 1]);
+    expect(before.serverOptions.find((o) => o.size === "massive")).toMatchObject({ rackUnits: 8, cabling: 50 });
+    expect(before.powerAndCooling).toBe(defaultConfig.models.onprem.powerAndCooling);
+    // Two massive servers fill it: a third needs another rack.
+    for (let i = 0; i < 2; i++) expect((await act({ type: "buyServer", server: "app", size: "massive" })).statusCode).toBe(200);
+    const full = await act({ type: "buyServer", server: "app", size: "massive" });
+    expect(full.statusCode).toBe(400);
+    expect(full.json()).toMatchObject({ error: "no_rack_space" });
+    for (const payload of [
+      { type: "buyRack" },
+      { type: "buyRack", size: "massive" },
+      { type: "sellRack" },
+      { type: "sellRack", id: 0 },
+      { type: "buyServer", server: "app", size: "small", rack: 0 },
+    ]) {
+      expect((await act(payload)).statusCode, JSON.stringify(payload)).toBe(400);
+    }
+    const filled = await get();
+    const racked = await act({ type: "buyRack", size: "large" });
+    expect(racked.statusCode).toBe(200);
+    const withRack = racked.json<CompanyView>();
+    expect(withRack.cash).toBe(filled.cash - 800 - 50);
+    expect(withRack.spend.cabling).toBe(filled.spend.cabling + 50);
+    expect(withRack.racks).toMatchObject({ units: 66, mostFree: 42 });
+    const placed = (await act({ type: "buyServer", server: "app", size: "massive", rack: 2 })).json<CompanyView>();
+    expect(placed.servers.at(-1)!.rack).toBe(2);
+    expect((await act({ type: "sellRack", id: 2 })).json()).toMatchObject({ error: "rack_in_use" });
+    // A day's power and cooling, as its own cost.
+    const { company } = await next();
+    expect(company.spend.power - placed.spend.power).toBe(defaultConfig.models.onprem.powerAndCooling);
+
+    const iaas = await setup("iaas");
+    expect(iaas.company.racks).toBeNull();
+    expect((await iaas.act({ type: "buyRack", size: "small" })).json()).toMatchObject({ error: "no_racks" });
   });
 });
 
@@ -1100,9 +1272,9 @@ describe("ledger and bankruptcy", () => {
     for (let i = 0; i < 2; i++) body = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
     expect(body!.log[0]!.entries).toEqual([
       { text: expect.stringContaining("running costs"), cashDelta: -25, category: "infrastructure" },
-      { text: "Ops staff pay (1)", cashDelta: -4, category: "staff" },
+      { text: "Ops staff pay (1 mid)", cashDelta: -4, category: "staff" },
     ]);
-    const spend = { staff: 8, infrastructure: 50, addons: 0, debt: 0 };
+    const spend = { staff: 8, infrastructure: 50, cabling: 0, power: 0, addons: 0, debt: 0 };
     expect(body!.company).toMatchObject({ cash: 1000 - 58, spend });
     expect((await app.inject({ method: "GET", url })).json<CompanyView>().spend).toEqual(spend);
   });
@@ -1161,31 +1333,33 @@ describe("bank loan", () => {
 
   it("shows the start terms in meta, and a new game can take them", async () => {
     const terms = await startLoan();
-    // £38,500 over 179 days, rounded up to the pound a day.
+    // £38,500 over the 120-day term, rounded up to the pound a day.
     expect(terms).toEqual({
       amount: 35_000,
       rate: 0.1,
-      dailyRepayment: 216,
-      days: 179,
-      total: 38_664,
-      interest: 3_664,
-      lastDay: 180,
+      dailyRepayment: 321,
+      days: 120,
+      total: 38_520,
+      interest: 3_520,
+      lastDay: 121,
     });
     const { company, next } = await setup({ takeLoan: true });
     expect(company.cash).toBe(1_000 + 35_000);
     expect(company.loan).toMatchObject({ amount: 35_000, day: 1, rate: 0.1, total: terms.total, repaid: 0 });
-    expect(company.loan).toMatchObject({ dailyRepayment: terms.dailyRepayment, remaining: terms.total, daysLeft: 179 });
+    expect(company.loan).toMatchObject({ dailyRepayment: terms.dailyRepayment, remaining: terms.total, daysLeft: 120 });
     expect(company.loanQuote).toBeNull();
     const { company: after, log } = await next();
     expect(after.spend.debt).toBe(terms.dailyRepayment);
-    expect(after.loan).toMatchObject({ repaid: terms.dailyRepayment, daysLeft: 178 });
+    expect(after.loan).toMatchObject({ repaid: terms.dailyRepayment, daysLeft: 119 });
+    // £3,520 of the £38,520 is interest, so £29 of the first £321.
+    expect(after.interestPaid).toBe(29);
     expect(log[0]!.entries).toContainEqual(
       expect.objectContaining({ category: "debt", cashDelta: -terms.dailyRepayment }),
     );
     expect(log[0]!.entries).toContainEqual(expect.objectContaining({ kind: "loan" }));
   });
 
-  it("starts without a loan by default, offering the start terms, which get worse later", async () => {
+  it("starts without a loan by default, offering the start terms, which get worse and shorter later", async () => {
     const terms = await startLoan();
     const { company, next } = await setup();
     expect(company).toMatchObject({ cash: 1_000, loan: null, loanQuote: terms });
@@ -1195,10 +1369,11 @@ describe("bank loan", () => {
     expect(later.loanQuote!.rate).toBeGreaterThan(terms.rate);
     expect(later.loanQuote!.dailyRepayment).toBeGreaterThan(terms.dailyRepayment);
     expect(later.loanQuote!.total).toBeGreaterThan(terms.total);
-    expect(later.loanQuote!.days).toBe(169);
+    // Half a day off the 120-day term for each of the 10 days later.
+    expect(later.loanQuote!.days).toBe(115);
   });
 
-  it("takes the loan later as an action, on the quoted terms, and only once", async () => {
+  it("takes a loan later as an action, on the quoted terms, and not a second while it's being repaid", async () => {
     const { act, next } = await setup();
     await next();
     const before = (await next()).company;
@@ -1216,14 +1391,41 @@ describe("bank loan", () => {
     expect(taken.loanQuote).toBeNull();
     const again = await act({ type: "takeLoan" });
     expect(again.statusCode).toBe(400);
-    expect(again.json()).toMatchObject({ error: "loan_taken", message: expect.stringContaining("one") });
+    expect(again.json()).toMatchObject({ error: "loan_open", message: expect.stringContaining("one at a time") });
   });
 
   it("rejects a second loan on a game that took one at the start", async () => {
     const { act } = await setup({ takeLoan: true });
     const res = await act({ type: "takeLoan" });
     expect(res.statusCode).toBe(400);
-    expect(res.json()).toMatchObject({ error: "loan_taken" });
+    expect(res.json()).toMatchObject({ error: "loan_open" });
+  });
+
+  it("pays a loan off early, saving the interest the quote showed, and then lends again", async () => {
+    const { act, next } = await setup({ takeLoan: true });
+    await next();
+    const { company } = await next();
+    // Two repayments of £321, £59 of them interest: £34,417 of the money borrowed is left.
+    expect(company.loan).toMatchObject({ repaid: 642, interestPaid: 59, payoff: 34_417, interestSaved: 3_461 });
+    const res = await act({ type: "repayLoan" });
+    expect(res.statusCode).toBe(200);
+    const paid = res.json<CompanyView>();
+    expect(paid.cash).toBe(company.cash - 34_417);
+    expect(paid.loan).toMatchObject({ paidOffDay: 3, remaining: 0, payoff: 0, repaidInFull: true });
+    expect(paid.interestPaid).toBe(59);
+    expect(paid.loanQuote).toMatchObject({ amount: 35_000, rate: 0.104, days: 119 });
+    const { company: after } = await next();
+    expect(after.spend.debt).toBe(642 + 34_417);
+    const again = await act({ type: "takeLoan" });
+    expect(again.statusCode).toBe(200);
+    expect(again.json<CompanyView>().loan).toMatchObject({ day: 4, repaid: 0, repaidInFull: false });
+  });
+
+  it("refuses to pay off a loan that isn't being repaid", async () => {
+    const { act } = await setup();
+    const res = await act({ type: "repayLoan" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: "no_loan" });
   });
 
   it("validates the take-loan option", async () => {
@@ -1239,7 +1441,7 @@ describe("bank loan", () => {
     expect(without.json()).toMatchObject({ error: "cant_afford", message: expect.stringContaining("bank loan") });
     const withLoan = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "onprem", takeLoan: true });
     expect(withLoan.statusCode).toBe(201);
-    expect(withLoan.json<CompanyView>().cash).toBe(1_000 + 35_000 - 5_200);
+    expect(withLoan.json<CompanyView>().cash).toBe(1_000 + 35_000 - 5_350);
   });
 });
 
@@ -1320,6 +1522,8 @@ describe("game end and summary", () => {
     expect(summary.spend).toEqual({
       staff: logged("staff"),
       infrastructure: logged("infrastructure"),
+      cabling: 0,
+      power: 0,
       addons: 0,
       debt: 0,
     });
@@ -1986,6 +2190,8 @@ describe("migration quote", () => {
       sizedFor: { cu: 1.25, dbu: 1.25 },
       headroom: 0.25,
       setupUpfront: 0,
+      racks: [],
+      cabling: 0,
       setupMonthly: 0,
       opsNeeded: 1,
       deliveryDays: null,
@@ -2014,7 +2220,9 @@ describe("migration quote", () => {
       { type: "database", size: "small", name: "Database", count: 1, units: 10, upfront: price.database.small, monthly: upkeep.database!.small!, daysLeft: 7 },
     ]);
     expect(onprem).toMatchObject({ setupUpfront: price.app.small + price.database.small, deliveryDays: 7 });
-    expect(onprem.upfrontCost).toBe(defaultConfig.models.onprem.upfrontCost + onprem.setupUpfront);
+    // With the server room's medium rack, and cabling for it and the 2 servers.
+    expect(onprem).toMatchObject({ racks: [{ size: "medium", count: 1, upfront: 500 }], cabling: 150 });
+    expect(onprem.upfrontCost).toBe(defaultConfig.models.onprem.upfrontCost + onprem.setupUpfront + 500 + 150);
     expect((await quote("saas")).json<MigrationQuoteView>()).toMatchObject({ setup: [], setupMonthly: 0 });
   });
 

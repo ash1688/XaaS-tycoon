@@ -10,6 +10,7 @@ import {
   type ServerType,
 } from "./config.ts";
 import { count, pounds, risen, type Finance } from "./finance.ts";
+import type { Racks } from "./racks.ts";
 import {
   isManagedService,
   isServerSize,
@@ -17,6 +18,7 @@ import {
   SimError,
   type GameState,
   type LogEntry,
+  type Rack,
   type Server,
   type UnitDemand,
 } from "./state.ts";
@@ -46,6 +48,8 @@ export interface ServerView {
   paid: number | null;
   /** What selling it back would refund now, or null for a rented one. */
   sellBack: number | null;
+  /** The rack it's installed in, by id, on a model with racks (on-prem); null on any other. */
+  rack: number | null;
 }
 
 /**
@@ -85,6 +89,10 @@ export interface ServerOption {
   readyDays: number;
   /** Ops staff it needs: a share of a person, added up over every server. */
   ops: number;
+  /** The rack units (U) it takes, on a model with racks (on-prem); null on any other. */
+  rackUnits: number | null;
+  /** Cabling charged on top of the price, on a model that buys its servers; 0 where they're rented. */
+  cabling: number;
 }
 
 /** Demand against capacity on one tier. Capacity 0 with demand above it is over capacity however small the demand. */
@@ -217,7 +225,7 @@ export interface UnitServe {
  * of each managed service. They're rented in all but name, so billed the same way, but ready at once, needing no ops,
  * and with the load balancer built in.
  */
-export function createServers(config: GameConfig, finance: Finance) {
+export function createServers(config: GameConfig, finance: Finance, racks: Racks) {
   const modelServers = (model: ModelId) => config.models[model].servers;
   const hasServers = (model: ModelId) => !!modelServers(model);
   const purchaseOf = (model: ModelId) => modelServers(model)?.purchase;
@@ -271,9 +279,15 @@ export function createServers(config: GameConfig, finance: Finance) {
     return { servers, nextServerId: id };
   }
 
-  /** A model's starter setup as servers, for a new company: bought ones at their purchase prices (see starterPurchases). */
-  const starter = (model: ModelId, readyDay: number, nextId = 1) =>
-    build(model, modelServers(model)?.starter ?? [], readyDay, nextId, (type, size) => purchaseOf(model)?.price[type][size] ?? 0);
+  /**
+   * A model's starter setup as servers, for a new company: bought ones at their purchase prices (see starterPurchases),
+   * installed in the racks the server room comes with, on a model with racks.
+   */
+  function starter(model: ModelId, readyDay: number, nextId = 1, nextRackId = 1) {
+    const price = (type: ServerType, size: ServerSize) => purchaseOf(model)?.price[type][size] ?? 0;
+    const built = build(model, modelServers(model)?.starter ?? [], readyDay, nextId, price);
+    return { ...racks.installAtBase(model, built.servers, nextRackId), nextServerId: built.nextServerId };
+  }
 
   /** The cheapest of some choices, by cost then by fewest servers; the first of any that tie. */
   const cheapest = <T extends { cost: number; servers: number }>(choices: T[]) =>
@@ -353,14 +367,15 @@ export function createServers(config: GameConfig, finance: Finance) {
   function setupFor(state: GameState, model: ModelId, demand: UnitDemand) {
     const readyDay = state.day + readyDaysOf(model);
     const price = (type: ServerType, size: ServerSize) => purchasePrice(state, model, type, size);
-    return build(model, sizeSetupFor(model, demand), readyDay, state.nextServerId, price);
+    const built = build(model, sizeSetupFor(model, demand), readyDay, state.nextServerId, price);
+    return { ...racks.installToday(state, model, built.servers, state.nextRackId), nextServerId: built.nextServerId };
   }
 
   /**
-   * Buying kit, on a model that buys its servers: one line per type, size and price, each labelled ("Starter kit").
-   * None where servers are rented: those are billed as rent.
+   * Buying kit, on a model that buys its servers: one line per type, size and price, each labelled ("Starter kit"),
+   * then the racks it goes in and the cabling for all of it. None where servers are rented: those are billed as rent.
    */
-  function kitEntries(model: ModelId, list: Server[], label: string): LogEntry[] {
+  function kitEntries(model: ModelId, list: Server[], label: string, rackList: Rack[] = []): LogEntry[] {
     if (!buys(model)) return [];
     const groups = new Map<string, { s: Server; n: number }>();
     for (const s of list) {
@@ -369,20 +384,24 @@ export function createServers(config: GameConfig, finance: Finance) {
       if (group) group.n++;
       else groups.set(key, { s, n: 1 });
     }
-    return [...groups.values()]
+    const servers = [...groups.values()]
       .filter(({ s }) => (s.paid ?? 0) > 0)
       .map(({ s, n }) => ({
         text: `${label}: bought ${plural(n, s.size, s.type)} at ${pounds(s.paid ?? 0)} each`,
         cashDelta: -n * (s.paid ?? 0),
         category: "infrastructure" as const,
       }));
+    return [...servers, ...racks.rackEntries(rackList, label), ...racks.cablingEntries(model, list.length + rackList.length, label)];
   }
 
   /**
    * Buying a model's starter kit, on a model that buys its servers: charged with the model's upfront cost (the server
    * room), one line per type and size.
    */
-  const starterPurchases = (model: ModelId) => kitEntries(model, starter(model, 0).servers, "Starter kit");
+  const starterPurchases = (model: ModelId) => {
+    const kit = starter(model, 0);
+    return kitEntries(model, kit.servers, "Starter kit", kit.racks);
+  };
 
   /**
    * The servers a model has: the company's on its current model, and on the model a migration is moving to, the
@@ -552,7 +571,7 @@ export function createServers(config: GameConfig, finance: Finance) {
   }
 
   /** Buys a server: charged at once, and on order until it arrives after the model's readyDays. */
-  function buyServer(state: GameState, type: string, size: string): GameState {
+  function buyServer(state: GameState, type: string, size: string, wanted?: number): GameState {
     const servers = modelServers(state.model);
     const { name } = config.models[state.model];
     if (!servers?.purchase) {
@@ -567,15 +586,30 @@ export function createServers(config: GameConfig, finance: Finance) {
       throw new SimError("unknown_server", "Pick a server type and size from the list.");
     }
     refuseWithoutApi(state, type);
+    // On a model with racks it needs room in one first, from the day it's ordered.
+    const rack = racks.hasRacks(state.model) ? racks.rackFor(state, size, wanted) : undefined;
     const price = purchasePrice(state, state.model, type, size);
-    if (price > state.cash) {
-      throw new SimError("cant_afford", `That costs ${pounds(price)} up front and you have ${pounds(state.cash)}.`);
+    const cabling = racks.cablingOf(state.model);
+    if (price + cabling > state.cash) {
+      const what = cabling > 0 ? `${pounds(price + cabling)} up front with its cabling` : `${pounds(price)} up front`;
+      throw new SimError("cant_afford", `That costs ${what} and you have ${pounds(state.cash)}.`);
     }
     const days = readyDaysOf(state.model);
-    const server: Server = { id: state.nextServerId, type, size, readyDay: state.day + days, paid: price };
+    const server: Server = {
+      id: state.nextServerId,
+      type,
+      size,
+      readyDay: state.day + days,
+      paid: price,
+      ...(rack !== undefined && { rack }),
+    };
     const bought = { ...state, servers: [...state.servers, server], nextServerId: state.nextServerId + 1 };
-    const text = `Bought ${plural(1, size, type)}, arriving in ${days} days`;
-    return finance.chargeNow(bought, [{ text, cashDelta: -price, category: "infrastructure" }]);
+    const where = rack !== undefined ? ` (rack #${rack}, ${racks.serverUnits(state.model, size)}U)` : "";
+    const text = `Bought ${plural(1, size, type)}${where}, arriving in ${days} days`;
+    return finance.chargeNow(bought, [
+      { text, cashDelta: -price, category: "infrastructure" },
+      ...racks.cablingEntries(state.model, 1, "New server"),
+    ]);
   }
 
   /**
@@ -717,9 +751,12 @@ export function createServers(config: GameConfig, finance: Finance) {
     };
   }
 
-  /** What selling back all the company's bought kit would refund, on order or not: 0 where servers are rented. */
+  /**
+   * What selling back all the company's bought kit would refund, on order or not, racks included: 0 where servers are
+   * rented.
+   */
   const sellBackTotal = (state: GameState) =>
-    buys(state.model) ? state.servers.reduce((sum, s) => sum + sellBackValue(state.model, s), 0) : 0;
+    buys(state.model) ? state.servers.reduce((sum, s) => sum + sellBackValue(state.model, s), 0) + racks.sellBackTotal(state) : 0;
 
   /**
    * What happens to the old setup when a migration off its model completes: rented VMs, and a platform's instances
@@ -728,7 +765,7 @@ export function createServers(config: GameConfig, finance: Finance) {
    */
   function leaveEntries(state: GameState): LogEntry[] {
     const n = state.servers.length;
-    if (n === 0) return [];
+    if (n === 0 && state.racks.length === 0) return [];
     if (managedOf(state.model)) {
       const text = `Your app instances and managed services were cancelled: you paid for them only for the days you had them.`;
       return [{ text, cashDelta: 0, kind: "migration" }];
@@ -738,9 +775,11 @@ export function createServers(config: GameConfig, finance: Finance) {
       return [{ text, cashDelta: 0, kind: "migration" }];
     }
     const refund = sellBackTotal(state);
-    const paid = state.servers.reduce((sum, s) => sum + (s.paid ?? 0), 0);
+    const paid = state.servers.reduce((sum, s) => sum + (s.paid ?? 0), 0) + state.racks.reduce((sum, r) => sum + r.paid, 0);
     const share = Math.round(100 * (purchaseOf(state.model)?.sellBackShare ?? 0));
-    const text = `Your ${n} server${n === 1 ? " was" : "s were"} sold back for ${pounds(refund)}: ${share}% of the ${pounds(paid)} you paid.`;
+    const r = state.racks.length;
+    const kit = `${n} server${n === 1 ? "" : "s"}${r ? ` and ${r} rack${r === 1 ? "" : "s"}` : ""}`;
+    const text = `Your ${kit} ${n + r === 1 ? "was" : "were"} sold back for ${pounds(refund)}: ${share}% of the ${pounds(paid)} you paid.`;
     return [{ text, cashDelta: refund, category: "infrastructure" }];
   }
 
@@ -822,6 +861,7 @@ export function createServers(config: GameConfig, finance: Finance) {
       monthlyCost: monthlyCost(state, state.model, s.type, s.size),
       paid: bought ? (s.paid ?? 0) : null,
       sellBack: bought ? sellBackValue(state.model, s) : null,
+      rack: s.rack ?? null,
     }));
   }
 
@@ -846,6 +886,8 @@ export function createServers(config: GameConfig, finance: Finance) {
         sellBackShare: servers.purchase?.sellBackShare ?? null,
         readyDays: readyDaysOf(state.model),
         ops: servers.opsPerServer?.[type] ?? 0,
+        rackUnits: racks.hasRacks(state.model) ? racks.serverUnits(state.model, size) : null,
+        cabling: racks.cablingOf(state.model),
       })),
     );
   }

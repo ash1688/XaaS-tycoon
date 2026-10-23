@@ -157,9 +157,15 @@ function downWhy(type: ServerType) {
   return undefined;
 }
 function upWhy(type: ServerType) {
-  const price = optionFor(type)?.price ?? 0;
+  const o = optionFor(type);
+  const price = (o?.price ?? 0) + (o?.cabling ?? 0);
+  const racks = game.company?.racks;
+  if (o?.rackUnits != null && racks && o.rackUnits > racks.mostFree) {
+    return `A ${one(type)} takes ${o.rackUnits}U and the most free in any one rack is ${racks.mostFree}U: buy a rack first.`;
+  }
   if (game.company && price > game.company.cash) {
-    return `A ${one(type)} costs ${formatCash(price)} up front and you have ${formatCash(game.company.cash)}.`;
+    const cabling = o?.cabling ? " with its cabling" : "";
+    return `A ${one(type)} costs ${formatCash(price)} up front${cabling} and you have ${formatCash(game.company.cash)}.`;
   }
   return undefined;
 }
@@ -169,18 +175,21 @@ function stepNote(type: ServerType) {
   if (!o || !game.company) return "";
   const what = `${formatCount(o.units)} ${UNIT[type]}`;
   const ops = opsFor([...servers.value.map((s) => s.type), type]);
-  const short = ops - game.company.ops;
+  const have = formatCount(game.opsWork);
+  const short = game.midsShort(ops, game.opsWork);
   const opsText =
     short > 0
-      ? ` You'd need ${ops} ops in all and have ${game.company.ops}: hire ${short} more, or capacity is cut.`
-      : ` You'd need ${ops} ops in all; you have ${game.company.ops}.`;
+      ? ` You'd need ${ops} ops in all and yours do the work of ${have}: hire ${short} more mids, or capacity is cut.`
+      : ` You'd need ${ops} ops in all; yours do the work of ${have}.`;
   const appServers = servers.value.filter((s) => s.type === "app" && !s.apiu).length + 1;
   const lbHint =
     type === "app" && appServers >= (game.meta?.loadBalancerFrom ?? 2)
       ? ` With ${appServers} app servers, you'll need load balancers to serve them all.`
       : "";
   if (o.price !== null) {
-    return `+ buys a ${one(type)} (${what}) for ${formatCash(o.price)} up front, paid now, then ${formatCash(o.monthlyCost)} a month once it arrives in ${days(o.readyDays)}.${opsText}${lbHint}`;
+    const cabling = o.cabling ? ` plus ${formatCash(o.cabling)} cabling` : "";
+    const rack = o.rackUnits !== null ? ` It takes ${o.rackUnits}U in a rack from today.` : "";
+    return `+ buys a ${one(type)} (${what}) for ${formatCash(o.price)}${cabling} up front, paid now, then ${formatCash(o.monthlyCost)} a month once it arrives in ${days(o.readyDays)}.${rack}${opsText}${lbHint}`;
   }
   return `+ rents a ${one(type)} (${what}) for ${formatCash(o.monthlyCost)} a month from tomorrow, ready after the next day.${opsText}${lbHint}`;
 }
@@ -227,7 +236,7 @@ async function cancel() {
         <strong>Ops:</strong> {{ opsRule }} You need <strong>{{ game.company.opsNeeded }}</strong> now<template
           v-if="game.company.opsNeededOnceReady > game.company.opsNeeded"
           >, <strong>{{ game.company.opsNeededOnceReady }}</strong> once your kit on order arrives</template
-        >; you have {{ game.company.ops }}.
+        >; yours do the work of {{ formatCount(game.opsWork) }}.
       </li>
       <li>
         <strong>Load balancers:</strong> from {{ game.meta?.loadBalancerFrom ?? 2 }} app servers up, traffic only
@@ -302,7 +311,7 @@ async function cancel() {
             @change="pickSize(g.type, ($event.target as HTMLSelectElement).value as ServerSize)"
           >
             <option v-for="o in options.filter((x) => x.type === g.type)" :key="o.size" :value="o.size">
-              {{ o.size }} · {{ formatCount(o.units) }} {{ UNIT[g.type] }} ·
+              {{ o.size }} · {{ formatCount(o.units) }} {{ UNIT[g.type] }}{{ o.rackUnits !== null ? ` · ${o.rackUnits}U` : "" }} ·
               {{ o.price !== null ? `${formatCash(o.price)} + ${formatCash(o.monthlyCost)}/mo` : `${formatCash(o.monthlyCost)}/mo` }}
             </option>
           </select>
@@ -360,11 +369,11 @@ async function cancel() {
     <p class="muted server-actions">
       <template v-if="buying">
         Paid for up front, then a small running cost once it arrives. Delivery takes {{ days(readyDays) }}. You need
-        <strong>{{ game.company.opsNeeded }}</strong> ops for the kit you have in place; you have {{ game.company.ops }}.
+        <strong>{{ game.company.opsNeeded }}</strong> ops for the kit you have in place; yours do the work of {{ formatCount(game.opsWork) }}.
       </template>
       <template v-else>
         Billed monthly, a day's share at a time. Ready the next day. You need
-        <strong>{{ game.company.opsNeeded }}</strong> ops for these servers; you have {{ game.company.ops }}.
+        <strong>{{ game.company.opsNeeded }}</strong> ops for these servers; yours do the work of {{ formatCount(game.opsWork) }}.
       </template>
     </p>
     <p v-if="game.error && !cancelling" class="error" role="alert">{{ game.error }}</p>

@@ -1,5 +1,6 @@
 import type { FeatureConfig, GameConfig, ModelId } from "./config.ts";
 import { count, pounds, risen, type Finance } from "./finance.ts";
+import { staffOutput } from "./staff.ts";
 import { SimError, type FeatureProgress, type GameState, type LogEntry } from "./state.ts";
 
 export type FeatureStatus = "notStarted" | FeatureProgress["status"];
@@ -60,10 +61,10 @@ export function createFeatures(config: GameConfig, finance: Finance) {
     if (!feature) throw new SimError("unknown_feature", "Pick a feature from your product's list.");
     if (isActive(state, id)) throw new SimError("addon_active", `${feature.name} is already active.`);
     const needed = config.addons.minConfigDevelopers;
-    if (state.developers < needed) {
+    if (staffOutput(config, state, "developers") < needed) {
       throw new SimError(
         "config_team",
-        `Add-ons still need configuring: hire at least ${needed} developer${needed === 1 ? "" : "s"} first.`,
+        `Add-ons still need configuring: hire at least ${needed} developer${needed === 1 ? "" : "s"} first, counted in mids: juniors do less, seniors more.`,
       );
     }
     // Paid when it's bought: the provider's fee to set it up.
@@ -80,22 +81,23 @@ export function createFeatures(config: GameConfig, finance: Finance) {
   }
 
   /**
-   * A day's work on the current build: one developer-day per developer. Logs progress, or completion. A build is
+   * A day's work on the current build: the developers' output, a developer-day for each mid. Logs progress, or completion. A build is
    * paused on SaaS (it only gets there by migrating mid-build).
    */
   function buildDay(state: GameState): { features: GameState["features"]; entries: LogEntry[] } {
     const feature = currentBuild(state);
     if (!feature || state.model === "saas") return { features: state.features, entries: [] };
-    if (state.developers === 0) {
+    const work = staffOutput(config, state, "developers");
+    if (work === 0) {
       const text = `${feature.name}: no developers, so no progress today.`;
       return { features: state.features, entries: [{ text, cashDelta: 0, kind: "feature" }] };
     }
-    const progress = Math.min(feature.devDays, state.features[feature.id]!.progress + state.developers);
+    const progress = Math.min(feature.devDays, Math.round((state.features[feature.id]!.progress + work) * 100) / 100);
     const built = progress === feature.devDays;
     const percent = Math.round(100 * (feature.growthMultiplier - 1));
     const text = built
       ? `Feature built: ${feature.name}. Growth up ${percent}% from now on.`
-      : `Building ${feature.name}: ${progress} of ${feature.devDays} developer-days done.`;
+      : `Building ${feature.name}: ${+progress.toFixed(1)} of ${feature.devDays} developer-days done.`;
     return {
       features: { ...state.features, [feature.id]: { status: built ? "built" : "building", progress } },
       entries: [{ text, cashDelta: 0, kind: "feature" }],
@@ -105,8 +107,8 @@ export function createFeatures(config: GameConfig, finance: Finance) {
   function features(state: GameState): FeatureView[] {
     return featureList(state).map((f) => {
       const { status, progress } = state.features[f.id] ?? { status: "notStarted" as const, progress: 0 };
-      const daysLeft =
-        status === "building" && state.developers > 0 && state.model !== "saas" ? Math.ceil((f.devDays - progress) / state.developers) : null;
+      const work = staffOutput(config, state, "developers");
+      const daysLeft = status === "building" && work > 0 && state.model !== "saas" ? Math.ceil((f.devDays - progress) / work) : null;
       return { ...f, status, progress, daysLeft, addonSetupFee: setupFee(state, f) };
     });
   }
