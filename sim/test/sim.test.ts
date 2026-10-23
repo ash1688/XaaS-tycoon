@@ -410,8 +410,8 @@ describe("launch", () => {
     expect(defaults.launch(done)).toMatchObject({ status: "launched", rampDay: 3, arrived: 4_000 });
     const { log } = defaults.advance(state, 2);
     expect(log.map((d) => d.entries.find((e) => e.kind === "launch")?.text)).toEqual([
-      "Launch, day 2 of 3: 1,200 new users arrived, 360 of them paying.",
-      "Launch, day 3 of 3: 2,000 new users arrived, 600 of them paying. That's everyone: normal growth takes over from tomorrow.",
+      "Launch, day 2 of 3: 1,200 new users arrived, 420 of them paying.",
+      "Launch, day 3 of 3: 2,000 new users arrived, 700 of them paying. That's everyone: normal growth takes over from tomorrow.",
     ]);
     // Then the product's normal daily growth.
     const next = defaults.advance(done).state;
@@ -438,14 +438,14 @@ describe("launch", () => {
   it("starts on-prem's users trickling in on the day its first kit arrives, with the normal delivery time", () => {
     const state = setUp(defaults, fresh(defaults, "onprem", "video", true));
     // The kit on order needs an ops person once it arrives, though none yet.
-    expect(defaults.launch(state)).toMatchObject({ status: "upcoming", day: 8, daysLeft: 7, opsNeeded: 1 });
+    expect(defaults.launch(state)).toMatchObject({ status: "upcoming", day: 5, daysLeft: 4, opsNeeded: 1 });
     expect(defaults.opsNeededNow(state)).toBe(0);
-    const waiting = playTo(defaults, state, 7);
+    const waiting = playTo(defaults, state, 4);
     expect(waiting).toMatchObject({ users: 0, launchDay: null });
-    expect(defaults.launch(waiting)).toMatchObject({ status: "upcoming", day: 8, daysLeft: 1 });
+    expect(defaults.launch(waiting)).toMatchObject({ status: "upcoming", day: 5, daysLeft: 1 });
     // Video's 1,600: 320, then 800, then all of them.
-    expect(usersOn(defaults, state, 8, 10)).toEqual([320, 800, 1_600]);
-    expect(defaults.launch(playTo(defaults, state, 10))).toMatchObject({ status: "launched", day: 8, daysLeft: null });
+    expect(usersOn(defaults, state, 5, 7)).toEqual([320, 800, 1_600]);
+    expect(defaults.launch(playTo(defaults, state, 7))).toMatchObject({ status: "launched", day: 5, daysLeft: null });
   });
 
   it("waits for capacity, starting the ramp on the first day the company has it", () => {
@@ -1837,7 +1837,7 @@ describe("servers on-prem", () => {
     // no kit until the company buys some, so nothing is charged twice.
     expect(s.upfrontCost("onprem")).toBe(onprem.upfrontCost + 550);
     expect(s.upfrontCost("onprem")).toBe(3_050);
-    expect(onprem.servers!.readyDays).toBe(7);
+    expect(onprem.servers!.readyDays).toBe(4);
     for (const p of PRODUCT_TYPE_IDS) {
       const own = s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1 });
       expect(own.cash).toBe(defaultConfig.startingCash - 3_050);
@@ -1848,9 +1848,9 @@ describe("servers on-prem", () => {
       expect(setUp(s, own).cash).toBe(defaultConfig.startingCash - (p === "video" ? 5_750 : 5_350));
       const loaned = s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1, takeLoan: true });
       expect(loaned.cash).toBe(defaultConfig.startingCash + defaultConfig.loan.amount - 3_050);
-      // The kit arrives on day 8, and the users with it.
+      // The kit arrives on day 5, and the users with it.
       const state = launched(s, loaned);
-      expect(state.launchDay, p).toBe(8);
+      expect(state.launchDay, p).toBe(5);
       expect(s.units(withStaff(state, { ops: s.opsNeededNow(state) }))!.usersSupported, p).toBeGreaterThan(state.users * 2);
     }
     // Every bought server sells back at a loss, and costs more up front than a month's rent of the same VM.
@@ -4067,12 +4067,12 @@ describe("migration with servers", () => {
     // 20,000 users need 60 CU and 80 DBU; plus a quarter, 75 and 100.
     expect(onprem.sizedFor).toEqual({ cu: 75, dbu: 100 });
     expect(onprem.setup.map((i) => [i.name, i.size, i.count, i.upfront, i.monthly, i.daysLeft])).toEqual([
-      ["App server", "massive", 3, 3 * 2_550, 3 * 85, 7],
-      ["Database", "massive", 4, 4 * 3_300, 4 * 110, 7],
-      ["Load balancer", "medium", 1, 900, 30, 7],
+      ["App server", "massive", 3, 3 * 2_550, 3 * 85, 4],
+      ["Database", "massive", 4, 4 * 3_300, 4 * 110, 4],
+      ["Load balancer", "medium", 1, 900, 30, 4],
     ]);
     // 3 app servers and 4 databases at 0.6 ops each, and a load balancer at 0.3: 4.5, so 5.
-    expect(onprem).toMatchObject({ setupUpfront: 21_750, setupMonthly: 725, deliveryDays: 7, opsNeeded: 5 });
+    expect(onprem).toMatchObject({ setupUpfront: 21_750, setupMonthly: 725, deliveryDays: 4, opsNeeded: 5 });
     // 58U of kit: the server room's medium rack takes the 3 app servers (24U), and a large one (42U) the rest. Cabling
     // for 8 servers and 2 racks at £50.
     expect(onprem.racks).toEqual([
@@ -4118,9 +4118,9 @@ describe("migration with servers", () => {
       expect(t.filter((x) => x.includes(") rent: "))).toHaveLength(2);
       expect(t).toContain("Double billing: Own servers (on-prem) running costs (£1,500 a month)");
     }
-    // Ordered on day 1 and arriving 7 days later, the kit's power and upkeep is billed from the day after.
+    // Ordered on day 1 and arriving 4 days later, the kit's power and upkeep is billed from the day after.
     const upkeepDays = log.filter((d) => d.entries.some((e) => e.text.includes("power and upkeep"))).map((d) => d.day);
-    expect(upkeepDays).toEqual([9, 10, 11, 12, 13, 14, 15]);
+    expect(upkeepDays).toEqual([6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
     expect(texts(log.slice(0, 1))).toContain("New setup: bought 3 massive app servers at £2,550 each");
 
     const paas = s.advance(s.applyAction(on("iaas", 20_000), migrate("paas")), 1).log;
@@ -4141,9 +4141,9 @@ describe("migration with servers", () => {
       ["database", "medium"],
     ]);
     expect(s.migration(moving)!.setup.map((i) => [i.type, i.count, i.daysLeft])).toEqual([
-      ["app", 3, 7],
-      ["database", 4, 7],
-      ["loadBalancer", 1, 7],
+      ["app", 3, 4],
+      ["database", 4, 4],
+      ["loadBalancer", 1, 4],
     ]);
     expect(s.migration(moving)!.setupMonthly).toBe(725);
     const later = s.advance(moving, 10).state;
@@ -6081,13 +6081,13 @@ describe("alpha patch: pricing exploits and balance", () => {
   });
 
   describe("on-prem start", () => {
-    it("leaves a company without the loan cash for a month after its first kit, which arrives in a week", () => {
+    it("leaves a company without the loan cash for a month after its first kit, which arrives in 4 days", () => {
       const sm = createSim(smallestLaunch(defaultConfig));
       for (const p of PRODUCT_TYPE_IDS) {
         const set = setUp(sm, sm.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1 }));
         const daily = sm.dailyStaffCost(set) + sm.monthlyInfrastructureCost(set) / 30;
         expect(set.cash / daily, p).toBeGreaterThan(14);
-        expect(launched(sm, set).launchDay, p).toBe(8);
+        expect(launched(sm, set).launchDay, p).toBe(5);
       }
     });
   });
