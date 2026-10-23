@@ -40,12 +40,19 @@ export function createEncounters(config: GameConfig, servers: Servers) {
   const { encounters } = config;
   const eventConfig = (id: string) => config.events.find((e) => e.id === id);
 
-  /** Whether an event can still hit the company: its model is hit, it hasn't fired its most, and its gap isn't open. */
+  /**
+   * Whether an event can still hit the company: its model is hit, it hasn't fired its most, what it follows has fired
+   * since it last did, and its gap isn't open.
+   */
   function canHit(state: Situation, event: EventConfig): boolean {
     const effect = event.effects[state.model];
     if (!event.encounter || !effect) return false;
-    const { maxTimes } = event.encounter;
+    const { maxTimes, follows } = event.encounter;
     if (maxTimes !== undefined && state.schedule.filter((s) => s.event === event.id).length >= maxTimes) return false;
+    if (follows) {
+      const last = state.schedule.findLastIndex((s) => s.event === event.id);
+      if (!state.schedule.slice(last + 1).some((s) => follows.includes(s.event))) return false;
+    }
     return !(effect.featureGap && state.featureGaps.some((g) => g.event === event.id && g.model === state.model));
   }
 

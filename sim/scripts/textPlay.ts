@@ -266,7 +266,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
     `danger meter: ${danger.meter} (no event waits past ${danger.max}) | rose ${danger.rise} today (well-run day +${danger.dailyRise}${risks ? `, ${risks}` : ""})`,
   );
   for (const r of danger.risks) lines.push(`  ${r.label}: ${r.detail}`);
-  for (const e of sim.events(state)) lines.push(`event today: ${e.name}. ${e.outcome}`);
+  for (const e of sim.events(state)) lines.push(`event today: ${e.name}. ${e.responsibility} ${e.outcome}`);
   for (const g of sim.featureGaps(state)) lines.push(`feature gap: ${g.name}. ${g.detail}`);
   return lines.join("\n");
 }
@@ -692,10 +692,11 @@ const builtCount = (state: GameState) => Object.values(state.features).filter((f
 /** Why the day just played needs a decision, if it does: compares the company before and after the day. */
 function stopReasons(sim: Sim, before: GameState, after: GameState): string[] {
   const reasons: string[] = [];
-  // Only events that need the player stop time: ones that hurt or found the company short of ops. A provider patch
-  // with nothing to do is just shown. An event lasting several days stops on its first day only.
+  // Only events that need the player stop time: ones that hurt, found the company short of ops or brought a wave of
+  // users to carry. A provider patch with nothing to do is just shown. An event lasting several days stops on its
+  // first day only.
   const yesterday = new Set(sim.events(before).map((e) => e.id));
-  const events = sim.events(after).filter((e) => (e.hit || e.shortOfOps) && !yesterday.has(e.id));
+  const events = sim.events(after).filter((e) => (e.hit || e.shortOfOps || e.newUsers > 0) && !yesterday.has(e.id));
   if (events.length) reasons.push(`event: ${events.map((e) => e.name).join(", ")}`);
   if (after.outageDays > before.outageDays) reasons.push("outage");
   // A risk that's new today makes the danger meter climb faster: worth a decision before the next random event.

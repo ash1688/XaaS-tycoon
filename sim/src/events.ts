@@ -1,5 +1,6 @@
 import type { EventConfig, EventEffect, EventOutcome, GameConfig, ModelId, ProductTypeId } from "./config.ts";
 import { layerOwner, layerResponsibility, type LayerId, type Owner } from "./responsibility.ts";
+import { count } from "./finance.ts";
 import { staffOutput } from "./staff.ts";
 import type { EventRecord, FeatureGap, GameState, LogEntry, ScheduledEvent } from "./state.ts";
 
@@ -20,8 +21,12 @@ export interface EventView {
   outcome: string;
   /** Short of the ops staff needed to deal with it. */
   shortOfOps: boolean;
+  /** Patches were overdue, which made it worse (see EventEffect.unpatched). */
+  unpatched: boolean;
   /** It hurt: it caused downtime, a penalty, a price rise or a feature gap. */
   hit: boolean;
+  /** New free users it brought (see EventOutcome.freeUsers): 0 for most events. */
+  newUsers: number;
 }
 
 /** A feature gap still slowing growth, for the screen to show every day until it closes. */
@@ -46,6 +51,7 @@ export interface FeatureGapView {
 export interface EventToday {
   event: EventConfig;
   shortOfOps: boolean;
+  unpatched: boolean;
   outcome: EventOutcome;
   /** Capacity grows to meet the event's load today (see EventOutcome.scaleCostPerLoad and scaleCostPerUnit). */
   scales: boolean;
@@ -84,8 +90,10 @@ export function createEvents(config: GameConfig) {
     return eventsOn(state, day, state.model).map((event) => {
       const needed = event.effects[state.model]?.opsNeeded;
       const shortOfOps = needed !== undefined && staffOutput(config, state, "ops") < needed;
-      const outcome = outcomeFor(event, state.model, shortOfOps);
-      return { event, shortOfOps, outcome, scales: scales(state, event, outcome, state.model, day) };
+      // Patches were overdue if yesterday had the unpatched risk: today's isn't known until the day is played.
+      const unpatched = !shortOfOps && !!event.effects[state.model]?.unpatched && state.dangerRisks.includes("unpatched");
+      const outcome = outcomeFor(event, state.model, shortOfOps, unpatched);
+      return { event, shortOfOps, unpatched, outcome, scales: scales(state, event, outcome, state.model, day) };
     });
   }
 
@@ -107,17 +115,18 @@ export function createEvents(config: GameConfig) {
     return outcome.scaleCostPerUnit !== undefined && dayOfEvent(state, event.id, day) >= (servers.readyDays ?? 0);
   }
 
-  /** How an event plays out on a model, short of ops or not. */
-  function outcomeFor(event: EventConfig, model: ModelId, shortOfOps: boolean): EventOutcome {
+  /** How an event plays out on a model, short of ops or not, with patches overdue or not. */
+  function outcomeFor(event: EventConfig, model: ModelId, shortOfOps: boolean, unpatched = false): EventOutcome {
     const effect = event.effects[model] ?? NO_EFFECT;
-    return shortOfOps && effect.shortOfOps ? effect.shortOfOps : effect;
+    if (shortOfOps && effect.shortOfOps) return effect.shortOfOps;
+    return unpatched && effect.unpatched ? effect.unpatched : effect;
   }
 
   /** On a day an event scaled the company up to meet its load. */
   const scaledUp = (state: GameState) =>
     state.events.some((r) => {
       const event = eventConfig(r.event);
-      return !!event && scales(state, event, outcomeFor(event, r.model, r.shortOfOps), r.model, state.day);
+      return !!event && scales(state, event, outcomeFor(event, r.model, r.shortOfOps, r.unpatched), r.model, state.day);
     });
 
   /** The outcome that opened a feature gap, if its event is still in config. */
@@ -147,19 +156,19 @@ export function createEvents(config: GameConfig) {
     return notes.map((n) => `${n} `).join("");
   }
 
-  function explain(
-    event: EventConfig,
-    { model, shortOfOps, hit }: Omit<EventRecord, "event">,
-    productType: ProductTypeId,
-  ): EventView {
+  function explain(event: EventConfig, record: Omit<EventRecord, "event">, productType: ProductTypeId): EventView {
+    const { model, shortOfOps, hit } = record;
+    const unpatched = record.unpatched ?? false;
+    const newUsers = record.newUsers ?? 0;
     const { id, name, description, layer } = event;
     const needed = event.effects[model]?.opsNeeded;
-    const result = outcomeFor(event, model, shortOfOps);
-    const detail = lastingNote(result, productType) + result.detail;
+    const result = outcomeFor(event, model, shortOfOps, unpatched);
+    const wave = result.freeUsers ? `${count.format(newUsers)} new free users signed up. ` : "";
+    const detail = wave + lastingNote(result, productType) + result.detail;
     const outcome = shortOfOps ? `${detail} You needed ${needed} ops staff.` : detail;
     const owner = layerOwner(model, layer);
     const responsibility = layerResponsibility(model, layer);
-    return { id, name, description, model, layer, owner, responsibility, outcome, shortOfOps, hit };
+    return { id, name, description, model, layer, owner, responsibility, outcome, shortOfOps, unpatched, hit, newUsers };
   }
 
   function events(state: GameState): EventView[] {
@@ -204,6 +213,21 @@ export function createEvents(config: GameConfig) {
     return { priceRises, addonPriceRise, featureGaps };
   }
 
+  /**
+   * The wave of free users each of today's events brings (see EventOutcome.freeUsers), on the day it fires, as far as
+   * the market has room. They arrive at the end of the day, after growth.
+   */
+  function newUsersToday(state: GameState, day: number, today: EventToday[], users: number): number[] {
+    const { marketSize } = config.productTypes[state.productType].growth;
+    let room = Math.max(0, marketSize - users);
+    return today.map(({ event, outcome }) => {
+      if (!outcome.freeUsers || !state.schedule.some((s) => s.event === event.id && s.day === day)) return 0;
+      const wave = Math.min(room, Math.max(outcome.freeUsers.min, Math.round(users * outcome.freeUsers.share)));
+      room -= wave;
+      return wave;
+    });
+  }
+
   /** Charges for the damage today's events did. */
   function costEntries(today: EventToday[]): LogEntry[] {
     return today.flatMap(({ event, outcome }): LogEntry[] =>
@@ -217,11 +241,13 @@ export function createEvents(config: GameConfig) {
    * How each of today's events played out, to keep in state, and each one explaining itself for the log: what
    * happened, whose job it is on this model, and how it played out.
    */
-  function record(state: GameState, today: EventToday[], overloaded: boolean) {
-    const records: EventRecord[] = today.map(({ event, shortOfOps, outcome }) => ({
+  function record(state: GameState, today: EventToday[], overloaded: boolean, newUsers: number[]) {
+    const records: EventRecord[] = today.map(({ event, shortOfOps, unpatched, outcome }, i) => ({
       event: event.id,
       model: state.model,
       shortOfOps,
+      unpatched,
+      newUsers: newUsers[i] ?? 0,
       hit:
         !!outcome.downtimeHours ||
         !!outcome.cost ||
@@ -245,6 +271,7 @@ export function createEvents(config: GameConfig) {
     events,
     featureGaps,
     lastingEffects,
+    newUsersToday,
     costEntries,
     record,
   };

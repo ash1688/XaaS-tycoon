@@ -140,6 +140,22 @@ describe("advanceUntil", () => {
     expect(quiet).toBeGreaterThan(0);
   });
 
+  it("stops for viral growth, and shows whose job it is to carry the new users", () => {
+    const viral = defaultConfig.events.find((e) => e.id === "viralGrowth")!;
+    const s = createSim({ ...defaultConfig, finalDay: 40, events: [{ ...viral, encounter: undefined, schedule: { type: "fixed", days: [10] } }] });
+    const begun = s.newGame({ companyName: "Test Co", productType: "social", model: "paas", seed: 3, takeLoan: true });
+    let state = runCommand(s, begun, parseCommand("instances 3"), who).state;
+    state = runCommand(s, state, parseCommand("managed database medium"), who).state;
+    // Time stops for other things on the way, such as the launch.
+    let turn = advanceUntil(s, state, 30, who);
+    while (turn.state.day < 10) turn = advanceUntil(s, turn.state, 30, who);
+    expect(turn.lines.at(-1)).toBe("stopped on day 10: event: Viral growth");
+    expect(turn.lines.join("\n")).toMatch(/day 10: Viral growth: Runtime and scaling is the provider's job on PaaS\. [\d,]+ new free users signed up\./);
+    expect(renderStatus(s, turn.state)).toMatch(
+      /event today: Viral growth\. Runtime and scaling is the provider's job on PaaS\. [\d,]+ new free users signed up\. They're staying\./,
+    );
+  });
+
   it("shows the danger meter, and stops when a new risk makes it climb faster", () => {
     let state = run(start(), "instances 2").state;
     state = run(state, "managed database small").state;

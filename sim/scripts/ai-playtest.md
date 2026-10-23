@@ -24,7 +24,7 @@ npm run -s play -- summary <game>
 - `do` runs game commands separated by `;`. Every game command goes inside `do`, including `preview` and `quote`:
   `npm run -s play -- do <game> "preview 8; quote iaas"`.
 - `next [days]` (inside `do`) moves time on, 7 days by default, and **stops early** when something needs a
-  decision: an event that hurts, an outage, a new risk on the danger meter, a built feature, a server arriving,
+  decision: an event that hurts or brings a wave of new users, an outage, a new risk on the danger meter, a built feature, a server arriving,
   staff starting, capacity running out, satisfaction falling, cash about to run out, the price lock ending, or paid
   API calls starting to be dropped. Any commands after a stop are not run, and each says so ("not run: time
   stopped"). Events that need nothing from you are shown but don't stop time. Each advance ends with how the users
