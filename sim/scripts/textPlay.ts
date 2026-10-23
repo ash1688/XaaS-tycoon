@@ -256,7 +256,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const valuation = sim.valuation(state);
   const table = sim.capTable(state);
   lines.push(
-    `valuation ${money(valuation.valuation)} | share price ${perShare(valuation.sharePrice)} | ${table.rows.map((r) => `${r.name.toLowerCase()} ${stake(r.share)}`).join(", ")} of ${table.sharesInIssue.toLocaleString("en-GB")} shares`,
+    `${state.ipo.result ? `market value ${money(state.ipo.result.marketValue)} at the first day's close` : `valuation ${money(valuation.valuation)}`} | share price ${perShare(table.sharePrice)} | ${table.rows.map((r) => `${r.name.toLowerCase()} ${stake(r.share)}`).join(", ")} of ${table.sharesInIssue.toLocaleString("en-GB")} shares`,
   );
   lines.push(`funding: ${fundingStatus(sim, state)}`);
   lines.push(`ipo: ${ipoStatus(sim, state)}`);
@@ -824,7 +824,13 @@ function stopReasons(sim: Sim, before: GameState, after: GameState): string[] {
   const grantBefore = before.funding.grant?.status;
   const grantAfter = after.funding.grant?.status;
   if (grantBefore === "accepted" && grantAfter !== "accepted") reasons.push(`grant ${grantAfter}`);
-  if (sim.ipo(after).status === "ready" && sim.ipo(before).status !== "ready") reasons.push("IPO: ready to apply");
+  const ipoBefore = sim.ipo(before);
+  const ipoAfter = sim.ipo(after);
+  if (ipoAfter.status === "ready" && ipoBefore.status !== "ready") reasons.push("IPO: ready to apply");
+  else if (ipoBefore.ready && !ipoAfter.ready) {
+    const lost = ipoAfter.conditions.filter((x) => !x.met && ipoBefore.conditions.find((b) => b.id === x.id)?.met);
+    reasons.push(`IPO: no longer ready (${lost.map((x) => x.label.toLowerCase()).join(", ")})`);
+  }
   const dropped = (st: GameState) => st.api?.dropped ?? 0;
   if (dropped(after) > 0 && dropped(before) === 0) reasons.push(`API calls dropped (${dropped(after).toLocaleString("en-GB")})`);
   return reasons;
@@ -887,6 +893,8 @@ export function renderSummary(sim: Sim, state: GameState): string {
   // The day-by-day series are for charts; the player only needs the totals.
   const { days: _days, incomeVsCosts: _incomeVsCosts, ...summary } = sim.summarise(state);
   const yours = sim.capTable(state).rows.find((r) => r.id === "student")!;
-  const valuation = { valuation: sim.valuation(state).valuation, yourShare: stake(yours.share), yourSharesWorth: yours.value };
+  // After an IPO the company is worth its market value at the first day's close, not the formula's valuation.
+  const worth = state.ipo.result ? { marketValue: state.ipo.result.marketValue } : { valuation: sim.valuation(state).valuation };
+  const valuation = { ...worth, yourShare: stake(yours.share), yourSharesWorth: yours.value };
   return JSON.stringify({ ...summary, ...valuation }, null, 1);
 }

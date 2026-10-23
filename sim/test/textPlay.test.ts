@@ -395,7 +395,7 @@ describe("the IPO", () => {
     const r = ready(s);
     expect(renderStatus(s, r)).toMatch(/ipo: READY: all 7 conditions met, comfort \d+% \("apply" to float\)/);
     expect(renderCommands(s, r)).toMatch(/apply {3}\(apply to float/);
-    expect(play(s, r, "ipo").lines.join("\n")).toMatch(/\[x\] Paying customer base: 1,000\. Needs 500 paying users\. Comfort 100%\./);
+    expect(play(s, r, "ipo").lines.join("\n")).toMatch(/\[x\] Paying customer base: 1,000, of 2,000 users in a market of about 40,000: .*\. Needs 500 paying users\. Comfort 100%\./);
   });
 
   it("says when a cold market postpones the IPO", () => {
@@ -424,6 +424,9 @@ describe("the IPO", () => {
     expect(rung.rows.map((r) => r.type)).toEqual(["ringBell", "end"]);
     expect(rung.rows.at(-1)).toMatchObject({ params: { status: "finished", ending: "ipo" } });
     expect(renderStatus(s, rung.state)).toMatch(/\| FLOATED\n[^]*ipo: floated 25% on day 41: raised £[\d,]+/);
+    const r = rung.state.ipo.result!;
+    expect(renderStatus(s, rung.state)).toContain(`market value £${r.marketValue.toLocaleString("en-GB")} at the first day's close`);
+    expect(JSON.parse(renderSummary(s, rung.state))).toMatchObject({ marketValue: r.marketValue, yourSharesWorth: r.studentValue });
     expect(play(s, rung.state, "ipo").lines.join("\n")).toMatch(/opening bell!/);
     expect(JSON.parse(renderSummary(s, rung.state))).toMatchObject({ ending: "ipo", ipo: { float: 0.25 } });
   });
@@ -432,5 +435,38 @@ describe("the IPO", () => {
     const s = ipoSim(0);
     const state = s.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3, gameLength: "until-ipo" });
     expect(renderStatus(s, state)).toMatch(/\| day 1 \(Until IPO\) \| PLAYING/);
+  });
+});
+
+describe("the IPO checklist over time", () => {
+  it("stops time when the company is no longer ready", () => {
+    const s = createSim({
+      ...defaultConfig,
+      // A provider outage on day 30 is the only event: it breaks the uptime record.
+      events: [
+        {
+          id: "providerOutage",
+          name: "Provider outage",
+          description: "The provider's data centre lost power.",
+          layer: "facilities",
+          schedule: { type: "fixed", days: [30] },
+          days: 1,
+          effects: { saas: { downtimeHours: 6, detail: "The SaaS platform went down with it." } },
+        },
+      ],
+      ipo: {
+        ...defaultConfig.ipo,
+        recordDays: 2,
+        minSatisfaction: 0,
+        maxCostSwing: 5,
+        products: { ...defaultConfig.ipo.products, social: { users: 0, annualRevenue: 0, payingUsers: 0 } },
+      },
+    });
+    let state = s.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 });
+    state = s.advance(state, 25).state;
+    expect(s.ipo(state).ready).toBe(true);
+    const turn = advanceUntil(s, state, 10, who);
+    expect(turn.state.day).toBe(30);
+    expect(turn.lines.at(-1)).toMatch(/stopped on day 30: .*IPO: no longer ready \(uptime record\)/);
   });
 });

@@ -105,8 +105,11 @@ export function createIpo(
 
   const startingIpo = () => ({ ipo: { applications: [], approvedDay: null, retryDay: 0, result: null } });
 
-  /** The last recordDays days played. */
-  const record = (state: GameState) => state.spendByDay.filter((d) => d.day > state.day - c.recordDays);
+  /** The last recordDays days played, from the launch on: before it there's nothing to keep a record of. */
+  const record = (state: GameState) =>
+    state.launchDay === null
+      ? []
+      : state.spendByDay.filter((d) => d.day >= state.launchDay! && d.day > state.day - c.recordDays);
   const sum = (days: DaySpend[], value: (d: DaySpend) => number) => days.reduce((s, d) => s + value(d), 0);
   /** A day's running costs: everything charged but a loan's capital, which isn't a cost. */
   const runningCosts = (d: DaySpend) => d.staff + d.infrastructure + d.cabling + d.power + d.addons + d.interest;
@@ -119,6 +122,7 @@ export function createIpo(
 
   function conditions(state: GameState): IpoCondition[] {
     const product = c.products[state.productType];
+    const market = config.productTypes[state.productType].growth.marketSize;
     const days = record(state);
     const n = Math.max(1, days.length);
     const v = shares.valuation(state);
@@ -166,7 +170,7 @@ export function createIpo(
         label: "Users and revenue",
         met: usersMet && revenueMet,
         needed: `${count.format(product.users)} users and ${pounds(product.annualRevenue)} a year of revenue`,
-        now: `${count.format(state.users)} users and ${pounds(v.annualRevenue)} a year`,
+        now: `${count.format(state.users)} users (of a market of about ${count.format(market)}) and ${pounds(v.annualRevenue)} a year`,
       },
       Math.min(over(state.users, product.users), over(v.annualRevenue, product.annualRevenue)),
     );
@@ -230,7 +234,7 @@ export function createIpo(
         label: "Paying customer base",
         met: payers >= product.payingUsers,
         needed: `${count.format(product.payingUsers)} paying users`,
-        now: `${count.format(payers)}`,
+        now: `${count.format(payers)}, of ${count.format(state.users)} users in a market of about ${count.format(market)}: more of them paying, not more users, is what grows it once the market is full`,
       },
       over(payers, product.payingUsers),
     );

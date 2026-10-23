@@ -244,6 +244,9 @@ describe("the float and the opening bell", () => {
       expect(now.share).toBeCloseTo(row.share * 0.75, 3);
     }
     expect(r.studentShare).toBeCloseTo(before.rows[0]!.share * 0.75, 3);
+    // After the IPO the cap table prices the shares at the close, adding up to the market value.
+    expect(after).toMatchObject({ sharePrice: r.closePrice, sharesInIssue: r.sharesAfter });
+    expect(after.rows[0]!.value).toBe(r.studentValue);
     // Cash raised isn't income: it's money from shareholders.
     expect(floated.spendByDay.at(-1)!.raised - state.spendByDay.at(-1)!.raised).toBe(r.cashRaised);
     expect(floated.income).toBe(state.income);
