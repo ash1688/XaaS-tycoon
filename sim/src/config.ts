@@ -989,6 +989,11 @@ export interface GameConfig {
    * Numbers rather than flags so the config page can store them like every other setting.
    */
   allowedGameLengths: Record<GameLengthId, number>;
+  /**
+   * 1 if time runs on its own on the game page, with pause and speed settings; 0 for Continue only. The server reads it
+   * from the active preset, so switching it off reaches games already being played.
+   */
+  timedFlow: number;
   /** Which difficulties students can pick from when starting a company: 1 if allowed, 0 if not. At least one must be. */
   allowedDifficulties: Record<DifficultyId, number>;
   maxCompanyNameLength: number;
@@ -1028,6 +1033,8 @@ export const defaultConfig: GameConfig = {
   // A normal lesson plays 180 days. The longer lengths could take hours, so the teacher turns them on for clubs,
   // homework or extension work.
   allowedGameLengths: { "180-days": 1, "1-year": 0, career: 0 },
+  // Time runs on its own and pauses itself when something needs the student.
+  timedFlow: 1,
   // Normal only, so a class plays the same game unless the teacher opens up the others.
   allowedDifficulties: { easy: 0, normal: 1, hard: 0 },
   maxCompanyNameLength: 40,

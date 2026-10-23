@@ -27,6 +27,7 @@ import type {
   MigrationQuote,
   MigrationView,
   ModelComparison,
+  PauseReason,
   PricePreview,
   PriceWaveView,
   ModelId,
@@ -52,10 +53,24 @@ export interface ApiError {
   daysLeft?: number;
 }
 
-/** Timed flow: when enabled, the game page has Play/Pause and plays a day every `seconds`. */
+/** A timed flow speed the student can pick: how long each tick (a day, or a week in a career) waits. */
+export interface TimedFlowSpeedView {
+  id: "slow" | "normal" | "fast" | "fastest";
+  /** "Slow", "Normal". */
+  name: string;
+  seconds: number;
+}
+
+/**
+ * Timed flow: when enabled, the game page plays a tick every `seconds` at normal speed, with Pause and the speeds, and
+ * pauses itself when something needs the student. Off when the server or the teacher's active preset switches it off.
+ */
 export interface TimedFlowView {
   enabled: boolean;
+  /** Seconds a tick at normal speed. */
   seconds: number;
+  /** Slowest first. */
+  speeds: TimedFlowSpeedView[];
 }
 
 /** A game length a student can pick when starting a company. */
@@ -89,7 +104,7 @@ export interface MetaView {
   maxCompanyNameLength: number;
   /** Companies still being played (status "active") that one login code can have at once. */
   maxActiveCompanies: number;
-  /** Whether the game page plays days on a timer, and how often. Off by default. */
+  /** Whether the game page plays ticks on a timer, and how often. */
   timedFlow: TimedFlowView;
   productTypes: {
     id: ProductTypeId;
@@ -167,6 +182,8 @@ export interface CompanyView {
   /** The game length picked when the company started. */
   gameLength: GameLengthId;
   gameLengthName: string;
+  /** Days Continue and each timed tick play: 7 in a career, otherwise 1. */
+  tickDays: number;
   /** The difficulty picked when the company started. */
   difficulty: DifficultyId;
   difficultyName: string;
@@ -422,9 +439,14 @@ export interface EndGamesResult {
 
 export type ActionBody = Action;
 
+/** One tick played: a day, or a week in a career, stopped early on the day something needs the student. */
 export interface ContinueResult {
   company: CompanyView;
   log: DayLog[];
+  /** Days played. */
+  days: number;
+  /** Why time paused itself after the last day played; empty when nothing needs the student. */
+  pauses: PauseReason[];
 }
 
 export interface TeacherCodeView {

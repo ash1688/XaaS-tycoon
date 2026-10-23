@@ -26,6 +26,7 @@ import { createLaunch, type LaunchView } from "./launch.ts";
 import { createLoan, type LoanQuote, type LoanView } from "./loan.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
 import { isNameAllowed } from "./nameFilter.ts";
+import { createPauses, type TickResult } from "./pauses.ts";
 import { createPricing, type CustomerMixView, type PricePreview, type PriceWaveView } from "./pricing.ts";
 import { createRacks, type RacksView } from "./racks.ts";
 import { seedRng } from "./rng.ts";
@@ -64,6 +65,7 @@ export type { ProviderView } from "./infrastructure.ts";
 export type { LaunchView } from "./launch.ts";
 export type { LoanQuote, LoanView } from "./loan.ts";
 export type { LostAddon, MigrationQuote, MigrationView, SetupRack } from "./migration.ts";
+export { LOW_CASH_DAYS, type PauseKind, type PauseReason, type TickResult } from "./pauses.ts";
 export type { RackOption, RackView, RacksView } from "./racks.ts";
 export type { CustomerMixView, CustomerTypeView, PricePreview, PriceWaveView, TypeReaction } from "./pricing.ts";
 export { weightedReaction } from "./pricing.ts";
@@ -161,8 +163,16 @@ export interface Sim {
   load(saved: unknown): GameState;
   /** Applies a player's action without moving time on. */
   applyAction(state: GameState, action: Action): GameState;
-  /** The only way time moves. Continue calls it with 1. */
+  /** Plays that many days, one at a time, with no pauses: for scripts, tests and the balance harness. */
   advance(state: GameState, days?: number): AdvanceResult;
+  /**
+   * What Continue and the timed flow play: one tick, a day or, in a career, a week. Pause triggers (an event that hurts,
+   * an alert, an offer, low cash or something finished) are checked after every day, and the tick stops on the day one
+   * fires, with the reasons.
+   */
+  tick(state: GameState): TickResult;
+  /** Days in one tick for this game: 7 in a career, otherwise 1. */
+  tickDays(state: GameState): number;
   /**
    * The teacher ends a game still being played: it finishes where it stands, before its final day, and its summary
    * is how it did. A game that has already ended is returned as it is.
@@ -377,6 +387,18 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const shares = createShares(config, finance, conversion);
   const api = createApi(config, features, finance, infra.apiuOn);
   const encounters = createEncounters(config, servers);
+  const pauses = createPauses(config, {
+    events: events.events,
+    units: infra.units,
+    capacity: infra.capacity,
+    runwayDays: (s) => runway(s).days,
+    features: features.features,
+    launch: launch.launchView,
+    migration: migration.migration,
+    servers: servers.servers,
+    funding: shares.funding,
+    calendar: calendar.calendar,
+  });
 
   function newGame({
     companyName,
@@ -704,6 +726,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     return { state: current, log };
   }
 
+  function tick(saved: GameState): TickResult {
+    return pauses.tick(loadPlaying(saved), advanceOneDay);
+  }
+
   function endGame(saved: GameState): GameState {
     const state = load(saved);
     return state.status === "playing" ? { ...state, status: "finished", endedByTeacher: true } : state;
@@ -715,6 +741,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     load,
     applyAction,
     advance,
+    tick,
+    tickDays: (s) => pauses.tickDays(load(s)),
     endGame,
     opsNeeded: infra.opsNeeded,
     upfrontCost: (model) => infra.upfrontCost(model),

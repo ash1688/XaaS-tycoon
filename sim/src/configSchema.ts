@@ -399,6 +399,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     const name = l === "180-days" ? "the short game" : gameLengthName(base, l);
     add(`allowedGameLengths.${l}`, "Events", "Game length", `Allow ${name}`, "Students can pick this length when starting a company. A change only affects new games.", TOGGLE);
   }
+  add("timedFlow", "Events", "Game length", "Timed flow", "Time runs on its own, with pause and speed settings, and pauses itself when something needs the student. Off, students play each day (or week, in a career) with Continue. A change reaches games already being played.", TOGGLE);
   for (const d of DIFFICULTY_IDS) {
     add(`allowedDifficulties.${d}`, "Events", "Difficulty", `Allow ${DIFFICULTIES[d].name}`, `Students can pick this difficulty when starting a company. ${DIFFICULTIES[d].blurb} A change only affects new games.`, TOGGLE);
   }

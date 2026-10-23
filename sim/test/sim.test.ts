@@ -130,6 +130,7 @@ const config: GameConfig = {
   startingCash: 1000,
   finalDay: 180,
   allowedGameLengths: { "180-days": 1, "1-year": 0, career: 0 },
+  timedFlow: 1,
   allowedDifficulties: { easy: 0, normal: 1, hard: 0 },
   maxCompanyNameLength: 20,
   // Launches in full on day 1, as the game starts, with the starter setups below in place: the launch tests set their own.
@@ -6391,5 +6392,114 @@ describe("racks, cabling, power and cooling", () => {
       expect(done.racks).toEqual([]);
       expect(sim.racks(done)).toBeNull();
     });
+  });
+});
+
+describe("ticks and pauses", () => {
+  // A patch on day 10 that breaks in on IaaS with no ops: an event that hurts. Games start on day 1, so it's the second
+  // day of the week played from day 8.
+  const patch: EventConfig = {
+    id: "patch",
+    name: "OS security patch",
+    description: "A hole in the OS.",
+    layer: "os",
+    schedule: { type: "fixed", days: [10] },
+    days: 1,
+    effects: {
+      onprem: { opsNeeded: 1, detail: "Patched.", shortOfOps: { detail: "Attackers got in.", downtimeHours: 6 } },
+      iaas: { opsNeeded: 1, detail: "Patched.", shortOfOps: { detail: "Attackers got in.", downtimeHours: 6 } },
+      paas: { detail: "The provider patched it." },
+      saas: { detail: "The provider patched it." },
+    },
+  };
+  const s = createSim({
+    ...config,
+    startingCash: 1_000_000,
+    allowedGameLengths: { "180-days": 1, "1-year": 0, career: 1 },
+    events: [patch],
+  });
+  const begin = (gameLength: string) =>
+    withStaff(s.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, gameLength }), { ops: 0 });
+
+  it("plays a day a tick, or a week in a career", () => {
+    expect(s.tickDays(begin("180-days"))).toBe(1);
+    expect(s.tickDays(begin("career"))).toBe(7);
+    const day = s.tick(s.advance(begin("180-days"), 1).state);
+    expect(day).toMatchObject({ days: 1, pauses: [] });
+    expect(day.state.day).toBe(3);
+    expect(day.log.map((d) => d.day)).toEqual([3]);
+    const week = s.tick(s.advance(begin("career"), 1).state);
+    expect(week).toMatchObject({ days: 7, pauses: [] });
+    expect(week.state.day).toBe(9);
+    expect(week.log.map((d) => d.day)).toEqual([3, 4, 5, 6, 7, 8, 9]);
+  });
+
+  it("plays a week one day at a time: the same days as advance", () => {
+    const start = s.advance(begin("career"), 1).state;
+    expect(s.tick(start).state).toEqual(s.advance(start, 7).state);
+  });
+
+  it("stops a career's week on the day a pause trigger fires, with why", () => {
+    const start = s.advance(begin("career"), 7).state;
+    expect(start.day).toBe(8);
+    const { state, days, pauses, log } = s.tick(start);
+    expect(days).toBe(2);
+    expect(state.day).toBe(10);
+    expect(log.map((d) => d.day)).toEqual([9, 10]);
+    expect(pauses).toEqual([{ kind: "event", id: "event-patch", text: "OS security patch" }]);
+    // Playing on starts a new week from there, and the patch doesn't stop it again.
+    const on = s.tick(state);
+    expect(on.log[0]!.day).toBe(11);
+    expect(on.pauses.map((p) => p.id)).not.toContain("event-patch");
+  });
+
+  it("pauses when the launch is over and when a feature is built", () => {
+    // Users arriving over three days: time stops once the last of them are in.
+    const ramped = createSim({ ...s.config, launch: { rampShares: [0.2, 0.3, 0.5] } });
+    let launching = ramped.tick(ramped.newGame({ companyName: "Acme", productType: "ecommerce", model: "saas", seed: 42 }));
+    expect(launching.pauses).toEqual([]);
+    while (ramped.launch(launching.state).status === "launching") launching = ramped.tick(launching.state);
+    expect(launching.pauses).toEqual([{ kind: "finished", id: "launch", text: "Your launch is over" }]);
+    const feature = s.config.productTypes.ecommerce.features[0]!;
+    const building = withStaff(s.applyAction(s.advance(begin("180-days"), 1).state, { type: "buildFeature", feature: feature.id }), {
+      ops: 0,
+      developers: 50,
+    });
+    let tick = s.tick(building);
+    while (!tick.pauses.length && tick.state.day < 100) tick = s.tick(tick.state);
+    expect(tick.pauses).toContainEqual({ kind: "finished", id: `feature-${feature.id}`, text: `${feature.name} is built` });
+  });
+
+  it("pauses when cash gets low, not every day after, and again the day before it runs out", () => {
+    const start = s.advance(begin("180-days"), 1).state;
+    const burn = -s.runway(start).dailyNet;
+    expect(burn).toBeGreaterThan(0);
+    // Six days' cash: after a day, five are left.
+    const low = s.tick({ ...start, cash: burn * 6.5 });
+    expect(low.pauses).toEqual([expect.objectContaining({ kind: "lowCash", id: "low-cash" })]);
+    expect(low.pauses[0]!.text).toMatch(/^Cash runs out in about \d days?$/);
+    expect(s.tick(low.state).pauses).toEqual([]);
+    const lastDay = s.tick({ ...start, cash: burn * 1.5 });
+    expect(lastDay.pauses).toEqual([{ kind: "lowCash", id: "low-cash", text: "Cash runs out tomorrow" }]);
+  });
+
+  it("stops a career's week when a holiday that hits the product is announced, with its date", () => {
+    const real = createSim({ ...defaultConfig, allowedGameLengths: { "180-days": 0, "1-year": 0, career: 1 } });
+    const shop = real.newGame({ companyName: "Acme", productType: "ecommerce", model: "saas", seed: 3, gameLength: "career", startDate: "2026-11-01" });
+    // Black Friday, on day 27, is announced 14 days ahead: day 13, in the week played from day 8.
+    const start = real.advance(shop, 7).state;
+    expect(start.day).toBe(8);
+    const { state, pauses } = real.tick(start);
+    expect(state.day).toBe(13);
+    expect(pauses).toContainEqual({
+      kind: "calendar",
+      id: "holiday-blackFriday",
+      text: "Holiday coming in 14 days: Black Friday, on Friday 27 November 2026",
+    });
+  });
+
+  it("refuses a game that has ended", () => {
+    const ended = s.endGame(begin("career"));
+    expect(() => s.tick(ended)).toThrow(expect.objectContaining({ code: "finished" }));
   });
 });
