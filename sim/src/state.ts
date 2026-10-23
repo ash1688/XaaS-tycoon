@@ -27,7 +27,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 30;
+export const GAME_STATE_VERSION = 31;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -298,6 +298,26 @@ export interface UnitDemand {
   apiu?: number;
 }
 
+/** A rival in the market: its price and users now, and what it has gained from the student. See RivalsConfig. */
+export interface RivalState {
+  /** The rival's id in its product's config. */
+  id: string;
+  /** Its monthly price. */
+  price: number;
+  users: number;
+  /** Quality points from staff the student let go who joined it. */
+  staffQuality: number;
+  /** The student's price it last answered: it reacts again once the price it sees differs. */
+  reactedTo: number;
+}
+
+/** Someone the student let go who joined a rival, logged with the next day played. */
+export interface RivalJoin {
+  rivalId: string;
+  pool: StaffPool;
+  grade: StaffGrade;
+}
+
 /** A price change, for the summary. */
 export interface PriceChange {
   /** The first day played at the new price. */
@@ -448,6 +468,12 @@ export interface GameState {
   conversions: number;
   /** The paid API, once bought: null until then, and on a product without one. */
   api: ApiState | null;
+  /** The product's rivals, in config order. */
+  rivals: RivalState[];
+  /** The rivals' own seeded RNG, so their choices don't change the game's other random draws. */
+  rivalRng: number;
+  /** Staff let go since the last day played who joined a rival. */
+  rivalJoins: RivalJoin[];
 }
 
 /** Something the player does between days. */
@@ -549,7 +575,7 @@ export interface LogEntry {
    * Set on entries that need to stand out, such as an outage, bankruptcy or the launch. "income" marks money coming in, which the
    * ledger counts as income rather than spend. "loan" marks the bank loan: money coming in with it is borrowed, which
    * is cash but not income. "funding" marks money from friends and family or a grant, and a withdrawn grant paid
-   * back: cash, but neither income nor a charge.
+   * back: cash, but neither income nor a charge. "rival" marks what a rival did: answered the price, or took on staff.
    */
   kind?:
     | "outage"
@@ -567,7 +593,8 @@ export interface LogEntry {
     | "launch"
     | "staff"
     | "api"
-    | "danger";
+    | "danger"
+    | "rival";
 }
 
 export interface DayLog {

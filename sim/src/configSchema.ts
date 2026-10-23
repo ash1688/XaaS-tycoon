@@ -252,6 +252,43 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("pricing.priceChurn", "Customers", "", "Payers lost to a dear price", "Share of paying users who stop paying each day at twice the fair price; × (price ÷ fair − 1)² in general.", range(0, 0.5, 0.001));
   add("pricing.maxPriceChurn", "Customers", "", "Most payers lost to a dear price a day", "The most of the paying users a dear price can lose in a day.", SHARE);
 
+  // Customers: rivals, the market and each product's rivals.
+  const R = "Rivals";
+  add("rivals.reactionDays", "Customers", R, "Reaction delay (days)", "Rivals answer the price the student charged this many days ago.", range(0, 90, 1));
+  add("rivals.undercutChance", "Customers", R, "Undercut chance", "Chance a rival undercuts the student when it answers their price, rather than taking its usual stance.", SHARE);
+  add("rivals.undercutShare", "Customers", R, "Undercut by", "An undercut prices this share below the student (0.1 = 10% under).", SHARE);
+  add("rivals.minPriceMultiple", "Customers", R, "Lowest rival price", "A rival never charges less than this × the fair price.", range(0.01, 10, 0.05));
+  add("rivals.maxPriceMultiple", "Customers", R, "Highest rival price", "A rival never charges more than this × the fair price.", range(0.01, 10, 0.05));
+  add("rivals.qualityFromFeatures", "Customers", R, "Quality from features", "Quality points (out of 100) for having every feature: a share for each one.", range(0, 100, 1));
+  add("rivals.qualityFromUptime", "Customers", R, "Quality from uptime", "Quality points (out of 100) for 100% uptime, fewer the closer uptime is to the worst uptime.", range(0, 100, 1));
+  add("rivals.worstUptime", "Customers", R, "Worst uptime %", "Uptime that earns no quality points.", range(0, 99.9, 0.5));
+  add("rivals.joinChance", "Customers", R, "Chance staff let go join a rival", "Each permanent member of staff the student lets go joins a rival with this chance.", SHARE);
+  add("rivals.qualityPerStaff", "Customers", R, "Quality per member of staff joining", "Quality points a mid who joins a rival brings it; juniors and seniors by their output.", range(0, 20, 0.5));
+  add("rivals.maxStaffQuality", "Customers", R, "Most quality from staff joining", "The most quality points a rival can get from staff who joined it.", range(0, 100, 1));
+  add("rivals.growthEffect", "Customers", R, "Effect on growth", "How strongly winning or losing new users to rivals changes the student's growth: 0 for none, 1 in proportion.", range(0, 2, 0.05));
+  add("rivals.minGrowth", "Customers", R, "Least growth with rivals", "Rivals never multiply the student's growth by less than this.", range(0, 1, 0.05));
+  add("rivals.maxGrowth", "Customers", R, "Most growth with rivals", "Rivals never multiply the student's growth by more than this.", range(1, 5, 0.05));
+  for (const t of CUSTOMER_TYPE_IDS) {
+    const type = base.customerTypes?.[t]?.name ?? t;
+    add(`rivals.priceWeight.${t}`, "Customers", R, `${type}: care about price`, "How much this type's choice of company turns on price: higher pulls them to the cheapest.", range(0, 10, 0.1));
+    add(`rivals.qualityWeight.${t}`, "Customers", R, `${type}: care about quality`, "How much this type's choice of company turns on quality: higher pulls them to the best.", range(0, 10, 0.1));
+  }
+  for (const p of PRODUCT_TYPE_IDS) {
+    const product = base.productTypes[p];
+    if (!product) continue;
+    for (const r of product.rivals ?? []) {
+      const at = `productTypes.${p}.rivals.${r.id}`;
+      const s = product.name;
+      add(`${at}.priceStance`, "Customers", s, `Rival ${r.name}: price stance`, "Its price as a multiple of the student's: at the start (against the fair price) and each time it answers their price.", range(0.1, 5, 0.05));
+      add(`${at}.startingUsers`, "Customers", s, `Rival ${r.name}: users at the start`, "Its users on day 1.", range(0, 10_000_000, 500));
+      add(`${at}.maxUsers`, "Customers", s, `Rival ${r.name}: most users`, "Users it can reach. Its growth slows as it nears them.", range(1, 10_000_000, 500));
+      add(`${at}.dailyGrowth`, "Customers", s, `Rival ${r.name}: daily growth`, "Share of its users it adds each day while it has room, before value.", range(0, 1, 0.001));
+      add(`${at}.features`, "Customers", s, `Rival ${r.name}: features at the start`, "Features it has on day 1, out of the product's list.", range(0, 10, 1));
+      add(`${at}.featureEveryDays`, "Customers", s, `Rival ${r.name}: a new feature every (days)`, "It builds one more feature every this many days, up to the product's list.", GAME_DAY);
+      add(`${at}.uptime`, "Customers", s, `Rival ${r.name}: uptime %`, "Its uptime, which sets part of its quality.", range(0, 100, 0.1));
+    }
+  }
+
   // Customers: free-to-paid conversion. The daily rate is the product's base rate × each multiplier, at most the cap.
   const C = "Free-to-paid conversion";
   add("conversion.perFeature", "Customers", C, "Boost per feature", "Each feature built or add-on bought adds this to the conversion multiplier (0.15 = 15% more each).", range(0, 2, 0.01));
@@ -503,6 +540,7 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
       ]),
     ),
     ["encounters.thresholdMin", "encounters.thresholdMax", "The highest threshold can't be below the lowest."],
+    ["rivals.minPriceMultiple", "rivals.maxPriceMultiple", "A rival's highest price can't be below its lowest."],
   ];
   if (GAME_LENGTH_IDS.every((l) => config.allowedGameLengths[l] !== 1)) {
     const changed = GAME_LENGTH_IDS.find((l) => `allowedGameLengths.${l}` in overrides) ?? GAME_LENGTH_IDS[0];

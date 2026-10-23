@@ -146,6 +146,36 @@ export function renderMix(sim: Sim, state: GameState): string {
     .join(", ");
 }
 
+/**
+ * The market in a line: each company's share of users, price and quality, what rivals do to growth, and when they'll
+ * answer a price change. Null with no rivals.
+ */
+export function renderMarket(sim: Sim, state: GameState): string | null {
+  const m = sim.market(state);
+  if (m.companies.length < 2) return null;
+  const companies = m.companies.map((c) => `${c.you ? "you" : c.name} ${pct(100 * c.share)} at ${price(c.price)} q${Math.round(c.quality)}`).join(", ");
+  const answer = m.nextReaction ? ` | rivals answer your ${price(m.nextReaction.price)} on day ${m.nextReaction.day}` : "";
+  return `market share: ${companies} | rivals ×${m.growth.toFixed(2)} growth${answer}`;
+}
+
+/** The market in full: each company, and how each customer type's new users split today. */
+function marketLines(sim: Sim, state: GameState): string[] {
+  const m = sim.market(state);
+  if (m.companies.length < 2) return ["no rivals in this market"];
+  const names = m.companies.map((c) => (c.you ? "you" : c.name));
+  return [
+    `market (rivals answer a price change ${m.reactionDays} days later, sometimes undercutting it; quality is 0–100 from features and uptime):`,
+    ...m.companies.map(
+      (c) =>
+        `  ${c.you ? `you (${c.name})` : c.name}: ${c.users.toLocaleString("en-GB")} users, ${stake(c.share)} share | ${price(c.price)}/month | quality ${c.quality} (${c.features} features, ${c.uptime}% uptime)${c.blurb ? ` | ${c.blurb}` : ""}`,
+    ),
+    `new users by customer type (best value wins most):`,
+    ...m.byType.map((t) => `  ${t.id}: ${t.shares.map((sh, i) => `${names[i]} ${pct(100 * sh)}`).join(", ")} | best: ${t.bestId === "you" ? "you" : t.bestName}`),
+    `rivals multiply your growth by ${m.growth.toFixed(2)} (1 = as good a deal as theirs)` +
+      (m.nextReaction ? `; they answer your ${price(m.nextReaction.price)} on day ${m.nextReaction.day}` : ""),
+  ];
+}
+
 /** The company at a glance: everything a player sees on the dashboard, as short lines. */
 export function renderStatus(sim: Sim, state: GameState): string {
   const lines: string[] = [];
@@ -170,6 +200,8 @@ export function renderStatus(sim: Sim, state: GameState): string {
     );
   }
   lines.push(`customer mix: ${renderMix(sim, state)}`);
+  const market = renderMarket(sim, state);
+  if (market) lines.push(market);
   const conversion = sim.conversion(state);
   lines.push(
     `users ${state.users.toLocaleString("en-GB")} (paid ${state.paidUsers.toLocaleString("en-GB")}, free ${(state.users - state.paidUsers).toLocaleString("en-GB")}) | converting ${(conversion.rate * 100).toFixed(2)}%/day`,
@@ -383,6 +415,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
       `  loan   (${money(loanQuote.amount)} now at ${Math.round(loanQuote.rate * 1000) / 10}%, ${money(loanQuote.dailyRepayment)}/day for ${loanQuote.days} days, to day ${loanQuote.lastDay}: ${money(loanQuote.interest)} interest)`,
     );
   }
+  lines.push(`  market   (rivals' prices, quality and share, and who wins each customer type; changes nothing)`);
   lines.push(`  valuation   (what's pushing the valuation up or down, and who owns what; changes nothing)`);
   const funding = sim.funding(state);
   const open = [funding.friendsAndFamilyOffer && "ff", funding.grantOffer && "grant"].filter(Boolean).join("|");
@@ -403,6 +436,7 @@ export type Command =
   | { kind: "preview"; price: number }
   | { kind: "quote"; model: string }
   | { kind: "valuation" }
+  | { kind: "market" }
   | { kind: "funding" }
   | { kind: "next"; days: number }
   /** The teacher ends the game, as from the staff panel. */
@@ -496,6 +530,8 @@ export function parseCommand(text: string): Command {
       return one({ type: "takeLoan" });
     case "valuation":
       return { kind: "valuation" };
+    case "market":
+      return { kind: "market" };
     case "funding":
       return { kind: "funding" };
     case "accept":
@@ -564,6 +600,7 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
     };
   }
   if (command.kind === "valuation") return { state, rows: [], lines: valuationLines(sim, state) };
+  if (command.kind === "market") return { state, rows: [], lines: marketLines(sim, state) };
   if (command.kind === "funding") return { state, rows: [], lines: fundingLines(sim, state) };
   if (command.kind === "end") {
     const ended = sim.endGame(state);
@@ -614,8 +651,8 @@ export function runScript(sim: Sim, state: GameState, script: string, who: Playe
     }
     try {
       const command = parseCommand(text);
-      // Once the game is over, only what changes nothing still works: the valuation and who owns the company.
-      if (current.status !== "playing" && command.kind !== "valuation" && command.kind !== "funding") {
+      // Once the game is over, only what changes nothing still works: the valuation, who owns the company and the market.
+      if (current.status !== "playing" && command.kind !== "valuation" && command.kind !== "funding" && command.kind !== "market") {
         skipped = "the game is over";
         lines.push(`> ${text}`, `not run: ${skipped}`);
         continue;
@@ -684,7 +721,7 @@ function fundingLines(sim: Sim, state: GameState): string[] {
  * Log entry kinds worth showing every day they appear. Feature, migration and API entries show only on days they stop
  * time.
  */
-const SHOWN_KINDS = new Set(["outage", "event", "bankrupt", "finished", "support", "price", "launch", "staff", "funding", "danger"]);
+const SHOWN_KINDS = new Set(["outage", "event", "bankrupt", "finished", "support", "price", "launch", "staff", "funding", "danger", "rival"]);
 const STOPPING_KINDS = new Set(["feature", "migration", "api"]);
 
 const builtCount = (state: GameState) => Object.values(state.features).filter((f) => f.status !== "building").length;

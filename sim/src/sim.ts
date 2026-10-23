@@ -21,6 +21,7 @@ import { createMigration, type MigrationQuote, type MigrationView } from "./migr
 import { isNameAllowed } from "./nameFilter.ts";
 import { createPricing, type CustomerMixView, type PricePreview, type PriceWaveView } from "./pricing.ts";
 import { createRacks, type RacksView } from "./racks.ts";
+import { createRivals, type MarketView } from "./rivals.ts";
 import { seedRng } from "./rng.ts";
 import { createShares, type CapTableView, type FundingView, type ValuationView } from "./shares.ts";
 import { createServers, type ManagedView, type ServerOption, type ServerView, type UnitsView } from "./servers.ts";
@@ -55,6 +56,7 @@ export type { LaunchView } from "./launch.ts";
 export type { LoanQuote, LoanView } from "./loan.ts";
 export type { LostAddon, MigrationQuote, MigrationView, SetupRack } from "./migration.ts";
 export type { RackOption, RackView, RacksView } from "./racks.ts";
+export type { MarketCompanyView, MarketView, TypeContestView } from "./rivals.ts";
 export type { CustomerMixView, CustomerTypeView, PricePreview, PriceWaveView, TypeReaction } from "./pricing.ts";
 export { weightedReaction } from "./pricing.ts";
 export type {
@@ -119,6 +121,8 @@ export {
   type PriceChange,
   type PriceWave,
   type Rack,
+  type RivalJoin,
+  type RivalState,
   type ScheduledEvent,
   type Server,
   type Shareholder,
@@ -207,6 +211,11 @@ export interface Sim {
   priceLockDaysLeft(state: GameState): number;
   /** The customer mix: each customer type's share of users, with its price threshold. Least willing to pay first. */
   customerMix(state: GameState): CustomerMixView;
+  /**
+   * The market: the student's company and each rival with its price, quality and market share; who wins each customer
+   * type's new users; what that does to the student's growth; and a price change the rivals haven't answered yet.
+   */
+  market(state: GameState): MarketView;
   /**
    * Load the company can serve in a day with its current model and staff. On a model with servers, the load its ready
    * servers carry at the product's usual demand. Null on SaaS, which has no capacity limit.
@@ -311,7 +320,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   const features = createFeatures(config, finance);
   const pricing = createPricing(config);
   const support = createSupport(config);
-  const customers = createCustomers(config, features, events, pricing, support);
+  const rivals = createRivals(config, features);
+  const customers = createCustomers(config, features, events, pricing, support, rivals);
   const conversion = createConversion(config, features, pricing);
   const racks = createRacks(config, finance);
   const servers = createServers(config, finance, racks);
@@ -449,8 +459,15 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const state = loadPlaying(saved);
     switch (action.type) {
       case "hire":
-      case "letGo":
         return staff.changeStaff(state, action.type, action.pool, action.grade, action.count);
+      case "letGo":
+        // Some of those let go may join a rival.
+        return rivals.staffLeft(
+          staff.changeStaff(state, action.type, action.pool, action.grade, action.count),
+          action.pool,
+          action.grade ?? "mid",
+          action.count ?? 1,
+        );
       case "buildFeature":
         return features.startBuild(state, action.feature);
       case "buyAddon":
@@ -534,6 +551,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const bursts = [...support.outageBursts(state, served.hoursDown), ...wave.bursts];
     const care = support.supportDay(state, bursts);
 
+    // Rivals answer the student's price from reactionDays ago and win their share of the market's new users.
+    const market = rivals.rivalsDay(state, day);
+
     // Developers work on the current build. A feature finished today helps growth from tomorrow.
     const build = features.buildDay(state);
 
@@ -553,6 +573,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       ...launched.entries,
       ...recorded.entries,
       ...(ramping ? [] : organic.entries),
+      ...market.entries,
       ...(served.outage ? [served.outage] : []),
       ...wave.entries,
       ...converted.entries,
@@ -597,6 +618,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       loan: repayment.loan,
       funding: grant.funding,
       api: calls.api,
+      rivals: market.rivals,
+      rivalRng: market.rivalRng,
+      rivalJoins: market.rivalJoins,
     };
     // The danger meter rises with the day's risks, on the model the day was played on.
     const risen: GameState = { ...played, ...encounters.riseDay(played, live, served.overloaded) };
@@ -666,6 +690,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     priceWave: (s) => pricing.priceWave(load(s)),
     priceLockDaysLeft: (s) => pricing.lockDaysLeft(load(s)),
     customerMix: (s) => pricing.customerMix(load(s)),
+    market: (s) => rivals.market(load(s)),
     capacity: (s) => infra.capacity(load(s)),
     units: (s) => infra.units(load(s)),
     servers: (s) => servers.servers(load(s)),

@@ -359,6 +359,78 @@ export interface ProductTypeConfig {
   features: FeatureConfig[];
   /** The paid API other businesses build on, for a product that would have one. Left out, the product has none. */
   api?: ProductApiConfig;
+  /** The one or two rivals in the product's market (see RivalsConfig). Empty for none. */
+  rivals: RivalConfig[];
+}
+
+/**
+ * A rival: a computer-run company in the same market, described only by its price, quality and users. It never runs
+ * out of money or floats on the stock market.
+ */
+export interface RivalConfig {
+  /** Unique within its product type. Saved in game state, so don't rename. */
+  id: string;
+  name: string;
+  /** One line on what it's like. */
+  blurb: string;
+  /**
+   * Its price as a multiple of the student's (0.85 = 15% under): at the start, against the fair price, and each time
+   * it reacts to the student's price.
+   */
+  priceStance: number;
+  /** Its users on day 1. */
+  startingUsers: number;
+  /** Users it can reach. Its growth slows as it nears them. */
+  maxUsers: number;
+  /** Share of its users added each day while it has room, before value (see RivalsConfig.growthEffect). */
+  dailyGrowth: number;
+  /** Features it has on day 1, out of the product's list. */
+  features: number;
+  /** It builds one more feature every this many days, up to the product's list. */
+  featureEveryDays: number;
+  /** Its uptime, as a percentage. */
+  uptime: number;
+}
+
+/**
+ * How rivals compete. Each company's quality, 0–100, is qualityFromFeatures × its share of the product's features plus
+ * qualityFromUptime × its uptime's place between worstUptime (none) and 100% (all), plus anything staff who joined it
+ * from the student brought. Each customer type values a company at qualityWeight × quality ÷ 100 − priceWeight × ln(price
+ * ÷ fair price), and its new users split between the companies in proportion to e^value: the best value wins most.
+ *
+ * The student's daily growth is multiplied by the mix-weighted sum of (their share of each type's new users ÷ an even
+ * share)^growthEffect, kept between minGrowth and maxGrowth: 1 when they're as good a deal as the rivals. Rivals grow
+ * the same way from their own users.
+ */
+export interface RivalsConfig {
+  /** Days a rival takes to answer the student's price: it reacts to the price they charged this many days ago. */
+  reactionDays: number;
+  /** Chance a rival undercuts the student when it reacts, rather than taking its usual stance. */
+  undercutChance: number;
+  /** An undercut prices this share below the student (0.1 = 10% under). */
+  undercutShare: number;
+  /** A rival's price stays between these multiples of the fair price, whatever the student charges. */
+  minPriceMultiple: number;
+  maxPriceMultiple: number;
+  /** Quality points for having every feature. */
+  qualityFromFeatures: number;
+  /** Quality points for 100% uptime. */
+  qualityFromUptime: number;
+  /** Uptime, as a percentage, that earns no quality points. */
+  worstUptime: number;
+  /** Chance each permanent member of staff the student lets go joins a rival. */
+  joinChance: number;
+  /** Quality points one mid joining a rival brings; other grades by their output. */
+  qualityPerStaff: number;
+  /** The most quality points a rival can get from staff who joined it. */
+  maxStaffQuality: number;
+  /** How strongly winning or losing new users changes growth: 0 for no effect, 1 in proportion. */
+  growthEffect: number;
+  minGrowth: number;
+  maxGrowth: number;
+  /** How much each customer type cares about price, and about quality (see RivalsConfig). */
+  priceWeight: Record<CustomerTypeId, number>;
+  qualityWeight: Record<CustomerTypeId, number>;
 }
 
 /**
@@ -922,6 +994,7 @@ export interface GameConfig {
   models: Record<ModelId, ModelConfig>;
   productTypes: Record<ProductTypeId, ProductTypeConfig>;
   customerTypes: Record<CustomerTypeId, CustomerTypeConfig>;
+  rivals: RivalsConfig;
   staff: Record<StaffPool, StaffPoolConfig>;
   staffGrades: Record<StaffGrade, StaffGradeConfig>;
   capacity: CapacityConfig;
@@ -1150,6 +1223,11 @@ export const defaultConfig: GameConfig = {
         price: 4_000,
         callsPerPaidUser: 3,
       },
+      // A cheap shop builder that pulls casual sellers, and a dearer, polished one that pulls businesses.
+      rivals: [
+        { id: "cartcraft", name: "CartCraft", blurb: "Cheap and cheerful shop builder.", priceStance: 0.85, startingUsers: 5_000, maxUsers: 15_000, dailyGrowth: 0.012, features: 1, featureEveryDays: 50, uptime: 99 },
+        { id: "tillbox", name: "Tillbox", blurb: "Polished and dear, built for serious sellers.", priceStance: 1.3, startingUsers: 3_000, maxUsers: 10_000, dailyGrowth: 0.01, features: 2, featureEveryDays: 60, uptime: 99.8 },
+      ],
     },
     social: {
       name: "Social network",
@@ -1210,6 +1288,11 @@ export const defaultConfig: GameConfig = {
           addonPricePerUser: 0.03,
         },
       ],
+      // A free-and-easy network that pulls casual users, and a slicker one for creators and brands.
+      rivals: [
+        { id: "natterly", name: "Natterly", blurb: "Cheap, cheerful and a bit flaky.", priceStance: 0.8, startingUsers: 10_000, maxUsers: 30_000, dailyGrowth: 0.012, features: 1, featureEveryDays: 50, uptime: 98.5 },
+        { id: "gatherhub", name: "GatherHub", blurb: "Slick and dear, where creators and brands hang out.", priceStance: 1.25, startingUsers: 5_000, maxUsers: 18_000, dailyGrowth: 0.01, features: 2, featureEveryDays: 60, uptime: 99.8 },
+      ],
     },
     video: {
       name: "Video sharing platform",
@@ -1267,6 +1350,10 @@ export const defaultConfig: GameConfig = {
           addonPricePerUser: 0.2,
         },
       ],
+      // One big, established rival, a little cheaper than fair.
+      rivals: [
+        { id: "reelhaus", name: "Reelhaus", blurb: "The big established video site.", priceStance: 0.95, startingUsers: 8_000, maxUsers: 20_000, dailyGrowth: 0.01, features: 2, featureEveryDays: 55, uptime: 99.5 },
+      ],
     },
   },
   // Casual users react at the fair price, as everyone did in the alpha; the others put up with more, and go free less.
@@ -1275,6 +1362,26 @@ export const defaultConfig: GameConfig = {
     enthusiasts: { name: "Enthusiasts", blurb: "Keen regular users. Will pay a bit more; sometimes go free.", thresholdMultiple: 1.25, toFreeShare: 0.4 },
     professionals: { name: "Professionals", blurb: "Use it for work. Pay well; rarely go free.", thresholdMultiple: 2, toFreeShare: 0.2 },
     businesses: { name: "Businesses", blurb: "Run on it. Pay the most; rarely go free, they leave.", thresholdMultiple: 3, toFreeShare: 0.1 },
+  },
+  // Placeholders from the beta design: rivals answer a price two weeks on, and undercut about a third of the time.
+  // Casual users chase price and businesses quality, so a cheap rival pulls casual users and a polished one the rest.
+  rivals: {
+    reactionDays: 14,
+    undercutChance: 0.35,
+    undercutShare: 0.1,
+    minPriceMultiple: 0.5,
+    maxPriceMultiple: 2,
+    qualityFromFeatures: 60,
+    qualityFromUptime: 40,
+    worstUptime: 95,
+    joinChance: 0.5,
+    qualityPerStaff: 2,
+    maxStaffQuality: 20,
+    growthEffect: 0.5,
+    minGrowth: 0.6,
+    maxGrowth: 1.4,
+    priceWeight: { casual: 3, enthusiasts: 2, professionals: 1, businesses: 0.5 },
+    qualityWeight: { casual: 1, enthusiasts: 2, professionals: 3, businesses: 4 },
   },
   staff: {
     developers: { name: "Developers", personName: "developer", dayRate: 120, startingCount: 2 },

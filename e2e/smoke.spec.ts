@@ -1157,3 +1157,38 @@ test("free users start paying each day, and Customers shows what's helping or hu
   // The day log says so too.
   await expect((await openDayLog(student)).locator('[data-kind="conversion"]')).toContainText("Free to paid:");
 });
+
+test("Customers shows market share against the rivals as a pie, and when they'll answer a price change", async ({ browser, request }) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  const code = await createCode(teacher);
+
+  const created = await request.post(`/api/codes/${code}/companies`, {
+    data: { name: "Share Ltd", productType: "social", model: "iaas" },
+  });
+  const { id } = await created.json();
+  await launch(request, code, id, "iaas");
+
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${id}`);
+  await goTo(student, "Customers");
+  const panel = student.getByTestId("market-share");
+  // A slice each for the student and the social network's two rivals, adding up to the whole market.
+  const pie = panel.getByTestId("market-pie");
+  await expect(pie.locator("path")).toHaveCount(3);
+  await expect(pie).toHaveAttribute("aria-label", /^You \d+%, Natterly \d+%, GatherHub \d+%$/);
+  const shares = (await pie.getAttribute("aria-label"))!.match(/\d+(?=%)/g)!.map(Number);
+  expect(shares.reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(99);
+  await expect(panel.locator("tbody tr")).toHaveCount(3);
+  await expect(panel.locator('tr[data-company="natterly"]')).toContainText("£4");
+  // The cheap rival wins casual users.
+  await expect(panel.locator('li[data-type="casual"] strong')).toHaveText("Natterly");
+  await expect(panel.getByTestId("rival-reaction")).toBeHidden();
+
+  // A price change: the rivals answer it two weeks on.
+  await request.post(`/api/codes/${code}/companies/${id}/actions`, { data: { type: "setPrice", price: 6 } });
+  await student.reload();
+  await expect(student.getByTestId("market-share").getByTestId("rival-reaction")).toContainText(/answer your £6 on day \d+/);
+});

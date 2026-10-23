@@ -41,6 +41,10 @@ npm run -s play -- summary <game>
 - `preview <price>` and `quote <model>` show what a price change or migration would do without doing it.
   A price rise's reaction is each customer type's reaction weighted by its share of users: the status shows your
   customer mix, each type's price threshold, and `!` where your price is over it.
+- One or two **rivals** share your market. The status shows each company's market share, price and quality (0–100,
+  from features and uptime). New users of each customer type go mostly to the best value for them: casual users chase
+  price, businesses quality. Rivals answer a price change 14 days later, sometimes undercutting you, and staff you
+  let go may join one and raise its quality. `market` shows it all in full, with who wins each customer type.
 - `valuation` shows what your company is worth, what's pushing it up or down, and who owns it. `funding` shows the
   friends and family and grant offers in full; `accept ff`, `accept grant`, `decline ff` and `decline grant` answer
   them, once each.

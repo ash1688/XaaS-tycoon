@@ -157,8 +157,10 @@ const config: GameConfig = {
       pricing,
       support,
       features,
+      // No rivals here, so growth is the product's own: the rivals tests use the default config.
+      rivals: [],
     },
-    social: { name: "Social", profile: "", growth: { ...growth, dailyGrowth: 0.06 }, demand, pricing, support, features },
+    social: { name: "Social", profile: "", growth: { ...growth, dailyGrowth: 0.06 }, demand, pricing, support, features, rivals: [] },
     video: {
       name: "Video",
       profile: "",
@@ -167,12 +169,14 @@ const config: GameConfig = {
       pricing,
       support,
       features,
+      rivals: [],
     },
   },
   customerTypes: {
     ...defaultConfig.customerTypes,
     casual: { ...defaultConfig.customerTypes.casual, thresholdMultiple: 1, toFreeShare: 0.4 },
   },
+  rivals: defaultConfig.rivals,
   // No starting staff, so the model's running cost is the only charge unless a test hires someone.
   staff: {
     developers: { name: "Developers", personName: "developer", dayRate: 7, startingCount: 0 },

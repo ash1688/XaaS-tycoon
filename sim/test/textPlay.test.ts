@@ -347,3 +347,31 @@ describe("shares and funding", () => {
     expect(turn.lines.join("\n")).toMatch(/day 8: Grant (condition met|withdrawn)/);
   });
 });
+
+describe("rivals", () => {
+  it("shows market share in the status and the market in full, changing nothing", () => {
+    const state = start();
+    expect(parseCommand("market")).toEqual({ kind: "market" });
+    expect(renderStatus(sim, state)).toMatch(/market share: you \d+% at £5 q\d+, Natterly \d+% at £4 q\d+, GatherHub \d+% at £6\.25 q\d+ \| rivals ×[\d.]+ growth/);
+    expect(renderCommands(sim, state)).toMatch(/market {3}\(rivals' prices, quality and share/);
+    const market = run(state, "market");
+    expect(market.state).toBe(state);
+    expect(market.lines.join("\n")).toMatch(/Natterly: [\d,]+ users, [\d.]+% share \| £4\/month \| quality [\d.]+ \(1 features, 98\.5% uptime\)/);
+    expect(market.lines.join("\n")).toMatch(/casual: you \d+%, Natterly \d+%, GatherHub \d+% \| best: Natterly/);
+  });
+
+  it("drives the rivals with a price change: they answer it two weeks on, and the log says so", () => {
+    const priced = run(run(start(), "next 10").state, "price 6").state;
+    expect(renderStatus(sim, priced)).toMatch(new RegExp(`rivals answer your £6 on day ${priced.day + 15}`));
+    // Advances stop early when something needs the player, so keep going past the day the rivals answer.
+    let state = priced;
+    const all: string[] = [];
+    while (state.day < priced.day + 15 && state.status === "playing") {
+      const turn = run(state, "next 15");
+      state = turn.state;
+      all.push(...turn.lines);
+    }
+    const lines = all.join("\n");
+    expect(lines).toMatch(/day \d+: (Natterly|GatherHub) (answered your £6 price|undercut you)/);
+  });
+});

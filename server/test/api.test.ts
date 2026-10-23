@@ -2951,6 +2951,24 @@ describe("pricing and income", () => {
     expect(body.total.left + body.total.toFree).toBe(Math.round(company.paidUsers * body.reaction));
   });
 
+  it("shows the market share, and rivals answering a price change after the delay", async () => {
+    const { company, act, next } = await setup({ "rivals.undercutChance": 0 });
+    const rivals = sim.config.productTypes.ecommerce.rivals;
+    expect(company.market.companies.map((c) => c.name)).toEqual([company.name, ...rivals.map((r) => r.name)]);
+    expect(company.market.companies.reduce((sum, c) => sum + c.share, 0)).toBeCloseTo(1, 10);
+    expect(company.market.byType.map((t) => t.id)).toEqual(["casual", "enthusiasts", "professionals", "businesses"]);
+
+    const priced = (await act({ type: "setPrice", price: 6 })).json<CompanyView>();
+    const { day } = priced.market.nextReaction!;
+    expect(day).toBe(company.day + 1 + sim.config.rivals.reactionDays);
+    let body = await next();
+    while (body.company.day < day - 1) body = await next();
+    expect(body.company.market.companies[1]!.price).toBe(fairPrice * rivals[0]!.priceStance);
+    body = await next();
+    expect(body.company.market.companies.slice(1).map((c) => c.price)).toEqual(rivals.map((r) => Math.round(6 * r.priceStance * 100) / 100));
+    expect(body.company.market.nextReaction).toBeNull();
+  });
+
   it("previews a price without changing anything, and the preview matches the wave that follows", async () => {
     const { url, act, next } = await setup({ "productTypes.ecommerce.pricing.freeShare": 0.5 });
     const preview = async (price: unknown) => app.inject({ method: "GET", url: `${url}/price-preview?price=${price}` });

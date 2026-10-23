@@ -20,6 +20,7 @@ import type {
   LoanQuote,
   LoanView,
   ManagedView,
+  MarketView,
   RacksView,
   MigrationPhase,
   MigrationQuote,
@@ -217,6 +218,11 @@ export interface CompanyView {
    * mark on the bar and whether the price is over it.
    */
   customerMix: CustomerMixView;
+  /**
+   * The market: the company and its rivals with each one's price, quality and market share (for the pie), who wins each
+   * customer type's new users, what rivals do to growth, and a price change they haven't answered yet.
+   */
+  market: MarketView;
   /**
    * Free-to-paid conversion: free users who started paying on the day just played and in all (a price wave's upgrades
    * aren't counted here), the base and current daily rates (from the next day played), recent uptime, and each

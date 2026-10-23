@@ -3,6 +3,7 @@ import type { Events } from "./events.ts";
 import type { Features } from "./features.ts";
 import { count } from "./finance.ts";
 import type { Pricing } from "./pricing.ts";
+import type { Rivals } from "./rivals.ts";
 import { nextRandom, seedRng, vary } from "./rng.ts";
 import type { GameState, LogEntry, UnitDemand } from "./state.ts";
 import type { Support } from "./support.ts";
@@ -17,6 +18,7 @@ export function createCustomers(
   events: Events,
   pricing: Pricing,
   support: Support,
+  rivals: Rivals,
 ) {
   /**
    * A new company: no users until it launches (see Launch), so no load. Its launch total is drawn evenly from the
@@ -30,6 +32,7 @@ export function createCustomers(
       launchUsers: Math.round(min + (Math.max(min, max) - min) * r),
       users: 0,
       ...pricing.startingPricing(productType, 0),
+      ...rivals.startingRivals(productType, seed),
       load: 0,
       demand: { cu: 0, dbu: 0 },
       outageDays: 0,
@@ -74,6 +77,8 @@ export function createCustomers(
       pricing.priceGrowth(state),
       // Customer satisfaction, from yesterday: low satisfaction slows growth.
       support.satisfactionGrowth(state),
+      // Rivals: winning or losing each customer type's new users to them.
+      rivals.rivalGrowth(state),
     ];
   }
 
