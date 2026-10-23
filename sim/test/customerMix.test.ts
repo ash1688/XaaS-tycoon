@@ -65,7 +65,8 @@ describe("what shifts the customer mix", () => {
     const withGroups: GameState = { ...state, features: { groups: { status: "addon", progress: 0 } } };
 
     const view = sim.customerMix(withGroups).types.find((t) => t.id === "professionals")!;
-    expect(view.featureAppeal).toBe(1.5);
+    // Half as many again, against a mix that grew by 4% overall.
+    expect(view.featureAppeal).toBeCloseTo(1.5 / 1.04, 9);
     // 8% professionals weighted half as much again: 12 in 104.
     expect(view.newShare).toBeCloseTo(0.12 / 1.04, 10);
 
@@ -74,6 +75,12 @@ describe("what shifts the customer mix", () => {
     expect(shares(sim, without).professionals).toBeCloseTo(0.08, 10);
     expect(shares(sim, after).professionals).toBeGreaterThan(0.085);
     expect(shares(sim, after).casual).toBeLessThan(shares(sim, without).casual);
+
+    // Every feature built pulls every type alike: no tilt, and new users join in the product's mix.
+    const all = Object.fromEntries(defaultConfig.productTypes.social.features.map((f) => [f.id, { status: "addon" as const, progress: 0 }]));
+    const everything = sim.customerMix({ ...state, features: all }).types;
+    expect(everything.every((t) => t.featureAppeal === 1)).toBe(true);
+    for (const t of everything) expect(t.newShare).toBeCloseTo(base("social")[t.id], 10);
   });
 
   it("filters new users by the price: above a type's threshold, fewer of them join", () => {

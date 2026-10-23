@@ -55,7 +55,10 @@ export interface CustomerTypeView {
   overThreshold: boolean;
   /** The type's share of today's new users (see CustomerMix), and what tilts it from the product's mix. */
   newShare: number;
-  /** The active features' appeal to the type: its weight among new users is multiplied by this. */
+  /**
+   * How much the active features tilt new users towards the type, against the product's mix: 1.44 = 44% more of them.
+   * Features that pull every type alike cancel out to 1.
+   */
   featureAppeal: number;
   /** The price's filter on the type: 1 at or below its threshold, less above it. */
   priceFilter: number;

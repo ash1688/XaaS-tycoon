@@ -87,7 +87,7 @@ describe("runCommand", () => {
     const dear = run(state, "price 10").state;
     expect(renderStatus(sim, dear)).toMatch(/new users join as: casual \d+\.\d% \(price x0\.25\), enthusiasts \d+\.\d% \(price x0\.39\), professionals/);
     const grouped: GameState = { ...state, features: { groups: { status: "built", progress: 0 } } };
-    expect(renderStatus(sim, grouped)).toMatch(/professionals 11\.5% \(features x1\.5\)/);
+    expect(renderStatus(sim, grouped)).toMatch(/professionals 11\.5% \(features x1\.44\)/);
   });
 });
 

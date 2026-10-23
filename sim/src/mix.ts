@@ -77,11 +77,22 @@ export function createCustomerMix(config: GameConfig, features: Features, pricin
     return normalise(users, state.customerMix);
   }
 
+  /**
+   * The features' appeal to each type against the product's mix as a whole: the type's appeal ÷ the base-mix average.
+   * Features that pull every type alike cancel out to 1, so only a real tilt shows. Rounded so they do exactly.
+   */
+  function relativeAppeal(state: GameState): Record<CustomerTypeId, number> {
+    const appeal = features.appeal(state);
+    const base = pricing.baseMix(state.productType);
+    const average = CUSTOMER_TYPE_IDS.reduce((sum, t) => sum + base[t] * appeal[t], 0);
+    return byType((t) => (average > 0 ? Math.round((1e9 * appeal[t]) / average) / 1e9 : 1));
+  }
+
   /** The customer mix for the screens, with each type's share of new users and what tilts it. */
   function customerMix(state: GameState): CustomerMixView {
     const view = pricing.customerMix(state);
     const newMix = newUserMix(state);
-    const appeal = features.appeal(state);
+    const appeal = relativeAppeal(state);
     const filter = priceFilter(state);
     return {
       ...view,
