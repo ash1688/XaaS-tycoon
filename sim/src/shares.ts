@@ -94,9 +94,14 @@ export interface FriendsAndFamilyOffer {
 /** The grant's offer: cash for no shares, on an uptime condition. */
 export interface GrantOffer {
   amount: number;
-  /** Days played after accepting that the condition covers, and the last of them if accepted today. */
+  /**
+   * Days played the condition covers, and the first and last of them if accepted today: they start after the launch
+   * ramp, so both are null until the company has launched.
+   */
   days: number;
-  untilDay: number;
+  fromDay: number | null;
+  untilDay: number | null;
+  /** The uptime % asked for on the company's model. */
   minUptime: number;
   /** Hours down allowed over those days in all. */
   maxHoursDown: number;
@@ -107,6 +112,9 @@ export interface GrantOffer {
 
 /** The grant once answered, with how its condition stands. */
 export interface GrantView extends GrantFunding {
+  /** The condition's first and last days: null until the company has launched, when they start after its ramp. */
+  fromDay: number | null;
+  untilDay: number | null;
   /** Days of the condition still to play: 0 once it's over. */
   daysLeft: number;
   /** Hours down still allowed before it's withdrawn: 0 once it's over. */
@@ -354,17 +362,32 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
     };
   }
 
+  /**
+   * The grant condition's first and last days, for a grant answered on `day`: from the day after it, or the first day
+   * after the launch ramp if that's later. Null until the company has launched, as it can't be known before.
+   */
+  function grantDays(state: GameState, day: number, days: number): { fromDay: number; untilDay: number } | null {
+    if (state.launchDay === null) return null;
+    const fromDay = Math.max(day + 1, state.launchDay + rampDays);
+    return { fromDay, untilDay: fromDay + days - 1 };
+  }
+
   function grantOffer(state: GameState): GrantOffer | null {
     if (state.funding.grant) return null;
-    const { amount, days, minUptime } = f.grant;
+    const { amount, days } = f.grant;
+    const minUptime = f.grant.minUptime[state.model];
     const maxHoursDown = round1(((100 - minUptime) / 100) * HOURS_PER_DAY * days);
+    const window = grantDays(state, state.day, days);
+    const launching = state.launchDay === null || state.day < state.launchDay + rampDays - 1;
+    const when = launching ? "once your launch is over" : "after you accept it";
     return {
       amount,
       days,
-      untilDay: state.day + days,
+      fromDay: window?.fromDay ?? null,
+      untilDay: window?.untilDay ?? null,
       minUptime,
       maxHoursDown,
-      condition: `Keep uptime at ${minUptime}% or more for the ${days} days after you accept it: at most ${maxHoursDown} hours down in all.`,
+      condition: `Keep uptime at ${minUptime}% or more for the ${days} days ${when}: at most ${maxHoursDown} hours down in all.`,
       ifMissed: `Go over and the grant is withdrawn: all ${pounds(amount)} is paid back at once, which can bankrupt the company.`,
     };
   }
@@ -372,10 +395,14 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
   function grantView(state: GameState): GrantView | null {
     const grant = state.funding.grant;
     if (!grant) return null;
+    const window = grantDays(state, grant.day, grant.days);
     const running = grant.status === "accepted";
+    const daysLeft = !running ? 0 : window ? Math.min(grant.days, Math.max(0, window.untilDay - state.day)) : grant.days;
     return {
       ...grant,
-      daysLeft: running ? Math.max(0, grant.untilDay - state.day) : 0,
+      fromDay: window?.fromDay ?? null,
+      untilDay: window?.untilDay ?? null,
+      daysLeft,
       hoursLeft: running ? round1(Math.max(0, grant.maxHoursDown - grant.hoursDown)) : 0,
     };
   }
@@ -439,7 +466,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
           status: "accepted",
           day: state.day,
           amount: offer.amount,
-          untilDay: offer.untilDay,
+          days: offer.days,
           minUptime: offer.minUptime,
           maxHoursDown: offer.maxHoursDown,
           hoursDown: 0,
@@ -456,8 +483,8 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
         ? { status: "declined" as const, day: state.day, amount: 0, shares: 0, valuation: 0 }
         : (() => {
             const offer = grantOffer(state)!;
-            const { amount, untilDay, minUptime, maxHoursDown } = offer;
-            return { status: "declined" as const, day: state.day, amount, untilDay, minUptime, maxHoursDown, hoursDown: 0 };
+            const { amount, days, minUptime, maxHoursDown } = offer;
+            return { status: "declined" as const, day: state.day, amount, days, minUptime, maxHoursDown, hoursDown: 0 };
           })();
     return { ...state, funding: { ...state.funding, [funder]: declined } };
   }
@@ -468,7 +495,8 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
    */
   function grantDay(state: GameState, day: number, hoursDown: number): { funding: Funding; entries: LogEntry[] } {
     const grant = state.funding.grant;
-    if (!grant || grant.status !== "accepted" || day <= grant.day || day > grant.untilDay) {
+    const window = grant && grantDays(state, grant.day, grant.days);
+    if (!grant || grant.status !== "accepted" || !window || day < window.fromDay || day > window.untilDay) {
       return { funding: state.funding, entries: [] };
     }
     const down = round1(grant.hoursDown + hoursDown);
@@ -477,19 +505,19 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
         funding: { ...state.funding, grant: { ...grant, hoursDown: down, status: "withdrawn" } },
         entries: [
           {
-            text: `Grant withdrawn: ${down} hours down since you accepted it, over the ${grant.maxHoursDown} its ${grant.minUptime}% uptime condition allows. All ${pounds(grant.amount)} is paid back.`,
+            text: `Grant withdrawn: ${down} hours down since its condition started on day ${window.fromDay}, over the ${grant.maxHoursDown} its ${grant.minUptime}% uptime condition allows. All ${pounds(grant.amount)} is paid back.`,
             cashDelta: -grant.amount,
             kind: "funding",
           },
         ],
       };
     }
-    if (day === grant.untilDay) {
+    if (day === window.untilDay) {
       return {
         funding: { ...state.funding, grant: { ...grant, hoursDown: down, status: "met" } },
         entries: [
           {
-            text: `Grant condition met: ${down} hours down over its ${grant.untilDay - grant.day} days, within the ${grant.maxHoursDown} allowed. The ${pounds(grant.amount)} is yours to keep.`,
+            text: `Grant condition met: ${down} hours down over its ${grant.days} days, within the ${grant.maxHoursDown} allowed. The ${pounds(grant.amount)} is yours to keep.`,
             cashDelta: 0,
             kind: "funding",
           },

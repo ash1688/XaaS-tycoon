@@ -281,7 +281,9 @@ function fundingStatus(sim: Sim, state: GameState): string {
   const grant = f.grantOffer
     ? `offer ${money(f.grantOffer.amount)} if uptime ≥ ${f.grantOffer.minUptime}% for ${f.grantOffer.days} days`
     : g!.status === "accepted"
-      ? `${g!.hoursDown}h of ${g!.maxHoursDown}h down allowed used, ${g!.daysLeft} days left`
+      ? g!.untilDay === null
+        ? `${g!.maxHoursDown}h down allowed over ${g!.days} days, starting once the launch is over`
+        : `${g!.hoursDown}h of ${g!.maxHoursDown}h down allowed used, ${g!.daysLeft} days left`
       : g!.status;
   return `friends and family ${ff} | grant ${grant}`;
 }
@@ -621,7 +623,11 @@ function fundingLines(sim: Sim, state: GameState): string[] {
     const t = f.grant!;
     lines.push(
       `grant: ${t.status} on day ${t.day}` +
-        (t.status === "accepted" ? `; ${t.hoursDown}h down of ${t.maxHoursDown}h allowed, ${t.hoursLeft}h left, until day ${t.untilDay}` : ""),
+        (t.status !== "accepted"
+          ? ""
+          : t.untilDay === null
+            ? `; ${t.maxHoursDown}h down allowed over ${t.days} days, starting once the launch is over`
+            : `; ${t.hoursDown}h down of ${t.maxHoursDown}h allowed, ${t.hoursLeft}h left, day ${t.fromDay} to day ${t.untilDay}`),
     );
   }
   return lines;

@@ -863,13 +863,14 @@ export interface ValuationConfig {
  * decline once. Both pay everything up front.
  *
  * - Friends and family put in `amount` for new shares at today's share price: amount ÷ share price of them.
- * - The grant gives `amount` for no shares, on condition that uptime stays at least minUptime % over the `days` days
- *   played after it's accepted: at most (100 − minUptime)% of those days' hours down in all. Going over withdraws the
- *   grant: all of it is paid back at once.
+ * - The grant gives `amount` for no shares, on condition that uptime stays at least minUptime % (for the model it's
+ *   accepted on) over `days` days played: at most (100 − minUptime)% of those days' hours down in all. They start
+ *   after it's accepted and after the launch ramp, so the launch itself never counts. Going over withdraws the grant:
+ *   all of it is paid back at once.
  */
 export interface FundingConfig {
   friendsAndFamily: { amount: number };
-  grant: { amount: number; days: number; minUptime: number };
+  grant: { amount: number; days: number; minUptime: Record<ModelId, number> };
 }
 
 /**
@@ -1351,8 +1352,14 @@ export const defaultConfig: GameConfig = {
     valuePerPayingUser: 20,
     minimum: 50_000,
   },
-  // Small, to carry a careful student through the early weeks. The grant's 99% over 60 days allows 14.4 hours down.
-  funding: { friendsAndFamily: { amount: 15_000 }, grant: { amount: 10_000, days: 60, minUptime: 99 } },
+  // Small, to carry a careful student through the early weeks. The grant's uptime over 60 days allows hours down to
+  // fit each model's worst case with careful play. On-prem 98% (28.8 hours): kit takes a week to arrive, so a capacity
+  // miss means a week of outages. IaaS and PaaS 98.5% (21.6 hours): two provider outages at 10 or 8 hours each. SaaS
+  // 99% (14.4 hours): two at 6 hours.
+  funding: {
+    friendsAndFamily: { amount: 15_000 },
+    grant: { amount: 10_000, days: 60, minUptime: { onprem: 98, iaas: 98.5, paas: 98.5, saas: 99 } },
+  },
   pricing: {
     maxPrice: 1_000,
     growthSensitivity: 1,

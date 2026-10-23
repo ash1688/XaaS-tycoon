@@ -88,9 +88,16 @@ async function answer(type: "acceptFunding" | "declineFunding") {
         </template>
         <template v-else-if="grant?.status === 'accepted'">
           <p data-testid="grant-condition">
-            {{ formatCash(grant.amount) }} received on day {{ grant.day }}. Keep uptime at {{ grant.minUptime }}% or more
-            until day {{ grant.untilDay }}: {{ grant.hoursDown }} of {{ grant.maxHoursDown }} hours down used,
-            {{ grant.hoursLeft }} left, {{ days(grant.daysLeft) }} to go.
+            {{ formatCash(grant.amount) }} received on day {{ grant.day }}.
+            <template v-if="grant.untilDay === null">
+              Keep uptime at {{ grant.minUptime }}% or more for {{ days(grant.days) }} once your launch is over: at most
+              {{ grant.maxHoursDown }} hours down in all.
+            </template>
+            <template v-else>
+              Keep uptime at {{ grant.minUptime }}% or more from day {{ grant.fromDay }} to day {{ grant.untilDay }}:
+              {{ grant.hoursDown }} of {{ grant.maxHoursDown }} hours down used, {{ grant.hoursLeft }} left,
+              {{ days(grant.daysLeft) }} to go.
+            </template>
           </p>
           <div
             class="loan-bar"
@@ -169,7 +176,13 @@ async function answer(type: "acceptFunding" | "declineFunding") {
             </tr>
           </tbody>
         </table>
-        <p class="muted">The condition runs until day {{ grantOffer.untilDay }}. You can only answer this offer once.</p>
+        <p class="muted">
+          <template v-if="grantOffer.untilDay !== null">
+            The condition runs from day {{ grantOffer.fromDay }} to day {{ grantOffer.untilDay }}.
+          </template>
+          <template v-else>The condition starts once your launch is over, so the launch itself doesn't count.</template>
+          You can only answer this offer once.
+        </p>
       </template>
       <div class="confirm-buttons">
         <button :disabled="game.busy" data-testid="funding-accept" @click="answer('acceptFunding')">

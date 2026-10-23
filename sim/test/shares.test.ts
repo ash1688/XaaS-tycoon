@@ -318,18 +318,34 @@ describe("friends and family", () => {
 });
 
 describe("the grant", () => {
-  const { amount, days, minUptime } = quiet.funding.grant;
+  const { amount, days } = quiet.funding.grant;
   const accept = (s: Sim, state: GameState) => s.applyAction(state, { type: "acceptFunding", funder: "grant" });
   const fundingEntries = (log: DayLog[]) =>
     log.flatMap((d) => d.entries).filter((e) => e.kind === "funding");
+  // SaaS launches on day 1, so its ramp takes days 1 to 3 and a grant taken on day 1 counts from day 4.
+  const RAMP = quiet.launch.rampShares.length;
+  const FROM = 1 + RAMP;
+  const UNTIL = FROM + days - 1;
 
   it("shows its condition and what happens if it's broken before it's accepted", () => {
     const offer = sim.funding(begin()).grantOffer!;
-    expect(offer).toMatchObject({ amount, days, untilDay: 1 + days, minUptime, maxHoursDown: 14.4 });
+    expect(offer).toMatchObject({ amount, days, fromDay: FROM, untilDay: UNTIL, minUptime: 99, maxHoursDown: 14.4 });
     expect(offer.condition).toBe(
-      `Keep uptime at 99% or more for the ${days} days after you accept it: at most 14.4 hours down in all.`,
+      `Keep uptime at 99% or more for the ${days} days once your launch is over: at most 14.4 hours down in all.`,
     );
     expect(offer.ifMissed).toMatch(/withdrawn: all £10,000 is paid back/);
+  });
+
+  it("asks for the uptime that fits the model: less on-prem, where kit takes a week to arrive", () => {
+    const onPrem = sim.newGame({ companyName: "Acme", productType: "social", model: "onprem", seed: 42, takeLoan: true });
+    const offer = sim.funding(onPrem).grantOffer!;
+    // Not launched yet (the kit is on order), so the condition's days aren't known.
+    expect(offer).toMatchObject({ minUptime: 98, maxHoursDown: 28.8, fromDay: null, untilDay: null });
+    expect(offer.condition).toMatch(/once your launch is over/);
+    const accepted = sim.funding(accept(sim, onPrem)).grant!;
+    expect(accepted).toMatchObject({ status: "accepted", fromDay: null, untilDay: null, daysLeft: days });
+    const paas = sim.newGame({ companyName: "Acme", productType: "social", model: "paas", seed: 42 });
+    expect(sim.funding(paas).grantOffer).toMatchObject({ minUptime: 98.5, maxHoursDown: 21.6 });
   });
 
   it("gives cash and takes no shares", () => {
@@ -339,14 +355,14 @@ describe("the grant", () => {
     expect(after.shareholders).toEqual(state.shareholders);
     expect(sim.funding(after)).toMatchObject({
       grantOffer: null,
-      grant: { status: "accepted", day: 1, untilDay: 1 + days, hoursDown: 0, daysLeft: days, hoursLeft: 14.4 },
+      grant: { status: "accepted", day: 1, days, fromDay: FROM, untilDay: UNTIL, hoursDown: 0, daysLeft: days, hoursLeft: 14.4 },
     });
   });
 
   it("is kept when uptime holds over its days, counting the hours down on the way", () => {
     const s = createSim({ ...quiet, events: [outageOn([5], 6)] });
-    const { state, log } = s.advance(accept(s, begin(s)), days);
-    expect(state.day).toBe(1 + days);
+    const { state, log } = s.advance(accept(s, begin(s)), UNTIL - 1);
+    expect(state.day).toBe(UNTIL);
     expect(sim.funding(state).grant).toMatchObject({ status: "met", hoursDown: 6, daysLeft: 0, hoursLeft: 0 });
     expect(fundingEntries(log)).toEqual([
       expect.objectContaining({ cashDelta: 0, text: expect.stringMatching(/^Grant condition met: 6 hours down/) }),
@@ -362,7 +378,7 @@ describe("the grant", () => {
     expect(s.funding(state).grant).toMatchObject({ status: "withdrawn", hoursDown: 18 });
     const [withdrawn] = fundingEntries(log);
     expect(withdrawn).toMatchObject({ cashDelta: -amount });
-    expect(withdrawn!.text).toMatch(/^Grant withdrawn: 18 hours down/);
+    expect(withdrawn!.text).toMatch(/^Grant withdrawn: 18 hours down since its condition started on day 4/);
     expect(log.find((d) => d.entries.includes(withdrawn!))!.day).toBe(14);
     // Paid back as money raised in reverse, so the cash chart still adds up.
     expect(state.spendByDay.find((d) => d.day === 14)!.raised).toBe(-amount);
@@ -371,11 +387,18 @@ describe("the grant", () => {
     expect(days2[0]!.cash).toBe(accepted.cash);
   });
 
-  it("ignores downtime before it was accepted and after its days", () => {
-    const s = createSim({ ...quiet, events: [outageOn([3, 2 + 3 + days], 20)] });
-    const late = s.advance(begin(s), 3).state;
-    const { state } = s.advance(accept(s, late), days + 2);
+  it("ignores downtime during the launch ramp, before it was accepted and after its days", () => {
+    const s = createSim({ ...quiet, events: [outageOn([RAMP, UNTIL + 1], 20)] });
+    const { state } = s.advance(accept(s, begin(s)), UNTIL + 1);
     expect(s.funding(state).grant).toMatchObject({ status: "met", hoursDown: 0 });
+
+    // Accepted once the launch is over, it counts from the next day.
+    const s2 = createSim({ ...quiet, events: [outageOn([5, 12 + days], 20)] });
+    const late = s2.advance(begin(s2), 10).state;
+    expect(s2.funding(late).grantOffer).toMatchObject({ fromDay: 12, untilDay: 11 + days });
+    expect(s2.funding(late).grantOffer!.condition).toMatch(/for the 60 days after you accept it/);
+    const after = s2.advance(accept(s2, late), days + 2).state;
+    expect(s2.funding(after).grant).toMatchObject({ status: "met", hoursDown: 0 });
   });
 
   it("can be taken once, or declined for good", () => {
