@@ -305,6 +305,11 @@ export interface FeatureConfig {
   growthMultiplier: number;
   /** On SaaS, the add-on's price per user per month, billed a day at a time like the model's per-user fee. */
   addonPricePerUser: number;
+  /**
+   * The customer types it appeals to: once active, each type's weight among new users is multiplied by its number
+   * here (1.5 = half as many again of them). A "pro" feature brings in more professionals. None changes nothing.
+   */
+  appeal?: Partial<Record<CustomerTypeId, number>>;
 }
 
 /** What a product's users expect to pay, and how many use it for free. */
@@ -427,6 +432,12 @@ export interface PricingConfig {
   maxGrowthBoost: number;
   /** How strongly a price above the fair price puts new users on the free tier. 0 for no effect. */
   paidShareSensitivity: number;
+  /**
+   * How hard the price filters who joins. Above a customer type's threshold, its weight among new users is multiplied
+   * by (price ÷ its threshold) ^ −newUserFilter, so a dear price brings fewer casual users and the mix moves upmarket.
+   * At or below every threshold new users arrive in the product's mix. 0 for no effect.
+   */
+  newUserFilter: number;
   /**
    * Days a price change's wave lasts, from the first day played at the new price. Day 1 is the quick reaction
    * (firstDayShare of the whole effect); the rest is spread over the remaining days, building to a peak in the
@@ -783,6 +794,11 @@ export interface CustomerTypeConfig {
   thresholdMultiple: number;
   /** Of the type's paying users a price rise loses, the share who drop to free. The rest leave. */
   toFreeShare: number;
+  /**
+   * Share of the type's users, paying or free, who leave for each hour the service is down, on top of the paying users
+   * every type stops paying (outage.paidChurnPerHour). Businesses run on the service, so poor uptime drives them out.
+   */
+  outageLeavePerHour: number;
 }
 
 export interface LoanConfig {
@@ -1117,6 +1133,7 @@ export const defaultConfig: GameConfig = {
           devDays: 20,
           growthMultiplier: 1.15,
           addonPricePerUser: 0.04,
+          appeal: { businesses: 1.5 },
         },
         {
           id: "reviews",
@@ -1125,6 +1142,7 @@ export const defaultConfig: GameConfig = {
           devDays: 12,
           growthMultiplier: 1.1,
           addonPricePerUser: 0.025,
+          appeal: { professionals: 1.5 },
         },
         {
           id: "recommendations",
@@ -1133,6 +1151,7 @@ export const defaultConfig: GameConfig = {
           devDays: 30,
           growthMultiplier: 1.2,
           addonPricePerUser: 0.05,
+          appeal: { casual: 1.5 },
         },
         {
           id: "wishlists",
@@ -1141,6 +1160,7 @@ export const defaultConfig: GameConfig = {
           devDays: 10,
           growthMultiplier: 1.05,
           addonPricePerUser: 0.015,
+          appeal: { enthusiasts: 1.5 },
         },
       ],
       // Other shops, marketplaces and delivery firms check stock and place orders through it.
@@ -1184,6 +1204,7 @@ export const defaultConfig: GameConfig = {
           devDays: 20,
           growthMultiplier: 1.15,
           addonPricePerUser: 0.08,
+          appeal: { casual: 1.5 },
         },
         {
           id: "photos",
@@ -1192,6 +1213,7 @@ export const defaultConfig: GameConfig = {
           devDays: 16,
           growthMultiplier: 1.12,
           addonPricePerUser: 0.06,
+          appeal: { enthusiasts: 1.5 },
         },
         {
           id: "groups",
@@ -1200,6 +1222,7 @@ export const defaultConfig: GameConfig = {
           devDays: 24,
           growthMultiplier: 1.15,
           addonPricePerUser: 0.08,
+          appeal: { professionals: 1.5 },
         },
         {
           id: "notifications",
@@ -1208,6 +1231,7 @@ export const defaultConfig: GameConfig = {
           devDays: 10,
           growthMultiplier: 1.05,
           addonPricePerUser: 0.03,
+          appeal: { businesses: 1.5 },
         },
       ],
     },
@@ -1241,6 +1265,7 @@ export const defaultConfig: GameConfig = {
           devDays: 20,
           growthMultiplier: 1.12,
           addonPricePerUser: 0.14,
+          appeal: { enthusiasts: 1.5 },
         },
         {
           id: "comments",
@@ -1249,6 +1274,7 @@ export const defaultConfig: GameConfig = {
           devDays: 10,
           growthMultiplier: 1.05,
           addonPricePerUser: 0.07,
+          appeal: { casual: 1.5 },
         },
         {
           id: "recommendations",
@@ -1257,6 +1283,7 @@ export const defaultConfig: GameConfig = {
           devDays: 30,
           growthMultiplier: 1.2,
           addonPricePerUser: 0.2,
+          appeal: { casual: 1.5 },
         },
         {
           id: "live",
@@ -1265,16 +1292,17 @@ export const defaultConfig: GameConfig = {
           devDays: 36,
           growthMultiplier: 1.2,
           addonPricePerUser: 0.2,
+          appeal: { professionals: 1.5, businesses: 1.5 },
         },
       ],
     },
   },
   // Casual users react at the fair price, as everyone did in the alpha; the others put up with more, and go free less.
   customerTypes: {
-    casual: { name: "Casual users", blurb: "Use it now and then. Low willingness to pay; go free readily.", thresholdMultiple: 1, toFreeShare: 0.6 },
-    enthusiasts: { name: "Enthusiasts", blurb: "Keen regular users. Will pay a bit more; sometimes go free.", thresholdMultiple: 1.25, toFreeShare: 0.4 },
-    professionals: { name: "Professionals", blurb: "Use it for work. Pay well; rarely go free.", thresholdMultiple: 2, toFreeShare: 0.2 },
-    businesses: { name: "Businesses", blurb: "Run on it. Pay the most; rarely go free, they leave.", thresholdMultiple: 3, toFreeShare: 0.1 },
+    casual: { name: "Casual users", blurb: "Use it now and then. Low willingness to pay; go free readily.", thresholdMultiple: 1, toFreeShare: 0.6, outageLeavePerHour: 0 },
+    enthusiasts: { name: "Enthusiasts", blurb: "Keen regular users. Will pay a bit more; sometimes go free.", thresholdMultiple: 1.25, toFreeShare: 0.4, outageLeavePerHour: 0 },
+    professionals: { name: "Professionals", blurb: "Use it for work. Pay well; rarely go free.", thresholdMultiple: 2, toFreeShare: 0.2, outageLeavePerHour: 0.002 },
+    businesses: { name: "Businesses", blurb: "Run on it. Pay the most; rarely go free, they leave, and fast when it's down.", thresholdMultiple: 3, toFreeShare: 0.1, outageLeavePerHour: 0.01 },
   },
   staff: {
     developers: { name: "Developers", personName: "developer", dayRate: 120, startingCount: 2 },
@@ -1366,6 +1394,8 @@ export const defaultConfig: GameConfig = {
     growthSensitivity: 1,
     maxGrowthBoost: 2,
     paidShareSensitivity: 1,
+    // Twice the casual threshold brings a quarter as many casual users, so a pricier company grows more professional.
+    newUserFilter: 2,
     // A change starts a 7-day wave and locks the price for 14. With these, a 25% rise on a fair price costs about 10%
     // of payers, 50% about 28% and doubling it 80%: the most income comes from about 25-30% above fair, and each rise
     // after that pays less, until raising the price stops paying at all.

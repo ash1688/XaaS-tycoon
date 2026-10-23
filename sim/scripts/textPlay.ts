@@ -14,6 +14,7 @@ import {
   STAFF_POOLS,
   type Action,
   type DayLog,
+  type FeatureView,
   type FunderId,
   type GameState,
   type ManagedService,
@@ -67,6 +68,7 @@ const money = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
 /** A price, to the penny when it has pence: £7.50, £5. */
 const price = (n: number) => (Number.isInteger(n) ? money(n) : `£${n.toFixed(2)}`);
 const pct = (n: number) => `${Math.round(n)}%`;
+const share = (n: number) => `${(100 * n).toFixed(1)}%`;
 /** A share of the company, 0–1, to one decimal place of a percent. */
 const stake = (share: number) => `${Math.round(share * 1000) / 10}%`;
 /** A share price, which can be under a penny with many shares. */
@@ -138,13 +140,33 @@ export function logRow(sim: Sim, state: GameState, who: Player, type: string, pa
   };
 }
 
-/** Each customer type's share of users and price threshold, "!" where today's price is over it. */
+/** Each customer type's share of users, to a tenth of a percent so a shift shows, and price threshold, "!" where today's price is over it. */
 export function renderMix(sim: Sim, state: GameState): string {
   return sim
     .customerMix(state)
-    .types.map((t) => `${t.id} ${pct(100 * t.share)} (threshold ${price(t.threshold)}${t.overThreshold ? "!" : ""})`)
+    .types.map((t) => `${t.id} ${share(t.share)} (threshold ${price(t.threshold)}${t.overThreshold ? "!" : ""})`)
     .join(", ");
 }
+
+/** Each customer type's share of today's new users, with what tilts it from the product's mix: features and the price. */
+export function renderNewUsers(sim: Sim, state: GameState): string {
+  return sim
+    .customerMix(state)
+    .types.map((t) => {
+      const why = [
+        t.featureAppeal !== 1 ? `features x${+t.featureAppeal.toFixed(2)}` : "",
+        t.priceFilter !== 1 ? `price x${+t.priceFilter.toFixed(2)}` : "",
+      ].filter(Boolean);
+      return `${t.id} ${share(t.newShare)}${why.length ? ` (${why.join(", ")})` : ""}`;
+    })
+    .join(", ");
+}
+
+/** Who a feature appeals to: " [pulls professionals x1.5]". */
+const appeal = (a: FeatureView["appeal"]) => {
+  const parts = Object.entries(a ?? {}).map(([t, m]) => `${t} x${m}`);
+  return parts.length ? ` [pulls ${parts.join(", ")}]` : "";
+};
 
 /** The company at a glance: everything a player sees on the dashboard, as short lines. */
 export function renderStatus(sim: Sim, state: GameState): string {
@@ -170,6 +192,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
     );
   }
   lines.push(`customer mix: ${renderMix(sim, state)}`);
+  lines.push(`new users join as: ${renderNewUsers(sim, state)}`);
   const conversion = sim.conversion(state);
   lines.push(
     `users ${state.users.toLocaleString("en-GB")} (paid ${state.paidUsers.toLocaleString("en-GB")}, free ${(state.users - state.paidUsers).toLocaleString("en-GB")}) | converting ${(conversion.rate * 100).toFixed(2)}%/day`,
@@ -242,7 +265,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const features = sim.features(state);
   lines.push(
     `features: ${features
-      .map((f) => `${f.id} ${f.status === "notStarted" ? "not started" : f.status}${f.daysLeft ? ` (${f.daysLeft}d left)` : ""}`)
+      .map((f) => `${f.id} ${f.status === "notStarted" ? "not started" : f.status}${f.daysLeft ? ` (${f.daysLeft}d left)` : ""}${appeal(f.appeal)}`)
       .join(", ")}`,
   );
 

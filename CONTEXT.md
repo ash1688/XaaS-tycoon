@@ -108,6 +108,14 @@ _Avoid_: Commission, cut, take rate
 A group of users with its own price threshold: casual users, enthusiasts, professionals or businesses. Each product has its own mix.
 _Avoid_: Segment, persona, tier
 
+**Customer mix**:
+Each customer type's share of a company's users. It starts as the product's mix and shifts as users come and go: features, the price and downtime change who joins and who leaves.
+_Avoid_: Segmentation, demographics
+
+**New-user mix**:
+The customer mix new users arrive in: the product's mix, tilted by the features (each pulls in a customer type) and the price (fewer of a type join above its price threshold). Rivals and campaigns tilt it too.
+_Avoid_: Acquisition mix, inflow
+
 **Price threshold**:
 The price at which a customer type starts to react badly.
 _Avoid_: Pain point, willingness to pay

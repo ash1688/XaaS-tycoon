@@ -210,6 +210,7 @@ const config: GameConfig = {
     maxPrice: 1_000,
     growthSensitivity: 1,
     maxGrowthBoost: 2,
+    newUserFilter: 2,
     paidShareSensitivity: 1,
     ...noWaves(),
   },

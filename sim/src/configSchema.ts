@@ -217,6 +217,11 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     }
     for (const f of product.features) {
       add(`productTypes.${p}.features.${f.id}.growthMultiplier`, "Customers", s, `${f.name}: growth multiplier`, "Once built or bought, daily growth is multiplied by this (1.1 = 10% faster).", range(0, 5, 0.01));
+      for (const t of CUSTOMER_TYPE_IDS) {
+        if (f.appeal?.[t] === undefined) continue;
+        const type = base.customerTypes?.[t]?.name ?? t;
+        add(`productTypes.${p}.features.${f.id}.appeal.${t}`, "Customers", s, `${f.name}: appeal to ${type.toLowerCase()}`, "Once built or bought, this customer type's weight among new users is multiplied by this (1.5 = half as many again). 1 for no effect.", MULTIPLIER);
+      }
     }
   }
   add("outage.growthMultiplier", "Customers", "", "Growth on an outage day", "Growth is multiplied by this on a day with an outage.", SHARE);
@@ -224,6 +229,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("pricing.growthSensitivity", "Customers", "", "Price effect on growth", "Growth is multiplied by (price ÷ fair price) to minus this. 0 for no effect.", range(0, 5, 0.05));
   add("pricing.maxGrowthBoost", "Customers", "", "Most a low price speeds growth", "A price below the fair price multiplies growth by at most this.", range(1, 10, 0.05));
   add("pricing.paidShareSensitivity", "Customers", "", "Price effect on new payers", "The paid share of new users is multiplied by (price ÷ fair price) to minus this.", range(0, 5, 0.05));
+  add("pricing.newUserFilter", "Customers", "", "Price effect on who joins", "Above a customer type's price threshold, its weight among new users is multiplied by (price ÷ threshold) to minus this, so a dear price brings fewer casual users. 0 for no effect.", range(0, 5, 0.05));
 
   // Customers: customer types
   for (const t of CUSTOMER_TYPE_IDS) {
@@ -231,6 +237,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     if (!type) continue;
     add(`customerTypes.${t}.thresholdMultiple`, "Customers", "Customer types", `${type.name}: price threshold`, "The price at which this type starts to react badly, as a multiple of the product's fair price. A rise and a high price are measured against it.", range(0.1, 20, 0.05));
     add(`customerTypes.${t}.toFreeShare`, "Customers", "Customer types", `${type.name}: drop to free share`, "Of this type's paying users a price rise loses, the share who drop to free. The rest leave.", SHARE);
+    add(`customerTypes.${t}.outageLeavePerHour`, "Customers", "Customer types", `${type.name}: users lost per hour down`, "Share of this type's users, paying or free, who leave for each hour of downtime (0.01 = 1%), on top of the payers every type loses. Poor uptime drives the type out.", range(0, 0.1, 0.0005));
   }
 
   // Customers: price waves and the price lock

@@ -20,6 +20,15 @@ const scaleTop = computed(() => {
 });
 const along = (price: number) => `${Math.min(100, (100 * price) / scaleTop.value)}%`;
 const over = computed(() => mix.value?.types.filter((t) => t.overThreshold && t.share > 0) ?? []);
+
+/** What tilts a type's share of new users from the product's mix: "features ×1.5", "price ×0.25". */
+const tilt = (t: { featureAppeal: number; priceFilter: number }) =>
+  [
+    t.featureAppeal !== 1 ? `features ×${+t.featureAppeal.toFixed(2)}` : "",
+    t.priceFilter !== 1 ? `price ×${+t.priceFilter.toFixed(2)}` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
 </script>
 
 <template>
@@ -59,6 +68,7 @@ const over = computed(() => mix.value?.types.filter((t) => t.overThreshold && t.
           <th scope="col">Customer type</th>
           <th scope="col" class="num">Share</th>
           <th scope="col" class="num">Users</th>
+          <th scope="col" class="num">New users</th>
           <th scope="col" class="num">Threshold</th>
         </tr>
       </thead>
@@ -71,6 +81,9 @@ const over = computed(() => mix.value?.types.filter((t) => t.overThreshold && t.
           </th>
           <td class="num">{{ percent(t.share) }}</td>
           <td class="num">{{ formatCount(t.users) }}</td>
+          <td class="num" data-testid="mix-new">
+            {{ percent(t.newShare) }}<small v-if="tilt(t)" class="mix-over-note">{{ tilt(t) }}</small>
+          </td>
           <td :class="['num', { neg: t.overThreshold }]">
             {{ formatPrice(t.threshold) }}<small v-if="t.overThreshold" class="mix-over-note">you're over</small>
           </td>
@@ -81,6 +94,12 @@ const over = computed(() => mix.value?.types.filter((t) => t.overThreshold && t.
       Each type has its own price threshold: the price at which it starts to react badly. When you raise your price,
       each type reacts in its own way, and the reaction you get is each type's reaction weighted by its share of
       users. A rise lands hardest on a mostly casual crowd; professionals and businesses put up with much more.
+    </p>
+    <p data-testid="mix-shifts">
+      The mix shifts as users come and go. New users join in your product's usual mix, tilted by your features (each
+      pulls in a customer type) and your price: above a type's threshold, fewer of them join. A rise loses casual users
+      first, and downtime drives businesses and professionals away. A pricier company ends up more professional, so
+      its next rise hurts less.
     </p>
     <p v-if="over.length" class="wave-note" data-testid="mix-over">
       <span class="badge">Over threshold</span>
