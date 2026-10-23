@@ -3,7 +3,7 @@
 import { computed, inject, onUnmounted, provide, reactive, ref, watch, type InjectionKey } from "vue";
 import type { DayLog, EventView, FeatureGapView, LayerId, ModelId, StaffGrade, StaffPool, UnitTier } from "@xaas/sim";
 import type { ActionBody, CompanyView, MetaView, SummaryView } from "@xaas/server/api-types";
-import { api } from "./api";
+import { api, RequestError } from "./api";
 import { createUiLog } from "./playLog";
 
 export const days = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
@@ -184,6 +184,15 @@ export function createGame(code: string, id: string) {
     }
   }
 
+  /**
+   * After an error: a game the teacher ended (or that ended in another tab) refuses everything with "finished", so
+   * the page reloads it to show its summary instead of the error.
+   */
+  async function showError(e: unknown) {
+    if (e instanceof RequestError && e.code === "finished") return load();
+    error.value = (e as Error).message;
+  }
+
   async function loadSummary() {
     summary.value = await api.summary(code, id);
   }
@@ -204,7 +213,7 @@ export function createGame(code: string, id: string) {
     try {
       company.value = await api.act(code, id, action);
     } catch (e) {
-      error.value = (e as Error).message;
+      await showError(e);
     } finally {
       busy.value = false;
     }
@@ -237,7 +246,7 @@ export function createGame(code: string, id: string) {
       dayLogs.value = [...dayLogs.value, ...result.log];
       if (over.value) await loadSummary();
     } catch (e) {
-      error.value = (e as Error).message;
+      await showError(e);
     } finally {
       busy.value = false;
     }

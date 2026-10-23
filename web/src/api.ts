@@ -4,6 +4,7 @@ import type {
   ApiError,
   CodeView,
   CompanyView,
+  EndGamesResult,
   ContinueResult,
   LogDeleteResult,
   LogStatsView,
@@ -92,6 +93,8 @@ export const api = {
   archiveGame: (id: string) => request<{ ok: true }>("POST", `/api/teacher/companies/${enc(id)}/archive`),
   unarchiveGame: (id: string) => request<{ ok: true }>("POST", `/api/teacher/companies/${enc(id)}/unarchive`),
   deleteGame: (id: string) => request<{ ok: true }>("DELETE", `/api/teacher/companies/${enc(id)}`),
+  endGame: (id: string) => request<EndGamesResult>("POST", `/api/teacher/companies/${enc(id)}/end`),
+  endCodeGames: (code: string) => request<EndGamesResult>("POST", `/api/teacher/codes/${enc(code)}/end`),
   archiveCode: (code: string) => request<{ ok: true }>("POST", `/api/teacher/codes/${enc(code)}/archive`),
   unarchiveCode: (code: string) => request<{ ok: true }>("POST", `/api/teacher/codes/${enc(code)}/unarchive`),
   deleteCode: (code: string) => request<{ ok: true }>("DELETE", `/api/teacher/codes/${enc(code)}`),
@@ -134,6 +137,8 @@ export const formatUptime = (pct: number) => (pct >= 100 ? "100%" : `${(Math.flo
 export const CATEGORY_LABELS: Record<SpendCategory, string> = {
   staff: "Staff",
   infrastructure: "Infrastructure",
+  cabling: "Cabling",
+  power: "Power and cooling",
   addons: "Add-ons",
   debt: "Debt",
 };

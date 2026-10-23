@@ -22,6 +22,11 @@
   /* The bank's: debt */
   --debt: #a16207;
   --debt-soft: #fdf6dd;
+  /* Running your own kit: cabling, and power and cooling */
+  --cabling: #4338ca;
+  --cabling-soft: #eceafd;
+  --power: #be185d;
+  --power-soft: #fce8f1;
   color-scheme: light;
 }
 
@@ -48,6 +53,10 @@
     --warn-soft: #3a1b1b;
     --debt: #facc15;
     --debt-soft: #352d10;
+    --cabling: #a5b4fc;
+    --cabling-soft: #23244a;
+    --power: #f472b6;
+    --power-soft: #3b1a2b;
     color-scheme: dark;
   }
 }
@@ -412,6 +421,17 @@ fieldset > p {
 .cat-addons {
   --cat: var(--shared);
   --cat-soft: var(--shared-soft);
+}
+
+/* Cabling for the kit you buy, and power and cooling for what you run. */
+.cat-cabling {
+  --cat: var(--cabling);
+  --cat-soft: var(--cabling-soft);
+}
+
+.cat-power {
+  --cat: var(--power);
+  --cat-soft: var(--power-soft);
 }
 
 /* Debt is the bank's: loan repayments. */

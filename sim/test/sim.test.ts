@@ -100,7 +100,7 @@ const paasServers = {
 };
 
 function costs(monthlyCost: number) {
-  return { upfrontCost: 0, monthlyCost, monthlyCostPerUser: 0, exitPenalty: 0 };
+  return { upfrontCost: 0, monthlyCost, monthlyCostPerUser: 0, powerAndCooling: 0, exitPenalty: 0 };
 }
 
 function noWaves() {
@@ -127,6 +127,7 @@ function noWaves() {
 const config: GameConfig = {
   startingCash: 1000,
   finalDay: 180,
+  allowedGameLengths: { "180-days": 1, "1-year": 0, career: 0 },
   maxCompanyNameLength: 20,
   // Launches in full on day 1, as the game starts, with the starter setups below in place: the launch tests set their own.
   launch: { rampShares: [1] },
@@ -191,8 +192,9 @@ const config: GameConfig = {
   },
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25, paidChurnPerHour: 0 },
   billing: { daysPerMonth: 30 },
-  // Taken at the start: £17,900 at 10%, £19,690 over 179 days, £110 a day.
-  loan: { amount: 17_900, baseRate: 0.1, ratePerDay: 0.002, minDays: 14 },
+  // Taken at the start: £17,900 at 10%, £19,690 over 179 days, £110 a day. The term is a day shorter for each day
+  // later it's taken, so like the final day.
+  loan: { amount: 17_900, baseRate: 0.1, ratePerDay: 0.002, termDays: 179, termPerDay: 1, minTermDays: 1, minDays: 14 },
   // No price waves unless a test says otherwise, so a price change only has its ongoing effect on growth and payers.
   pricing: {
     maxPrice: 1_000,
@@ -1294,8 +1296,8 @@ describe("servers on IaaS", () => {
   it("starts a new IaaS game with the configured starter setup, ready for the first day", () => {
     const state = begin();
     expect(flat.servers(state)).toEqual([
-      { id: 1, type: "app", size: "massive", name: "App server", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, monthlyCost: 0, paid: null, sellBack: null },
-      { id: 2, type: "database", size: "massive", name: "Database", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, monthlyCost: 0, paid: null, sellBack: null },
+      { id: 1, type: "app", size: "massive", name: "App server", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, monthlyCost: 0, paid: null, sellBack: null, rack: null },
+      { id: 2, type: "database", size: "massive", name: "Database", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, monthlyCost: 0, paid: null, sellBack: null, rack: null },
     ]);
     expect(flat.units(state)).toMatchObject({ cu: { demand: 10, capacity: 10_000 }, dbu: { demand: 10, capacity: 10_000 } });
   });
@@ -1576,7 +1578,7 @@ describe("servers on-prem", () => {
   };
   const onpremServers = {
     ...iaasServers,
-    purchase: { price: each(1_000, 2_000, 3_000, 4_000), sellBackShare: 0.4 },
+    purchase: { price: each(1_000, 2_000, 3_000, 4_000), sellBackShare: 0.4, cablingCost: 0 },
     monthlyCost: each(30, 60, 90, 120),
     readyDays: 10,
   };
@@ -1810,20 +1812,21 @@ describe("servers on-prem", () => {
   it("by default, charges the server room up front and the first kit when it's bought, launching when it arrives", () => {
     const s = createSim(smallestLaunch(defaultConfig));
     const { onprem } = defaultConfig.models;
-    // The model's upfront cost is the server room. There's no kit until the company buys some, so nothing is charged
-    // twice.
-    expect(s.upfrontCost("onprem")).toBe(onprem.upfrontCost);
-    expect(s.upfrontCost("onprem")).toBe(3_000);
+    // The model's upfront cost is the server room, which comes with a medium rack (£500) and its cabling (£50). There's
+    // no kit until the company buys some, so nothing is charged twice.
+    expect(s.upfrontCost("onprem")).toBe(onprem.upfrontCost + 550);
+    expect(s.upfrontCost("onprem")).toBe(3_050);
     expect(onprem.servers!.readyDays).toBe(7);
     for (const p of PRODUCT_TYPE_IDS) {
       const own = s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1 });
-      expect(own.cash).toBe(defaultConfig.startingCash - 3_000);
+      expect(own.cash).toBe(defaultConfig.startingCash - 3_050);
       expect(own.servers).toEqual([]);
-      // A large app server and database, £2,200 on day 1 (video's massive app server, £2,600): starting cash covers
-      // them, leaving little to buy more with.
-      expect(setUp(s, own).cash).toBe(defaultConfig.startingCash - (p === "video" ? 5_600 : 5_200));
+      expect(own.racks).toEqual([{ id: 1, size: "medium", paid: 500 }]);
+      // A large app server and database, £2,200 on day 1 (video's massive app server, £2,600), and £50 cabling each:
+      // starting cash covers them, leaving little to buy more with.
+      expect(setUp(s, own).cash).toBe(defaultConfig.startingCash - (p === "video" ? 5_750 : 5_350));
       const loaned = s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1, takeLoan: true });
-      expect(loaned.cash).toBe(defaultConfig.startingCash + defaultConfig.loan.amount - 3_000);
+      expect(loaned.cash).toBe(defaultConfig.startingCash + defaultConfig.loan.amount - 3_050);
       // The kit arrives on day 8, and the users with it.
       const state = launched(s, loaned);
       expect(state.launchDay, p).toBe(8);
@@ -2418,16 +2421,30 @@ describe("bank loan", () => {
   it("can be taken at the start: the money arrives on day 1 as borrowing, not income", () => {
     const state = begin(true);
     expect(state.cash).toBe(100_000 + 17_900);
-    expect(state.loan).toEqual({ amount: 17_900, day: 1, rate: 0.1, dailyRepayment: 110, total: 19_690, repaid: 0 });
+    expect(state.loan).toEqual({
+      amount: 17_900,
+      day: 1,
+      rate: 0.1,
+      term: 179,
+      lastDay: 180,
+      dailyRepayment: 110,
+      total: 19_690,
+      repaid: 0,
+      interestPaid: 0,
+      paidOffDay: null,
+    });
     expect(state.spendByDay).toEqual([
       {
         day: 1,
         staff: 0,
         infrastructure: 0,
+        cabling: 0,
+        power: 0,
         addons: 0,
         debt: 0,
         income: 0,
         borrowed: 17_900,
+        interest: 0,
         users: 1000,
         paidUsers: 0,
         satisfaction: 100,
@@ -2488,7 +2505,7 @@ describe("bank loan", () => {
     const notes = loanNotes(log);
     expect(notes).toHaveLength(2);
     expect(notes[0]).toMatchObject({ day: 61, text: expect.stringContaining("on day 60 at 21.8% interest") });
-    expect(notes[0]!.text).toContain("£182 a day until day 180");
+    expect(notes[0]!.text).toContain("£182 a day for 120 days, until day 180");
     expect(notes[1]).toMatchObject({ day: 180, text: expect.stringContaining("repaid in full") });
   });
 
@@ -2503,8 +2520,8 @@ describe("bank loan", () => {
     expect(loanNotes(log).at(-1)!.day).toBe(180);
   });
 
-  it("allows only one loan per company", () => {
-    const refused = expect.objectContaining({ code: "loan_taken" });
+  it("refuses a second loan while one is being repaid", () => {
+    const refused = expect.objectContaining({ code: "loan_open" });
     expect(() => rich.applyAction(begin(true), takeLoan)).toThrow(refused);
     const taken = rich.applyAction(onDay60(), takeLoan);
     expect(() => rich.applyAction(taken, takeLoan)).toThrow(SimError);
@@ -2513,8 +2530,8 @@ describe("bank loan", () => {
     expect(rich.loanQuote(begin(true))).toBeNull();
   });
 
-  it("isn't lent with fewer than the fewest repayment days left", () => {
-    // Day 166 leaves 14 days to repay: the fewest. Day 167 leaves 13.
+  it("isn't lent in the game's last days", () => {
+    // Day 166 leaves 14 days: the fewest. Day 167 leaves 13.
     const day166 = rich.advance(begin(), 165).state;
     expect(rich.loanQuote(day166)).toMatchObject({ days: 14 });
     const day167 = rich.advance(day166).state;
@@ -2545,7 +2562,9 @@ describe("bank loan", () => {
     expect(days[0]!.cash).toBe(begin().cash);
     // Profit counts only the interest in the repayments: the principal paid back was borrowed, not earned.
     const { loan } = state;
-    const principal = state.spend.debt - Math.round((state.spend.debt * (loan!.total - loan!.amount)) / loan!.total);
+    expect(state.interestPaid).toBe(Math.round((state.spend.debt * (loan!.total - loan!.amount)) / loan!.total));
+    expect(state.interestPaid).toBe(state.spendByDay.reduce((sum, d) => sum + d.interest, 0));
+    const principal = state.spend.debt - state.interestPaid;
     expect(principal).toBeGreaterThan(0);
     const profit = rich.summarise(state).profit;
     expect(profit).toBeCloseTo(state.income - costs + principal, 6);
@@ -2569,14 +2588,212 @@ describe("bank loan", () => {
     const play = () => rich.advance(rich.applyAction(onDay60(), takeLoan), 50);
     expect(play()).toEqual(play());
   });
+
+  describe("with a fixed term", () => {
+    // A 120-day term at the start, half a day shorter for each day later, and never under 60, whatever the game's
+    // length.
+    const termed = (finalDay: number) =>
+      createSim({
+        ...config,
+        startingCash: 100_000,
+        finalDay,
+        loan: { ...config.loan, termDays: 120, termPerDay: 0.5, minTermDays: 60 },
+      });
+    const long = termed(400);
+    const startLong = (takeLoan = false) =>
+      long.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, takeLoan });
+    const repayLoan: Action = { type: "repayLoan" };
+
+    it("repays over the same term in any game length", () => {
+      // £19,690 over 120 days, rounded up to £165 a day.
+      const quote = { amount: 17_900, rate: 0.1, interest: 1_900, total: 19_800, dailyRepayment: 165, days: 120 };
+      for (const finalDay of [30, 180, 400]) {
+        expect(termed(finalDay).startLoanQuote()).toEqual({ ...quote, lastDay: 121 });
+      }
+      const { state, log } = long.advance(startLong(true), 199);
+      expect(state.day).toBe(200);
+      expect(debts(log)).toHaveLength(120);
+      expect(log.find((d) => d.day === 121)!.entries.some((e) => e.text.includes("repaid in full"))).toBe(true);
+      expect(log.find((d) => d.day === 122)!.entries.some((e) => e.category === "debt")).toBe(false);
+      expect(long.loan(state)).toMatchObject({ remaining: 0, daysLeft: 0, repaidInFull: true });
+      expect(state.interestPaid).toBe(1_900);
+    });
+
+    it("runs past the final day of a short game, ending with some still to repay", () => {
+      const short = termed(30);
+      const { state } = short.advance(
+        short.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, takeLoan: true }),
+        29,
+      );
+      expect(state.status).toBe("finished");
+      expect(short.summarise(state).loan).toMatchObject({
+        loans: 1,
+        repaid: 29 * 165,
+        remaining: 19_800 - 29 * 165,
+        fullyRepaid: false,
+      });
+    });
+
+    it("is lent until the last days of the game's own length", () => {
+      const year = createSim({
+        ...config,
+        startingCash: 100_000,
+        allowedGameLengths: { "180-days": 0, "1-year": 1, career: 0 },
+        loan: { ...config.loan, termDays: 120, termPerDay: 0.5, minTermDays: 60 },
+      });
+      const begun = year.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 });
+      expect(begun.finalDay).toBe(365);
+      // Day 300 is past a 180-day game's end, but a year has 65 days left: the usual 60-day term, to day 360.
+      expect(year.loanQuote(year.advance(begun, 299).state)).toMatchObject({ days: 60, lastDay: 360 });
+      expect(year.loanQuote(year.advance(begun, 352).state)).toBeNull();
+    });
+
+    it("is shorter, and dearer, taken later", () => {
+      const day61 = long.loanQuote(long.advance(startLong(), 60).state)!;
+      // 22% over 90 days.
+      expect(day61).toMatchObject({ rate: 0.22, days: 90, lastDay: 151 });
+      const day200 = long.loanQuote(long.advance(startLong(), 199).state)!;
+      expect(day200).toMatchObject({ days: 60, lastDay: 260 });
+      expect(day200.interest).toBeGreaterThan(day61.interest);
+    });
+
+    it("allows a new loan once the last is repaid, at the later day's terms", () => {
+      const repaid = long.advance(startLong(true), 120).state;
+      expect(repaid.day).toBe(121);
+      const quote = long.loanQuote(repaid)!;
+      expect(quote).toMatchObject({ rate: 0.34, days: 60, lastDay: 181 });
+      const second = long.applyAction(repaid, takeLoan);
+      expect(second.cash).toBe(repaid.cash + 17_900);
+      expect(second.pastLoans).toEqual([repaid.loan]);
+      expect(second.loan).toMatchObject({ day: 121, rate: 0.34, repaid: 0 });
+      expect(() => long.applyAction(second, takeLoan)).toThrow(expect.objectContaining({ code: "loan_open" }));
+
+      const { state, log } = long.advance(second, 100);
+      expect(debts(log)).toHaveLength(60);
+      const summary = long.summarise(state);
+      expect(summary.loan).toMatchObject({
+        loans: 2,
+        day: 1,
+        amount: 35_800,
+        total: 19_800 + quote.total,
+        repaid: 19_800 + quote.total,
+        interestPaid: 1_900 + quote.interest,
+        principalRepaid: 35_800,
+        remaining: 0,
+        fullyRepaid: true,
+      });
+      // Only the two loans' interest counts against profit.
+      const plain = long.summarise(long.advance(startLong(), 220).state);
+      expect(summary.profit).toBeCloseTo(plain.profit - 1_900 - quote.interest, 6);
+    });
+
+    it("can be paid off early with what's left of the money borrowed, saving the interest still to come", () => {
+      const midway = long.advance(startLong(true), 30).state;
+      // 30 repayments of £165 so far, £1,900 × 4,950 ÷ 19,800 = £475 of them interest, so £4,475 of the £17,900
+      // is paid back.
+      const view = long.loan(midway)!;
+      expect(view).toMatchObject({ repaid: 4_950, interestPaid: 475, remaining: 14_850, daysLeft: 90 });
+      expect(view).toMatchObject({ payoff: 13_425, interestSaved: 1_425, repaidInFull: false });
+
+      const paidOff = long.applyAction(midway, repayLoan);
+      expect(paidOff.cash).toBe(midway.cash - 13_425);
+      expect(paidOff.loan).toMatchObject({ repaid: 18_375, interestPaid: 475, paidOffDay: 31 });
+      expect(paidOff.spend.debt).toBe(18_375);
+      expect(paidOff.interestPaid).toBe(475);
+      expect(long.loan(paidOff)).toMatchObject({ remaining: 0, payoff: 0, repaidInFull: true });
+
+      // No more repayments, and a new loan can be taken.
+      const { state, log } = long.advance(paidOff, 100);
+      expect(debts(log)).toHaveLength(0);
+      expect(long.loanQuote(paidOff)).not.toBeNull();
+
+      // Against keeping it to the end of the term, profit is better by the interest saved.
+      const kept = long.summarise(long.advance(startLong(true), 130).state);
+      const early = long.summarise(state);
+      expect(early.profit).toBeCloseTo(kept.profit + 1_425, 6);
+      expect(early.loan).toMatchObject({ repaid: 18_375, interestPaid: 475, interestSaved: 1_425, fullyRepaid: true });
+      expect(early.cash).toBe(kept.cash + 1_425);
+    });
+
+    it("refuses to pay off without a loan being repaid, or without the cash", () => {
+      const noLoan = expect.objectContaining({ code: "no_loan" });
+      expect(() => long.applyAction(startLong(), repayLoan)).toThrow(noLoan);
+      expect(() => long.applyAction(long.advance(startLong(true), 120).state, repayLoan)).toThrow(noLoan);
+      const midway = long.advance(startLong(true), 30).state;
+      expect(() => long.applyAction({ ...midway, cash: 13_424 }, repayLoan)).toThrow(
+        expect.objectContaining({ code: "not_enough_cash", details: { cost: 13_425, cash: 13_424 } }),
+      );
+    });
+  });
+});
+
+describe("game lengths", () => {
+  const allowing = (lengths: Partial<GameConfig["allowedGameLengths"]>) =>
+    createSim({ ...config, allowedGameLengths: { "180-days": 0, "1-year": 0, career: 0, ...lengths } });
+  const newGame = (s: Sim, gameLength?: string) =>
+    s.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1, gameLength });
+  const rich = (lengths: Partial<GameConfig["allowedGameLengths"]>) =>
+    createSim({ ...config, startingCash: 10_000_000, allowedGameLengths: { "180-days": 0, "1-year": 0, career: 0, ...lengths } });
+
+  it("allows only 180 days by default", () => {
+    const s = createSim();
+    expect(s.config.allowedGameLengths).toEqual({ "180-days": 1, "1-year": 0, career: 0 });
+    expect(newGame(s)).toMatchObject({ gameLength: "180-days", finalDay: 180, endedByTeacher: false });
+    for (const length of ["1-year", "career"]) {
+      expect(() => newGame(s, length)).toThrow(expect.objectContaining({ code: "game_length_not_allowed" }));
+    }
+  });
+
+  it("starts a game of any allowed length, with its final day", () => {
+    const s = allowing({ "180-days": 1, "1-year": 1, career: 1 });
+    expect(newGame(s, "180-days")).toMatchObject({ gameLength: "180-days", finalDay: 180 });
+    expect(newGame(s, "1-year")).toMatchObject({ gameLength: "1-year", finalDay: 365 });
+    expect(newGame(s, "career")).toMatchObject({ gameLength: "career", finalDay: 47 * 365 });
+  });
+
+  it("starts on the first allowed length when none is picked, and refuses one it doesn't know", () => {
+    const s = allowing({ "1-year": 1, career: 1 });
+    expect(newGame(s)).toMatchObject({ gameLength: "1-year" });
+    expect(() => newGame(s, "180-days")).toThrow(/game length your teacher allows: 1 year, Career/);
+    expect(() => newGame(s, "forever")).toThrow(expect.objectContaining({ code: "game_length_not_allowed" }));
+  });
+
+  it("ends a 1-year game on day 365 and a career after 47 years", () => {
+    const s = rich({ "1-year": 1, career: 1 });
+    const year = s.advance(newGame(s, "1-year"), 400);
+    expect(year.state).toMatchObject({ day: 365, status: "finished" });
+    expect(year.log.at(-1)!.entries.at(-1)!.text).toMatch(/Day 365 was the last/);
+    expect(s.summarise(year.state)).toMatchObject({ ending: "completed", gameLength: "1-year", finalDay: 365 });
+
+    const career = newGame(s, "career");
+    const nearlyRetired = s.advance({ ...career, day: 47 * 365 - 2 }, 1).state;
+    expect(nearlyRetired).toMatchObject({ day: 47 * 365 - 1, status: "playing" });
+    expect(s.advance(nearlyRetired, 10).state).toMatchObject({ day: 17_155, status: "finished" });
+  });
+
+  it("lets the teacher end a game early, as it stands, with its summary", () => {
+    const s = rich({ "1-year": 1 });
+    const { state } = s.advance(newGame(s, "1-year"), 40);
+    const ended = s.endGame(state);
+    expect(ended).toMatchObject({ day: 41, cash: state.cash, status: "finished", endedByTeacher: true });
+    expect(s.summarise(ended)).toMatchObject({ ending: "ended", day: 41, finalDay: 365, cash: state.cash });
+    expect(() => s.advance(ended)).toThrow(/Your teacher ended Acme early/);
+    expect(() => s.applyAction(ended, { type: "hire", pool: "ops" })).toThrow(expect.objectContaining({ code: "finished" }));
+    // Ending a game that is already over leaves it as it was.
+    expect(s.endGame(ended)).toEqual(ended);
+    const bankrupt = { ...state, status: "bankrupt" } as GameState;
+    expect(s.endGame(bankrupt)).toEqual(bankrupt);
+  });
 });
 
 describe("game end and summary", () => {
-  // A 30-day game, with cash for two migrations. IaaS costs 20 a day and £100 upfront; PaaS 30 a day.
+  // A 30-day game, with cash for two migrations. IaaS costs 20 a day and £100 upfront; PaaS 30 a day. A loan's term
+  // ends on the final day.
   const shortConfig: GameConfig = {
     ...config,
     startingCash: 100_000,
     finalDay: 30,
+    loan: { ...config.loan, termDays: 29 },
     models: { ...config.models, iaas: { ...config.models.iaas, upfrontCost: 100 } },
   };
   const s = createSim(shortConfig);
@@ -2614,12 +2831,19 @@ describe("game end and summary", () => {
     }
   });
 
-  it("ends a game saved past the final day, such as one played under a longer config", () => {
+  it("keeps the final day a game started with, whatever config loads it later", () => {
     const longer = sim.advance(sim.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1 }), 39);
-    expect(longer.state).toMatchObject({ day: 40, status: "playing" });
-    expect(s.load(longer.state).status).toBe("finished");
-    expect(() => s.advance(longer.state)).toThrow(expect.objectContaining({ code: "finished" }));
-    expect(s.summarise(longer.state).ending).toBe("completed");
+    expect(longer.state).toMatchObject({ day: 40, finalDay: 180, status: "playing" });
+    expect(s.load(longer.state).status).toBe("playing");
+    expect(s.advance(longer.state).state).toMatchObject({ day: 41, status: "playing" });
+  });
+
+  it("ends a game saved on or past its final day", () => {
+    const { state } = s.advance(begin(), 10);
+    const saved = { ...state, day: 30, status: "playing" } as GameState;
+    expect(s.load(saved).status).toBe("finished");
+    expect(() => s.advance(saved)).toThrow(expect.objectContaining({ code: "finished" }));
+    expect(s.summarise(saved).ending).toBe("completed");
   });
 
   it("counts going bankrupt on the final day as bankrupt", () => {
@@ -2651,6 +2875,8 @@ describe("game end and summary", () => {
     expect(summary.spend).toEqual({
       staff: charges(log, "staff"),
       infrastructure: 100 + charges(log, "infrastructure"),
+      cabling: charges(log, "cabling"),
+      power: charges(log, "power"),
       addons: charges(log, "addons"),
       debt: 0,
     });
@@ -2676,10 +2902,13 @@ describe("game end and summary", () => {
       day: 1,
       staff: 0,
       infrastructure: 100,
+      cabling: 0,
+      power: 0,
       addons: 0,
       debt: 0,
       income: 0,
       borrowed: 0,
+      interest: 0,
       users: 1000,
       paidUsers: 0,
       satisfaction: 100,
@@ -2688,7 +2917,7 @@ describe("game end and summary", () => {
     expect(days.at(-1)!.cash).toBe(cash);
     for (let i = 1; i < days.length; i++) {
       const d = days[i]!;
-      expect(days[i - 1]!.cash - d.cash).toBe(d.staff + d.infrastructure + d.addons + d.debt);
+      expect(days[i - 1]!.cash - d.cash).toBe(SPEND_CATEGORIES.reduce((sum, c) => sum + d[c], 0));
     }
   });
 
@@ -2813,12 +3042,15 @@ describe("game end and summary", () => {
       const { state, summary } = play();
       expect(summary.priceChanges).toBe(1);
       expect(summary.loan).toEqual({
+        loans: 1,
         day: 10,
         amount: 17_900,
         total: state.loan!.total,
         repaid: state.loan!.total,
         interestPaid: state.loan!.total - 17_900,
         principalRepaid: 17_900,
+        interestSaved: 0,
+        remaining: 0,
         fullyRepaid: true,
       });
       expect(summary.spend.debt).toBe(state.loan!.total);
@@ -2830,6 +3062,7 @@ describe("game end and summary", () => {
       expect(busy.summarise(midway).loan).toMatchObject({
         day: 10,
         repaid: 5 * midway.loan!.dailyRepayment,
+        remaining: midway.loan!.total - 5 * midway.loan!.dailyRepayment,
         fullyRepaid: false,
       });
     });
@@ -2924,8 +3157,11 @@ describe("default config", () => {
       return state;
     }
     const type = state.model === "onprem" ? "buyServer" : "rentServer";
+    // On-prem, a large rack first when no rack has room for a massive server.
+    const racks = sim180.racks(state);
+    const racked = racks && racks.mostFree < racks.serverUnits.massive ? sim180.applyAction(state, { type: "buyRack", size: "large" }) : state;
     const rent = (server: ServerType) =>
-      rentAhead(sim180.applyAction(state, { type, server, size: "massive" }));
+      rentAhead(sim180.applyAction(racked, { type, server, size: "massive" }));
     const { cu, dbu, ch, loadBalancer } = units;
     // VMs are ready the next day, so it waits for any being set up. Kit takes a week to arrive, so on-prem buys
     // further ahead, and waits only for kit of the same type already on order.
@@ -3394,6 +3630,8 @@ describe("migration costs", () => {
         sizedFor: { cu: 12.5, dbu: 12.5 },
         headroom: 0.25,
         setupUpfront: 0,
+        racks: [],
+        cabling: 0,
         setupMonthly: 60,
         opsNeeded: 1,
         deliveryDays: null,
@@ -3633,6 +3871,7 @@ describe("migration with servers", () => {
               loadBalancer: sizes(600, 900, 1_350, 1_800),
             },
             sellBackShare: 0.4,
+            cablingCost: 50,
           },
           monthlyCost: {
             app: sizes(40, 55, 70, 85),
@@ -3711,6 +3950,8 @@ describe("migration with servers", () => {
   const entries = (log: DayLog[]) => log.flatMap((d) => d.entries);
   const texts = (log: DayLog[]) => entries(log).map((e) => e.text);
   const total = (list: LogEntry[]) => list.reduce((sum, e) => sum - e.cashDelta, 0);
+  /** Spend on running and buying kit: infrastructure, with cabling and power and cooling. */
+  const kitSpend = (st: GameState) => st.spend.infrastructure + st.spend.cabling + st.spend.power;
   const pairs = MODEL_IDS.flatMap((from) => MODEL_IDS.filter((to) => to !== from).map((to) => [from, to] as const));
 
   describe("sizeSetupFor", () => {
@@ -3803,8 +4044,15 @@ describe("migration with servers", () => {
     ]);
     // 3 app servers and 4 databases at 0.6 ops each, and a load balancer at 0.3: 4.5, so 5.
     expect(onprem).toMatchObject({ setupUpfront: 21_750, setupMonthly: 725, deliveryDays: 7, opsNeeded: 5 });
-    // The server room and the kit, on the first day.
-    expect(onprem.upfrontCost).toBe(calm.models.onprem.upfrontCost + 21_750);
+    // 58U of kit: the server room's medium rack takes the 3 app servers (24U), and a large one (42U) the rest. Cabling
+    // for 8 servers and 2 racks at £50.
+    expect(onprem.racks).toEqual([
+      { size: "medium", count: 1, upfront: 500 },
+      { size: "large", count: 1, upfront: 800 },
+    ]);
+    expect(onprem.cabling).toBe(500);
+    // The server room, the kit, its racks and cabling, on the first day.
+    expect(onprem.upfrontCost).toBe(calm.models.onprem.upfrontCost + 21_750 + 1_300 + 500);
 
     const paas = s.migrationQuote(on("iaas", 20_000), "paas");
     expect(paas.setup.map((i) => [i.name, i.size, i.count, i.upfront, i.monthly])).toEqual([
@@ -3822,9 +4070,10 @@ describe("migration with servers", () => {
       const quote = s.migrationQuote(state, to);
       const { state: done, log } = s.advance(s.applyAction(state, migrate(to)), 14);
       expect(done.model).toBe(to);
-      expect(done.spend.infrastructure - state.spend.infrastructure).toBe(quote.total);
-      // Item by item: the kit bought, and the new model's bill (its setup included) on every day of the move.
-      expect(total(entries(log).filter((e) => e.text.startsWith("New setup")))).toBe(quote.setupUpfront);
+      expect(kitSpend(done) - kitSpend(state)).toBe(quote.total);
+      // Item by item: the kit bought with its racks and cabling, and the new model's bill (its setup included) on every
+      // day of the move.
+      expect(total(entries(log).filter((e) => e.text.startsWith("New setup")))).toBe(quote.upfrontCost - calm.models[to].upfrontCost);
       expect(total(entries(log).filter((e) => e.text.startsWith("Double billing")))).toBe(quote.doubleBilling);
       expect(entries(log).filter((e) => e.text.startsWith("Exit penalty")).map((e) => -e.cashDelta)).toEqual(
         quote.exitPenalty > 0 ? [quote.exitPenalty] : [],
@@ -3885,22 +4134,22 @@ describe("migration with servers", () => {
     expect(done.model).toBe("onprem");
     expect(slips.servers(done).every((srv) => srv.status === "ready")).toBe(true);
     // 3 more days of IaaS with its VMs, and of on-prem with its arrived kit.
-    const extra = log.slice(14).reduce((sum, d) => sum + total(d.entries.filter((e) => e.category === "infrastructure")), 0);
-    expect(done.spend.infrastructure - state.spend.infrastructure).toBe(quote.total + extra - total(log[16]!.entries.filter((e) => e.text.startsWith("Exit penalty"))));
+    const extra = log.slice(14).reduce((sum, d) => sum + total(d.entries.filter((e) => e.category && e.category !== "staff")), 0);
+    expect(kitSpend(done) - kitSpend(state)).toBe(quote.total + extra - total(log[16]!.entries.filter((e) => e.text.startsWith("Exit penalty"))));
     expect(extra).toBeGreaterThan(0);
   });
 
   it("on completion, sells old kit back at the configured loss, kit on order included", () => {
     const state = on("onprem", 20_000);
     const quote = s.migrationQuote(state, "iaas");
-    // The starter kit: a large app server (£2,100) and database (£2,700). 40% back is £1,920.
-    expect(quote.sellBack).toBe(1_920);
+    // The starter kit: a large app server (£2,100) and database (£2,700), and its medium rack (£500). 40% back is £2,120.
+    expect(quote.sellBack).toBe(2_120);
     let moving = s.advance(s.applyAction(state, migrate("iaas")), 10).state;
     moving = s.applyAction(moving, { type: "buyServer", server: "cache", size: "small" });
     const { state: done, log } = s.advance(moving, 4);
     expect(log.at(-1)!.entries).toContainEqual({
-      text: "Your 3 servers were sold back for £2,100: 40% of the £5,250 you paid.",
-      cashDelta: 2_100,
+      text: "Your 3 servers and 1 rack were sold back for £2,300: 40% of the £5,750 you paid.",
+      cashDelta: 2_300,
       category: "infrastructure",
     });
     expect(done.servers.every((srv) => srv.paid === undefined)).toBe(true);
@@ -5584,6 +5833,191 @@ describe("alpha patch: pricing exploits and balance", () => {
 
     it("costs more after a provider price rise on add-ons", () => {
       expect(fees.features({ ...onSaas(), addonPriceRise: 1.25 })[0]!.addonSetupFee).toBe(750);
+    });
+  });
+});
+
+describe("racks, cabling, power and cooling", () => {
+  const sim = createSim(defaultConfig);
+  const { onprem } = defaultConfig.models;
+  const cabling = onprem.servers!.purchase!.cablingCost;
+  const begin = (model: ModelId = "onprem") =>
+    sim.newGame({ companyName: "Acme", productType: "video", model, seed: 1, takeLoan: true });
+  const buy = (state: GameState, size: ServerSize, rack?: number, server: ServerType = "app") =>
+    sim.applyAction(state, { type: "buyServer", server, size, ...(rack !== undefined && { rack }) });
+  const refusal = (f: () => unknown) => {
+    try {
+      f();
+    } catch (e) {
+      if (e instanceof SimError) return e.code;
+      throw e;
+    }
+    return null;
+  };
+  const lastDay = (state: GameState) => state.spendByDay.at(-1)!;
+
+  describe("racks on-prem", () => {
+    it("starts with the server room's rack, charged with its cabling as costs of their own", () => {
+      const state = begin();
+      expect(state.racks).toEqual([{ id: 1, size: "medium", paid: 500 }]);
+      expect(sim.racks(state)).toMatchObject({
+        racks: [{ id: 1, size: "medium", units: 24, used: 0, free: 24, servers: [], paid: 500, sellBack: 200 }],
+        units: 24,
+        used: 0,
+        free: 24,
+        mostFree: 24,
+        serverUnits: { small: 1, medium: 2, large: 4, massive: 8 },
+      });
+      expect(sim.racks(state)!.options.map((o) => [o.size, o.units, o.price, o.cabling])).toEqual([
+        ["small", 12, 300, cabling],
+        ["medium", 24, 500, cabling],
+        ["large", 42, 800, cabling],
+      ]);
+      expect(lastDay(state)).toMatchObject({ infrastructure: onprem.upfrontCost + 500, cabling });
+      expect(state.spend.cabling).toBe(cabling);
+    });
+
+    it("installs each server in the first rack with room, taking its U from the day it's ordered", () => {
+      let state = buy(begin(), "massive");
+      state = buy(state, "large", undefined, "database");
+      expect(state.servers.map((s) => s.rack)).toEqual([1, 1]);
+      expect(sim.servers(state).map((s) => [s.status, s.rack])).toEqual([
+        ["pending", 1],
+        ["pending", 1],
+      ]);
+      expect(sim.racks(state)).toMatchObject({ used: 12, free: 12, mostFree: 12 });
+      expect(sim.racks(state)!.racks[0]!.servers).toEqual(state.servers.map((s) => s.id));
+    });
+
+    it("refuses a server without enough free U in any one rack, until a rack is bought", () => {
+      let state = buy(buy(buy(begin(), "massive"), "massive"), "large");
+      // 20U used of 24: a massive server (8U) doesn't fit, a large one (4U) does.
+      expect(sim.racks(state)).toMatchObject({ free: 4, mostFree: 4 });
+      expect(refusal(() => buy(state, "massive"))).toBe("no_rack_space");
+      expect(() => buy(state, "massive")).toThrow("A massive server takes 8U and the most free in any one rack is 4U.");
+      state = sim.applyAction(state, { type: "buyRack", size: "small" });
+      expect(sim.racks(state)).toMatchObject({ units: 36, free: 16, mostFree: 12 });
+      state = buy(state, "massive");
+      expect(state.servers.at(-1)!.rack).toBe(2);
+      // U are counted rack by rack: 8U free in all, but no more than 4U in either, so another massive one won't go in.
+      expect(sim.racks(state)).toMatchObject({ free: 8, mostFree: 4 });
+      expect(refusal(() => buy(state, "massive"))).toBe("no_rack_space");
+    });
+
+    it("installs a server in the rack asked for, if it has room", () => {
+      let state = sim.applyAction(begin(), { type: "buyRack", size: "small" });
+      state = buy(state, "large", 2);
+      expect(state.servers.at(-1)!.rack).toBe(2);
+      state = buy(buy(state, "large", 2), "large", 2);
+      expect(refusal(() => buy(state, "small", 2))).toBe("rack_full");
+      expect(refusal(() => buy(state, "small", 9))).toBe("unknown_rack");
+      expect(buy(state, "small", 1).servers.at(-1)!.rack).toBe(1);
+    });
+
+    it("charges cabling on every server and rack bought, as its own cost", () => {
+      const start = begin();
+      const state = sim.applyAction(buy(start, "large"), { type: "buyRack", size: "large" });
+      const price = onprem.servers!.purchase!.price.app.large;
+      expect(start.cash - state.cash).toBe(price + 800 + 2 * cabling);
+      expect(state.spend.cabling - start.spend.cabling).toBe(2 * cabling);
+      expect(state.spend.infrastructure - start.spend.infrastructure).toBe(price + 800);
+      expect(lastDay(state).cabling - lastDay(start).cabling).toBe(2 * cabling);
+      // Shown before buying, with the U each server takes.
+      const option = sim.serverOptions(start).find((o) => o.type === "app" && o.size === "large")!;
+      expect(option).toMatchObject({ price, cabling, rackUnits: 4 });
+    });
+
+    it("refuses a rack or server it can't pay for with its cabling", () => {
+      const poor = { ...begin(), cash: 820 };
+      expect(refusal(() => sim.applyAction(poor, { type: "buyRack", size: "large" }))).toBe("cant_afford");
+      expect(refusal(() => buy({ ...poor, cash: 420 }, "small"))).toBe("cant_afford");
+      expect(buy({ ...poor, cash: 450 }, "small").cash).toBe(0);
+    });
+
+    it("sells back an empty rack at the sell-back share, but not one with servers in it", () => {
+      let state = buy(sim.applyAction(begin(), { type: "buyRack", size: "large" }), "small", 2);
+      expect(refusal(() => sim.applyAction(state, { type: "sellRack", id: 2 }))).toBe("rack_in_use");
+      expect(refusal(() => sim.applyAction(state, { type: "sellRack", id: 7 }))).toBe("unknown_rack");
+      state = sim.advance(state, 7).state;
+      state = sim.applyAction(state, { type: "sellServer", id: state.servers[0]!.id });
+      const sold = sim.applyAction(state, { type: "sellRack", id: 2 });
+      expect(sold.cash - state.cash).toBe(320);
+      expect(sold.racks.map((r) => r.id)).toEqual([1]);
+    });
+
+    it("plays the same after a JSON round trip, racks and all", () => {
+      const state = buy(sim.applyAction(begin(), { type: "buyRack", size: "small" }), "large", 2);
+      expect(sim.advance(JSON.parse(JSON.stringify(state)), 10)).toEqual(sim.advance(state, 10));
+    });
+  });
+
+  describe("on other models", () => {
+    it("has no racks on IaaS, PaaS or SaaS", () => {
+      for (const model of ["iaas", "paas", "saas"] as const) {
+        const state = begin(model);
+        expect(state.racks).toEqual([]);
+        expect(sim.racks(state)).toBeNull();
+        expect(refusal(() => sim.applyAction(state, { type: "buyRack", size: "small" }))).toBe("no_racks");
+        expect(refusal(() => sim.applyAction(state, { type: "sellRack", id: 1 }))).toBe("no_racks");
+        expect(sim.serverOptions(state).every((o) => o.rackUnits === null && o.cabling === 0)).toBe(true);
+        expect(state.spend.cabling).toBe(0);
+      }
+    });
+  });
+
+  describe("power and cooling", () => {
+    it("is a fixed daily cost on every model, on-prem's the highest and SaaS's the least", () => {
+      const daily = MODEL_IDS.map((m) => sim.powerAndCooling(m));
+      expect(daily).toEqual(MODEL_IDS.map((m) => defaultConfig.models[m].powerAndCooling));
+      expect([...daily].sort((a, b) => b - a)).toEqual(daily);
+      expect(new Set(daily).size).toBe(MODEL_IDS.length);
+      for (const model of MODEL_IDS) {
+        const { state, log } = sim.advance(begin(model), 5);
+        const power = log.flatMap((d) => d.entries.filter((e) => e.category === "power"));
+        expect(power, model).toHaveLength(5);
+        expect(power[0]!.text).toBe(`${defaultConfig.models[model].name} power and cooling (£${sim.powerAndCooling(model)} a day)`);
+        expect(state.spend.power).toBe(5 * sim.powerAndCooling(model));
+        // In the daily running costs.
+        expect(sim.runway(state).dailyCosts).toBeGreaterThanOrEqual(sim.powerAndCooling(model));
+      }
+    });
+
+    it("is billed for both models during a migration, like the rest of the bill", () => {
+      const moving = sim.applyAction(sim.advance(begin("iaas"), 3).state, { type: "startMigration", model: "paas" });
+      const { log } = sim.advance(moving);
+      expect(log[0]!.entries.filter((e) => e.category === "power").map((e) => -e.cashDelta)).toEqual([
+        sim.powerAndCooling("iaas"),
+        sim.powerAndCooling("paas"),
+      ]);
+    });
+  });
+
+  describe("migration", () => {
+    it("onto on-prem, buys the racks the new setup needs, with cabling for all of it, as quoted", () => {
+      const state = { ...sim.advance(begin("iaas"), 3).state, users: 20_000, cash: 1_000_000 };
+      const quote = sim.migrationQuote(state, "onprem");
+      expect(quote.racks.length).toBeGreaterThan(0);
+      const pieces = quote.setup.reduce((sum, i) => sum + i.count, 0) + quote.racks.reduce((sum, r) => sum + r.count, 0);
+      expect(quote.cabling).toBe(pieces * cabling);
+      const moving = sim.applyAction(state, { type: "startMigration", model: "onprem" });
+      const { log } = sim.advance(moving);
+      expect(log[0]!.entries.filter((e) => e.category === "cabling").map((e) => -e.cashDelta)).toEqual([quote.cabling]);
+      const done = sim.advance(moving, 20).state;
+      expect(done.model).toBe("onprem");
+      const racks = sim.racks(done)!;
+      expect(racks.racks.map((r) => r.size)).toEqual(quote.racks.flatMap((r) => Array<string>(r.count).fill(r.size)));
+      expect(racks.racks.every((r) => r.free >= 0)).toBe(true);
+      expect(done.servers.every((s) => done.racks.some((r) => r.id === s.rack))).toBe(true);
+    });
+
+    it("off on-prem, sells the racks back with the servers", () => {
+      const state = buy(begin(), "large");
+      const quote = sim.migrationQuote(state, "iaas");
+      expect(quote.sellBack).toBe(Math.round(onprem.servers!.purchase!.price.app.large * 0.4) + 200);
+      const done = sim.advance(sim.applyAction(state, { type: "startMigration", model: "iaas" }), 20).state;
+      expect(done.model).toBe("iaas");
+      expect(done.racks).toEqual([]);
+      expect(sim.racks(done)).toBeNull();
     });
   });
 });

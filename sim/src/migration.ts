@@ -1,4 +1,11 @@
-import { MIGRATION_PHASES, type GameConfig, type MigrationPhase, type ModelId } from "./config.ts";
+import {
+  MIGRATION_PHASES,
+  RACK_SIZES,
+  type GameConfig,
+  type MigrationPhase,
+  type ModelId,
+  type RackSize,
+} from "./config.ts";
 import type { Events } from "./events.ts";
 import type { Features } from "./features.ts";
 import type { Infrastructure } from "./infrastructure.ts";
@@ -51,6 +58,13 @@ export interface MigrationQuote {
   headroom: number;
   /** What buying the setup costs, on a model that buys its servers: part of the upfront cost. 0 where it's rented. */
   setupUpfront: number;
+  /**
+   * The racks the setup goes in, by size, on a model with racks (on-prem): the server room's own and any more it
+   * needs, bought with the upfront cost. Empty on any other model.
+   */
+  racks: SetupRack[];
+  /** Cabling for the setup's servers and racks, part of the upfront cost. 0 where servers are rented. */
+  cabling: number;
   /** What the setup costs a month: rent, or bought kit's power and upkeep. Part of the double billing. */
   setupMonthly: number;
   /** Ops staff the new model needs once the setup takes over: its fixed number plus the setup's servers' shares. */
@@ -89,6 +103,14 @@ export interface MigrationQuote {
    * bill), or none. Migrating that short of cash is how companies go bankrupt mid-move.
    */
   warning: string | null;
+}
+
+/** Racks of one size a migration's setup goes in. */
+export interface SetupRack {
+  size: RackSize;
+  count: number;
+  /** What they cost to buy, all together. */
+  upfront: number;
 }
 
 /** Days of running costs a migration should leave in the bank: with less, its quote warns. */
@@ -143,7 +165,7 @@ export function createMigration(
     const started = planMigration(state, model);
     // The upfront bill lands on the first day, so a migration that costs more up front than the company has is
     // refused rather than bankrupting it.
-    const upfront = infra.upfrontCost(started.migration!.to, started.migration!.servers);
+    const upfront = infra.upfrontCost(started.migration!.to, started.migration!);
     if (upfront > state.cash) {
       throw new SimError(
         "cant_afford",
@@ -158,8 +180,15 @@ export function createMigration(
   function planMigration(state: GameState, model: string): GameState {
     const to = migrationTarget(state, model);
     const setup = servers.setupFor(state, to, infra.usualDemand(state));
-    const migration: Migration = { to, phase: MIGRATION_PHASES[0], phaseDaysDone: 0, overrunDays: 0, servers: setup.servers };
-    return { ...state, nextServerId: setup.nextServerId, migration };
+    const migration: Migration = {
+      to,
+      phase: MIGRATION_PHASES[0],
+      phaseDaysDone: 0,
+      overrunDays: 0,
+      servers: setup.servers,
+      racks: setup.racks,
+    };
+    return { ...state, nextServerId: setup.nextServerId, nextRackId: setup.nextRackId, migration };
   }
 
   /**
@@ -171,7 +200,7 @@ export function createMigration(
     const m = started.migration!;
     const to = m.to;
     const days = MIGRATION_PHASES.reduce((sum, p) => sum + config.migration.phases[p].days, 0);
-    const upfrontCost = infra.upfrontCost(to, m.servers);
+    const upfrontCost = infra.upfrontCost(to, m);
     let doubleBilling = 0;
     let proRata = 0;
     for (let d = 0; d < days; d++) {
@@ -207,6 +236,13 @@ export function createMigration(
       sizedFor: { cu: tidy(usual.cu * (1 + room)), dbu: tidy(usual.dbu * (1 + room)) },
       headroom: room,
       setupUpfront: setup.reduce((sum, item) => sum + item.upfront, 0),
+      racks: RACK_SIZES.flatMap((size) => {
+        const of = m.racks.filter((r) => r.size === size);
+        return of.length ? [{ size, count: of.length, upfront: of.reduce((sum, r) => sum + r.paid, 0) }] : [];
+      }),
+      cabling: infra
+        .upfrontEntries(to, m)
+        .reduce((sum, e) => sum - (e.category === "cabling" ? e.cashDelta : 0), 0),
       setupMonthly: Math.round(setup.reduce((sum, item) => sum + item.monthly, 0)),
       opsNeeded: servers.opsFor(to, m.servers),
       deliveryDays: config.models[to].servers?.purchase && setup.length ? servers.readyDaysOf(to) : null,
@@ -245,7 +281,7 @@ export function createMigration(
     const m = state.migration;
     if (!m) return [];
     const firstDay = m.phase === MIGRATION_PHASES[0] && m.phaseDaysDone === 0;
-    return [...(firstDay ? infra.upfrontEntries(m.to, m.servers) : []), ...newSetupEntries(state)];
+    return [...(firstDay ? infra.upfrontEntries(m.to, m) : []), ...newSetupEntries(state)];
   }
 
   /** A seeded roll for whether a migration overruns, and by how many days. Always draws once, then again if so. */
@@ -316,6 +352,7 @@ export function createMigration(
       migration: null,
       migrations: state.migrations + 1,
       servers: m.servers,
+      racks: m.racks,
     };
     const needed = infra.opsNeededNow(switched);
     const left = config.models[state.model];

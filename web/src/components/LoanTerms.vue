@@ -2,8 +2,8 @@
 import type { LoanQuote } from "@xaas/sim";
 import { formatCash } from "../api";
 
-// The bank loan's terms, to read before accepting: what you get, the interest, and what you pay back each day until
-// the final day. Used on the new-game form and the Finance page's take-loan modal.
+// A bank loan's terms, to read before accepting: what you get, the interest, and what you pay back each day over its
+// term. Used on the new-game form and the Finance page's take-loan modal.
 defineProps<{ quote: LoanQuote }>();
 const percent = (rate: number) => `${Math.round(rate * 1000) / 10}%`;
 </script>

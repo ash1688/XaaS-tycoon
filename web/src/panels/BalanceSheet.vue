@@ -1,18 +1,18 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { interestIn, SPEND_CATEGORIES } from "@xaas/sim";
+import { SPEND_CATEGORIES } from "@xaas/sim";
 import { CATEGORY_LABELS, formatCash } from "../api";
 import { useGame } from "../game";
 
 // The balance sheet: income against costs by category, and the profit or loss they leave, for the last day played
 // and for the game so far. The day's figures come from the summary so far, which the Finance page keeps fresh. Costs
-// are everything spent, as cash fell by it; the principal paid back on the bank loan is then added back, as only its
+// are everything spent, as cash fell by it; the principal paid back on bank loans is then added back, as only their
 // interest is a cost, so profit is the summary's and the teacher's.
 const game = useGame();
 const lastDay = computed(() => game.summary?.days.at(-1));
 const costs = (s: Record<(typeof SPEND_CATEGORIES)[number], number>) => SPEND_CATEGORIES.reduce((sum, c) => sum + s[c], 0);
 const totalCosts = computed(() => (game.company ? costs(game.company.spend) : 0));
-const totalInterest = computed(() => (game.company ? interestIn(game.company.loan, game.company.spend.debt) : 0));
+const totalInterest = computed(() => game.company?.interestPaid ?? 0);
 const totalPrincipal = computed(() => (game.company ? game.company.spend.debt - totalInterest.value : 0));
 const totalProfit = computed(() =>
   game.company ? game.company.income - totalCosts.value + totalPrincipal.value : 0,
@@ -79,7 +79,7 @@ const signed = (n: number) => (n < 0 ? `−${formatCash(-n)}` : formatCash(Math.
     </div>
     <p class="muted">
       Income is what paying users pay, a day's share of the monthly price each. Profit is income less every cost. Day 1
-      includes any upfront cost of your model. Debt is the bank loan's daily repayments, part paying back what you
+      includes any upfront cost of your model. Debt is bank loan repayments, part paying back what you
       borrowed and part interest. What you borrowed wasn't income, so paying it back isn't a cost: only the interest
       counts against profit, though your cash pays the whole repayment.
     </p>

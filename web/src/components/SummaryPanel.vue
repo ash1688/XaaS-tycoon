@@ -14,6 +14,8 @@ const props = defineProps<{ summary: SummaryView; modelName: string; retired?: b
 const CATEGORY_LABELS: Record<SpendCategory, string> = {
   staff: "Staff",
   infrastructure: "Infrastructure",
+  cabling: "Cabling",
+  power: "Power and cooling",
   addons: "Add-ons",
   debt: "Debt",
 };
@@ -36,6 +38,9 @@ const biggest = computed(() =>
       <template v-if="summary.ending === 'completed'">Played all {{ summary.finalDay }} days</template>
       <template v-else-if="summary.ending === 'bankrupt'">
         Ran out of cash on day {{ summary.day }} of {{ summary.finalDay }}
+      </template>
+      <template v-else-if="summary.ending === 'ended'">
+        Ended by the teacher on day {{ summary.day }} of {{ summary.finalDay }}
       </template>
       <template v-else-if="retired">Retired on day {{ summary.day }} of {{ summary.finalDay }}</template>
       <template v-else>So far: day {{ summary.day }} of {{ summary.finalDay }}</template>
@@ -93,13 +98,16 @@ const biggest = computed(() =>
         <span class="value" data-testid="summary-migrations">{{ summary.migrations }}</span>
       </div>
       <div class="stat">
-        <span class="label">Bank loan</span>
+        <span class="label">{{ loan && loan.loans > 1 ? `${loan.loans} bank loans` : "Bank loan" }}</span>
         <template v-if="loan">
           <span class="value" data-testid="summary-loan">{{ formatCash(loan.amount) }}</span>
           <small data-testid="summary-loan-status">
-            {{ loan.day === 1 ? "taken at the start" : `taken on day ${loan.day}` }} ·
-            {{ loan.fullyRepaid ? "repaid in full" : `${formatCash(loan.repaid)} of ${formatCash(loan.total)} repaid` }} ·
+            {{ loan.day === 1 ? "first taken at the start" : `first taken on day ${loan.day}` }} ·
+            {{ loan.fullyRepaid ? "repaid in full" : `${formatCash(loan.remaining)} still owed` }} ·
             <span data-testid="summary-loan-interest">{{ formatCash(loan.interestPaid) }} interest</span>
+            <template v-if="loan.interestSaved">
+              · <span data-testid="summary-loan-saved">{{ formatCash(loan.interestSaved) }} saved by paying early</span>
+            </template>
           </small>
         </template>
         <template v-else>

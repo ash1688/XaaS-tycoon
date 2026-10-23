@@ -17,6 +17,8 @@ npm run -s play -- summary <game>
 ```
 
 - `new` starts a game and shows the company and the commands. Leave out `--loan` to start without the bank loan.
+  `--length` picks the game length: `180-days` (the default), `1-year` (ends on day 365) or `career` (47 years,
+  ends on day 17,155). Play 180 days unless your brief says otherwise.
 - `look` shows the company and every command that works right now, with prices and allowed values.
 - `do` runs game commands separated by `;`. Every game command goes inside `do`, including `preview` and `quote`:
   `npm run -s play -- do <game> "preview 8; quote iaas"`.
@@ -28,9 +30,13 @@ npm run -s play -- summary <game>
   after hiring (shown under staff until they do). `hire <pool> [grade] [n]` and `letgo <pool> [grade] [n]` take a
   grade; without one it's mids. Time also stops when hires start.
 - `preview <price>` and `quote <model>` show what a price change or migration would do without doing it.
+- `loan` takes a bank loan, repaid daily over a fixed term; `repayloan` pays it off early to save interest. One loan
+  at a time: once it's repaid, `loan` is offered again.
 - `summary` shows the final figures once the game is over.
+- `end` (inside `do`) ends the game as the teacher would from the staff panel, scored as it stands. Only use it if
+  your brief asks you to test it.
 
-Run `look` whenever you're unsure what you can do. Keep going until the game ends: day 180, or bankruptcy.
+Run `look` whenever you're unsure what you can do. Keep going until the game ends: its final day (day 180 by default), or bankruptcy.
 
 ## Your playstyle
 
