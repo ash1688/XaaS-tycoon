@@ -347,3 +347,41 @@ describe("shares and funding", () => {
     expect(turn.lines.join("\n")).toMatch(/day 8: Grant (condition met|withdrawn)/);
   });
 });
+
+describe("the calendar", () => {
+  const full = createSim(defaultConfig);
+  const shop = (startDate: string) =>
+    full.newGame({ companyName: "Test Co", productType: "ecommerce", model: "saas", seed: 3, startDate });
+  /** Plays on until time stops for a holiday. */
+  const toHoliday = (state: GameState) => {
+    let turn = advanceUntil(full, state, 60, who);
+    while (!turn.lines.at(-1)!.includes("holiday")) turn = advanceUntil(full, turn.state, 60, who);
+    return turn;
+  };
+
+  it("reads the calendar command", () => {
+    expect(parseCommand("calendar")).toEqual({ kind: "calendar" });
+    expect(renderCommands(sim, start())).toContain("calendar");
+  });
+
+  it("shows the date and the next holiday in the status, and every holiday to come on asking", () => {
+    const state = shop("2026-11-01");
+    const status = renderStatus(full, state);
+    expect(status).toContain("| Sunday 1 November 2026 |");
+    expect(status).toContain("calendar: next: Black Friday in 26 days, day 27 (load ×2.2, growth ×2.5)");
+    const { lines } = runCommand(full, state, parseCommand("calendar"), who);
+    expect(lines[0]).toBe("calendar: Sunday 1 November 2026, year 1 of the game (started 2026)");
+    expect(lines).toContain("  Christmas: in 47 days, 18 Dec 2026–1 Jan 2027 (days 48–62), load ×1.5, growth ×1.4. Last-minute gifts, then the Boxing Day sales.");
+  });
+
+  it("stops time when a holiday that hits the product is announced, and when it starts", () => {
+    const announced = toHoliday(shop("2026-11-01"));
+    expect(announced.state.day).toBe(13);
+    expect(announced.lines.at(-1)).toContain("holiday coming in 14 days: Black Friday");
+    expect(announced.lines.some((l) => l.includes("day 13: Black Friday is coming in 14 days"))).toBe(true);
+    const started = toHoliday(announced.state);
+    expect(started.state.day).toBe(27);
+    expect(started.lines.at(-1)).toContain("holiday started: Black Friday");
+    expect(renderStatus(full, started.state)).toContain("Black Friday on now to day 30 (load ×2.2, growth ×2.5)");
+  });
+});

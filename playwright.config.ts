@@ -8,6 +8,7 @@ export const E2E_TIMED_FLOW_SECONDS = 1;
 export const E2E_TEACHER_PASSWORD = "e2e-teacher-password";
 // A short game, so a test can play one to the end. Set on the server through GAME_FINAL_DAY, as anyone can.
 export const E2E_FINAL_DAY = 30;
+export const E2E_START_DATE = "2026-10-01";
 export const E2E_DATABASE_URL = process.env.E2E_DATABASE_URL ?? "postgres://xaas:xaas@127.0.0.1:5433/xaas_e2e";
 
 const serverEnv = {
@@ -15,6 +16,8 @@ const serverEnv = {
   TEACHER_PASSWORD: E2E_TEACHER_PASSWORD,
   SESSION_SECRET: "e2e-session-secret-at-least-32-characters",
   GAME_FINAL_DAY: String(E2E_FINAL_DAY),
+  // Every game starts on a date with no holidays in its 30 days, so holidays don't move a test's load and growth.
+  GAME_START_DATE: E2E_START_DATE,
 };
 
 export default defineConfig({

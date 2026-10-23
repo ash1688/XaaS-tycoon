@@ -148,11 +148,7 @@ const config: GameConfig = {
     ecommerce: {
       name: "Shop",
       profile: "",
-      growth: {
-        ...growth,
-        dailyGrowth: 0.02,
-        seasonalSpike: { firstDay: 10, every: 10, length: 3, loadMultiplier: 3, growthMultiplier: 3 },
-      },
+      growth: { ...growth, dailyGrowth: 0.02 },
       demand,
       pricing,
       support,
@@ -247,7 +243,8 @@ const config: GameConfig = {
     thresholdMin: 24,
     thresholdMax: 64,
   },
-  // No scripted events unless a test adds some.
+  // No holidays or scripted events unless a test adds some.
+  calendar: { startYear: 2026, noticeDays: 14, holidays: [] },
   events: [],
 };
 
@@ -1159,9 +1156,10 @@ describe("users and growth", () => {
     const users = Object.fromEntries(
       (["ecommerce", "social", "video"] as const).map((p) => [p, play(p, 60).state.users]),
     );
-    // Social grows steadily fastest. E-commerce and video share a base rate, but sale spikes put e-commerce ahead.
+    // Social grows steadily fastest. E-commerce and video share a base rate here: holidays set them apart (see
+    // calendar.test.ts).
     expect(users.social).toBeGreaterThan(users.ecommerce! * 1.5);
-    expect(users.ecommerce).toBeGreaterThan(users.video! * 1.1);
+    expect(users.social).toBeGreaterThan(users.video! * 1.5);
   });
 
   it("puts heavier load per user on video", () => {
@@ -1170,11 +1168,6 @@ describe("users and growth", () => {
       return state.load / state.users;
     };
     expect(perUser("video")).toBeGreaterThan(perUser("social") * 3);
-  });
-
-  it("spikes e-commerce load during the season", () => {
-    const loads = [9, 10].map((d) => play("ecommerce", d - 1).state.load);
-    expect(loads[1]! / loads[0]!).toBeGreaterThan(2);
   });
 
   it("slows as users approach the market size", () => {

@@ -227,8 +227,8 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
   function serveLoad(state: GameState, day: number, today: EventToday[]) {
     const profile = config.productTypes[state.productType].growth;
     const [loadVariation, rng] = vary(state.rng, profile.loadNoise);
-    let load = Math.round(customers.baseLoad(state.productType, state.users, day) * loadVariation);
-    const base = customers.baseDemand(state.productType, state.users, day);
+    let load = Math.round(customers.baseLoad(state, state.users, day) * loadVariation);
+    const base = customers.baseDemand(state, state.users, day);
     let unitMultiplier = loadVariation;
     for (const { event } of today) {
       if (!event.load) continue;

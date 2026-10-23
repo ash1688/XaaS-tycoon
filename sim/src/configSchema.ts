@@ -56,6 +56,13 @@ export const CONFIG_EXCLUSIONS: Record<string, string> = {
   "shares.min": "The range of shares a student can pick is fixed by the design: 10,000 to 100,000.",
   "shares.max": "The range of shares a student can pick is fixed by the design: 10,000 to 100,000.",
   "shares.default": "Only what the new-company form starts on; the student picks their own.",
+  "calendar.startYear": "The server starts each game in the current year; this is only the sim's default.",
+  // A holiday's dates are the real calendar's: Christmas is on the 25th whatever the preset.
+  ...Object.fromEntries(
+    defaultConfig.calendar.holidays.flatMap((h) =>
+      numericPaths(h.start, `calendar.holidays.${h.id}.start`).map((p) => [p, "A holiday falls on its real dates every year."]),
+    ),
+  ),
 };
 
 const MODEL_LABELS = { onprem: "On-prem", iaas: "IaaS", paas: "PaaS", saas: "SaaS" } as const;
@@ -205,10 +212,6 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add(`${g}.marketSize`, "Customers", s, "Market size", "Users the product can reach. Growth slows as users approach it.", range(1, 10_000_000, 1_000));
     add(`${g}.dailyGrowth`, "Customers", s, "Daily growth", "Share of users added each day while the market is wide open (0.05 = 5%).", range(0, 1, 0.005));
     add(`${g}.growthNoise`, "Customers", s, "Growth variation", "Daily growth varies randomly by up to this share either way.", SHARE);
-    add(`${g}.seasonalSpike.firstDay`, "Customers", s, "Seasonal spike: first day", "The day the first busy season starts.", GAME_DAY);
-    add(`${g}.seasonalSpike.every`, "Customers", s, "Seasonal spike: every (days)", "Days from the start of one busy season to the next.", GAME_DAY);
-    add(`${g}.seasonalSpike.length`, "Customers", s, "Seasonal spike: length (days)", "How many days each busy season lasts.", GAME_DAY);
-    add(`${g}.seasonalSpike.growthMultiplier`, "Customers", s, "Seasonal spike: growth multiplier", "Growth is multiplied by this during a busy season.", MULTIPLIER);
     add(`productTypes.${p}.pricing.freeShare`, "Customers", s, "Free share", "Share of users on the free tier, at the start and among new users at the fair price.", SHARE);
     add(`productTypes.${p}.pricing.conversionRate`, "Customers", s, "Free-to-paid conversion rate", "Share of free users who start paying each day, before features, uptime, satisfaction and price (0.004 = 0.4%).", range(0, 0.1, 0.0005));
     for (const t of CUSTOMER_TYPE_IDS) {
@@ -300,7 +303,6 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     const g = `productTypes.${p}.growth`;
     add(`${g}.loadPerUser`, "Infrastructure", product.name, "Load per user", "Load each user puts on the system per day.", range(0, 100, 0.1));
     add(`${g}.loadNoise`, "Infrastructure", product.name, "Load variation", "Daily load varies randomly by up to this share either way.", SHARE);
-    add(`${g}.seasonalSpike.loadMultiplier`, "Infrastructure", product.name, "Seasonal spike: load multiplier", "Load is multiplied by this during a busy season.", MULTIPLIER);
   }
   for (const p of PRODUCT_TYPE_IDS) {
     const product = base.productTypes[p];
@@ -401,6 +403,17 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   }
   add("encounters.thresholdMin", "Events", "Danger meter", "Lowest threshold", "No event's threshold is lower: over the most a day can rise, the shortest gap between random events.", range(1, 365, 1));
   add("encounters.thresholdMax", "Events", "Danger meter", "Highest threshold", "No event's threshold is higher. Unlikely events get thresholds up to this.", range(1, 365, 1));
+  add("calendar.noticeDays", "Events", "Calendar", "Holiday notice (days)", "A holiday that hits the product is announced in the log this many days before it starts.", range(0, 90, 1));
+  for (const holiday of base.calendar.holidays) {
+    const at = `calendar.holidays.${holiday.id}`;
+    const s = holiday.name;
+    add(`${at}.days`, "Events", s, "Days it lasts", "Days it lasts every year, from its real start date.", range(1, 90, 1));
+    for (const p of PRODUCT_TYPE_IDS) {
+      const product = base.productTypes[p]?.name ?? p;
+      add(`${at}.effects.${p}.loadMultiplier`, "Events", s, `${product}: load multiplier`, "Load and CU and DBU demand are multiplied by this on each of its days.", MULTIPLIER);
+      add(`${at}.effects.${p}.growthMultiplier`, "Events", s, `${product}: growth multiplier`, "Growth is multiplied by this on each of its days: below 1, fewer sign-ups.", MULTIPLIER);
+    }
+  }
   for (const event of base.events) {
     const at = `events.${event.id}`;
     const s = event.name;

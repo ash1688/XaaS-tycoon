@@ -8,6 +8,7 @@ import type {
   ConfigOverrides,
   ConversionView,
   CustomerMixView,
+  CalendarView,
   DangerView,
   DayLog,
   EventView,
@@ -337,6 +338,11 @@ export interface CompanyView {
    * on the encounter list, which stays hidden.
    */
   danger: DangerView;
+  /**
+   * The real calendar: the date and year of the day just played, the holidays on it, and the next of each holiday to
+   * come in the game, each with what it does to the company's product. Holidays sit outside the danger meter.
+   */
+  calendar: CalendarView;
   /**
    * Features the platform can't provide, each still slowing growth until the company migrates off that model. Shown
    * every day, not just the day the event fired.

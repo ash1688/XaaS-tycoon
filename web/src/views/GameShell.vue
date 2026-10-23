@@ -76,6 +76,7 @@ async function closeMenu() {
         <span class="day-counter">
           <span class="label">Day</span>
           <strong data-testid="day">{{ game.company.day }} <small>of {{ game.company.finalDay }}</small></strong>
+          <span class="date" data-testid="date">{{ game.company.calendar.today.text }}</span>
         </span>
         <div v-if="game.timedFlow && !game.over" class="timed-flow" data-testid="timed-flow">
           <!-- One button whose label changes, so keyboard focus stays on it. -->
