@@ -22,6 +22,11 @@
   /* The bank's: debt */
   --debt: #a16207;
   --debt-soft: #fdf6dd;
+  /* Running your own kit: cabling, and power and cooling */
+  --cabling: #4338ca;
+  --cabling-soft: #eceafd;
+  --power: #be185d;
+  --power-soft: #fce8f1;
   color-scheme: light;
 }
 
@@ -48,6 +53,10 @@
     --warn-soft: #3a1b1b;
     --debt: #facc15;
     --debt-soft: #352d10;
+    --cabling: #a5b4fc;
+    --cabling-soft: #23244a;
+    --power: #f472b6;
+    --power-soft: #3b1a2b;
     color-scheme: dark;
   }
 }
@@ -414,10 +423,93 @@ fieldset > p {
   --cat-soft: var(--shared-soft);
 }
 
+/* Cabling for the kit you buy, and power and cooling for what you run. */
+.cat-cabling {
+  --cat: var(--cabling);
+  --cat-soft: var(--cabling-soft);
+}
+
+.cat-power {
+  --cat: var(--power);
+  --cat-soft: var(--power-soft);
+}
+
 /* Debt is the bank's: loan repayments. */
 .cat-debt {
   --cat: var(--debt);
   --cat-soft: var(--debt-soft);
+}
+
+/* Equity: the valuation, who owns the company, and funding that buys shares. */
+.cat-equity {
+  --cat: var(--accent);
+  --cat-soft: var(--accent-soft);
+}
+
+.equity-panel h2 {
+  border-left: 4px solid var(--cat);
+  padding-left: 0.6rem;
+}
+
+.drivers th small {
+  display: block;
+}
+
+/* The cap table's bar and swatches: the student first, then each shareholder in turn. */
+.cap-bar {
+  display: flex;
+  height: 0.8rem;
+  margin: 0.75rem 0;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--cat-soft);
+}
+
+.holder-0 {
+  --holder: var(--you);
+}
+
+.holder-1 {
+  --holder: var(--accent);
+}
+
+.holder-2 {
+  --holder: var(--shared);
+}
+
+.holder-3 {
+  --holder: var(--provider);
+}
+
+.cap-bar span {
+  display: block;
+  height: 100%;
+  background: var(--holder);
+}
+
+.cap-swatch {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-right: 0.5rem;
+  border-radius: 3px;
+  background: var(--holder);
+}
+
+.funding-offers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 1rem;
+}
+
+.funder {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.funder h3 {
+  margin: 0;
 }
 
 .loan-bar {

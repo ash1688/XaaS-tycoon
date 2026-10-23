@@ -44,7 +44,7 @@ const quoteRows = computed(() => {
 });
 
 // A setup item in words: "3 × massive app server", or on PaaS "5 × app instance (15 CU each)".
-const UNIT: Record<ServerType, string> = { app: "CU", database: "DBU", cache: "CH", loadBalancer: "app servers" };
+const UNIT: Record<ServerType, string> = { app: "CU", database: "DBU", cache: "CH", loadBalancer: "app servers", api: "APIU" };
 const itemName = (i: { name: string; size: string; count: number; type: ServerType }) =>
   i.type === "app" && i.name === "App instance" ? `${i.count} × app instance` : `${i.count} × ${i.size} ${i.name.toLowerCase()}`;
 const itemUnits = (i: { units: number; type: ServerType }) =>
@@ -363,8 +363,8 @@ async function startMigration() {
           </li>
           <li v-if="quote.setup.length">Once you've switched, fine-tune the sizes here on Infrastructure.</li>
           <li>
-            Then {{ targetModel.name }} needs <strong data-testid="quote-ops">{{ quote.opsNeeded }}</strong> ops staff. You have
-            {{ game.company.ops }}.
+            Then {{ targetModel.name }} needs <strong data-testid="quote-ops">{{ quote.opsNeeded }}</strong> ops staff. Yours do the
+            work of {{ formatCount(game.opsWork) }}.
           </li>
         </ul>
         <div class="confirm-buttons">

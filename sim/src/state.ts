@@ -1,18 +1,24 @@
 import {
+  GAME_LENGTH_IDS,
   MANAGED_SERVICES,
   type DangerRisk,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
+  RACK_SIZES,
   SERVER_SIZES,
   SERVER_TYPES,
+  STAFF_GRADES,
   STAFF_POOLS,
+  type GameLengthId,
   type ManagedService,
   type MigrationPhase,
   type ModelId,
   type ProductTypeId,
+  type RackSize,
   type ServerSize,
   type ServerType,
   type SpendCategory,
+  type StaffGrade,
   type StaffPool,
 } from "./config.ts";
 
@@ -20,7 +26,19 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 22;
+export const GAME_STATE_VERSION = 28;
+
+/** Headcount in one pool, by grade. */
+export type GradeCounts = Record<StaffGrade, number>;
+
+/** People hired together who haven't started yet. */
+export interface Hire {
+  pool: StaffPool;
+  grade: StaffGrade;
+  count: number;
+  /** The first day they work and are paid: the day hired plus their grade's lead time. */
+  arrivesOn: number;
+}
 
 /** Money spent in each category. */
 export type Spend = Record<SpendCategory, number>;
@@ -30,8 +48,15 @@ export interface DaySpend extends Spend {
   day: number;
   /** Income on the day: what paying users paid. */
   income: number;
-  /** Money borrowed on the day: the bank loan, if it was taken then. Not income: it's paid back as debt. */
+  /** Money borrowed on the day: a bank loan, if one was taken then. Not income: it's paid back as debt. */
   borrowed: number;
+  /**
+   * Money from funders on the day: friends and family's and a grant's, less a withdrawn grant paid back. Not income:
+   * friends and family bought shares with it, and a grant is a gift with a condition.
+   */
+  raised: number;
+  /** Of the day's debt, the interest: the only part of a loan repayment that counts against profit. */
+  interest: number;
   /** Users at the end of the day, paying or free, for the summary's peak. */
   users: number;
   /** Of them, those paying. */
@@ -41,8 +66,8 @@ export interface DaySpend extends Spend {
 }
 
 /**
- * The company's bank loan. It's repaid in equal daily repayments (debt), from the day after it's taken to the final
- * day, whatever happens. See LoanConfig for how the rate and repayment are set.
+ * A bank loan. It's repaid in equal daily repayments (debt) over its fixed term, from the day after it's taken,
+ * whatever happens, unless it's paid off early. See LoanConfig for how the rate, term and repayment are set.
  */
 export interface Loan {
   amount: number;
@@ -50,12 +75,20 @@ export interface Loan {
   day: number;
   /** Interest as a share of the amount (0.1 = 10%), set by the day it was taken. */
   rate: number;
-  /** Charged on every day played after `day`, to the final day. */
+  /** Repayment days: the term, set by the day it was taken. */
+  term: number;
+  /** The day of the last repayment: day + term. It can be after the game's final day. */
+  lastDay: number;
+  /** Charged on every day played from the day after `day` to `lastDay`. */
   dailyRepayment: number;
-  /** Everything to repay: the amount plus interest, dailyRepayment × the days to repay it. */
+  /** Everything to repay over the term: the amount plus interest, dailyRepayment × term. */
   total: number;
-  /** Repaid so far. */
+  /** Repaid so far, an early payoff included. */
   repaid: number;
+  /** Of what's been repaid, the interest. */
+  interestPaid: number;
+  /** The day it was paid off early, or null: the interest it would still have charged was saved. */
+  paidOffDay: number | null;
 }
 
 /**
@@ -90,6 +123,55 @@ export interface Migration {
    * They serve only once the model switches, when they become the company's servers.
    */
   servers: Server[];
+  /** The racks the setup goes in, on a model with racks (see Rack): bought on the first day with the servers. */
+  racks: Rack[];
+}
+
+/** The funders on the Finance page from day 1, each a fixed offer to accept or decline once. */
+export const FUNDER_IDS = ["friendsAndFamily", "grant"] as const;
+export type FunderId = (typeof FUNDER_IDS)[number];
+
+/** Someone who owns shares in the company. */
+export interface Shareholder {
+  /** "student" for the student, who owns every share at the start; otherwise the funder who bought them. */
+  id: "student" | "friendsAndFamily";
+  shares: number;
+  /** The day they got their shares: 1 for the student. */
+  day: number;
+}
+
+/** Friends and family's offer once answered: accepted (with what they paid and got) or declined. */
+export interface FriendsAndFamilyFunding {
+  status: "accepted" | "declined";
+  day: number;
+  /** Cash they put in, and the new shares it bought at the share price then. 0 if declined. */
+  amount: number;
+  shares: number;
+  /** The valuation the shares were priced at. */
+  valuation: number;
+}
+
+/**
+ * The grant once answered. Accepted, its uptime condition runs over the days played after `day` up to `untilDay`: the
+ * hours down then must stay at most maxHoursDown. It's then "met", or "withdrawn" the day they go over, when the
+ * whole amount is paid back.
+ */
+export interface GrantFunding {
+  status: "accepted" | "declined" | "met" | "withdrawn";
+  day: number;
+  amount: number;
+  untilDay: number;
+  /** Uptime % the condition asks for, and the hours down that allows over its days. */
+  minUptime: number;
+  maxHoursDown: number;
+  /** Hours down so far on the condition's days. */
+  hoursDown: number;
+}
+
+/** Friends and family and the grant: null until the student accepts or declines each. */
+export interface Funding {
+  friendsAndFamily: FriendsAndFamilyFunding | null;
+  grant: GrantFunding | null;
 }
 
 /** A day an event fires on: a fixed day from config, or the day a random event came up on the encounter list. */
@@ -173,12 +255,45 @@ export interface Server {
   readyDay: number;
   /** What it was bought for, on a model that buys its servers. Selling it back refunds a share of this. */
   paid?: number;
+  /** An app server switched from giving CU to giving APIU, for the paid API's calls. Left out while it gives CU. */
+  apiu?: boolean;
+  /** The rack it's installed in, by id, on a model with racks: it takes its U there from the day it's ordered. */
+  rack?: number;
+}
+
+/**
+ * The company's paid API, once bought. Traffic is the calls a day developers make; each day it moves towards a target
+ * set by paying users and features (see ApiConfig).
+ */
+export interface ApiState {
+  /** Calls a day developers make now: what the next day played brings, before any are dropped. */
+  calls: number;
+  /** Calls served on the day just played: each earned its price. */
+  served: number;
+  /** Calls dropped on the day just played: beyond the APIU, or while the service was down. */
+  dropped: number;
+  /** After an outage, API growth is slow until this day has been played. 0 before any outage. */
+  slowUntil: number;
+}
+
+/**
+ * A rack the company has bought, on a model whose servers go in racks (on-prem). It holds servers up to its size in
+ * rack units (U), and can be sold back once it's empty.
+ */
+export interface Rack {
+  /** Unique within the game. */
+  id: number;
+  size: RackSize;
+  /** What it was bought for. Selling it back refunds a share of this. */
+  paid: number;
 }
 
 /** CU and DBU demand on the day just played: what every user needed, before any cache. */
 export interface UnitDemand {
   cu: number;
   dbu: number;
+  /** APIU the paid API's calls need, when sizing a setup. Left out of the day's demand and with no API. */
+  apiu?: number;
 }
 
 /** A price change, for the summary. */
@@ -192,12 +307,12 @@ export interface PriceChange {
 /**
  * A bankrupt game is over, and so is a finished one: one that has played the configured final day. Either way it
  * accepts no more actions or advances. The final day is the last day played, so a 180-day game plays day 180 in full
- * (billed, with its events) and finishes at the end of it.
+ * (billed, with its events) and finishes at the end of it. A game the teacher ends early is finished too.
  */
 export type GameStatus = "playing" | "bankrupt" | "finished";
 
-/** How a game ended, for the summary. */
-export type GameEnding = "completed" | "bankrupt";
+/** How a game ended, for the summary: "ended" when the teacher ended it before its final day. */
+export type GameEnding = "completed" | "bankrupt" | "ended";
 
 /** Plain, JSON-serialisable game state. The server stores it as-is. */
 export interface GameState {
@@ -206,13 +321,22 @@ export interface GameState {
   companyName: string;
   productType: ProductTypeId;
   model: ModelId;
+  /** The game length the student picked when starting the company. */
+  gameLength: GameLengthId;
+  /** The last day played: the game finishes once it has been played. Set from the game length at the start. */
+  finalDay: number;
+  /** True once the teacher has ended the game, scored as it stood. */
+  endedByTeacher: boolean;
   day: number;
   cash: number;
   rng: number;
-  developers: number;
-  ops: number;
-  /** Support staff: they answer customers' tickets, on every model. */
-  support: number;
+  /**
+   * Staff on the team, by pool and grade: developers build features, ops keep the servers running, and support answer
+   * customers' tickets on every model. Hires still to start aren't here.
+   */
+  staff: Record<StaffPool, GradeCounts>;
+  /** Hires waiting to start, in the order they were made. */
+  hiring: Hire[];
   /**
    * The day the company launched: its first users arrived at the end of it, the first day of the launch ramp. Null until
    * then, when it has no users (see LaunchConfig).
@@ -248,6 +372,10 @@ export interface GameState {
   servers: Server[];
   /** The id the next server added gets. */
   nextServerId: number;
+  /** The racks the company has, on a model with racks, oldest first. Empty on any other model. */
+  racks: Rack[];
+  /** The id the next rack bought gets. */
+  nextRackId: number;
   outageDays: number;
   /** Total hours down across every day played, for uptime. */
   downtimeHours: number;
@@ -261,8 +389,16 @@ export interface GameState {
   migration: Migration | null;
   /** Migrations completed, for the end-of-game summary. */
   migrations: number;
-  /** The bank loan once taken, kept once repaid, or null. One per company. */
+  /** The latest bank loan, kept once repaid, or null if none was taken. One at a time. */
   loan: Loan | null;
+  /** The cap table: who owns the company's shares, the student first. Their shares added up are the shares in issue. */
+  shareholders: Shareholder[];
+  /** Friends and family and the grant, once answered. */
+  funding: Funding;
+  /** Loans repaid before the latest was taken, oldest first, for the summary. */
+  pastLoans: Loan[];
+  /** The interest in every loan repayment so far: of the debt spend, the part that counts against profit. */
+  interestPaid: number;
   /**
    * When each event fires, in day order: the fixed days from config, set when the game starts, and each random event
    * added on the day it fires.
@@ -303,22 +439,28 @@ export interface GameState {
   conversionsToday: number;
   /** Free users who have started paying in all, the same way. */
   conversions: number;
+  /** The paid API, once bought: null until then, and on a product without one. */
+  api: ApiState | null;
 }
 
 /** Something the player does between days. */
 export type Action =
-  /** Hires or lets go people in one pool: `count` of them, one if it's left out. */
-  | { type: "hire"; pool: StaffPool; count?: number }
-  | { type: "letGo"; pool: StaffPool; count?: number }
+  /**
+   * Hires or lets go people of one grade in one pool: `count` of them, one if it's left out, mids if the grade is.
+   * Hires start after their grade's lead time; letting go is at once, and only of those on the team.
+   */
+  | { type: "hire"; pool: StaffPool; grade?: StaffGrade; count?: number }
+  | { type: "letGo"; pool: StaffPool; grade?: StaffGrade; count?: number }
   /** Starts building one of the product's features. One build at a time; not on SaaS. */
   | { type: "buildFeature"; feature: string }
   /** Buys one of the product's features as an add-on, active at once. SaaS only, with a configuration team. */
   | { type: "buyAddon"; feature: string }
   /**
-   * Moves one person from one pool into another. Any time, including during a migration. Without `from`, a move
-   * into developers comes from ops and any other move from developers.
+   * Moves one person from one pool into another, keeping their grade. Any time, including during a migration. Without
+   * `from`, a move into developers comes from ops and any other move from developers. Without `grade`, a mid moves if
+   * there is one, else a junior, else a senior.
    */
-  | { type: "moveStaff"; to: StaffPool; from?: StaffPool }
+  | { type: "moveStaff"; to: StaffPool; from?: StaffPool; grade?: StaffGrade }
   /** Starts a migration to another model. One at a time; it runs in the background. */
   | { type: "startMigration"; model: ModelId }
   /** Sets the monthly price paying users pay, from the next day played. Above 0 and at most the configured maximum. */
@@ -328,12 +470,17 @@ export type Action =
   /** Cancels a rented VM, ready or not. Its rent stops: you pay only for the days you had it. */
   | { type: "cancelServer"; id: number }
   /**
-   * Buys a server of a type and size, on-prem. Its price is charged at once (infrastructure). It's on order until it
-   * arrives after the delivery time, adding no capacity until then. An order can't be cancelled.
+   * Buys a server of a type and size, on-prem. Its price is charged at once (infrastructure), with its cabling. It's on
+   * order until it arrives after the delivery time, adding no capacity until then. An order can't be cancelled. It's
+   * installed in the rack given, or the first with room for it, taking its U from now; with no room, it's refused.
    */
-  | { type: "buyServer"; server: ServerType; size: ServerSize }
+  | { type: "buyServer"; server: ServerType; size: ServerSize; rack?: number }
   /** Sells back a bought server that has arrived, refunding the configured share of what it cost, at once. */
   | { type: "sellServer"; id: number }
+  /** Buys a rack, on-prem: its price and cabling are charged at once, and it's installed at once. */
+  | { type: "buyRack"; size: RackSize }
+  /** Sells back an empty rack, refunding the configured share of what it cost, at once. */
+  | { type: "sellRack"; id: number }
   /**
    * Sets how many app instances run, on PaaS: from 1 to the platform's most. The change is instant, serving from the
    * next day played, and billed monthly a day's share at a time from then.
@@ -345,10 +492,31 @@ export type Action =
    */
   | { type: "setManagedService"; service: ManagedService; size: ServerSize | null }
   /**
-   * Takes the bank loan, if it wasn't taken at the start: the money arrives at once, and repayments start the next day
-   * played, at today's rate. One per company, and not with too few days left to repay it.
+   * Takes a bank loan: the money arrives at once, and repayments start the next day played, at today's rate and term.
+   * One at a time, so not while one is being repaid, and not in the game's last days.
    */
-  | { type: "takeLoan" };
+  | { type: "takeLoan" }
+  /**
+   * Accepts a funder's fixed offer, at once: friends and family's cash for new shares at today's share price, or the
+   * grant's cash on its uptime condition. Once each.
+   */
+  | { type: "acceptFunding"; funder: FunderId }
+  /** Turns a funder's offer down for good. */
+  | { type: "declineFunding"; funder: FunderId }
+  /**
+   * Pays off the loan being repaid, at once, with what's left of the money borrowed: the interest still to come is
+   * saved. Refused without enough cash.
+   */
+  | { type: "repayLoan" }
+  /** Buys the product's paid API, charged at once. Calls start arriving from the next day played. */
+  | { type: "buyApi" }
+  /**
+   * Switches one of the company's app servers between giving CU and giving APIU, on a model where you add servers one
+   * at a time. It serves the other way from the next day played.
+   */
+  | { type: "switchServer"; id: number; gives: "cu" | "apiu" }
+  /** Sets how many API instances run on PaaS, from 0 to the platform's most, like the app instance count. */
+  | { type: "setApiInstances"; count: number };
 
 export interface NewGameParams {
   companyName: string;
@@ -357,6 +525,10 @@ export interface NewGameParams {
   seed: number;
   /** Take the bank loan at the start, on its best terms. */
   takeLoan?: boolean;
+  /** Shares in issue at the start, all the student's: a whole number in the configured range. The default if left out. */
+  shares?: number;
+  /** One of the game lengths the config allows. Left out, the first it allows (180 days by default). */
+  gameLength?: string;
 }
 
 export interface LogEntry {
@@ -364,10 +536,13 @@ export interface LogEntry {
   cashDelta: number;
   /** Set on every charge, and only on charges. */
   category?: SpendCategory;
+  /** Of a loan repayment (debt), the interest in it. */
+  interest?: number;
   /**
    * Set on entries that need to stand out, such as an outage, bankruptcy or the launch. "income" marks money coming in, which the
    * ledger counts as income rather than spend. "loan" marks the bank loan: money coming in with it is borrowed, which
-   * is cash but not income.
+   * is cash but not income. "funding" marks money from friends and family or a grant, and a withdrawn grant paid
+   * back: cash, but neither income nor a charge.
    */
   kind?:
     | "outage"
@@ -381,7 +556,10 @@ export interface LogEntry {
     | "price"
     | "conversion"
     | "loan"
+    | "funding"
     | "launch"
+    | "staff"
+    | "api"
     | "danger";
 }
 
@@ -415,6 +593,10 @@ export function isCurrentState(saved: unknown): saved is GameState {
   return typeof saved === "object" && saved !== null && (saved as { version?: unknown }).version === GAME_STATE_VERSION;
 }
 
+export function isGameLengthId(v: string): v is GameLengthId {
+  return (GAME_LENGTH_IDS as readonly string[]).includes(v);
+}
+
 export function isModelId(v: string): v is ModelId {
   return (MODEL_IDS as readonly string[]).includes(v);
 }
@@ -431,10 +613,22 @@ export function isServerSize(v: string): v is ServerSize {
   return (SERVER_SIZES as readonly string[]).includes(v);
 }
 
+export function isRackSize(v: string): v is RackSize {
+  return (RACK_SIZES as readonly string[]).includes(v);
+}
+
 export function isManagedService(v: string): v is ManagedService {
   return (MANAGED_SERVICES as readonly string[]).includes(v);
 }
 
+export function isFunderId(v: string): v is FunderId {
+  return (FUNDER_IDS as readonly string[]).includes(v);
+}
+
 export function isStaffPool(v: string): v is StaffPool {
   return (STAFF_POOLS as readonly string[]).includes(v);
+}
+
+export function isStaffGrade(v: string): v is StaffGrade {
+  return (STAFF_GRADES as readonly string[]).includes(v);
 }

@@ -4,10 +4,14 @@ import { formatCash } from "../../api";
 import { days, useGame } from "../../game";
 import CashChart from "../../components/CashChart.vue";
 import BalanceSheet from "../../panels/BalanceSheet.vue";
+import CapTablePanel from "../../panels/CapTablePanel.vue";
+import FundingPanel from "../../panels/FundingPanel.vue";
 import LoanPanel from "../../panels/LoanPanel.vue";
 import SpendPanel from "../../panels/SpendPanel.vue";
+import ValuationPanel from "../../panels/ValuationPanel.vue";
 
-// Finance: cash, the balance sheet of income against costs, the bank loan, where the money went, and cash over time.
+// Finance: cash, the balance sheet of income against costs, the valuation and who owns the company, funding, the bank
+// loan, where the money went, and cash over time.
 // The chart's figures come from the summary so far, fetched again only once a new day has been played.
 const game = useGame();
 watch(
@@ -66,6 +70,9 @@ watch(
       </p>
     </section>
     <BalanceSheet />
+    <ValuationPanel />
+    <CapTablePanel />
+    <FundingPanel />
     <LoanPanel />
     <SpendPanel />
     <section class="card" aria-labelledby="cash-chart-heading">

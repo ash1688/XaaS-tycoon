@@ -120,7 +120,7 @@ export function createConversion(config: GameConfig, features: Features, pricing
   /** A new company: no conversions yet and no days played. */
   const startingConversion = () => ({ recentHoursDown: [] as number[], conversionsToday: 0, conversions: 0 });
 
-  return { startingConversion, recentHoursDownAfter, convertDay, conversion };
+  return { startingConversion, recentHoursDownAfter, recentUptime, convertDay, conversion };
 }
 
 export type Conversion = ReturnType<typeof createConversion>;

@@ -2,6 +2,7 @@ import { DANGER_RISKS, type DangerRisk, type EventConfig, type GameConfig } from
 import { layerOwner } from "./responsibility.ts";
 import { nextRandom } from "./rng.ts";
 import type { Servers } from "./servers.ts";
+import { staffOutput } from "./staff.ts";
 import type { Encounter, GameState, LogEntry, ScheduledEvent } from "./state.ts";
 
 /** One thing that made the danger meter climb faster on the day just played. */
@@ -112,7 +113,8 @@ export function createEncounters(config: GameConfig, servers: Servers) {
   /** The risks on a day played: what made it a risky day, worked out at the end of it. */
   function risksOn(state: GameState, overloaded: boolean): DangerRisk[] {
     const on: Record<DangerRisk, boolean> = {
-      unpatched: layerOwner(state.model, "os") === "you" && state.ops < servers.opsNeeded(state),
+      // Ops still to start after hiring aren't patching yet.
+      unpatched: layerOwner(state.model, "os") === "you" && staffOutput(config, state, "ops") < servers.opsNeeded(state),
       overloaded,
       lowSatisfaction: state.satisfaction < config.support.poorSatisfaction,
     };
@@ -134,7 +136,7 @@ export function createEncounters(config: GameConfig, servers: Servers) {
   const RISK_TEXT: Record<DangerRisk, { label: string; detail: string }> = {
     unpatched: {
       label: "Servers going unpatched",
-      detail: "You have fewer ops staff than your setup needs, so patches fall behind. Hire ops to catch up.",
+      detail: "You have fewer ops staff at work than your setup needs, so patches fall behind. Hire ops to catch up.",
     },
     overloaded: {
       label: "Capacity overloaded",
