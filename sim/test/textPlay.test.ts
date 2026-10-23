@@ -95,12 +95,25 @@ describe("runCommand", () => {
   it("shows the customer mix with thresholds, and a rise's reaction by customer type", () => {
     const state = advanceUntil(sim, run(start(), "instances 2").state, 20, who).state;
     expect(renderStatus(sim, state)).toMatch(
-      /customer mix: casual 70% \(threshold £5\), enthusiasts 20% \(threshold £6\.25\), professionals 8% \(threshold £10\), businesses 2% \(threshold £15\)/,
+      /customer mix: casual 70\.\d% \(threshold £5\), enthusiasts 20\.\d% \(threshold £6\.25\), professionals \d\.\d% \(threshold £10\), businesses \d\.\d% \(threshold £15\)/,
     );
     const line = run(state, "preview 7.5").lines[0]!;
     expect(line).toMatch(/reaction \d+\.\d% of payers = casual \d+\.\d% × 70% \+ enthusiasts .* \+ businesses \d+\.\d% × 2%/);
     const raised = run(state, "price 7.5").state;
-    expect(renderStatus(sim, raised)).toMatch(/casual 70% \(threshold £5!\)/);
+    expect(renderStatus(sim, raised)).toMatch(/casual 70\.\d% \(threshold £5!\)/);
+  });
+
+  it("shows who new users join as, and what features and the price pull in", () => {
+    const state = advanceUntil(sim, run(start(), "instances 2").state, 20, who).state;
+    expect(renderStatus(sim, state)).toMatch(
+      /new users join as: casual 70\.0%, enthusiasts 20\.0%, professionals 8\.0%, businesses 2\.0%\n/,
+    );
+    expect(renderStatus(sim, state)).toMatch(/groups not started \[pulls professionals x1\.5\]/);
+    // Twice the fair price: a quarter as many casual users join.
+    const dear = run(state, "price 10").state;
+    expect(renderStatus(sim, dear)).toMatch(/new users join as: casual \d+\.\d% \(price x0\.25\), enthusiasts \d+\.\d% \(price x0\.39\), professionals/);
+    const grouped: GameState = { ...state, features: { groups: { status: "built", progress: 0 } } };
+    expect(renderStatus(sim, grouped)).toMatch(/professionals 11\.5% \(features x1\.44\)/);
   });
 });
 

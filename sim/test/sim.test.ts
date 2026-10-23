@@ -217,6 +217,7 @@ const config: GameConfig = {
     maxPrice: 1_000,
     growthSensitivity: 1,
     maxGrowthBoost: 2,
+    newUserFilter: 2,
     paidShareSensitivity: 1,
     ...noWaves(),
   },
@@ -986,6 +987,29 @@ describe("agency staff and severance", () => {
     const state = { ...begin(), agency: { ...begin().agency, developers: { ...none, mid: 1 } } };
     expect(() => s.applyAction(state, { type: "moveStaff", from: "developers", to: "ops" })).toThrow(
       expect.objectContaining({ code: "no_staff" }),
+    );
+  });
+
+  it("hires agency moderators and pays permanent ones severance, only on a product with user content", () => {
+    // Social with user content; moderators are £2 a day for a permanent mid, so severance is £20.
+    const content = createSim({
+      ...config,
+      severance: { days: 10 },
+      productTypes: { ...config.productTypes, social: { ...config.productTypes.social, moderation: { reportsPerUser: 0.01 } } },
+    });
+    const social = content.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 42 });
+    const hired = content.advance(content.applyAction(social, { type: "hire", pool: "moderators", agency: true, count: 2 })).state;
+    expect(hired.agency.moderators).toEqual({ ...none, mid: 2 });
+    expect(content.staff(hired).find((p) => p.pool === "moderators")).toMatchObject({ agencyCount: 2, output: 1 });
+    expect(content.applyAction(hired, { type: "letGo", pool: "moderators", agency: true, count: 2 }).cash).toBe(hired.cash);
+
+    const permanent = { ...hired, cash: 1_000, staff: { ...hired.staff, moderators: { ...none, mid: 1 } } };
+    expect(content.staff(permanent).find((p) => p.pool === "moderators")!.grades.find((g) => g.grade === "mid")!.severance).toBe(20);
+    expect(content.applyAction(permanent, { type: "letGo", pool: "moderators" }).cash).toBe(980);
+
+    const shop = content.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 });
+    expect(() => content.applyAction(shop, { type: "hire", pool: "moderators", agency: true })).toThrow(
+      expect.objectContaining({ code: "no_content" }),
     );
   });
 

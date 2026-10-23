@@ -1,4 +1,4 @@
-import type { FeatureConfig, GameConfig, ModelId } from "./config.ts";
+import { CUSTOMER_TYPE_IDS, type CustomerTypeId, type FeatureConfig, type GameConfig, type ModelId } from "./config.ts";
 import { count, pounds, risen, type Finance } from "./finance.ts";
 import { staffOutput } from "./staff.ts";
 import { SimError, type FeatureProgress, type GameState, type LogEntry } from "./state.ts";
@@ -119,6 +119,16 @@ export function createFeatures(config: GameConfig, finance: Finance) {
       .filter((f) => isActive(state, f.id))
       .map((f) => f.growthMultiplier);
 
+  /**
+   * What the active features do to who joins: each customer type's weight among new users is multiplied by every
+   * active feature's appeal to it. 1 for a type no active feature appeals to.
+   */
+  function appeal(state: GameState): Record<CustomerTypeId, number> {
+    const active = featureList(state).filter((f) => isActive(state, f.id));
+    const by = (t: CustomerTypeId) => active.reduce((m, f) => m * (f.appeal?.[t] ?? 1), 1);
+    return Object.fromEntries(CUSTOMER_TYPE_IDS.map((t) => [t, by(t)])) as Record<CustomerTypeId, number>;
+  }
+
   /** Features built before today and add-ons bought: what's active for customers. */
   const activeCount = (state: GameState) => featureList(state).filter((f) => isActive(state, f.id)).length;
 
@@ -156,6 +166,7 @@ export function createFeatures(config: GameConfig, finance: Finance) {
     buildDay,
     features,
     activeGrowth,
+    appeal,
     activeCount,
     addonsLeftBehind,
     addonEntries,

@@ -64,6 +64,10 @@ npm run -s play -- summary <game>
 - `preview <price>` and `quote <model>` show what a price change or migration would do without doing it.
   A price rise's reaction is each customer type's reaction weighted by its share of users: the status shows your
   customer mix, each type's price threshold, and `!` where your price is over it.
+- The mix shifts. `new users join as` shows the mix new users arrive in: the product's own, tilted by your features
+  (each pulls a customer type, shown in `features` as `[pulls ...]`) and your price (above a type's threshold, fewer
+  of that type join). A rise loses casual users first, and downtime drives businesses and professionals out. A
+  pricier company ends up more professional, so its next rise hurts less.
 - `valuation` shows what your company is worth, what's pushing it up or down, and who owns it. `funding` shows the
   friends and family and grant offers in full; `accept ff`, `accept grant`, `decline ff` and `decline grant` answer
   them, once each. Either can be negotiated first: `counter ff amount 18000 share 18` asks friends and family for more

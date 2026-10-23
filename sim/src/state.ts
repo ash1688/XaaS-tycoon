@@ -294,6 +294,11 @@ export interface PriceWave {
   days: WaveEffect[];
   /** What it has done so far. Less than the plan only where users had already gone. */
   done: WaveEffect;
+  /**
+   * For a rise, who the users it loses are: each customer type's weight among them, its share of users × its reaction
+   * × the share of its lost payers who leave rather than go free. Casual users leave first. Null for a cut.
+   */
+  leftMix: Record<CustomerTypeId, number> | null;
 }
 
 /**
@@ -468,7 +473,8 @@ export interface GameState {
   paidUsers: number;
   /**
    * Each customer type's share of the users, adding up to 1: the product's mix to begin with. A price change's reaction
-   * is each type's reaction weighted by its share.
+   * is each type's reaction weighted by its share. It shifts as users come and go (see CustomerMix): new users arrive
+   * in a mix features and the price tilt, casual users leave first over the price and businesses over downtime.
    */
   customerMix: Record<CustomerTypeId, number>;
   /** The monthly price each paying user pays, a day's share at a time. A change applies from the next day played. */

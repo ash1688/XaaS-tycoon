@@ -26,6 +26,7 @@ import { createIpo, type IpoView } from "./ipo.ts";
 import { createLaunch, type LaunchView } from "./launch.ts";
 import { createLoan, type LoanQuote, type LoanView } from "./loan.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
+import { createCustomerMix } from "./mix.ts";
 import { isNameAllowed } from "./nameFilter.ts";
 import type { CounterOdds, Terms } from "./negotiation.ts";
 import { createPauses, type TickResult } from "./pauses.ts";
@@ -71,6 +72,7 @@ export type { LaunchView } from "./launch.ts";
 export type { LoanQuote, LoanView } from "./loan.ts";
 export type { LostAddon, MigrationQuote, MigrationView, SetupRack } from "./migration.ts";
 export { LOW_CASH_DAYS, type PauseKind, type PauseReason, type TickResult } from "./pauses.ts";
+export type { NewUserFactor } from "./mix.ts";
 export type { RackOption, RackView, RacksView } from "./racks.ts";
 export type { CounterOdds, NegotiationRound, RollResult, TermSpec, Terms } from "./negotiation.ts";
 export { MAX_OFFERS, ROLL_RESULTS } from "./negotiation.ts";
@@ -242,7 +244,10 @@ export interface Sim {
   priceWave(state: GameState): PriceWaveView | null;
   /** Days until the price can be changed again: 0 when it can. */
   priceLockDaysLeft(state: GameState): number;
-  /** The customer mix: each customer type's share of users, with its price threshold. Least willing to pay first. */
+  /**
+   * The customer mix: each customer type's share of users, with its price threshold, and its share of new users with
+   * what tilts it (features and the price). Least willing to pay first.
+   */
   customerMix(state: GameState): CustomerMixView;
   /**
    * Load the company can serve in a day with its current model and staff. On a model with servers, the load its ready
@@ -413,6 +418,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const support = createSupport(config);
   const moderation = createModeration(config);
   const customers = createCustomers(config, features, events, pricing, support, calendar);
+  const mix = createCustomerMix(config, features, pricing);
   const conversion = createConversion(config, features, pricing);
   const racks = createRacks(config, finance);
   const servers = createServers(config, finance, racks);
@@ -673,6 +679,17 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const viral = events.newUsersToday(state, day, today, launched.state.users);
     const users = launched.state.users + viral.reduce((sum, n) => sum + n, 0);
     const rng = grown.rng;
+    // The mix shifts with who left and joined: launch users arrive in the product's mix, the rest as newUserMix says.
+    const newMix = mix.newUserMix(state);
+    const customerMix = mix.mixAfter(
+      state,
+      [...(ramping ? [] : organic.lost), ...(wave.left ? [wave.left] : [])],
+      [
+        { users: ramping ? 0 : organic.arrived, weights: newMix },
+        { users: wave.joined, weights: newMix },
+        { users: users - wave.users, weights: pricing.baseMix(state.productType) },
+      ],
+    );
 
     // The paid API's calls, served as far as the APIU go. Its traffic for tomorrow follows the users paying tonight.
     const calls = api.apiDay(state, day, served.hoursDown, paidUsers, live);
@@ -704,8 +721,9 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       ...arrivals.entries,
       ...launched.entries,
       ...recorded.entries,
-      ...(ramping ? [] : organic.entries),
+      // The outage first, then who it drove away.
       ...(served.outage ? [served.outage] : []),
+      ...(ramping ? [] : organic.entries),
       ...wave.entries,
       ...converted.entries,
       ...moderated.entries,
@@ -729,6 +747,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       launchDay,
       users,
       paidUsers,
+      customerMix,
       priceWave: wave.priceWave,
       // Over the launch ramp the users arriving outgrow the day's load, so the load and demand shown are the usual ones
       // of the users there now: what the servers face from tomorrow.
@@ -837,7 +856,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     pricePreview: (s, price) => pricing.pricePreview(load(s), price),
     priceWave: (s) => pricing.priceWave(load(s)),
     priceLockDaysLeft: (s) => pricing.lockDaysLeft(load(s)),
-    customerMix: (s) => pricing.customerMix(load(s)),
+    customerMix: (s) => mix.customerMix(load(s)),
     capacity: (s) => infra.capacity(load(s)),
     units: (s) => infra.units(load(s)),
     servers: (s) => servers.servers(load(s)),
