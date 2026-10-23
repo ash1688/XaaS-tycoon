@@ -3752,3 +3752,37 @@ select:disabled {
   border-radius: 3px;
   background: var(--type);
 }
+
+/* Negotiating a funder's offer, in its review modal. */
+.negotiation {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+.negotiation h3 {
+  margin: 0;
+}
+.negotiation-rounds {
+  padding-left: 1.25rem;
+}
+.negotiation-rounds li + li {
+  margin-top: 0.4rem;
+}
+.counter-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: end;
+}
+.counter-form label {
+  display: grid;
+  gap: 0.25rem;
+}
+.counter-form input {
+  width: 8rem;
+}
+.counter-form .counter-odds,
+.counter-form p {
+  flex-basis: 100%;
+  margin: 0;
+}

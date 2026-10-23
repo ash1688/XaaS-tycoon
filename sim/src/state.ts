@@ -1,3 +1,4 @@
+import type { Negotiation, Terms } from "./negotiation.ts";
 import {
   GAME_LENGTH_IDS,
   MANAGED_SERVICES,
@@ -27,7 +28,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 30;
+export const GAME_STATE_VERSION = 31;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -174,6 +175,11 @@ export interface GrantFunding {
 export interface Funding {
   friendsAndFamily: FriendsAndFamilyFunding | null;
   grant: GrantFunding | null;
+  /**
+   * Each funder's offer once the student has countered it: its offers so far and the rolls between them. Null until
+   * then, while the offer is the fixed one, and again once it's answered.
+   */
+  negotiating: Record<FunderId, Negotiation | null>;
 }
 
 /** A day an event fires on: a fixed day from config, or the day a random event came up on the encounter list. */
@@ -419,6 +425,8 @@ export interface GameState {
   dangerRisks: DangerRisk[];
   /** Its own seeded RNG, so rolling encounters doesn't change the day-to-day randomness of load and growth. */
   encounterRng: number;
+  /** The same for negotiation rolls: one a counter. */
+  negotiationRng: number;
   /** Scripted events that were on during the day just played. */
   events: EventRecord[];
   /**
@@ -510,6 +518,11 @@ export type Action =
   | { type: "acceptFunding"; funder: FunderId }
   /** Turns a funder's offer down for good. */
   | { type: "declineFunding"; funder: FunderId }
+  /**
+   * Counters a funder's offer: friends and family's on `amount` and `share` (theirs after, 0–1), the grant's on
+   * `amount` and `days`. A term left out stays as offered. A roll sets the next offer; the third is final.
+   */
+  | { type: "counterFunding"; funder: FunderId; terms: Partial<Terms> }
   /**
    * Pays off the loan being repaid, at once, with what's left of the money borrowed: the interest still to come is
    * saved. Refused without enough cash.

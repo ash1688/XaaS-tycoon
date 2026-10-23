@@ -205,6 +205,7 @@ const config: GameConfig = {
   shares: { min: 10_000, max: 100_000, default: 10_000 },
   valuation: defaultConfig.valuation,
   funding: defaultConfig.funding,
+  negotiation: defaultConfig.negotiation,
   // No price waves unless a test says otherwise, so a price change only has its ongoing effect on growth and payers.
   pricing: {
     maxPrice: 1_000,

@@ -130,6 +130,14 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   for (const m of MODEL_IDS) {
     add(`funding.grant.minUptime.${m}`, "Money", "Grant", `Uptime needed (${MODEL_LABELS[m]})`, "Uptime % a company on this model must keep over those days, or the grant is withdrawn and paid back.", range(0, 100, 0.1));
   }
+  add("negotiation.dieSides", "Money", "Negotiation", "Sides on the die", "Each counter is answered by a roll of a die with this many sides.", range(2, 100, 1));
+  add("negotiation.highFrom", "Money", "Negotiation", "High roll from", "A roll of this or more, after the penalty for asking a lot, moves the next offer most of the way to the counter.", range(1, 100, 1));
+  add("negotiation.middleFrom", "Money", "Negotiation", "Middle roll from", "A roll of this or more, but below a high roll, meets the counter about halfway.", range(1, 100, 1));
+  add("negotiation.greedPenalty", "Money", "Negotiation", "Penalty per 100% asked", "Taken off the roll for a counter asking 100% better terms, and in step for less: 30 is 3 per 10%.", range(0, 200, 1));
+  add("negotiation.maxAsk", "Money", "Negotiation", "Most a counter can ask", "The most a counter can ask for in all, as a share of the offer (0.5 = 50% better terms).", range(0.05, 5, 0.05));
+  add("negotiation.moves.high", "Money", "Negotiation", "High roll moves", "Share of the way from the offer to the counter the next offer moves on a high roll.", SHARE);
+  add("negotiation.moves.middle", "Money", "Negotiation", "Middle roll moves", "Share of the way the next offer moves on a middle roll.", SHARE);
+  add("negotiation.moves.low", "Money", "Negotiation", "Low roll moves", "Share of the way the next offer moves on a low roll.", SHARE);
   add("billing.daysPerMonth", "Money", "", "Days in a billing month", "Monthly costs are charged a day at a time: the monthly cost ÷ this.", range(28, 31, 1));
   for (const m of MODEL_IDS) {
     const s = MODEL_LABELS[m];
@@ -503,6 +511,10 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
       ]),
     ),
     ["encounters.thresholdMin", "encounters.thresholdMax", "The highest threshold can't be below the lowest."],
+    ["negotiation.middleFrom", "negotiation.highFrom", "A high roll can't start below a middle one."],
+    ["negotiation.highFrom", "negotiation.dieSides", "A high roll has to be possible on the die."],
+    ["negotiation.moves.low", "negotiation.moves.middle", "A middle roll can't move less than a low one."],
+    ["negotiation.moves.middle", "negotiation.moves.high", "A high roll can't move less than a middle one."],
   ];
   if (GAME_LENGTH_IDS.every((l) => config.allowedGameLengths[l] !== 1)) {
     const changed = GAME_LENGTH_IDS.find((l) => `allowedGameLengths.${l}` in overrides) ?? GAME_LENGTH_IDS[0];

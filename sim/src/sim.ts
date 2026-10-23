@@ -19,6 +19,7 @@ import { createLaunch, type LaunchView } from "./launch.ts";
 import { createLoan, type LoanQuote, type LoanView } from "./loan.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
 import { isNameAllowed } from "./nameFilter.ts";
+import type { CounterOdds, Terms } from "./negotiation.ts";
 import { createPricing, type CustomerMixView, type PricePreview, type PriceWaveView } from "./pricing.ts";
 import { createRacks, type RacksView } from "./racks.ts";
 import { seedRng } from "./rng.ts";
@@ -55,6 +56,8 @@ export type { LaunchView } from "./launch.ts";
 export type { LoanQuote, LoanView } from "./loan.ts";
 export type { LostAddon, MigrationQuote, MigrationView, SetupRack } from "./migration.ts";
 export type { RackOption, RackView, RacksView } from "./racks.ts";
+export type { CounterOdds, NegotiationRound, RollResult, TermSpec, Terms } from "./negotiation.ts";
+export { MAX_OFFERS, ROLL_RESULTS } from "./negotiation.ts";
 export type { CustomerMixView, CustomerTypeView, PricePreview, PriceWaveView, TypeReaction } from "./pricing.ts";
 export { weightedReaction } from "./pricing.ts";
 export type {
@@ -75,6 +78,7 @@ export type {
   FundingView,
   GrantOffer,
   GrantView,
+  NegotiationView,
   ValuationDriver,
   ValuationDriverId,
   ValuationView,
@@ -278,6 +282,11 @@ export interface Sim {
    */
   funding(state: GameState): FundingView;
   /**
+   * What countering a funder's open offer with `terms` would do, before it's made: how far it asks, the odds of a
+   * high, middle or low roll, and the next offer each would bring. Refused as counterFunding would refuse it.
+   */
+  counterOdds(state: GameState, funder: string, terms: Partial<Terms>): CounterOdds;
+  /**
    * Where the company is with its launch: waiting for capacity, its first users due, arriving over the ramp, or
    * launched; the day they started (or will start) arriving, and the launch total.
    */
@@ -387,6 +396,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       interestPaid: 0,
       schedule,
       ...starting,
+      // Negotiation rolls have their own too, so countering an offer doesn't change the rest of the game.
+      negotiationRng: seedRng(seed ^ 0xd1ce),
       events: [],
       priceRises: {},
       addonPriceRise: 1,
@@ -483,6 +494,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         return shares.acceptFunding(state, action.funder);
       case "declineFunding":
         return shares.declineFunding(state, action.funder);
+      case "counterFunding":
+        return shares.counterFunding(state, action.funder, action.terms);
       case "buyApi":
         return api.buyApi(state);
       case "switchServer":
@@ -686,6 +699,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     valuation: (s) => shares.valuation(load(s)),
     capTable: (s) => shares.capTable(load(s)),
     funding: (s) => shares.funding(load(s)),
+    counterOdds: (s, funder, terms) => shares.counterOdds(load(s), funder, terms),
     launch: (s) => launch.launchView(load(s)),
     migration: (s) => migration.migration(load(s)),
     migrationQuote: (s, target) => migration.migrationQuote(load(s), target),
