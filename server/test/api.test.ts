@@ -674,6 +674,92 @@ describe("games from an older version", () => {
   });
 });
 
+describe("game lengths", () => {
+  const ALL_LENGTHS = { "allowedGameLengths.1-year": 1, "allowedGameLengths.career": 1 };
+
+  it("offers only 180 days by default, and refuses a length the preset doesn't allow", async () => {
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.gameLengths).toEqual([{ id: "180-days", name: "180 days", finalDay: 180 }]);
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    expect(company).toMatchObject({ gameLength: "180-days", gameLengthName: "180 days", finalDay: 180, endedByTeacher: false });
+    const refused = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "iaas", gameLength: "1-year" });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toMatchObject({ error: "game_length_not_allowed", message: expect.stringContaining("180 days") });
+  });
+
+  it("starts a game of a length the preset allows, which keeps its final day", async () => {
+    await useOverrides(ALL_LENGTHS);
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.gameLengths.map((l) => [l.id, l.finalDay])).toEqual([
+      ["180-days", 180],
+      ["1-year", 365],
+      ["career", 17_155],
+    ]);
+    const code = await newCode();
+    const created = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "iaas", gameLength: "1-year" });
+    expect(created.statusCode).toBe(201);
+    expect(created.json<CompanyView>()).toMatchObject({ gameLength: "1-year", finalDay: 365 });
+    const career = (await newCompany(code, { name: "Lifer", productType: "social", model: "saas", gameLength: "career" })).json<CompanyView>();
+    expect(career).toMatchObject({ gameLength: "career", finalDay: 17_155 });
+    const games = (await app.inject({ method: "GET", url: "/api/teacher/games", cookies: await teacherCookie() })).json<TeacherGamesView>();
+    expect(games.codes[0]!.companies.map((c) => c.finalDay).sort()).toEqual([17_155, 365]);
+  });
+
+  it("lets the teacher end one game, which then shows its summary and can't be played", async () => {
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    await app.inject({ method: "POST", url: `${url}/continue` });
+    const endUrl = `/api/teacher/companies/${company.id}/end`;
+    expect((await app.inject({ method: "POST", url: endUrl })).statusCode).toBe(401);
+    const cookies = await teacherCookie();
+    const ended = await app.inject({ method: "POST", url: endUrl, cookies });
+    expect(ended.statusCode).toBe(200);
+    expect(ended.json()).toEqual({ ended: 1 });
+    const after = (await app.inject({ method: "GET", url })).json<CompanyView>();
+    expect(after).toMatchObject({ status: "finished", endedByTeacher: true, day: 2 });
+    const summary = (await app.inject({ method: "GET", url: `${url}/summary` })).json<SummaryView>();
+    expect(summary).toMatchObject({ ending: "ended", day: 2, finalDay: 180 });
+    const next = await app.inject({ method: "POST", url: `${url}/continue` });
+    expect(next.statusCode).toBe(409);
+    expect(next.json()).toMatchObject({ error: "finished", message: expect.stringContaining("Your teacher ended Acme early") });
+    // Ending it again ends nothing more.
+    expect((await app.inject({ method: "POST", url: endUrl, cookies })).json()).toEqual({ ended: 0 });
+    const games = (await app.inject({ method: "GET", url: "/api/teacher/games", cookies })).json<TeacherGamesView>();
+    expect(games.codes[0]!.companies[0]).toMatchObject({ status: "finished", endedByTeacher: true });
+    for (const id of ["00000000-0000-0000-0000-000000000000", "nope"]) {
+      expect((await app.inject({ method: "POST", url: `/api/teacher/companies/${id}/end`, cookies })).statusCode).toBe(404);
+    }
+  });
+
+  it("lets the teacher end every game still being played under a code, leaving others alone", async () => {
+    const code = await newCode();
+    const other = await newCode();
+    const ids: string[] = [];
+    for (const name of ["One", "Two", "Retired"]) {
+      ids.push((await newCompany(code, { name, productType: "ecommerce", model: "iaas" })).json<CompanyView>().id);
+    }
+    await app.inject({ method: "POST", url: `/api/codes/${code}/companies/${ids[2]}/retire` });
+    const elsewhere = (await newCompany(other)).json<CompanyView>();
+    const cookies = await teacherCookie();
+    expect((await app.inject({ method: "POST", url: `/api/teacher/codes/${code}/end` })).statusCode).toBe(401);
+    const ended = await app.inject({ method: "POST", url: `/api/teacher/codes/${code}/end`, cookies });
+    expect(ended.json()).toEqual({ ended: 2 });
+    const list = (await app.inject({ method: "GET", url: `/api/codes/${code}` })).json<{ companies: CompanyView[] }>();
+    expect(Object.fromEntries(list.companies.map((c) => [c.name, [c.status, c.endedByTeacher]]))).toEqual({
+      One: ["finished", true],
+      Two: ["finished", true],
+      Retired: ["retired", false],
+    });
+    const untouched = (await app.inject({ method: "GET", url: `/api/codes/${other}/companies/${elsewhere.id}` })).json<CompanyView>();
+    expect(untouched.status).toBe("active");
+    // Ended games are history, so they don't count towards the limit.
+    expect((await newCompany(code, { name: "Again", productType: "ecommerce", model: "iaas" })).statusCode).toBe(201);
+    expect((await app.inject({ method: "POST", url: "/api/teacher/codes/99999999/end", cookies })).statusCode).toBe(404);
+  });
+});
+
 describe("users, capacity and uptime", () => {
   async function setup() {
     const code = await newCode();
@@ -1206,31 +1292,33 @@ describe("bank loan", () => {
 
   it("shows the start terms in meta, and a new game can take them", async () => {
     const terms = await startLoan();
-    // £38,500 over 179 days, rounded up to the pound a day.
+    // £38,500 over the 120-day term, rounded up to the pound a day.
     expect(terms).toEqual({
       amount: 35_000,
       rate: 0.1,
-      dailyRepayment: 216,
-      days: 179,
-      total: 38_664,
-      interest: 3_664,
-      lastDay: 180,
+      dailyRepayment: 321,
+      days: 120,
+      total: 38_520,
+      interest: 3_520,
+      lastDay: 121,
     });
     const { company, next } = await setup({ takeLoan: true });
     expect(company.cash).toBe(1_000 + 35_000);
     expect(company.loan).toMatchObject({ amount: 35_000, day: 1, rate: 0.1, total: terms.total, repaid: 0 });
-    expect(company.loan).toMatchObject({ dailyRepayment: terms.dailyRepayment, remaining: terms.total, daysLeft: 179 });
+    expect(company.loan).toMatchObject({ dailyRepayment: terms.dailyRepayment, remaining: terms.total, daysLeft: 120 });
     expect(company.loanQuote).toBeNull();
     const { company: after, log } = await next();
     expect(after.spend.debt).toBe(terms.dailyRepayment);
-    expect(after.loan).toMatchObject({ repaid: terms.dailyRepayment, daysLeft: 178 });
+    expect(after.loan).toMatchObject({ repaid: terms.dailyRepayment, daysLeft: 119 });
+    // £3,520 of the £38,520 is interest, so £29 of the first £321.
+    expect(after.interestPaid).toBe(29);
     expect(log[0]!.entries).toContainEqual(
       expect.objectContaining({ category: "debt", cashDelta: -terms.dailyRepayment }),
     );
     expect(log[0]!.entries).toContainEqual(expect.objectContaining({ kind: "loan" }));
   });
 
-  it("starts without a loan by default, offering the start terms, which get worse later", async () => {
+  it("starts without a loan by default, offering the start terms, which get worse and shorter later", async () => {
     const terms = await startLoan();
     const { company, next } = await setup();
     expect(company).toMatchObject({ cash: 1_000, loan: null, loanQuote: terms });
@@ -1240,10 +1328,11 @@ describe("bank loan", () => {
     expect(later.loanQuote!.rate).toBeGreaterThan(terms.rate);
     expect(later.loanQuote!.dailyRepayment).toBeGreaterThan(terms.dailyRepayment);
     expect(later.loanQuote!.total).toBeGreaterThan(terms.total);
-    expect(later.loanQuote!.days).toBe(169);
+    // Half a day off the 120-day term for each of the 10 days later.
+    expect(later.loanQuote!.days).toBe(115);
   });
 
-  it("takes the loan later as an action, on the quoted terms, and only once", async () => {
+  it("takes a loan later as an action, on the quoted terms, and not a second while it's being repaid", async () => {
     const { act, next } = await setup();
     await next();
     const before = (await next()).company;
@@ -1261,14 +1350,41 @@ describe("bank loan", () => {
     expect(taken.loanQuote).toBeNull();
     const again = await act({ type: "takeLoan" });
     expect(again.statusCode).toBe(400);
-    expect(again.json()).toMatchObject({ error: "loan_taken", message: expect.stringContaining("one") });
+    expect(again.json()).toMatchObject({ error: "loan_open", message: expect.stringContaining("one at a time") });
   });
 
   it("rejects a second loan on a game that took one at the start", async () => {
     const { act } = await setup({ takeLoan: true });
     const res = await act({ type: "takeLoan" });
     expect(res.statusCode).toBe(400);
-    expect(res.json()).toMatchObject({ error: "loan_taken" });
+    expect(res.json()).toMatchObject({ error: "loan_open" });
+  });
+
+  it("pays a loan off early, saving the interest the quote showed, and then lends again", async () => {
+    const { act, next } = await setup({ takeLoan: true });
+    await next();
+    const { company } = await next();
+    // Two repayments of £321, £59 of them interest: £34,417 of the money borrowed is left.
+    expect(company.loan).toMatchObject({ repaid: 642, interestPaid: 59, payoff: 34_417, interestSaved: 3_461 });
+    const res = await act({ type: "repayLoan" });
+    expect(res.statusCode).toBe(200);
+    const paid = res.json<CompanyView>();
+    expect(paid.cash).toBe(company.cash - 34_417);
+    expect(paid.loan).toMatchObject({ paidOffDay: 3, remaining: 0, payoff: 0, repaidInFull: true });
+    expect(paid.interestPaid).toBe(59);
+    expect(paid.loanQuote).toMatchObject({ amount: 35_000, rate: 0.104, days: 119 });
+    const { company: after } = await next();
+    expect(after.spend.debt).toBe(642 + 34_417);
+    const again = await act({ type: "takeLoan" });
+    expect(again.statusCode).toBe(200);
+    expect(again.json<CompanyView>().loan).toMatchObject({ day: 4, repaid: 0, repaidInFull: false });
+  });
+
+  it("refuses to pay off a loan that isn't being repaid", async () => {
+    const { act } = await setup();
+    const res = await act({ type: "repayLoan" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: "no_loan" });
   });
 
   it("validates the take-loan option", async () => {

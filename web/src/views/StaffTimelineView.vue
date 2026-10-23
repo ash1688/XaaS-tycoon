@@ -129,7 +129,9 @@ function describe(e: PlayEventView): string {
     case "setManagedService":
       return `Set the managed ${p.service} to ${p.size ?? "off"}`;
     case "takeLoan":
-      return "Took the bank loan";
+      return "Took a bank loan";
+    case "repayLoan":
+      return "Paid off the bank loan early";
   }
   return e.type;
 }

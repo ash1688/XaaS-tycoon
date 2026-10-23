@@ -428,10 +428,12 @@ export function playGame(sim: Sim, { model, productType, strategy, seed }: GameS
 function breakEven(state: GameState): number | null {
   const spend = Object.fromEntries(SPEND_CATEGORIES.map((c) => [c, 0])) as Spend;
   let income = 0;
+  let interest = 0;
   for (const d of state.spendByDay) {
     for (const c of SPEND_CATEGORIES) spend[c] += d[c];
     income += d.income;
-    if (income > 0 && income >= profitCosts(spend, state.loan)) return d.day;
+    interest += d.interest;
+    if (income > 0 && income >= profitCosts(spend, interest)) return d.day;
   }
   return null;
 }

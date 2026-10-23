@@ -424,12 +424,28 @@ const inputId = (f: ConfigField) => `cfg-${f.path.replace(/\./g, "-")}`;
             <div class="config-field-text">
               <label :for="inputId(f)">{{ f.label }}</label>
               <p class="muted">{{ f.help }}</p>
-              <p class="config-meta muted">
+              <p v-if="f.kind === 'toggle'" class="config-meta muted">Default {{ f.default ? "on" : "off" }}</p>
+              <p v-else class="config-meta muted">
                 Default {{ format(f.default) }} · {{ format(f.min) }} to {{ format(f.max) }}
               </p>
             </div>
             <div class="config-field-input">
+              <!-- A toggle is stored as 1 or 0 like any other number, but drawn as a checkbox. -->
               <input
+                v-if="f.kind === 'toggle'"
+                :id="inputId(f)"
+                type="checkbox"
+                :checked="draft[f.path] === '1'"
+                :disabled="readOnly"
+                :aria-invalid="!!fieldErrors[f.path]"
+                :aria-describedby="fieldErrors[f.path] ? `${inputId(f)}-error` : undefined"
+                @change="
+                  draft[f.path] = ($event.target as HTMLInputElement).checked ? '1' : '0';
+                  delete fieldErrors[f.path];
+                "
+              />
+              <input
+                v-else
                 :id="inputId(f)"
                 v-model="draft[f.path]"
                 type="number"

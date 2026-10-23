@@ -89,6 +89,16 @@ describe("advanceUntil", () => {
     expect(summary).toMatch(/"ending"/);
     expect(summary).not.toMatch(/incomeVsCosts|"days"/);
   });
+
+  it("ends the game as the teacher, logging it like the classroom server", () => {
+    const { state } = run(start(), "next 3");
+    const ended = run(state, "end");
+    expect(ended.state).toMatchObject({ status: "finished", endedByTeacher: true, day: state.day });
+    expect(ended.lines).toEqual([`GAME OVER: ended by the teacher on day ${state.day}`]);
+    expect(ended.rows).toMatchObject([{ type: "end", params: { status: "finished", endedBy: "teacher" } }]);
+    expect(renderStatus(sim, ended.state)).toMatch(/ENDED BY TEACHER/);
+    expect(renderSummary(sim, ended.state)).toMatch(/"ending": "ended"/);
+  });
 });
 
 describe("racks, cabling, power and cooling", () => {
@@ -131,11 +141,33 @@ describe("racks, cabling, power and cooling", () => {
 });
 
 describe("rendering", () => {
+  it("shows a longer game's length and final day", () => {
+    const yearly = createSim({ ...defaultConfig, allowedGameLengths: { "180-days": 0, "1-year": 1, career: 1 } });
+    const career = yearly.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3, gameLength: "career" });
+    expect(renderStatus(yearly, career)).toMatch(/day 1\/17155 \(Career \(47 years, age 18 to 65\)\)/);
+  });
+
   it("shows the company and the commands that work now", () => {
     const state = start();
-    expect(renderStatus(sim, state)).toMatch(/day 1\/40/);
+    expect(renderStatus(sim, state)).toMatch(/day 1\/40 \(40 days\)/);
+    expect(renderCommands(sim, state)).toMatch(/^\s+end /m);
     const commands = renderCommands(sim, state);
     expect(commands).toMatch(/instances <1–20>/);
     expect(commands).not.toMatch(/^\s+rent /m);
+  });
+
+  it("shows the loan with its payoff, pays it off early, and then offers another", () => {
+    const state = run(start(), "next 10").state;
+    const loan = sim.loan(state)!;
+    expect(renderStatus(sim, state)).toContain(`to day ${loan.lastDay}); paying off now costs £${loan.payoff.toLocaleString("en-GB")}`);
+    expect(renderCommands(sim, state)).toMatch(/repayloan {3}\(pay off the loan now: .*, saving .* interest\)/);
+    expect(renderCommands(sim, state)).not.toMatch(/^\s+loan /m);
+    expect(parseCommand("repayloan")).toEqual({ kind: "action", action: { type: "repayLoan" }, times: 1 });
+
+    const turn = run({ ...state, cash: state.cash + 50_000 }, "repayloan");
+    expect(turn.rows[0]).toMatchObject({ type: "repayLoan", ok: true });
+    expect(renderStatus(sim, turn.state)).toContain(`loan: repaid early on day ${state.day}`);
+    expect(renderCommands(sim, turn.state)).toMatch(/^\s+loan {3}\(£35,000 now at .*, to day \d+: .* interest\)/m);
+    expect(renderCommands(sim, turn.state)).not.toMatch(/repayloan/);
   });
 });

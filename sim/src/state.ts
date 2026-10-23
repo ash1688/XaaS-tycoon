@@ -1,4 +1,5 @@
 import {
+  GAME_LENGTH_IDS,
   MANAGED_SERVICES,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
@@ -6,6 +7,7 @@ import {
   SERVER_SIZES,
   SERVER_TYPES,
   STAFF_POOLS,
+  type GameLengthId,
   type ManagedService,
   type MigrationPhase,
   type ModelId,
@@ -21,7 +23,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 22;
+export const GAME_STATE_VERSION = 24;
 
 /** Money spent in each category. */
 export type Spend = Record<SpendCategory, number>;
@@ -31,8 +33,10 @@ export interface DaySpend extends Spend {
   day: number;
   /** Income on the day: what paying users paid. */
   income: number;
-  /** Money borrowed on the day: the bank loan, if it was taken then. Not income: it's paid back as debt. */
+  /** Money borrowed on the day: a bank loan, if one was taken then. Not income: it's paid back as debt. */
   borrowed: number;
+  /** Of the day's debt, the interest: the only part of a loan repayment that counts against profit. */
+  interest: number;
   /** Users at the end of the day, paying or free, for the summary's peak. */
   users: number;
   /** Of them, those paying. */
@@ -42,8 +46,8 @@ export interface DaySpend extends Spend {
 }
 
 /**
- * The company's bank loan. It's repaid in equal daily repayments (debt), from the day after it's taken to the final
- * day, whatever happens. See LoanConfig for how the rate and repayment are set.
+ * A bank loan. It's repaid in equal daily repayments (debt) over its fixed term, from the day after it's taken,
+ * whatever happens, unless it's paid off early. See LoanConfig for how the rate, term and repayment are set.
  */
 export interface Loan {
   amount: number;
@@ -51,12 +55,20 @@ export interface Loan {
   day: number;
   /** Interest as a share of the amount (0.1 = 10%), set by the day it was taken. */
   rate: number;
-  /** Charged on every day played after `day`, to the final day. */
+  /** Repayment days: the term, set by the day it was taken. */
+  term: number;
+  /** The day of the last repayment: day + term. It can be after the game's final day. */
+  lastDay: number;
+  /** Charged on every day played from the day after `day` to `lastDay`. */
   dailyRepayment: number;
-  /** Everything to repay: the amount plus interest, dailyRepayment × the days to repay it. */
+  /** Everything to repay over the term: the amount plus interest, dailyRepayment × term. */
   total: number;
-  /** Repaid so far. */
+  /** Repaid so far, an early payoff included. */
   repaid: number;
+  /** Of what's been repaid, the interest. */
+  interestPaid: number;
+  /** The day it was paid off early, or null: the interest it would still have charged was saved. */
+  paidOffDay: number | null;
 }
 
 /**
@@ -202,12 +214,12 @@ export interface PriceChange {
 /**
  * A bankrupt game is over, and so is a finished one: one that has played the configured final day. Either way it
  * accepts no more actions or advances. The final day is the last day played, so a 180-day game plays day 180 in full
- * (billed, with its events) and finishes at the end of it.
+ * (billed, with its events) and finishes at the end of it. A game the teacher ends early is finished too.
  */
 export type GameStatus = "playing" | "bankrupt" | "finished";
 
-/** How a game ended, for the summary. */
-export type GameEnding = "completed" | "bankrupt";
+/** How a game ended, for the summary: "ended" when the teacher ended it before its final day. */
+export type GameEnding = "completed" | "bankrupt" | "ended";
 
 /** Plain, JSON-serialisable game state. The server stores it as-is. */
 export interface GameState {
@@ -216,6 +228,12 @@ export interface GameState {
   companyName: string;
   productType: ProductTypeId;
   model: ModelId;
+  /** The game length the student picked when starting the company. */
+  gameLength: GameLengthId;
+  /** The last day played: the game finishes once it has been played. Set from the game length at the start. */
+  finalDay: number;
+  /** True once the teacher has ended the game, scored as it stood. */
+  endedByTeacher: boolean;
   day: number;
   cash: number;
   rng: number;
@@ -275,8 +293,12 @@ export interface GameState {
   migration: Migration | null;
   /** Migrations completed, for the end-of-game summary. */
   migrations: number;
-  /** The bank loan once taken, kept once repaid, or null. One per company. */
+  /** The latest bank loan, kept once repaid, or null if none was taken. One at a time. */
   loan: Loan | null;
+  /** Loans repaid before the latest was taken, oldest first, for the summary. */
+  pastLoans: Loan[];
+  /** The interest in every loan repayment so far: of the debt spend, the part that counts against profit. */
+  interestPaid: number;
   /** When each scripted event fires, in day order. Rolled when the game starts. */
   schedule: ScheduledEvent[];
   /** Scripted events that were on during the day just played. */
@@ -353,10 +375,15 @@ export type Action =
    */
   | { type: "setManagedService"; service: ManagedService; size: ServerSize | null }
   /**
-   * Takes the bank loan, if it wasn't taken at the start: the money arrives at once, and repayments start the next day
-   * played, at today's rate. One per company, and not with too few days left to repay it.
+   * Takes a bank loan: the money arrives at once, and repayments start the next day played, at today's rate and term.
+   * One at a time, so not while one is being repaid, and not in the game's last days.
    */
-  | { type: "takeLoan" };
+  | { type: "takeLoan" }
+  /**
+   * Pays off the loan being repaid, at once, with what's left of the money borrowed: the interest still to come is
+   * saved. Refused without enough cash.
+   */
+  | { type: "repayLoan" };
 
 export interface NewGameParams {
   companyName: string;
@@ -365,6 +392,8 @@ export interface NewGameParams {
   seed: number;
   /** Take the bank loan at the start, on its best terms. */
   takeLoan?: boolean;
+  /** One of the game lengths the config allows. Left out, the first it allows (180 days by default). */
+  gameLength?: string;
 }
 
 export interface LogEntry {
@@ -372,6 +401,8 @@ export interface LogEntry {
   cashDelta: number;
   /** Set on every charge, and only on charges. */
   category?: SpendCategory;
+  /** Of a loan repayment (debt), the interest in it. */
+  interest?: number;
   /**
    * Set on entries that need to stand out, such as an outage, bankruptcy or the launch. "income" marks money coming in, which the
    * ledger counts as income rather than spend. "loan" marks the bank loan: money coming in with it is borrowed, which
@@ -420,6 +451,10 @@ export class SimError extends Error {
 /** Whether something stored is a game from this version. Anything else is refused, not upgraded. */
 export function isCurrentState(saved: unknown): saved is GameState {
   return typeof saved === "object" && saved !== null && (saved as { version?: unknown }).version === GAME_STATE_VERSION;
+}
+
+export function isGameLengthId(v: string): v is GameLengthId {
+  return (GAME_LENGTH_IDS as readonly string[]).includes(v);
 }
 
 export function isModelId(v: string): v is ModelId {

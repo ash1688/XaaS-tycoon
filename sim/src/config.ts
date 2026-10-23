@@ -14,6 +14,16 @@ export type StaffPool = (typeof STAFF_POOLS)[number];
 export const MIGRATION_PHASES = ["planning", "testing", "moving"] as const;
 export type MigrationPhase = (typeof MIGRATION_PHASES)[number];
 
+/**
+ * How long a game runs before it ends, if the company doesn't go bankrupt first. The student picks one of the lengths
+ * the preset allows when starting a company. Saved in game state, so don't rename. (Until IPO comes with the IPO.)
+ */
+export const GAME_LENGTH_IDS = ["180-days", "1-year", "career"] as const;
+export type GameLengthId = (typeof GAME_LENGTH_IDS)[number];
+
+/** A career runs from founding the company at 18 to retiring at 65. */
+export const CAREER_YEARS = 65 - 18;
+
 /** Every charge is tagged with one of these, so students can see where their money goes. */
 export const SPEND_CATEGORIES = ["staff", "infrastructure", "cabling", "power", "addons", "debt"] as const;
 export type SpendCategory = (typeof SPEND_CATEGORIES)[number];
@@ -639,19 +649,22 @@ export interface LaunchConfig {
 }
 
 /**
- * The bank loan: one per company, taken when the game starts or at any point after. It's repaid in equal daily
- * repayments (debt) from the next day played to the final day, whatever happens, so the later it's taken the fewer
- * days there are to repay it, and the bank charges more interest too.
+ * Bank loans: one at a time, taken when the game starts or at any point after, and another once the last is repaid.
+ * Each is repaid in equal daily repayments (debt) over a fixed term from the next day played, whatever happens and
+ * whatever the game's length, so it can run past the final day. The later it's taken, the shorter the term and the
+ * more interest the bank charges. Paying one off early costs the money borrowed not yet paid back, and saves the
+ * interest still to come.
  *
  * Interest is simple, on the whole amount, at a rate set by the day the loan is taken (day 1 at the start):
  *
  *   rate = baseRate + ratePerDay × (day − 1)
- *   days = finalDay − day                             (repayment days left)
+ *   days = max(minTermDays, termDays − termPerDay × (day − 1)), rounded      (the term)
  *   dailyRepayment = amount × (1 + rate) ÷ days, rounded up to the pound like every charge
  *   total repaid = dailyRepayment × days; interest = total repaid − amount
  *
- * With the defaults over 180 days: taken at the start, 10% (£216 a day for 179 days, £38,664 in all); on day 60,
- * 21.8% (£356 a day for 120 days, £42,720); on day 120, 33.8% (£781 a day for 60 days, £46,860).
+ * Each repayment is interest and principal in the loan's own proportion. With the defaults: taken at the start, 10%
+ * (£321 a day for 120 days, £38,520 in all); on day 61, 22% (£475 a day for 90 days, £42,750); on day 121, 34%
+ * (£782 a day for 60 days, £46,920).
  */
 export interface LoanConfig {
   /** What the bank lends. */
@@ -660,14 +673,28 @@ export interface LoanConfig {
   baseRate: number;
   /** Added to the rate for each day later it's taken (0.002 = 0.2 percentage points a day). */
   ratePerDay: number;
-  /** The bank won't lend with fewer repayment days than this left. */
+  /** The term of a loan taken at the start: its repayment days. */
+  termDays: number;
+  /** Taken off the term for each day later it's taken. */
+  termPerDay: number;
+  /** The shortest term, however late it's taken. */
+  minTermDays: number;
+  /** The bank won't lend with fewer days than this left in the game. */
   minDays: number;
 }
 
 export interface GameConfig {
   startingCash: number;
-  /** The last day played. The game ends once it has been played, so day finalDay is played in full. */
+  /**
+   * The last day played in a 180-day game: the game ends once it has been played, so day finalDay is played in full.
+   * Longer lengths have fixed days (see gameLengthDays). The bank loan is repaid by this day whatever the length.
+   */
   finalDay: number;
+  /**
+   * Which game lengths students can pick from when starting a company: 1 if allowed, 0 if not. At least one must be.
+   * Numbers rather than flags so the config page can store them like every other setting.
+   */
+  allowedGameLengths: Record<GameLengthId, number>;
   maxCompanyNameLength: number;
   launch: LaunchConfig;
   models: Record<ModelId, ModelConfig>;
@@ -692,6 +719,9 @@ export const defaultConfig: GameConfig = {
   // costs. On-prem's server room and first kit leave too little to buy more kit for weeks without the bank loan.
   startingCash: 15_000,
   finalDay: 180,
+  // A normal lesson plays 180 days. The longer lengths could take hours, so the teacher turns them on for clubs,
+  // homework or extension work.
+  allowedGameLengths: { "180-days": 1, "1-year": 0, career: 0 },
   maxCompanyNameLength: 40,
   // Users trickle in over 3 days, building up. SaaS starts on day 1; a platform set up or VMs rented on day 1 start on
   // day 2; on-prem kit bought on day 1 arrives on day 8, so it starts nearly a week after the cloud models.
@@ -1018,8 +1048,8 @@ export const defaultConfig: GameConfig = {
   outage: { baseHours: 2, hoursPerOverload: 20, growthMultiplier: 0.25, paidChurnPerHour: 0.001 },
   billing: { daysPerMonth: 30 },
   // Enough for on-prem to buy kit ahead of demand from the start, or to see an IaaS, PaaS or SaaS company through a
-  // tight start, for about £3,700 of interest. See LoanConfig for the interest formula.
-  loan: { amount: 35_000, baseRate: 0.1, ratePerDay: 0.002, minDays: 14 },
+  // tight start, for about £3,500 of interest. See LoanConfig for the interest formula.
+  loan: { amount: 35_000, baseRate: 0.1, ratePerDay: 0.002, termDays: 120, termPerDay: 0.5, minTermDays: 60, minDays: 14 },
   pricing: {
     maxPrice: 1_000,
     growthSensitivity: 1,
@@ -1228,3 +1258,22 @@ export const defaultConfig: GameConfig = {
     },
   ],
 };
+
+/** The last day played in a game of a length: day finalDay, 365 or a career's 47 years of 365 days. */
+export function gameLengthDays(config: GameConfig, length: GameLengthId): number {
+  if (length === "1-year") return 365;
+  if (length === "career") return CAREER_YEARS * 365;
+  return config.finalDay;
+}
+
+/** The game lengths a config lets students pick, shortest first. */
+export function allowedGameLengths(config: GameConfig): GameLengthId[] {
+  return GAME_LENGTH_IDS.filter((id) => config.allowedGameLengths[id] === 1);
+}
+
+/** A game length's name for the screens: "180 days" (or however many the config's shortest game has). */
+export function gameLengthName(config: GameConfig, length: GameLengthId): string {
+  if (length === "1-year") return "1 year";
+  if (length === "career") return `Career (${CAREER_YEARS} years, age 18 to 65)`;
+  return `${config.finalDay} days`;
+}
