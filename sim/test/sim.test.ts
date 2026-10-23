@@ -5103,9 +5103,11 @@ describe("encounters", () => {
     const risky = allGaps(0);
     expect(risky.length).toBeGreaterThan(careful.length);
     expect(Math.min(...risky)).toBeGreaterThanOrEqual(8);
-    // Real default games that outgrow their setup and leave customers unhappy: rarely within 14 days.
+    // Real default games that outgrow their setup and leave customers unhappy: rarely within 14 days. Some events
+    // leave a risk behind that brings the next sooner (a viral wave overloads the servers, a fire's outage upsets
+    // customers), so a few do.
     const real = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].flatMap((seed) => gaps(defaultGame(seed).map((e) => e.day)));
-    expect(real.filter((g) => g < 14).length / real.length).toBeLessThan(0.1);
+    expect(real.filter((g) => g < 14).length / real.length).toBeLessThan(0.15);
   });
 
   it("carries on the same from a saved game", () => {
@@ -5325,6 +5327,18 @@ describe("the beta's new events", () => {
         expect(view.outcome).toContain(e.effects[model]!.detail);
       }
     }
+  });
+
+  it("lead into the rescue buyout when one empties the cash, not straight to the end", () => {
+    const fraud = { ...event("fraud"), encounter: undefined, schedule: { type: "fixed" as const, days: [6] } };
+    const s = createSim({ ...roomyDefaults, events: [fraud] });
+    const start = setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 7 }));
+    // Just less cash than the fraud takes, the day before it.
+    const before = s.advance(start, 4).state;
+    const { state, log } = s.advance({ ...before, cash: 1_000 }, 1);
+    expect(log.at(-1)!.entries.some((e) => e.text.startsWith("Theft or fraud: Money clawed back"))).toBe(true);
+    expect(state.status).toBe("playing");
+    expect(state.rescue).toMatchObject({ day: 6 });
   });
 
   it("each fire in some games, with a lawsuit only ever soon after a breach", () => {

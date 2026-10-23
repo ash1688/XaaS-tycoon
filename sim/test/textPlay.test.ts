@@ -149,7 +149,7 @@ describe("advanceUntil", () => {
     // Time stops for other things on the way, such as the launch.
     let turn = advanceUntil(s, state, 30, who);
     while (turn.state.day < 10) turn = advanceUntil(s, turn.state, 30, who);
-    expect(turn.lines.at(-1)).toBe("stopped on day 10: event: Viral growth");
+    expect(turn.lines.at(-1)).toBe("stopped on day 10: Viral growth");
     expect(turn.lines.join("\n")).toMatch(/day 10: Viral growth: Runtime and scaling is the provider's job on PaaS\. [\d,]+ new free users signed up\./);
     expect(renderStatus(s, turn.state)).toMatch(
       /event today: Viral growth\. Runtime and scaling is the provider's job on PaaS\. [\d,]+ new free users signed up\. They're staying\./,
