@@ -6483,6 +6483,21 @@ describe("ticks and pauses", () => {
     expect(lastDay.pauses).toEqual([{ kind: "lowCash", id: "low-cash", text: "Cash runs out tomorrow" }]);
   });
 
+  it("stops a career's week when a holiday that hits the product is announced, with its date", () => {
+    const real = createSim({ ...defaultConfig, allowedGameLengths: { "180-days": 0, "1-year": 0, career: 1 } });
+    const shop = real.newGame({ companyName: "Acme", productType: "ecommerce", model: "saas", seed: 3, gameLength: "career", startDate: "2026-11-01" });
+    // Black Friday, on day 27, is announced 14 days ahead: day 13, in the week played from day 8.
+    const start = real.advance(shop, 7).state;
+    expect(start.day).toBe(8);
+    const { state, pauses } = real.tick(start);
+    expect(state.day).toBe(13);
+    expect(pauses).toContainEqual({
+      kind: "calendar",
+      id: "holiday-blackFriday",
+      text: "Holiday coming in 14 days: Black Friday, on Friday 27 November 2026",
+    });
+  });
+
   it("refuses a game that has ended", () => {
     const ended = s.endGame(begin("career"));
     expect(() => s.tick(ended)).toThrow(expect.objectContaining({ code: "finished" }));

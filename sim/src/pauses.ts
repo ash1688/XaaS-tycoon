@@ -81,11 +81,11 @@ export function createPauses(config: GameConfig, views: PauseViews) {
     // A holiday that hits the product: announced ahead, so there's time to plan capacity, and again as it starts.
     const { on, upcoming } = views.calendar(after);
     for (const h of on) {
-      if (h.effect && h.startDay === after.day) add("calendar", `holiday-${h.id}`, `${h.name} starts today, for ${h.days} days`);
+      if (h.effect && h.startDay === after.day) add("calendar", `holiday-${h.id}`, `Holiday started: ${h.name}, for ${h.days} days`);
     }
     for (const h of upcoming) {
       if (h.effect && h.daysUntil === config.calendar.noticeDays) {
-        add("calendar", `holiday-${h.id}`, `${h.name} is coming in ${h.daysUntil} days, on ${h.start.text}`);
+        add("calendar", `holiday-${h.id}`, `Holiday coming in ${h.daysUntil} days: ${h.name}, on ${h.start.text}`);
       }
     }
 

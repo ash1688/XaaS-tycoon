@@ -77,7 +77,7 @@ test("timed flow pauses itself when something needs the student, and says why", 
   await student.getByRole("button", { name: "Play" }).click();
   const reasons = student.getByTestId("pause-reasons");
   await expect(reasons).toBeVisible({ timeout: 15_000 });
-  await expect(reasons).toContainText(/Time stopped on day \d+ because something needs you/);
+  await expect(reasons).toContainText(/Time stopped on day \d+, \w+ \d+ \w+ \d{4}, because something needs you/);
   await expect(reasons.getByRole("listitem").first()).toBeVisible();
   await expect(reasons).toContainText(/Cash runs out/);
   await expect(student.getByRole("button", { name: "Play" })).toBeVisible();
