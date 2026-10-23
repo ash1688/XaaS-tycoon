@@ -283,7 +283,7 @@ function fundingStatus(sim: Sim, state: GameState): string {
     : g!.status === "accepted"
       ? g!.untilDay === null
         ? `${g!.maxHoursDown}h down allowed over ${g!.days} days, starting once the launch is over`
-        : `${g!.hoursDown}h of ${g!.maxHoursDown}h down allowed used, ${g!.daysLeft} days left`
+        : `${g!.hoursDown}h of ${g!.maxHoursDown}h down allowed used, ${state.day < g!.fromDay! ? `starting day ${g!.fromDay}, ` : ""}${g!.daysLeft} days left`
       : g!.status;
   return `friends and family ${ff} | grant ${grant}`;
 }
