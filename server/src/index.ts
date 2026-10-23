@@ -32,6 +32,13 @@ if (process.env.GAME_FINAL_DAY) {
   }
 }
 
+// Optional: every new game starts on this date (YYYY-MM-DD) rather than a random one this year. For tests and demos.
+const startDate = process.env.GAME_START_DATE || undefined;
+if (startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+  console.error("GAME_START_DATE must be a date, YYYY-MM-DD.");
+  process.exit(1);
+}
+
 // Timed flow: a tick every TIMED_FLOW_SECONDS at normal speed, with Pause and speeds. On unless TIMED_FLOW=off; the
 // teacher can also switch it off on the config page.
 const timedFlow = { enabled: process.env.TIMED_FLOW !== "off", seconds: DEFAULT_TIMED_FLOW_SECONDS };
@@ -79,6 +86,7 @@ const app = await buildApp({
   sessionSecret,
   sim: createSim({ ...defaultConfig, finalDay }),
   timedFlow,
+  startDate,
   trustProxy,
   rateLimit,
   webDist: fileURLToPath(new URL("../../web/dist", import.meta.url)),

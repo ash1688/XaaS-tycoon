@@ -133,6 +133,9 @@ describe("validateOverrides", () => {
       ["allowedGameLengths.1-year", 0],
       ["allowedGameLengths.career", 0],
       ["timedFlow", 1],
+      ["allowedDifficulties.easy", 0],
+      ["allowedDifficulties.normal", 1],
+      ["allowedDifficulties.hard", 0],
     ]);
     expect(validateOverrides({ timedFlow: 0 })).toEqual({});
     expect(validateOverrides({ "allowedGameLengths.career": 1, "allowedGameLengths.1-year": 1 })).toEqual({});
@@ -141,6 +144,14 @@ describe("validateOverrides", () => {
       "allowedGameLengths.180-days": "At least one game length must be allowed.",
     });
     expect(validateOverrides({ "allowedGameLengths.180-days": 0, "allowedGameLengths.career": 1 })).toEqual({});
+  });
+
+  it("needs at least one difficulty allowed", () => {
+    expect(validateOverrides({ "allowedDifficulties.easy": 1, "allowedDifficulties.hard": 1 })).toEqual({});
+    expect(validateOverrides({ "allowedDifficulties.normal": 0 })).toEqual({
+      "allowedDifficulties.normal": "At least one difficulty must be allowed.",
+    });
+    expect(validateOverrides({ "allowedDifficulties.normal": 0, "allowedDifficulties.hard": 1 })).toEqual({});
   });
 });
 

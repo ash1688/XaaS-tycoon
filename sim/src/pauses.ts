@@ -1,3 +1,4 @@
+import type { CalendarView } from "./calendar.ts";
 import type { GameConfig } from "./config.ts";
 import type { EventView } from "./events.ts";
 import type { LaunchView } from "./launch.ts";
@@ -9,8 +10,11 @@ import type { DayLog, GameState } from "./state.ts";
 /** With this many days of cash left or fewer, time pauses once: a loan or cost cuts can still help. */
 export const LOW_CASH_DAYS = 5;
 
-/** What kind of thing stopped the clock: an event that hurt, an alert, an offer, low cash or something finished. */
-export type PauseKind = "event" | "alert" | "offer" | "lowCash" | "finished";
+/**
+ * What kind of thing stopped the clock: an event that hurt, a holiday that hits the product, an alert, an offer, low
+ * cash or something finished.
+ */
+export type PauseKind = "event" | "calendar" | "alert" | "offer" | "lowCash" | "finished";
 
 /** Why time stopped by itself after a day: shown to the student, who decides what to do before playing on. */
 export interface PauseReason {
@@ -42,6 +46,7 @@ export interface PauseViews {
   migration(state: GameState): MigrationView | null;
   servers(state: GameState): ServerView[];
   funding(state: GameState): FundingView;
+  calendar(state: GameState): CalendarView;
 }
 
 export function createPauses(config: GameConfig, views: PauseViews) {
@@ -71,6 +76,17 @@ export function createPauses(config: GameConfig, views: PauseViews) {
     }
     if (after.outageDays > before.outageDays && !reasons.some((r) => r.kind === "event")) {
       add("event", "outage", "Outage: the service went down");
+    }
+
+    // A holiday that hits the product: announced ahead, so there's time to plan capacity, and again as it starts.
+    const { on, upcoming } = views.calendar(after);
+    for (const h of on) {
+      if (h.effect && h.startDay === after.day) add("calendar", `holiday-${h.id}`, `${h.name} starts today, for ${h.days} days`);
+    }
+    for (const h of upcoming) {
+      if (h.effect && h.daysUntil === config.calendar.noticeDays) {
+        add("calendar", `holiday-${h.id}`, `${h.name} is coming in ${h.daysUntil} days, on ${h.start.text}`);
+      }
     }
 
     // Alerts: things getting worse that a decision can fix.

@@ -8,12 +8,14 @@ import type {
   ConfigOverrides,
   ConversionView,
   CustomerMixView,
+  CalendarView,
   DangerView,
   DayLog,
   EventView,
   FeatureGapView,
   FeatureView,
   FundingView,
+  DifficultyId,
   GameLengthId,
   GameSummary,
   LaunchView,
@@ -80,12 +82,25 @@ export interface GameLengthView {
   finalDay: number;
 }
 
+/** A difficulty a student can pick when starting a company. */
+export interface DifficultyView {
+  id: DifficultyId;
+  /** "Easy", "Normal" or "Hard". */
+  name: string;
+  /** One line on what it changes. */
+  blurb: string;
+  /** The cash a company starts with on it, before any loan. */
+  startingCash: number;
+}
+
 export interface MetaView {
   startingCash: number;
   /** The last day of the shortest game length, 180 by default: the bank loan is repaid by it. */
   finalDay: number;
   /** The game lengths the preset allows, shortest first: the first is picked unless the student chooses another. */
   gameLengths: GameLengthView[];
+  /** The difficulties the preset allows, easiest first. Normal is picked if allowed, otherwise the first. */
+  difficulties: DifficultyView[];
   maxCompanyNameLength: number;
   /** Companies still being played (status "active") that one login code can have at once. */
   maxActiveCompanies: number;
@@ -169,6 +184,9 @@ export interface CompanyView {
   gameLengthName: string;
   /** Days Continue and each timed tick play: 7 in a career, otherwise 1. */
   tickDays: number;
+  /** The difficulty picked when the company started. */
+  difficulty: DifficultyId;
+  difficultyName: string;
   day: number;
   /** The game length's last day. */
   finalDay: number;
@@ -355,6 +373,11 @@ export interface CompanyView {
    */
   danger: DangerView;
   /**
+   * The real calendar: the date and year of the day just played, the holidays on it, and the next of each holiday to
+   * come in the game, each with what it does to the company's product. Holidays sit outside the danger meter.
+   */
+  calendar: CalendarView;
+  /**
    * Features the platform can't provide, each still slowing growth until the company migrates off that model. Shown
    * every day, not just the day the event fired.
    */
@@ -405,6 +428,8 @@ export interface NewCompanyBody {
   shares?: number;
   /** One of MetaView.gameLengths. Left out, the first of them. */
   gameLength?: string;
+  /** One of MetaView.difficulties. Left out, Normal if allowed, otherwise the first of them. */
+  difficulty?: string;
 }
 
 /** How many games a teacher's end request ended: those still being played. */

@@ -21,16 +21,19 @@ import {
   type SQL,
 } from "drizzle-orm";
 import {
+  allowedDifficulties,
   allowedGameLengths,
   applyOverrides,
   configFields,
   createSim,
   diffFromDefaults,
+  DIFFICULTIES,
   FUNDER_IDS,
   GAME_STATE_VERSION,
   gameLengthDays,
   gameLengthName,
   interestIn,
+  withDifficulty,
   isCurrentState,
   MANAGED_SERVICES,
   MIGRATION_PHASES,
@@ -113,6 +116,11 @@ export interface AppOptions {
   logger?: boolean;
   /** Companies still being played that one login code can have at once. Defaults to 3. */
   maxActiveCompanies?: number;
+  /**
+   * Day 1's date for every new game, "YYYY-MM-DD", in place of a random date this year: for tests and demonstrations.
+   * Unset, each game starts on a random date in the current year.
+   */
+  startDate?: string;
   /** How far back, in hours, the teacher's dashboard looks unless the teacher picks another window. Defaults to 3. */
   dashboardHours?: number;
   /**
@@ -218,6 +226,8 @@ export async function buildApp(opts: AppOptions) {
   const maxActiveCompanies = opts.maxActiveCompanies ?? DEFAULT_MAX_ACTIVE_COMPANIES;
   const dashboardHours = opts.dashboardHours ?? DEFAULT_DASHBOARD_HOURS;
   const timedFlow = opts.timedFlow ?? { enabled: true, seconds: DEFAULT_TIMED_FLOW_SECONDS };
+  // A new game starts on the configured date, or a random one this year.
+  const startsOn = () => (opts.startDate ? { startDate: opts.startDate } : { startYear: new Date().getUTCFullYear() });
   const app = Fastify({ logger: opts.logger ?? false, trustProxy: opts.trustProxy ?? false });
 
   await app.register(cookie, { secret: opts.sessionSecret });
@@ -340,6 +350,8 @@ export async function buildApp(opts: AppOptions) {
       gameLength: state.gameLength,
       gameLengthName: gameLengthName(sim.config, state.gameLength),
       tickDays: sim.tickDays(state),
+      difficulty: state.difficulty,
+      difficultyName: DIFFICULTIES[state.difficulty].name,
       day: state.day,
       finalDay: state.finalDay,
       endedByTeacher: state.endedByTeacher,
@@ -395,6 +407,7 @@ export async function buildApp(opts: AppOptions) {
       migrations: state.migrations,
       events: sim.events(state),
       danger: sim.danger(state),
+      calendar: sim.calendar(state),
       featureGaps: sim.featureGaps(state),
       api: sim.api(state),
     };
@@ -441,6 +454,12 @@ export async function buildApp(opts: AppOptions) {
         id,
         name: gameLengthName(config, id),
         finalDay: gameLengthDays(config, id),
+      })),
+      difficulties: allowedDifficulties(config).map((id) => ({
+        id,
+        name: DIFFICULTIES[id].name,
+        blurb: DIFFICULTIES[id].blurb,
+        startingCash: withDifficulty(config, id).startingCash,
       })),
       maxCompanyNameLength: config.maxCompanyNameLength,
       maxActiveCompanies,
@@ -519,6 +538,7 @@ export async function buildApp(opts: AppOptions) {
             // Shares in issue at the start. The sim checks it's in the game's range.
             shares: { type: "integer" },
             gameLength: { type: "string" },
+            difficulty: { type: "string" },
           },
           additionalProperties: false,
         },
@@ -527,7 +547,7 @@ export async function buildApp(opts: AppOptions) {
     async (req, reply) => {
       const code = await findCode(req.params.code);
       if (!code) return sendError(reply, 404, "unknown_code", "That code wasn't recognised. Check it with your teacher.");
-      const { name, productType, model, takeLoan = false, gameLength, shares } = req.body;
+      const { name, productType, model, takeLoan = false, gameLength, difficulty, shares } = req.body;
       // Locks the code so two creates at once can't both see room under the limit. Only games still being played
       // count: finished, bankrupt and retired ones are history. Archiving is only the teacher's view, so it doesn't
       // change what counts.
@@ -542,7 +562,17 @@ export async function buildApp(opts: AppOptions) {
         // changes later.
         const { preset, config } = await newGameSetup(tx);
         const sim = simFor(config);
-        const state = sim.newGame({ companyName: name, productType, model, seed: randomInt(2 ** 31), takeLoan, gameLength, shares });
+        const state = sim.newGame({
+          companyName: name,
+          productType,
+          model,
+          seed: randomInt(2 ** 31),
+          takeLoan,
+          gameLength,
+          difficulty,
+          shares,
+          ...startsOn(),
+        });
         const [inserted] = await tx
           .insert(companies)
           .values({
@@ -565,7 +595,15 @@ export async function buildApp(opts: AppOptions) {
         );
       }
       const company = view(row);
-      const started = { productType, model, takeLoan, gameLength: company.gameLength, shares: company.capTable.sharesInIssue, preset: row.preset };
+      const started = {
+        productType,
+        model,
+        takeLoan,
+        gameLength: company.gameLength,
+        difficulty: company.difficulty,
+        shares: company.capTable.sharesInIssue,
+        preset: row.preset,
+      };
       logGame(row, company.day, "start", started, company);
       return reply.code(201).send(company);
     },

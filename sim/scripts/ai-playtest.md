@@ -19,14 +19,19 @@ npm run -s play -- summary <game>
 - `new` starts a game and shows the company and the commands. Leave out `--loan` to start without the bank loan.
   `--shares` is how many shares your company has (10,000 to 100,000, 10,000 if left out): you own all of them.
   `--length` picks the game length: `180-days` (the default), `1-year` (ends on day 365) or `career` (47 years,
-  ends on day 17,155). Play 180 days unless your brief says otherwise.
+  ends on day 17,155). Play 180 days unless your brief says otherwise. `--date 2026-11-01` starts the game on that
+  date; left out, it starts on a random date this year.
+  `--difficulty` picks `easy`, `normal` (the default) or `hard`: Easy starts with more cash, has fewer random events
+  and customers who put up with dearer prices; Hard the opposite. The status line shows it. Play Normal unless your
+  brief says otherwise.
 - `look` shows the company and every command that works right now, with prices and allowed values.
 - `do` runs game commands separated by `;`. Every game command goes inside `do`, including `preview` and `quote`:
   `npm run -s play -- do <game> "preview 8; quote iaas"`.
 - `next [days]` (inside `do`) moves time on, 7 days by default, in ticks as the game page does: a tick is a day, or
   a week in a career. It **stops early**, on the day itself, when the game pauses for the student: an event that
-  hurts or an outage, an alert (capacity over 100%, satisfaction falling below the poor mark, the grant withdrawn,
-  paid API calls starting to be dropped), a new offer, cash about to run out, or something finished (a feature
+  hurts or an outage, a holiday that hits your product (announced 14 days ahead, and on the day it starts), an
+  alert (capacity over 100%, satisfaction falling below the poor mark, the grant withdrawn, paid API calls starting
+  to be dropped), a new offer, cash about to run out, or something finished (a feature
   built, the launch over, servers ready, a migration step, the grant's condition met). The text interface also
   stops for a new risk on the danger meter, staff starting, satisfaction falling hard and the price lock ending.
   Any commands after a stop are not run, and each says so ("not run: time stopped"). Events that need nothing from
@@ -41,6 +46,11 @@ npm run -s play -- summary <game>
   back to 0 when a random event fires. It creeps on a well-run day and climbs faster with risky play: servers going
   unpatched (fewer ops than your setup needs, on on-prem or IaaS), capacity overloaded, or unhappy customers. Which
   event comes next, and when, is hidden; your situation also changes which events are likely.
+- The game runs on a **real calendar**: `look` shows today's date and year, any holiday on now and the next one
+  coming. Holidays (January blues, Easter and summer holidays, Black Friday, Christmas) fall on their dates every
+  year and hit each product its own way, multiplying load and growth on their days: a shop's Black Friday spike, more
+  social and video use in the school holidays. They sit outside the danger meter, so you can plan capacity for them.
+  `calendar` lists every holiday still to come in the game, with its dates and what it does to your product.
 - `preview <price>` and `quote <model>` show what a price change or migration would do without doing it.
   A price rise's reaction is each customer type's reaction weighted by its share of users: the status shows your
   customer mix, each type's price threshold, and `!` where your price is over it.
