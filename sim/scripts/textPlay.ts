@@ -326,7 +326,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
     const verb = state.model === "saas" ? "addon" : "build";
     lines.push(
       `  ${verb} <${notStarted.map((f) => f.id).join("|")}>   ${notStarted
-        .map((f) => (state.model === "saas" ? `${f.id} ${money(f.addonSetupFee)} + ${money(f.addonPricePerUser)}/user/month` : `${f.id} ${f.devDays} dev-days`))
+        .map((f) => (state.model === "saas" ? `${f.id} ${money(f.addonSetupFee)} + ${price(f.addonPricePerUser)}/user/month` : `${f.id} ${f.devDays} dev-days`))
         .join(", ")}`,
     );
   }
