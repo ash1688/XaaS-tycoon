@@ -719,6 +719,63 @@ export interface LoanConfig {
 }
 
 /**
+ * Shares in issue: the student picks how many their company has when they start it, and owns all of them. Each
+ * funding round adds more (see FundingConfig). The default is what the new-company form starts on.
+ */
+export interface SharesConfig {
+  min: number;
+  max: number;
+  default: number;
+}
+
+/**
+ * What the company is worth: the formula valuation. Revenue counts at a multiple that growth, satisfaction and uptime
+ * move; paying users count at a value each, so price-gouging can't inflate it. Never below the minimum.
+ *
+ *   annual revenue = income earned a day (paying users and any paid API), averaged over the last revenueDays days
+ *                    played since launch, × 365
+ *                    (income earned, not today's price: a price change can't move it until the income comes in)
+ *   growth = (paying users now − paying users growthDays ago) ÷ max(those then, growthBaseUsers)
+ *   multiple = revenueMultiple
+ *            + growthMultiple × growth, between −maxGrowthPenalty and +maxGrowthMultiple
+ *            − satisfactionPenalty × (goodSatisfaction − satisfaction) ÷ goodSatisfaction, below goodSatisfaction
+ *            − uptimePenaltyPerPoint × (goodUptime − recent uptime %), below goodUptime, at most maxUptimePenalty
+ *   valuation = max(minimum, annual revenue × max(0, multiple) + paying users × valuePerPayingUser)
+ *
+ * Recent uptime is over ConversionConfig's uptimeDays. Share price = valuation ÷ shares in issue.
+ */
+export interface ValuationConfig {
+  revenueDays: number;
+  revenueMultiple: number;
+  growthDays: number;
+  growthBaseUsers: number;
+  growthMultiple: number;
+  maxGrowthMultiple: number;
+  maxGrowthPenalty: number;
+  goodSatisfaction: number;
+  satisfactionPenalty: number;
+  goodUptime: number;
+  uptimePenaltyPerPoint: number;
+  maxUptimePenalty: number;
+  valuePerPayingUser: number;
+  minimum: number;
+}
+
+/**
+ * Friends and family and the grant: on the Finance page from day 1, each a fixed offer the student can accept or
+ * decline once. Both pay everything up front.
+ *
+ * - Friends and family put in `amount` for new shares at today's share price: amount ÷ share price of them.
+ * - The grant gives `amount` for no shares, on condition that uptime stays at least minUptime % over the `days` days
+ *   played after it's accepted: at most (100 − minUptime)% of those days' hours down in all. Going over withdraws the
+ *   grant: all of it is paid back at once.
+ */
+export interface FundingConfig {
+  friendsAndFamily: { amount: number };
+  grant: { amount: number; days: number; minUptime: number };
+}
+
+/**
  * Paid APIs, for a product that has one (see ProductApiConfig). Each call served earns pricePerCall. Calls need APIU,
  * from API servers or app servers switched from CU to APIU (on PaaS, API instances): calls beyond the APIU are
  * dropped, and their income with them. On SaaS the provider runs the API, so it needs no APIU, but takes a fee per
@@ -773,6 +830,9 @@ export interface GameConfig {
   outage: OutageConfig;
   billing: BillingConfig;
   loan: LoanConfig;
+  shares: SharesConfig;
+  valuation: ValuationConfig;
+  funding: FundingConfig;
   pricing: PricingConfig;
   support: SupportConfig;
   conversion: ConversionConfig;
@@ -1143,6 +1203,28 @@ export const defaultConfig: GameConfig = {
   // Enough for on-prem to buy kit ahead of demand from the start, or to see an IaaS, PaaS or SaaS company through a
   // tight start, for about £3,500 of interest. See LoanConfig for the interest formula.
   loan: { amount: 35_000, baseRate: 0.1, ratePerDay: 0.002, termDays: 120, termPerDay: 0.5, minTermDays: 60, minDays: 14 },
+  shares: { min: 10_000, max: 100_000, default: 10_000 },
+  // Placeholders. A new company with no revenue is worth the £50k minimum, so friends and family's £15k on day 1 buys
+  // about 23% of it; a company making £500 a day with 2,000 paying users is worth about £590k, and the same £15k buys
+  // under 3%. Selling early costs far more of the company.
+  valuation: {
+    revenueDays: 30,
+    revenueMultiple: 3,
+    growthDays: 30,
+    growthBaseUsers: 100,
+    growthMultiple: 2,
+    maxGrowthMultiple: 4,
+    maxGrowthPenalty: 1.5,
+    goodSatisfaction: 70,
+    satisfactionPenalty: 1.5,
+    goodUptime: 99,
+    uptimePenaltyPerPoint: 0.5,
+    maxUptimePenalty: 1.5,
+    valuePerPayingUser: 20,
+    minimum: 50_000,
+  },
+  // Small, to carry a careful student through the early weeks. The grant's 99% over 60 days allows 14.4 hours down.
+  funding: { friendsAndFamily: { amount: 15_000 }, grant: { amount: 10_000, days: 60, minUptime: 99 } },
   pricing: {
     maxPrice: 1_000,
     growthSensitivity: 1,

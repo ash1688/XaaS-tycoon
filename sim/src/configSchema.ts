@@ -50,6 +50,9 @@ export type ConfigErrors = Record<string, string>;
  */
 export const CONFIG_EXCLUSIONS: Record<string, string> = {
   maxCompanyNameLength: "A limit on what students type, not a balance number; the name filter and screens rely on it.",
+  "shares.min": "The range of shares a student can pick is fixed by the design: 10,000 to 100,000.",
+  "shares.max": "The range of shares a student can pick is fixed by the design: 10,000 to 100,000.",
+  "shares.default": "Only what the new-company form starts on; the student picks their own.",
 };
 
 const MODEL_LABELS = { onprem: "On-prem", iaas: "IaaS", paas: "PaaS", saas: "SaaS" } as const;
@@ -97,6 +100,24 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("loan.termPerDay", "Money", "Bank loan", "Shorter term per day later", "Days taken off the term for each day later the loan is taken (0.5 = a day shorter every two days).", range(0, 10, 0.05));
   add("loan.minTermDays", "Money", "Bank loan", "Shortest term", "The fewest repayment days a loan has, however late it's taken.", range(1, 3_650, 1));
   add("loan.minDays", "Money", "Bank loan", "No loans in the last days", "The bank won't lend with fewer days than this left in the game.", range(1, 365, 1));
+  add("valuation.minimum", "Money", "Valuation", "Lowest valuation", "A company is never valued below this, even with no revenue.", POUNDS);
+  add("valuation.revenueDays", "Money", "Valuation", "Revenue averaged over", "Days of income earned that annual revenue is averaged from, so a price change can't move the valuation at once.", GAME_DAY);
+  add("valuation.revenueMultiple", "Money", "Valuation", "Revenue multiple", "Annual revenue counts this many times over in the valuation, before growth, satisfaction and uptime move it.", MULTIPLIER);
+  add("valuation.valuePerPayingUser", "Money", "Valuation", "Value per paying user", "Each paying user adds this to the valuation, so it can't be inflated by price alone.", range(0, 1_000, 1));
+  add("valuation.growthDays", "Money", "Valuation", "Growth measured over", "Days back to compare paying users with, for growth.", GAME_DAY);
+  add("valuation.growthBaseUsers", "Money", "Valuation", "Growth measured from at least", "Growth is the change in paying users ÷ those then, or ÷ this many if there were fewer.", range(1, 100_000, 1));
+  add("valuation.growthMultiple", "Money", "Valuation", "Multiple per 100% growth", "Added to the revenue multiple for each 100% growth in paying users over the period (taken off for a fall).", MULTIPLIER);
+  add("valuation.maxGrowthMultiple", "Money", "Valuation", "Most growth adds", "The most growth can add to the multiple.", MULTIPLIER);
+  add("valuation.maxGrowthPenalty", "Money", "Valuation", "Most a fall takes", "The most falling paying users can take off the multiple.", MULTIPLIER);
+  add("valuation.goodSatisfaction", "Money", "Valuation", "Satisfaction that costs nothing", "Below this satisfaction %, the multiple falls.", range(0, 100, 1));
+  add("valuation.satisfactionPenalty", "Money", "Valuation", "Multiple lost at 0% satisfaction", "Taken off the multiple at 0% satisfaction, and a share of it in between.", MULTIPLIER);
+  add("valuation.goodUptime", "Money", "Valuation", "Uptime that costs nothing", "Below this recent uptime %, the multiple falls.", range(0, 100, 0.1));
+  add("valuation.uptimePenaltyPerPoint", "Money", "Valuation", "Multiple lost per point of uptime", "Taken off the multiple for each percentage point of recent uptime below the line.", MULTIPLIER);
+  add("valuation.maxUptimePenalty", "Money", "Valuation", "Most poor uptime takes", "The most poor uptime can take off the multiple.", MULTIPLIER);
+  add("funding.friendsAndFamily.amount", "Money", "Friends and family", "Amount", "What friends and family put in, once, for new shares at the share price.", POUNDS);
+  add("funding.grant.amount", "Money", "Grant", "Amount", "What the grant gives, once, for no shares.", POUNDS);
+  add("funding.grant.days", "Money", "Grant", "Condition lasts", "Days after accepting the grant that its uptime condition applies.", GAME_DAY);
+  add("funding.grant.minUptime", "Money", "Grant", "Uptime needed", "Uptime % the company must keep over those days, or the grant is withdrawn and paid back.", range(0, 100, 0.1));
   add("billing.daysPerMonth", "Money", "", "Days in a billing month", "Monthly costs are charged a day at a time: the monthly cost ÷ this.", range(28, 31, 1));
   for (const m of MODEL_IDS) {
     const s = MODEL_LABELS[m];

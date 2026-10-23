@@ -10,13 +10,14 @@ code or config. Everything a student can see is in the game's own output.
 Run every command from the `sim` folder. `<game>` is the path to your game file, for example `C:/tmp/ai/minmax-1.json`.
 
 ```bash
-npm run -s play -- new <game> --product social --model paas --loan --seed 1 --player "AI 1" --playstyle min-maxer
+npm run -s play -- new <game> --product social --model paas --loan --shares 10000 --seed 1 --player "AI 1" --playstyle min-maxer
 npm run -s play -- look <game>
 npm run -s play -- do <game> "hire support junior 3; price 6; next 7"
 npm run -s play -- summary <game>
 ```
 
 - `new` starts a game and shows the company and the commands. Leave out `--loan` to start without the bank loan.
+  `--shares` is how many shares your company has (10,000 to 100,000, 10,000 if left out): you own all of them.
   `--length` picks the game length: `180-days` (the default), `1-year` (ends on day 365) or `career` (47 years,
   ends on day 17,155). Play 180 days unless your brief says otherwise.
 - `look` shows the company and every command that works right now, with prices and allowed values.
@@ -30,6 +31,9 @@ npm run -s play -- summary <game>
   after hiring (shown under staff until they do). `hire <pool> [grade] [n]` and `letgo <pool> [grade] [n]` take a
   grade; without one it's mids. Time also stops when hires start.
 - `preview <price>` and `quote <model>` show what a price change or migration would do without doing it.
+- `valuation` shows what your company is worth, what's pushing it up or down, and who owns it. `funding` shows the
+  friends and family and grant offers in full; `accept ff`, `accept grant`, `decline ff` and `decline grant` answer
+  them, once each.
 - `loan` takes a bank loan, repaid daily over a fixed term; `repayloan` pays it off early to save interest. One loan
   at a time: once it's repaid, `loan` is offered again.
 - `summary` shows the final figures once the game is over.
@@ -58,8 +62,10 @@ Play the whole game in character as your playstyle:
 When the game is over, reply with a **game summary** of no more than about 300 words:
 
 1. **Setup:** playstyle, product, model, loan or not, seed.
-2. **Ending:** finished or bankrupt, on which day, final cash, paying and free users, satisfaction and uptime (from `summary`).
-3. **Key moments:** first profit, price changes, migrations, events and how you handled them, any crisis.
+2. **Ending:** finished or bankrupt, on which day, final cash, paying and free users, satisfaction and uptime (from `summary`),
+   and your valuation and the share of the company you still own (from `valuation`).
+3. **Key moments:** first profit, price changes, migrations, funding taken or declined, events and how you handled
+   them, any crisis.
 4. **What you tried** and whether it worked.
 5. **Anything that felt broken, unfair, confusing or exploitable**, with the day and the commands that caused it.
 6. **One change you'd make** to the game.

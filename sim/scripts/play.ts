@@ -2,7 +2,7 @@
 // a JSON file between calls, and every game writes a playtest log beside it (<game>.log.json) in the classroom
 // export's format. See textPlay.ts.
 //
-//   npm run play -- new <game.json> --product social --model paas [--loan] [--length 1-year] [--seed 1] [--player "AI 1"] [--playstyle min-maxer]
+//   npm run play -- new <game.json> --product social --model paas [--loan] [--length 1-year] [--shares 10000] [--seed 1] [--player "AI 1"] [--playstyle min-maxer]
 //   npm run play -- look <game.json>
 //   npm run play -- do <game.json> "hire support 3; price 6; next 7"
 //   npm run play -- summary <game.json>
@@ -59,6 +59,7 @@ function newGame(file: string, args: string[]) {
     model: flag(args, "model") ?? "",
     seed,
     takeLoan: args.includes("--loan"),
+    ...(flag(args, "shares") !== undefined && { shares: Number(flag(args, "shares")) }),
     gameLength: flag(args, "length"),
   });
   const game: SavedGame = { player, playstyle, seed, state };
@@ -66,6 +67,7 @@ function newGame(file: string, args: string[]) {
     model: state.model,
     productType: state.productType,
     takeLoan: args.includes("--loan"),
+    shares: sim.capTable(state).sharesInIssue,
     gameLength: state.gameLength,
     seed,
     ...(playstyle ? { playstyle } : {}),
@@ -81,12 +83,13 @@ function play(file: string, script: string) {
   const rows: LogRow[] = [];
   const out: string[] = [];
   for (const text of script.split(";").map((t) => t.trim()).filter(Boolean)) {
-    if (state.status !== "playing") {
-      out.push(`> ${text}: the game is over`);
-      break;
-    }
     try {
       const command = parseCommand(text);
+      // Once the game is over, only what changes nothing still works: the valuation and who owns the company.
+      if (state.status !== "playing" && command.kind !== "valuation" && command.kind !== "funding") {
+        out.push(`> ${text}: the game is over`);
+        break;
+      }
       const turn = command.kind === "next" ? advanceUntil(sim, state, command.days, game) : runCommand(sim, state, command, game);
       state = turn.state;
       rows.push(...turn.rows);
@@ -108,7 +111,7 @@ function play(file: string, script: string) {
 function main(argv: string[]) {
   const [verb, file, ...rest] = argv;
   if (!verb || !file) {
-    console.log('Usage: play <new|look|do|summary> <game.json> [...]. "new" takes --product, --model, --loan, --length, --seed, --player, --playstyle.');
+    console.log('Usage: play <new|look|do|summary> <game.json> [...]. "new" takes --product, --model, --loan, --length, --shares, --seed, --player, --playstyle.');
     process.exitCode = 1;
     return;
   }

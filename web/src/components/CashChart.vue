@@ -18,11 +18,11 @@ const plotH = HEIGHT - M.top - M.bottom;
 
 const lastDay = computed(() => Math.max(props.finalDay, props.days.at(-1)?.day ?? 1));
 const band = computed(() => plotW.value / lastDay.value);
-// Cash before the first day's charges and any loan taken at the start, so the line starts at the starting cash.
+// Cash before the first day's charges and any loan or funding taken at the start, so the line starts at the starting cash.
 const opening = computed(() => {
   const first = props.days[0];
   const spent = first && SPEND_CATEGORIES.reduce((sum, c) => sum + first[c], 0);
-  return first && { day: first.day, cash: first.cash + spent! - first.income - first.borrowed };
+  return first && { day: first.day, cash: first.cash + spent! - first.income - first.borrowed - first.raised };
 });
 const yTicks = computed(() => {
   const cash = [...props.days.map((d) => d.cash), opening.value?.cash ?? 0];

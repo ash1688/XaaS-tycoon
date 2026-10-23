@@ -25,7 +25,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 26;
+export const GAME_STATE_VERSION = 27;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -49,6 +49,11 @@ export interface DaySpend extends Spend {
   income: number;
   /** Money borrowed on the day: a bank loan, if one was taken then. Not income: it's paid back as debt. */
   borrowed: number;
+  /**
+   * Money from funders on the day: friends and family's and a grant's, less a withdrawn grant paid back. Not income:
+   * friends and family bought shares with it, and a grant is a gift with a condition.
+   */
+  raised: number;
   /** Of the day's debt, the interest: the only part of a loan repayment that counts against profit. */
   interest: number;
   /** Users at the end of the day, paying or free, for the summary's peak. */
@@ -119,6 +124,53 @@ export interface Migration {
   servers: Server[];
   /** The racks the setup goes in, on a model with racks (see Rack): bought on the first day with the servers. */
   racks: Rack[];
+}
+
+/** The funders on the Finance page from day 1, each a fixed offer to accept or decline once. */
+export const FUNDER_IDS = ["friendsAndFamily", "grant"] as const;
+export type FunderId = (typeof FUNDER_IDS)[number];
+
+/** Someone who owns shares in the company. */
+export interface Shareholder {
+  /** "student" for the student, who owns every share at the start; otherwise the funder who bought them. */
+  id: "student" | "friendsAndFamily";
+  shares: number;
+  /** The day they got their shares: 1 for the student. */
+  day: number;
+}
+
+/** Friends and family's offer once answered: accepted (with what they paid and got) or declined. */
+export interface FriendsAndFamilyFunding {
+  status: "accepted" | "declined";
+  day: number;
+  /** Cash they put in, and the new shares it bought at the share price then. 0 if declined. */
+  amount: number;
+  shares: number;
+  /** The valuation the shares were priced at. */
+  valuation: number;
+}
+
+/**
+ * The grant once answered. Accepted, its uptime condition runs over the days played after `day` up to `untilDay`: the
+ * hours down then must stay at most maxHoursDown. It's then "met", or "withdrawn" the day they go over, when the
+ * whole amount is paid back.
+ */
+export interface GrantFunding {
+  status: "accepted" | "declined" | "met" | "withdrawn";
+  day: number;
+  amount: number;
+  untilDay: number;
+  /** Uptime % the condition asks for, and the hours down that allows over its days. */
+  minUptime: number;
+  maxHoursDown: number;
+  /** Hours down so far on the condition's days. */
+  hoursDown: number;
+}
+
+/** Friends and family and the grant: null until the student accepts or declines each. */
+export interface Funding {
+  friendsAndFamily: FriendsAndFamilyFunding | null;
+  grant: GrantFunding | null;
 }
 
 /** A day a scripted event fires on, fixed when the game starts. */
@@ -331,6 +383,10 @@ export interface GameState {
   migrations: number;
   /** The latest bank loan, kept once repaid, or null if none was taken. One at a time. */
   loan: Loan | null;
+  /** The cap table: who owns the company's shares, the student first. Their shares added up are the shares in issue. */
+  shareholders: Shareholder[];
+  /** Friends and family and the grant, once answered. */
+  funding: Funding;
   /** Loans repaid before the latest was taken, oldest first, for the summary. */
   pastLoans: Loan[];
   /** The interest in every loan repayment so far: of the debt spend, the part that counts against profit. */
@@ -422,6 +478,13 @@ export type Action =
    */
   | { type: "takeLoan" }
   /**
+   * Accepts a funder's fixed offer, at once: friends and family's cash for new shares at today's share price, or the
+   * grant's cash on its uptime condition. Once each.
+   */
+  | { type: "acceptFunding"; funder: FunderId }
+  /** Turns a funder's offer down for good. */
+  | { type: "declineFunding"; funder: FunderId }
+  /**
    * Pays off the loan being repaid, at once, with what's left of the money borrowed: the interest still to come is
    * saved. Refused without enough cash.
    */
@@ -443,6 +506,8 @@ export interface NewGameParams {
   seed: number;
   /** Take the bank loan at the start, on its best terms. */
   takeLoan?: boolean;
+  /** Shares in issue at the start, all the student's: a whole number in the configured range. The default if left out. */
+  shares?: number;
   /** One of the game lengths the config allows. Left out, the first it allows (180 days by default). */
   gameLength?: string;
 }
@@ -457,7 +522,8 @@ export interface LogEntry {
   /**
    * Set on entries that need to stand out, such as an outage, bankruptcy or the launch. "income" marks money coming in, which the
    * ledger counts as income rather than spend. "loan" marks the bank loan: money coming in with it is borrowed, which
-   * is cash but not income.
+   * is cash but not income. "funding" marks money from friends and family or a grant, and a withdrawn grant paid
+   * back: cash, but neither income nor a charge.
    */
   kind?:
     | "outage"
@@ -471,6 +537,7 @@ export interface LogEntry {
     | "price"
     | "conversion"
     | "loan"
+    | "funding"
     | "launch"
     | "staff"
     | "api";
@@ -532,6 +599,10 @@ export function isRackSize(v: string): v is RackSize {
 
 export function isManagedService(v: string): v is ManagedService {
   return (MANAGED_SERVICES as readonly string[]).includes(v);
+}
+
+export function isFunderId(v: string): v is FunderId {
+  return (FUNDER_IDS as readonly string[]).includes(v);
 }
 
 export function isStaffPool(v: string): v is StaffPool {

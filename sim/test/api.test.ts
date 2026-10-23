@@ -300,3 +300,20 @@ describe("API servers on-prem", () => {
     expect(error).toBe("no_rack_space");
   });
 });
+
+describe("API income in the valuation", () => {
+  it("counts in the revenue the valuation averages, like income from paying users", () => {
+    let state = act(shop(), { type: "buyApi" }, { type: "rentServer", server: "api", size: "large" });
+    state = sim.advance(state).state;
+    state = { ...state, api: { ...state.api!, calls: 50_000 } };
+    const { state: after, log } = sim.advance(state, 3);
+    expect(apiIncome(log)).toBeGreaterThan(0);
+    // Every day since launch, within the valuation's window, users' and API income together.
+    const since = after.spendByDay.filter((d) => d.day > after.launchDay!);
+    const average = since.reduce((sum, d) => sum + d.income, 0) / since.length;
+    expect(sim.valuation(after).annualRevenue).toBe(Math.round(average * 365));
+    // Without the API's income those days, revenue would be lower.
+    const withoutApi = since.reduce((sum, d) => sum + d.income, 0) - apiIncome(log);
+    expect(sim.valuation(after).annualRevenue).toBeGreaterThan(Math.round((withoutApi / since.length) * 365));
+  });
+});
