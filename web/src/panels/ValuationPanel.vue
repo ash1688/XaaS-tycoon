@@ -56,9 +56,11 @@ const signed = (n: number) => (n < 0 ? `−${formatCash(-n)}` : `+${formatCash(n
       </table>
     </div>
     <p class="muted">
-      Revenue counts at a multiple that growth raises and poor satisfaction or uptime lowers. Paying users count too, so
-      a high price alone can't make the company worth more. Selling shares while the valuation is low costs you far more
-      of the company.
+      Revenue counts at a multiple that growth raises and poor satisfaction or uptime lowers. Paying users count too, at
+      up to what they pay, so neither a high price nor a give-away one can make the company worth more. Cash counts,
+      less what you still owe the bank. Revenue, paying users and satisfaction are averaged over recent
+      weeks, so the valuation moves steadily. Selling shares while the valuation is low costs you far more of the
+      company.
     </p>
   </section>
 </template>

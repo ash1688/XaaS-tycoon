@@ -29,12 +29,15 @@ const refusal = (fn: () => unknown) => {
   return null;
 };
 
+/** Days the valuation averages over. */
+const AVERAGE = quiet.valuation.averageDays;
+
 /**
  * A company with these paying users at this price and satisfaction, for valuation, as if they'd always had them and
- * paid it: launched and ten days in, every day's income what they pay.
+ * paid it: launched and a full averaging window in, every day's income what they pay.
  */
 const trading = (state: GameState, paidUsers: number, price: number, satisfaction = 100): GameState => {
-  const played = state.day < 10 ? sim.advance(state, 10 - state.day).state : state;
+  const played = state.day <= AVERAGE ? sim.advance(state, AVERAGE + 1 - state.day).state : state;
   const income = (paidUsers * price) / quiet.billing.daysPerMonth;
   return {
     ...played,
@@ -42,9 +45,15 @@ const trading = (state: GameState, paidUsers: number, price: number, satisfactio
     paidUsers,
     price,
     satisfaction,
-    spendByDay: played.spendByDay.map((d) => ({ ...d, paidUsers, income })),
+    spendByDay: played.spendByDay.map((d) => ({ ...d, paidUsers, income, satisfaction })),
   };
 };
+
+/** The state with each of its last `days` days changed. */
+const lastDays = (state: GameState, days: number, change: Partial<GameState["spendByDay"][number]>): GameState => ({
+  ...state,
+  spendByDay: state.spendByDay.map((d) => (d.day > state.day - days ? { ...d, ...change } : d)),
+});
 
 describe("shares in issue", () => {
   it("defaults to the configured count, all the student's", () => {
@@ -82,24 +91,45 @@ describe("shares in issue", () => {
 
 describe("valuation", () => {
   const total = (v: ReturnType<Sim["valuation"]>) => v.drivers.reduce((sum, d) => sum + d.amount, 0);
+  const driver = (v: ReturnType<Sim["valuation"]>, id: string) => v.drivers.find((d) => d.id === id)?.amount ?? 0;
+  const fair = quiet.productTypes.social.pricing.fairPrice;
 
-  it("is the minimum for a company with no revenue, saying so", () => {
+  it("is the minimum for a company with no revenue and little cash, saying so", () => {
     const v = sim.valuation({ ...begin(), paidUsers: 0 });
     expect(v.valuation).toBe(quiet.valuation.minimum);
     expect(v.drivers.at(-1)).toMatchObject({ id: "minimum" });
     expect(total(v)).toBe(v.valuation);
   });
 
-  it("comes from annual revenue × the multiple plus paying users × their value, the drivers adding up to it", () => {
+  it("comes from annual revenue × the multiple, paying users × their value and net cash, the drivers adding up to it", () => {
     const state = trading(begin(), 2_000, 10);
     const v = sim.valuation(state);
     // The income every day of the last 30 earned: 2,000 payers × £10 a month ÷ 30 days.
     const annual = Math.round(((2_000 * 10) / 30) * 365);
     expect(v.annualRevenue).toBe(annual);
     expect(v.multiple).toBe(quiet.valuation.revenueMultiple);
-    expect(v.valuation).toBe(annual * quiet.valuation.revenueMultiple + 2_000 * quiet.valuation.valuePerPayingUser);
-    expect(v.drivers.map((d) => d.id)).toEqual(["revenue", "growth", "satisfaction", "uptime", "payingUsers"]);
+    expect(v.valuation).toBe(
+      Math.round(annual * quiet.valuation.revenueMultiple) + 2_000 * quiet.valuation.valuePerPayingUser + Math.round(state.cash),
+    );
+    expect(v.drivers.map((d) => d.id)).toEqual(["revenue", "growth", "satisfaction", "uptime", "payingUsers", "netCash"]);
     expect(total(v)).toBe(v.valuation);
+  });
+
+  it("is nothing once the company is bankrupt, whatever the minimum", () => {
+    const v = sim.valuation({ ...trading(begin(), 2_000, 10), status: "bankrupt" });
+    expect(v.valuation).toBe(0);
+    expect(v.sharePrice).toBe(0);
+    expect(v.drivers.at(-1)).toMatchObject({ id: "bankrupt" });
+    expect(total(v)).toBe(0);
+  });
+
+  it("counts cash less the money borrowed still to pay back on a loan", () => {
+    const loaned = trading(sim.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 42, takeLoan: true }), 2_000, 10);
+    const owed = sim.loan(loaned)!.payoff;
+    expect(owed).toBeGreaterThan(0);
+    expect(driver(sim.valuation(loaned), "netCash")).toBe(Math.round(loaned.cash - owed));
+    // £10k more in the bank is £10k more valuation.
+    expect(sim.valuation({ ...loaned, cash: loaned.cash + 10_000 }).valuation).toBe(sim.valuation(loaned).valuation + 10_000);
   });
 
   it("counts income earned, so a price change doesn't move it until the income comes in", () => {
@@ -110,40 +140,97 @@ describe("valuation", () => {
     expect(sim.funding(spiked).friendsAndFamilyOffer!.newShares).toBe(sim.funding(state).friendsAndFamilyOffer!.newShares);
   });
 
-  it("has no revenue before income has come in since launch", () => {
+  it("has no revenue before income has come in, and builds it up over the first weeks", () => {
     expect(sim.valuation(begin()).annualRevenue).toBe(0);
+    const early = sim.advance(begin(), 5).state;
+    const earned = early.spendByDay.reduce((sum, d) => sum + d.income, 0);
+    expect(earned).toBeGreaterThan(0);
+    // Five days' income over the 30-day window, not five days' average.
+    expect(sim.valuation(early).annualRevenue).toBe(Math.round((earned / AVERAGE) * 365));
   });
 
-  it("is pushed down by poor satisfaction and up by growth", () => {
-    const state = trading(sim.advance(begin(), 5).state, 2_000, 10);
+  it("counts income lost within fallDays, though a rise counts over the whole window", () => {
+    const state = trading(begin(), 2_000, 10);
+    const steady = sim.valuation(state).annualRevenue;
+    const fall = quiet.valuation.fallDays;
+    // A week of no income: revenue goes with it, not a week's share of the month.
+    expect(sim.valuation(lastDays(state, fall, { income: 0 })).annualRevenue).toBe(0);
+    // A week of double income adds only a week's share of it.
+    const doubled = sim.valuation(lastDays(state, fall, { income: ((2_000 * 10) / 30) * 2 })).annualRevenue;
+    expect(doubled).toBeCloseTo(steady * (1 + fall / AVERAGE), -1);
+  });
+
+  it("is pushed down by poor satisfaction over the window, not one day's", () => {
+    const state = trading(begin(), 2_000, 10);
     const steady = sim.valuation(state);
-    const unhappy = sim.valuation({ ...state, satisfaction: 35 });
+    // Today's satisfaction alone doesn't move it.
+    expect(sim.valuation({ ...state, satisfaction: 0 }).valuation).toBe(steady.valuation);
+    const unhappy = sim.valuation(lastDays(state, AVERAGE, { satisfaction: 35 }));
     expect(unhappy.valuation).toBeLessThan(steady.valuation);
-    expect(unhappy.drivers.find((d) => d.id === "satisfaction")!.amount).toBeLessThan(0);
-    const growing = sim.valuation({ ...state, paidUsers: 3_000, users: 6_000 });
-    expect(growing.drivers.find((d) => d.id === "growth")!.amount).toBeGreaterThan(0);
-    expect(total(growing)).toBe(growing.valuation);
+    expect(driver(unhappy, "satisfaction")).toBeLessThan(0);
+    // A bad week alone costs nothing: the window's average stays above the line.
+    expect(driver(sim.valuation(lastDays(state, 7, { satisfaction: 35 })), "satisfaction")).toBe(0);
+  });
+
+  it("is pushed up by growth in average paying users on the window before", () => {
+    // Long enough after launch for growth to count in full.
+    const state = sim.advance(trading(begin(), 1_000, 10), AVERAGE + 10).state;
+    const grown = lastDays(state, AVERAGE, { paidUsers: 1_500 });
+    const v = sim.valuation({ ...grown, paidUsers: 1_500 });
+    expect(v.growth).toBeGreaterThan(0.3);
+    expect(driver(v, "growth")).toBeGreaterThan(0);
+    expect(total(v)).toBe(v.valuation);
+    // One day's jump in payers isn't growth.
+    expect(sim.valuation({ ...state, paidUsers: state.paidUsers * 3 }).growth).toBe(sim.valuation(state).growth);
   });
 
   it("doesn't count the launch ramp's users arriving as growth", () => {
     const ramping = begin();
     expect(sim.launch(ramping).status).toBe("launching");
-    const v = sim.valuation({ ...ramping, paidUsers: ramping.paidUsers * 5 });
-    expect(v.growth).toBe(0);
-    // After it, growth counts from the users there at its end.
+    expect(sim.valuation({ ...ramping, paidUsers: ramping.paidUsers * 5 }).growth).toBe(0);
     const launched = sim.advance(ramping, 5).state;
     expect(sim.launch(launched).status).toBe("launched");
-    const grown = sim.valuation({ ...launched, paidUsers: launched.paidUsers * 2 });
-    const rampEnd = launched.spendByDay.find((d) => d.day === launched.launchDay! + quiet.launch.rampShares.length - 1)!;
-    expect(grown.growth).toBeCloseTo((launched.paidUsers * 2 - rampEnd.paidUsers) / rampEnd.paidUsers, 10);
+    // Nor the weeks after it.
+    expect(sim.valuation({ ...launched, paidUsers: launched.paidUsers * 5 }).growth).toBe(0);
+    const rampEnd = launched.launchDay! + quiet.launch.rampShares.length - 1;
+    // Then it builds up as the days to compare with come after the ramp, from nothing.
+    const start = rampEnd + quiet.valuation.growthDays;
+    expect(sim.valuation(sim.advance(launched, start - 1 - launched.day).state).growth).toBe(0);
+    const firstDay = sim.valuation(sim.advance(launched, start - launched.day).state).growth;
+    const whole = sim.valuation(sim.advance(launched, start + AVERAGE - 1 - launched.day).state).growth;
+    expect(Math.abs(firstDay)).toBeLessThan(Math.abs(whole) / 5);
   });
 
   it("is pushed down by poor recent uptime", () => {
     const state = trading(begin(), 2_000, 10);
     const down = sim.valuation({ ...state, recentHoursDown: [12, 0, 0, 0] });
     expect(down.recentUptime).toBe(87.5);
-    expect(down.drivers.find((d) => d.id === "uptime")!.amount).toBeLessThan(0);
+    expect(driver(down, "uptime")).toBeLessThan(0);
     expect(down.valuation).toBeLessThan(sim.valuation(state).valuation);
+  });
+
+  it("can't swing several-fold in days: a crash in satisfaction, uptime and payers for a week costs well under half", () => {
+    const state = trading(begin(), 2_000, 10);
+    const crashed = lastDays(state, 7, { satisfaction: 0, paidUsers: 1_500 });
+    const v = sim.valuation({ ...crashed, satisfaction: 0, paidUsers: 1_500, recentHoursDown: [24, 24, 24, 24, 24, 24, 24] });
+    expect(v.valuation).toBeGreaterThan(sim.valuation(state).valuation * 0.6);
+    expect(total(v)).toBe(v.valuation);
+  });
+
+  it("never counts revenue for less than the lowest multiple", () => {
+    const state = lastDays(trading(begin(), 2_000, 10), AVERAGE, { satisfaction: 0 });
+    const v = sim.valuation({ ...state, satisfaction: 0, recentHoursDown: [24, 24, 24, 24, 24, 24, 24] });
+    expect(v.multiple).toBe(quiet.valuation.minMultiple);
+    expect(v.drivers.map((d) => d.id)).toContain("multipleFloor");
+    const revenueParts = v.drivers.filter((d) => !["payingUsers", "netCash", "minimum"].includes(d.id));
+    expect(revenueParts.reduce((sum, d) => sum + d.amount, 0)).toBe(Math.round(v.annualRevenue * quiet.valuation.minMultiple));
+  });
+
+  it("counts a rush of paying users slowly but losing them at once", () => {
+    const state = trading(begin(), 2_000, 10);
+    const each = quiet.valuation.valuePerPayingUser;
+    expect(driver(sim.valuation({ ...state, paidUsers: 6_000 }), "payingUsers")).toBe(2_000 * each);
+    expect(driver(sim.valuation({ ...state, paidUsers: 500 }), "payingUsers")).toBe(500 * each);
   });
 
   it("counts paying users, so a higher price alone can't inflate it as much as more payers", () => {
@@ -151,6 +238,15 @@ describe("valuation", () => {
     const dear = sim.valuation(trading(state, 1_000, 20));
     const many = sim.valuation(trading(state, 2_000, 10));
     expect(many.valuation).toBeGreaterThan(dear.valuation);
+  });
+
+  it("values paying users at what they pay below the fair price, so a give-away price can't inflate it", () => {
+    const each = quiet.valuation.valuePerPayingUser;
+    const atFair = sim.valuation(trading(begin(), 2_000, fair));
+    expect(driver(atFair, "payingUsers")).toBe(2_000 * each);
+    const pennies = sim.valuation(trading(begin(), 2_000, fair / 100));
+    expect(driver(pennies, "payingUsers")).toBe(Math.round((2_000 * each) / 100));
+    expect(pennies.drivers.find((d) => d.id === "payingUsers")!.detail).toMatch(/fair price/);
   });
 });
 
@@ -199,7 +295,7 @@ describe("friends and family", () => {
 
   it("costs far less of the company once it's worth more", () => {
     const early = sim.funding(begin()).friendsAndFamilyOffer!;
-    const later = sim.funding(trading(begin(), 2_000, 10)).friendsAndFamilyOffer!;
+    const later = sim.funding(trading(begin(), 5_000, 10)).friendsAndFamilyOffer!;
     expect(later.theirShare).toBeLessThan(early.theirShare / 5);
   });
 

@@ -1,10 +1,12 @@
 import type { GameConfig } from "./config.ts";
 import type { Conversion } from "./conversion.ts";
 import { count, pounds, type Finance } from "./finance.ts";
+import { loanOwed } from "./loan.ts";
 import {
   isFunderId,
   SimError,
   type FriendsAndFamilyFunding,
+  type DaySpend,
   type Funding,
   type FunderId,
   type GameState,
@@ -20,7 +22,9 @@ export type ValuationDriverId =
   | "uptime"
   | "multipleFloor"
   | "payingUsers"
-  | "minimum";
+  | "netCash"
+  | "minimum"
+  | "bankrupt";
 
 /** One thing pushing the valuation up or down, in pounds. The drivers add up to the valuation. */
 export interface ValuationDriver {
@@ -38,15 +42,18 @@ export interface ValuationView {
   sharesInIssue: number;
   /** valuation ÷ shares in issue, unrounded: with many shares it can be a fraction of a penny. */
   sharePrice: number;
-  /** Income earned a day over the last revenueDays days since launch, averaged, × 365. */
+  /** Income earned over the last averageDays days, ÷ averageDays, × 365. */
   annualRevenue: number;
-  /** What annual revenue is multiplied by, after growth, satisfaction and uptime; never below 0. */
+  /** What annual revenue is multiplied by, after growth, satisfaction and uptime; never below minMultiple. */
   multiple: number;
-  /** Growth in paying users over the configured days, since the launch ramp ended, as a share (0.5 = 50%). */
+  /** Growth in average paying users on growthDays before, since the launch ramp ended, as a share (0.5 = 50%). */
   growth: number;
   /** Recent uptime %, as free-to-paid conversion measures it. */
   recentUptime: number;
-  /** Revenue first, then growth, satisfaction, uptime, paying users and any top-up to the minimum. */
+  /**
+   * Revenue first, then growth, satisfaction, uptime, paying users, net cash and any top-up to the minimum, or for a
+   * bankrupt company what takes it to nothing.
+   */
   drivers: ValuationDriver[];
 }
 
@@ -131,6 +138,7 @@ const multipleText = (m: number) => `${m >= 0 ? "+" : "−"}${Math.abs(Math.roun
 export function createShares(config: GameConfig, finance: Finance, conversion: Conversion) {
   const v = config.valuation;
   const f = config.funding;
+  const uptimeDays = Math.max(1, config.conversion.uptimeDays);
 
   /** A new company's cap table: every share the student's. Refuses a count outside the configured range. */
   function startingShares(shares = config.shares.default): { shareholders: Shareholder[]; funding: Funding } {
@@ -150,43 +158,74 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
   // The launch ramp's users arriving aren't growth: it's measured from the end of the ramp at the earliest.
   const rampDays = config.launch.rampShares.some((x) => x > 0) ? config.launch.rampShares.length : 1;
 
+  /** The days played from `from` to `to`, both included. */
+  const daysBetween = (state: GameState, from: number, to: number) =>
+    state.spendByDay.filter((d) => d.day >= from && d.day <= to);
+  const mean = (days: DaySpend[], value: (d: DaySpend) => number) =>
+    days.reduce((sum, d) => sum + value(d), 0) / days.length;
+
+  /** Income earned over the last `days` days, ÷ days: days before launch count as nothing. */
+  const incomeOver = (state: GameState, days: number) =>
+    daysBetween(state, state.day - days + 1, state.day).reduce((sum, d) => sum + d.income, 0) / days;
+
   /**
-   * Paying users growthDays ago, or at the end of the launch ramp if that was later. Today's before the ramp has
-   * ended, so there's no growth yet.
+   * Income actually earned a day, from paying users and any paid API: over the last averageDays days, or the last
+   * fallDays if that's lower. So a new company's revenue builds up over its first weeks and a rise counts slowly, but
+   * income lost shows within days. Not today's price: a price change only moves it as the income it brings comes in.
    */
-  function paidUsersBefore(state: GameState): number {
-    if (state.launchDay === null) return state.paidUsers;
-    const from = Math.max(state.day - v.growthDays, state.launchDay + rampDays - 1);
-    const then = state.spendByDay.find((d) => d.day >= from);
-    return then?.paidUsers ?? state.paidUsers;
+  const averageIncome = (state: GameState) =>
+    Math.min(incomeOver(state, v.averageDays), incomeOver(state, Math.max(1, v.fallDays)));
+
+  /**
+   * Over the last averageDays days played: paying users averaged, or today's if fewer, so a rush of payers counts
+   * slowly but losing them counts at once; satisfaction averaged; and what a paying user paid a month on average,
+   * from income earned ÷ paying-user days (none before any income). Today's figures before any day's played.
+   */
+  function recent(state: GameState): { paidUsers: number; satisfaction: number; monthlyPerUser: number | null } {
+    const days = daysBetween(state, state.day - v.averageDays + 1, state.day);
+    if (!days.length) return { paidUsers: state.paidUsers, satisfaction: state.satisfaction, monthlyPerUser: null };
+    const userDays = days.reduce((sum, d) => sum + d.paidUsers, 0);
+    const income = days.reduce((sum, d) => sum + d.income, 0);
+    return {
+      paidUsers: Math.min(state.paidUsers, userDays / days.length),
+      satisfaction: mean(days, (d) => d.satisfaction),
+      // None before any income has come in, as on launch day: then they count in full.
+      monthlyPerUser: userDays > 0 && income > 0 ? (income / userDays) * config.billing.daysPerMonth : null,
+    };
   }
 
   /**
-   * Income actually earned a day, from paying users and any paid API, averaged over the last revenueDays days played
-   * since launch: not today's price, so a price change only moves the valuation as the income it brings comes in. 0
-   * before any.
+   * Growth in paying users: their average over the last averageDays days against their average over the averageDays
+   * days to growthDays ago. Only days after the end of the launch ramp count, and growth is scaled by the share of
+   * those earlier days that do, so it builds up from nothing over the weeks after launch rather than counting the
+   * launch rush.
    */
-  function averageIncome(state: GameState): number {
+  function growthIn(state: GameState): number {
     if (state.launchDay === null) return 0;
-    const from = Math.max(state.day - v.revenueDays + 1, state.launchDay + 1);
-    const days = state.spendByDay.filter((d) => d.day >= from);
-    return days.length ? days.reduce((sum, d) => sum + d.income, 0) / days.length : 0;
+    const rampEnd = state.launchDay + rampDays - 1;
+    const now = daysBetween(state, Math.max(rampEnd, state.day - v.averageDays + 1), state.day);
+    const thenTo = state.day - v.growthDays;
+    const then = daysBetween(state, Math.max(rampEnd, thenTo - v.averageDays + 1), thenTo);
+    if (!now.length || !then.length) return 0;
+    const before = mean(then, (d) => d.paidUsers);
+    const share = Math.min(1, then.length / v.averageDays);
+    return (share * (mean(now, (d) => d.paidUsers) - before)) / Math.max(before, v.growthBaseUsers);
   }
 
   function valuation(state: GameState): ValuationView {
     const annualRevenue = Math.round(averageIncome(state) * DAYS_PER_YEAR);
-    const before = paidUsersBefore(state);
-    const growth = (state.paidUsers - before) / Math.max(before, v.growthBaseUsers);
+    const { paidUsers, satisfaction, monthlyPerUser } = recent(state);
+    const growth = growthIn(state);
     const growthM = Math.min(v.maxGrowthMultiple, Math.max(-v.maxGrowthPenalty, v.growthMultiple * growth));
     const satisfactionM =
-      state.satisfaction < v.goodSatisfaction
-        ? (-v.satisfactionPenalty * (v.goodSatisfaction - state.satisfaction)) / Math.max(1, v.goodSatisfaction)
+      satisfaction < v.goodSatisfaction
+        ? (-v.satisfactionPenalty * (v.goodSatisfaction - satisfaction)) / Math.max(1, v.goodSatisfaction)
         : 0;
     const recentUptime = conversion.recentUptime(state);
     const uptimeM =
       recentUptime < v.goodUptime ? -Math.min(v.maxUptimePenalty, v.uptimePenaltyPerPoint * (v.goodUptime - recentUptime)) : 0;
     const raw = v.revenueMultiple + growthM + satisfactionM + uptimeM;
-    const multiple = Math.max(0, raw);
+    const multiple = Math.max(v.minMultiple, raw);
     const part = (m: number) => Math.round(annualRevenue * m);
 
     const drivers: ValuationDriver[] = [
@@ -194,48 +233,66 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
         id: "revenue",
         label: "Revenue",
         amount: part(v.revenueMultiple),
-        detail: `${pounds(annualRevenue)} a year, from income earned by users and any API over the last ${v.revenueDays} days, × ${v.revenueMultiple}`,
+        detail: `${pounds(annualRevenue)} a year, from income earned by users and any API over the last ${v.averageDays} days (or the last ${v.fallDays}, if lower), × ${v.revenueMultiple}`,
       },
       {
         id: "growth",
         label: "Growth",
         amount: part(growthM),
-        detail: `Paying users ${growth >= 0 ? "up" : "down"} ${percent(Math.abs(growth))} over ${v.growthDays} days: ${multipleText(growthM)} revenue`,
+        detail: `Paying users over the last ${v.averageDays} days ${growth >= 0 ? "up" : "down"} ${percent(Math.abs(growth))} on the ${v.averageDays} days to ${v.growthDays} days ago (counting from the end of the launch): ${multipleText(growthM)} revenue`,
       },
       {
         id: "satisfaction",
         label: "Satisfaction",
         amount: part(satisfactionM),
         detail: satisfactionM
-          ? `${Math.round(state.satisfaction)}%, below ${v.goodSatisfaction}%: ${multipleText(satisfactionM)} revenue`
-          : `${Math.round(state.satisfaction)}%: no effect at ${v.goodSatisfaction}% or more`,
+          ? `${Math.round(satisfaction)}% over ${v.averageDays} days, below ${v.goodSatisfaction}%: ${multipleText(satisfactionM)} revenue`
+          : `${Math.round(satisfaction)}% over ${v.averageDays} days: no effect at ${v.goodSatisfaction}% or more`,
       },
       {
         id: "uptime",
         label: "Uptime",
         amount: part(uptimeM),
         detail: uptimeM
-          ? `${round1(recentUptime)}% lately, below ${v.goodUptime}%: ${multipleText(uptimeM)} revenue`
-          : `${round1(recentUptime)}% lately: no effect at ${v.goodUptime}% or more`,
+          ? `${round1(recentUptime)}% over the last ${uptimeDays} days, below ${v.goodUptime}%: ${multipleText(uptimeM)} revenue`
+          : `${round1(recentUptime)}% over the last ${uptimeDays} days: no effect at ${v.goodUptime}% or more`,
       },
     ];
-    // The multiple can't go below 0: a company isn't worth less for having revenue.
-    if (raw < 0) {
+    // Revenue always counts for at least the lowest multiple, however badly the rest is going.
+    if (raw < v.minMultiple) {
       drivers.push({
         id: "multipleFloor",
         label: "Multiple floor",
-        amount: -drivers.reduce((sum, d) => sum + d.amount, 0),
-        detail: "Revenue can't count for less than nothing",
+        amount: part(v.minMultiple) - drivers.reduce((sum, d) => sum + d.amount, 0),
+        detail: `Revenue always counts at least ${v.minMultiple} times over`,
       });
     }
+    // A paying user is worth less for paying less than the fair price, so a give-away price can't inflate it either.
+    const users = Math.round(paidUsers);
+    const fair = config.productTypes[state.productType].pricing.fairPrice;
+    const perUser = v.valuePerPayingUser * Math.min(1, monthlyPerUser === null ? 1 : monthlyPerUser / fair);
     drivers.push({
       id: "payingUsers",
       label: "Paying users",
-      amount: state.paidUsers * v.valuePerPayingUser,
-      detail: `${count.format(state.paidUsers)} × ${pounds(v.valuePerPayingUser)}`,
+      amount: Math.round(users * perUser),
+      detail:
+        perUser < v.valuePerPayingUser
+          ? `${count.format(users)} lately × ${pounds(perUser)}: ${pounds(v.valuePerPayingUser)} each at the fair price of ${pounds(fair)} a month, but they paid ${pounds(monthlyPerUser!)}`
+          : `${count.format(users)} lately × ${pounds(perUser)}`,
+    });
+    // Cash counts, less what's still owed on a loan: a company is worth at least what's in the bank.
+    const owed = loanOwed(state.loan);
+    drivers.push({
+      id: "netCash",
+      label: "Net cash",
+      amount: Math.round(state.cash - owed),
+      detail: owed ? `${pounds(state.cash)} cash, less ${pounds(owed)} of the loan still to pay back` : `${pounds(state.cash)} cash`,
     });
     const formula = drivers.reduce((sum, d) => sum + d.amount, 0);
-    if (formula < v.minimum) {
+    // A bankrupt company is worth nothing: the minimum is for one still trading, so wrecking it can't score.
+    if (state.status === "bankrupt") {
+      drivers.push({ id: "bankrupt", label: "Bankrupt", amount: -formula, detail: "A bankrupt company is worth nothing" });
+    } else if (formula < v.minimum) {
       drivers.push({
         id: "minimum",
         label: "Minimum",
@@ -243,7 +300,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
         detail: `A company is never valued below ${pounds(v.minimum)}`,
       });
     }
-    const value = Math.max(v.minimum, formula);
+    const value = state.status === "bankrupt" ? 0 : Math.max(v.minimum, formula);
     const shares = sharesInIssue(state);
     return {
       valuation: value,
