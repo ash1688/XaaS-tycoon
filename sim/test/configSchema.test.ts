@@ -114,6 +114,14 @@ describe("validateOverrides", () => {
     expect(validateOverrides({ "events.trafficSpike.schedule.toDay": 10 })).toHaveProperty([
       "events.trafficSpike.schedule.toDay",
     ]);
+    // Every server has to fit in the biggest rack.
+    expect(validateOverrides({ "models.onprem.servers.racks.serverUnits.massive": 50 })).toHaveProperty([
+      "models.onprem.servers.racks.serverUnits.massive",
+    ]);
+    expect(validateOverrides({ "models.onprem.servers.racks.sizes.large.units": 6 })).toHaveProperty([
+      "models.onprem.servers.racks.sizes.large.units",
+    ]);
+    expect(validateOverrides({ "models.onprem.servers.racks.serverUnits.massive": 42 })).toEqual({});
   });
 
   it("has a toggle for each game length, and needs at least one allowed", () => {

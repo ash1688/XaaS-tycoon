@@ -18,6 +18,7 @@ import { createLoan, type LoanQuote, type LoanView } from "./loan.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
 import { isNameAllowed } from "./nameFilter.ts";
 import { createPricing, type PricePreview, type PriceWaveView } from "./pricing.ts";
+import { createRacks, type RacksView } from "./racks.ts";
 import { seedRng } from "./rng.ts";
 import { createServers, type ManagedView, type ServerOption, type ServerView, type UnitsView } from "./servers.ts";
 import { createStaff } from "./staff.ts";
@@ -47,7 +48,8 @@ export type { FeatureStatus, FeatureView } from "./features.ts";
 export type { ProviderView } from "./infrastructure.ts";
 export type { LaunchView } from "./launch.ts";
 export type { LoanQuote, LoanView } from "./loan.ts";
-export type { LostAddon, MigrationQuote, MigrationView } from "./migration.ts";
+export type { LostAddon, MigrationQuote, MigrationView, SetupRack } from "./migration.ts";
+export type { RackOption, RackView, RacksView } from "./racks.ts";
 export type { PricePreview, PriceWaveView } from "./pricing.ts";
 export type {
   LoadBalancerView,
@@ -69,6 +71,7 @@ export {
   isManagedService,
   isModelId,
   isProductTypeId,
+  isRackSize,
   isServerSize,
   isServerType,
   isStaffPool,
@@ -89,6 +92,7 @@ export {
   type NewGameParams,
   type PriceChange,
   type PriceWave,
+  type Rack,
   type ScheduledEvent,
   type Server,
   type Spend,
@@ -191,6 +195,13 @@ export interface Sim {
    * Null on any other model.
    */
   managed(state: GameState): ManagedView | null;
+  /**
+   * On-prem: the company's racks, the U each holds and its servers take, and the racks it can buy. Null on IaaS, PaaS
+   * and SaaS, which have no racks.
+   */
+  racks(state: GameState): RacksView | null;
+  /** What a model charges a day for power and cooling, whatever the company runs: highest on-prem. */
+  powerAndCooling(model: ModelId): number;
   /** On SaaS: capacity is the provider's, so what you pay for it is the per-user bill. Null on any other model. */
   provider(state: GameState): ProviderView | null;
   /** Tickets the support staff can clear in a day: support staff × tickets each. */
@@ -248,7 +259,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   const support = createSupport(config);
   const customers = createCustomers(config, features, events, pricing, support);
   const conversion = createConversion(config, features, pricing);
-  const servers = createServers(config, finance);
+  const racks = createRacks(config, finance);
+  const servers = createServers(config, finance, racks);
   const infra = createInfrastructure(config, customers, events, servers);
   const staff = createStaff(config);
   const migration = createMigration(config, infra, features, events, servers);
@@ -298,6 +310,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       spendByDay: [],
       servers: setup.servers,
       nextServerId: setup.nextServerId,
+      racks: setup.racks,
+      nextRackId: setup.nextRackId,
       features: {},
       migration: null,
       migrations: 0,
@@ -383,9 +397,13 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       case "cancelServer":
         return servers.cancelServer(state, action.id);
       case "buyServer":
-        return servers.buyServer(state, action.server, action.size);
+        return servers.buyServer(state, action.server, action.size, action.rack);
       case "sellServer":
         return servers.sellServer(state, action.id);
+      case "buyRack":
+        return racks.buyRack(state, action.size);
+      case "sellRack":
+        return racks.sellRack(state, action.id);
       case "setInstances":
         return servers.setInstances(state, action.count);
       case "setManagedService":
@@ -552,6 +570,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     servers: (s) => servers.servers(load(s)),
     serverOptions: (s) => servers.serverOptions(load(s)),
     managed: (s) => servers.managed(load(s)),
+    racks: (s) => racks.racks(load(s)),
+    powerAndCooling: (model) => config.models[model].powerAndCooling,
     provider: (s) => infra.provider(load(s)),
     dailyClearance: (s) => support.dailyClearance(load(s)),
     usualTickets: (s) => support.usualTickets(load(s)),

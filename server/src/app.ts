@@ -345,6 +345,8 @@ export async function buildApp(opts: AppOptions) {
       servers: sim.servers(state),
       serverOptions: sim.serverOptions(state),
       managed: sim.managed(state),
+      racks: sim.racks(state),
+      powerAndCooling: sim.powerAndCooling(state.model),
       provider: sim.provider(state),
       uptime: sim.uptime(state),
       outageDays: state.outageDays,
@@ -416,12 +418,12 @@ export async function buildApp(opts: AppOptions) {
         };
       }),
       models: MODEL_IDS.map((id) => {
-        const { name, blurb, comparison, monthlyCost, monthlyCostPerUser } = config.models[id];
+        const { name, blurb, comparison, monthlyCost, monthlyCostPerUser, powerAndCooling } = config.models[id];
         const stack = responsibilityStack(id);
         const opsNeeded = sim.opsNeeded(id);
-        // On-prem's is the server room: the kit is bought on top, one server at a time.
+        // On-prem's is the server room, with its rack and cabling: the kit is bought on top, one server at a time.
         const upfrontCost = sim.upfrontCost(id);
-        return { id, name, blurb, comparison, stack, opsNeeded, upfrontCost, monthlyCost, monthlyCostPerUser };
+        return { id, name, blurb, comparison, stack, opsNeeded, upfrontCost, monthlyCost, monthlyCostPerUser, powerAndCooling };
       }),
       staff: STAFF_POOLS.map((id) => {
         const { name, personName, dayRate } = config.staff[id];
@@ -613,6 +615,8 @@ export async function buildApp(opts: AppOptions) {
                 "cancelServer",
                 "buyServer",
                 "sellServer",
+                "buyRack",
+                "sellRack",
                 "setInstances",
                 "setManagedService",
                 "takeLoan",
@@ -633,8 +637,12 @@ export async function buildApp(opts: AppOptions) {
             // setManagedService uses size too, where null turns the cache off; it's refused for the others below.
             server: { enum: [...SERVER_TYPES] },
             size: { enum: [...SERVER_SIZES, null] },
-            // cancelServer and sellServer: one of the company's servers, by id. The sim checks it's theirs.
+            // buyRack uses size too, for the rack's size: the sim checks it's one racks come in.
+            // cancelServer and sellServer: one of the company's servers, by id; sellRack, one of its racks. The sim checks
+            // it's theirs.
             id: { type: "integer", minimum: 1 },
+            // buyServer: the rack to install it in, by id. Left out, it goes in the first with room.
+            rack: { type: "integer", minimum: 1 },
             // setInstances: how many app instances to run on PaaS. The sim checks it against the platform's most.
             // hire and letGo: how many people at once, one if left out. Capped so a typo can't hire thousands.
             count: { type: "integer", minimum: 1, maximum: 999 },
@@ -648,7 +656,8 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { const: "startMigration" } } }, then: { required: ["model"] } },
             { if: { properties: { type: { const: "setPrice" } } }, then: { required: ["price"] } },
             { if: { properties: { type: { enum: ["rentServer", "buyServer"] } } }, then: { required: ["server", "size"] } },
-            { if: { properties: { type: { enum: ["cancelServer", "sellServer"] } } }, then: { required: ["id"] } },
+            { if: { properties: { type: { enum: ["cancelServer", "sellServer", "sellRack"] } } }, then: { required: ["id"] } },
+            { if: { properties: { type: { const: "buyRack" } } }, then: { required: ["size"] } },
             { if: { properties: { type: { const: "setInstances" } } }, then: { required: ["count"] } },
             {
               if: { properties: { type: { const: "setManagedService" } } },

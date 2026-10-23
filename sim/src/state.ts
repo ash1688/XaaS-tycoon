@@ -3,6 +3,7 @@ import {
   MANAGED_SERVICES,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
+  RACK_SIZES,
   SERVER_SIZES,
   SERVER_TYPES,
   STAFF_POOLS,
@@ -11,6 +12,7 @@ import {
   type MigrationPhase,
   type ModelId,
   type ProductTypeId,
+  type RackSize,
   type ServerSize,
   type ServerType,
   type SpendCategory,
@@ -21,7 +23,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 23;
+export const GAME_STATE_VERSION = 24;
 
 /** Money spent in each category. */
 export type Spend = Record<SpendCategory, number>;
@@ -101,6 +103,8 @@ export interface Migration {
    * They serve only once the model switches, when they become the company's servers.
    */
   servers: Server[];
+  /** The racks the setup goes in, on a model with racks (see Rack): bought on the first day with the servers. */
+  racks: Rack[];
 }
 
 /** A day a scripted event fires on, fixed when the game starts. */
@@ -177,6 +181,20 @@ export interface Server {
   readyDay: number;
   /** What it was bought for, on a model that buys its servers. Selling it back refunds a share of this. */
   paid?: number;
+  /** The rack it's installed in, by id, on a model with racks: it takes its U there from the day it's ordered. */
+  rack?: number;
+}
+
+/**
+ * A rack the company has bought, on a model whose servers go in racks (on-prem). It holds servers up to its size in
+ * rack units (U), and can be sold back once it's empty.
+ */
+export interface Rack {
+  /** Unique within the game. */
+  id: number;
+  size: RackSize;
+  /** What it was bought for. Selling it back refunds a share of this. */
+  paid: number;
 }
 
 /** CU and DBU demand on the day just played: what every user needed, before any cache. */
@@ -258,6 +276,10 @@ export interface GameState {
   servers: Server[];
   /** The id the next server added gets. */
   nextServerId: number;
+  /** The racks the company has, on a model with racks, oldest first. Empty on any other model. */
+  racks: Rack[];
+  /** The id the next rack bought gets. */
+  nextRackId: number;
   outageDays: number;
   /** Total hours down across every day played, for uptime. */
   downtimeHours: number;
@@ -331,12 +353,17 @@ export type Action =
   /** Cancels a rented VM, ready or not. Its rent stops: you pay only for the days you had it. */
   | { type: "cancelServer"; id: number }
   /**
-   * Buys a server of a type and size, on-prem. Its price is charged at once (infrastructure). It's on order until it
-   * arrives after the delivery time, adding no capacity until then. An order can't be cancelled.
+   * Buys a server of a type and size, on-prem. Its price is charged at once (infrastructure), with its cabling. It's on
+   * order until it arrives after the delivery time, adding no capacity until then. An order can't be cancelled. It's
+   * installed in the rack given, or the first with room for it, taking its U from now; with no room, it's refused.
    */
-  | { type: "buyServer"; server: ServerType; size: ServerSize }
+  | { type: "buyServer"; server: ServerType; size: ServerSize; rack?: number }
   /** Sells back a bought server that has arrived, refunding the configured share of what it cost, at once. */
   | { type: "sellServer"; id: number }
+  /** Buys a rack, on-prem: its price and cabling are charged at once, and it's installed at once. */
+  | { type: "buyRack"; size: RackSize }
+  /** Sells back an empty rack, refunding the configured share of what it cost, at once. */
+  | { type: "sellRack"; id: number }
   /**
    * Sets how many app instances run, on PaaS: from 1 to the platform's most. The change is instant, serving from the
    * next day played, and billed monthly a day's share at a time from then.
@@ -444,6 +471,10 @@ export function isServerType(v: string): v is ServerType {
 
 export function isServerSize(v: string): v is ServerSize {
   return (SERVER_SIZES as readonly string[]).includes(v);
+}
+
+export function isRackSize(v: string): v is RackSize {
+  return (RACK_SIZES as readonly string[]).includes(v);
 }
 
 export function isManagedService(v: string): v is ManagedService {

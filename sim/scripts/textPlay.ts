@@ -6,6 +6,7 @@ import {
   gameLengthName,
   MANAGED_SERVICES,
   MODEL_IDS,
+  RACK_SIZES,
   SERVER_SIZES,
   SERVER_TYPES,
   SimError,
@@ -15,6 +16,7 @@ import {
   type GameState,
   type ManagedService,
   type ModelId,
+  type RackSize,
   type ServerSize,
   type ServerType,
   type Sim,
@@ -54,6 +56,9 @@ export interface Player {
   player: string;
   playstyle?: string;
 }
+
+/** What each server type's units are, so they don't read as rack units (U). */
+const UNIT: Record<ServerType, string> = { app: "CU", database: "DBU", cache: "CH", loadBalancer: "apps" };
 
 const money = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
 const pct = (n: number) => `${Math.round(n)}%`;
@@ -144,6 +149,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
   lines.push(
     `satisfaction ${pct(state.satisfaction)} | uptime ${sim.uptime(state).toFixed(1)}% | tickets ${Math.round(sim.usualTickets(state))}/day vs ${Math.round(sim.dailyClearance(state))} cleared, backlog ${Math.round(state.backlog)}`,
   );
+  lines.push(`power and cooling ${money(sim.powerAndCooling(state.model))}/day`);
   lines.push(`staff: developers ${state.developers}, ops ${state.ops} (need ${sim.opsNeededNow(state)}), support ${state.support} | staff cost ${money(sim.dailyStaffCost(state))}/day`);
 
   const launch = sim.launch(state);
@@ -178,9 +184,14 @@ export function renderStatus(sim: Sim, state: GameState): string {
   if (servers.length) {
     lines.push(
       `servers: ${servers
-        .map((s) => `#${s.id} ${s.size} ${s.type} ${s.units}u${s.status === "pending" ? ` (arrives in ${s.daysLeft}d)` : ""}`)
+        .map((s) => `#${s.id} ${s.size} ${s.type} ${s.units} ${UNIT[s.type]}${s.rack !== null ? ` in rack #${s.rack}` : ""}${s.status === "pending" ? ` (arrives in ${s.daysLeft}d)` : ""}`)
         .join(", ")}`,
     );
+  }
+  const racks = sim.racks(state);
+  if (racks) {
+    const list = racks.racks.map((r) => `#${r.id} ${r.size} ${r.used}/${r.units}U`).join(", ");
+    lines.push(`racks: ${list || "none"} | ${racks.free}U free, most in one rack ${racks.mostFree}U`);
   }
 
   const features = sim.features(state);
@@ -220,29 +231,42 @@ export function renderCommands(sim: Sim, state: GameState): string {
     );
   }
   const options = sim.serverOptions(state);
+  const racks = sim.racks(state);
   if (options.length) {
     const verb = state.model === "onprem" ? "buy" : "rent";
-    lines.push(`  ${verb} <${SERVER_TYPES.join("|")}> <${SERVER_SIZES.join("|")}>`);
+    lines.push(`  ${verb} <${SERVER_TYPES.join("|")}> <${SERVER_SIZES.join("|")}>${racks ? " [rack id]   (goes in the first rack with room unless you pick one)" : ""}`);
+    if (racks) {
+      lines.push(
+        `    rack space: ${SERVER_SIZES.map((size) => `${size} ${racks.serverUnits[size]}U`).join(", ")}; most free in one rack ${racks.mostFree}U` +
+          `${options[0]!.cabling > 0 ? `; ${money(options[0]!.cabling)} cabling on each` : ""}`,
+      );
+    }
     for (const type of SERVER_TYPES) {
       const sizes = options.filter((o) => o.type === type);
       if (sizes.length) {
         lines.push(
           `    ${type}: ${sizes
-            .map((o) => `${o.size} ${o.units}u ${o.price !== null ? `${money(o.price)} once` : `${money(o.monthlyCost)}/month`}`)
+            .map((o) => `${o.size} ${o.units} ${UNIT[o.type]} ${o.price !== null ? `${money(o.price)} once` : `${money(o.monthlyCost)}/month`}`)
             .join(", ")}`,
         );
       }
     }
     lines.push(`  ${state.model === "onprem" ? "sell" : "cancel"} <server id>`);
   }
+  if (racks) {
+    lines.push(
+      `  rack <${RACK_SIZES.join("|")}>   ${racks.options.map((o) => `${o.size} ${o.units}U ${money(o.price)} + ${money(o.cabling)} cabling`).join(", ")}`,
+    );
+    if (racks.racks.some((r) => r.servers.length === 0)) lines.push(`  sellrack <rack id>   (empty racks only)`);
+  }
   const managed = sim.managed(state);
   if (managed) {
     lines.push(`  instances <1–${managed.maxInstances}>   (${money(managed.instanceMonthlyCost)}/month each)`);
     lines.push(`  managed <${MANAGED_SERVICES.join("|")}> <${SERVER_SIZES.join("|")}|off>   (the cache can be off; the database can't)`);
     lines.push(
-      `    database: ${managed.databaseOptions.map((o) => `${o.size} ${o.units}u ${money(o.monthlyCost)}/month`).join(", ")}`,
+      `    database: ${managed.databaseOptions.map((o) => `${o.size} ${o.units} DBU ${money(o.monthlyCost)}/month`).join(", ")}`,
     );
-    lines.push(`    cache: ${managed.cacheOptions.map((o) => `${o.size} ${o.units}u ${money(o.monthlyCost)}/month`).join(", ")}`);
+    lines.push(`    cache: ${managed.cacheOptions.map((o) => `${o.size} ${o.units} CH ${money(o.monthlyCost)}/month`).join(", ")}`);
   }
   if (!sim.migration(state)) lines.push(`  quote <${MODEL_IDS.filter((m) => m !== state.model).join("|")}> | migrate <model>`);
   const loanQuote = sim.loanQuote(state);
@@ -314,7 +338,16 @@ export function parseCommand(text: string): Command {
     case "addon":
       return one({ type: "buyAddon", feature: args[0] ?? "" });
     case "buy":
-      return one({ type: "buyServer", server: type(args[0]), size: size(args[1]) });
+      return one({
+        type: "buyServer",
+        server: type(args[0]),
+        size: size(args[1]),
+        ...(args[2] !== undefined && { rack: number(args[2], "a rack id") }),
+      });
+    case "rack":
+      return one({ type: "buyRack", size: oneOf<RackSize>(args[0], RACK_SIZES, "a rack size") });
+    case "sellrack":
+      return one({ type: "sellRack", id: number(args[0], "a rack id") });
     case "rent":
       return one({ type: "rentServer", server: type(args[0]), size: size(args[1]) });
     case "sell":

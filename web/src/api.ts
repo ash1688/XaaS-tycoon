@@ -137,6 +137,8 @@ export const formatUptime = (pct: number) => (pct >= 100 ? "100%" : `${(Math.flo
 export const CATEGORY_LABELS: Record<SpendCategory, string> = {
   staff: "Staff",
   infrastructure: "Infrastructure",
+  cabling: "Cabling",
+  power: "Power and cooling",
   addons: "Add-ons",
   debt: "Debt",
 };

@@ -141,9 +141,15 @@ function downWhy(type: ServerType) {
   return undefined;
 }
 function upWhy(type: ServerType) {
-  const price = optionFor(type)?.price ?? 0;
+  const o = optionFor(type);
+  const price = (o?.price ?? 0) + (o?.cabling ?? 0);
+  const racks = game.company?.racks;
+  if (o?.rackUnits != null && racks && o.rackUnits > racks.mostFree) {
+    return `A ${one(type)} takes ${o.rackUnits}U and the most free in any one rack is ${racks.mostFree}U: buy a rack first.`;
+  }
   if (game.company && price > game.company.cash) {
-    return `A ${one(type)} costs ${formatCash(price)} up front and you have ${formatCash(game.company.cash)}.`;
+    const cabling = o?.cabling ? " with its cabling" : "";
+    return `A ${one(type)} costs ${formatCash(price)} up front${cabling} and you have ${formatCash(game.company.cash)}.`;
   }
   return undefined;
 }
@@ -164,7 +170,9 @@ function stepNote(type: ServerType) {
       ? ` With ${appServers} app servers, you'll need load balancers to serve them all.`
       : "";
   if (o.price !== null) {
-    return `+ buys a ${one(type)} (${what}) for ${formatCash(o.price)} up front, paid now, then ${formatCash(o.monthlyCost)} a month once it arrives in ${days(o.readyDays)}.${opsText}${lbHint}`;
+    const cabling = o.cabling ? ` plus ${formatCash(o.cabling)} cabling` : "";
+    const rack = o.rackUnits !== null ? ` It takes ${o.rackUnits}U in a rack from today.` : "";
+    return `+ buys a ${one(type)} (${what}) for ${formatCash(o.price)}${cabling} up front, paid now, then ${formatCash(o.monthlyCost)} a month once it arrives in ${days(o.readyDays)}.${rack}${opsText}${lbHint}`;
   }
   return `+ rents a ${one(type)} (${what}) for ${formatCash(o.monthlyCost)} a month from tomorrow, ready after the next day.${opsText}${lbHint}`;
 }
@@ -260,7 +268,7 @@ async function cancel() {
             @change="pickSize(g.type, ($event.target as HTMLSelectElement).value as ServerSize)"
           >
             <option v-for="o in options.filter((x) => x.type === g.type)" :key="o.size" :value="o.size">
-              {{ o.size }} · {{ formatCount(o.units) }} {{ UNIT[g.type] }} ·
+              {{ o.size }} · {{ formatCount(o.units) }} {{ UNIT[g.type] }}{{ o.rackUnits !== null ? ` · ${o.rackUnits}U` : "" }} ·
               {{ o.price !== null ? `${formatCash(o.price)} + ${formatCash(o.monthlyCost)}/mo` : `${formatCash(o.monthlyCost)}/mo` }}
             </option>
           </select>

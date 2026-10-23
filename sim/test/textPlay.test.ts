@@ -101,6 +101,45 @@ describe("advanceUntil", () => {
   });
 });
 
+describe("racks, cabling, power and cooling", () => {
+  const onPrem = () => sim.newGame({ companyName: "Test Co", productType: "video", model: "onprem", seed: 3, takeLoan: true });
+
+  it("reads buying a server into a chosen rack, and buying and selling racks", () => {
+    expect(parseCommand("buy app large 2")).toMatchObject({ action: { type: "buyServer", server: "app", size: "large", rack: 2 } });
+    expect(parseCommand("buy app large")).toEqual({ kind: "action", action: { type: "buyServer", server: "app", size: "large" }, times: 1 });
+    expect(parseCommand("rack large")).toMatchObject({ action: { type: "buyRack", size: "large" } });
+    expect(parseCommand("sellrack 2")).toMatchObject({ action: { type: "sellRack", id: 2 } });
+    expect(() => parseCommand("rack massive")).toThrow(/rack size/);
+  });
+
+  it("shows racks, rack space and power and cooling on-prem, and drives them", () => {
+    let state = onPrem();
+    expect(renderStatus(sim, state)).toMatch(/^racks: #1 medium 0\/24U \| 24U free, most in one rack 24U$/m);
+    expect(renderStatus(sim, state)).toMatch(/^power and cooling £25\/day$/m);
+    const commands = renderCommands(sim, state);
+    expect(commands).toMatch(/^ {2}buy <.+> <.+> \[rack id\]/m);
+    expect(commands).toMatch(/rack space: small 1U, medium 2U, large 4U, massive 8U; most free in one rack 24U; £50 cabling on each/);
+    expect(commands).toMatch(/^ {2}rack <small\|medium\|large> {3}small 12U £300 \+ £50 cabling/m);
+    for (let i = 0; i < 3; i++) state = run(state, "buy app massive").state;
+    expect(renderStatus(sim, state)).toMatch(/#1 massive app \d+ CU in rack #1 \(arrives in 7d\)/);
+    const full = run(state, "buy database small");
+    expect(full.lines[0]).toMatch(/refused.*Buy a rack/);
+    expect(full.rows[0]).toMatchObject({ ok: false, type: "buyServer", error: "no_rack_space" });
+    state = run(state, "rack small").state;
+    expect(renderStatus(sim, state)).toMatch(/racks: #1 medium 24\/24U, #2 small 0\/12U/);
+    expect(renderCommands(sim, state)).toMatch(/sellrack <rack id>/);
+    state = run(state, "buy database small").state;
+    expect(state.servers.at(-1)!.rack).toBe(2);
+  });
+
+  it("has no racks off on-prem, but still shows power and cooling", () => {
+    const state = start();
+    expect(renderStatus(sim, state)).not.toMatch(/^racks:/m);
+    expect(renderStatus(sim, state)).toMatch(/^power and cooling £6\/day$/m);
+    expect(renderCommands(sim, state)).not.toMatch(/rack/);
+  });
+});
+
 describe("rendering", () => {
   it("shows a longer game's length and final day", () => {
     const yearly = createSim({ ...defaultConfig, allowedGameLengths: { "180-days": 0, "1-year": 1, career: 1 } });

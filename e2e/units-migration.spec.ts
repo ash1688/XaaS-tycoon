@@ -36,8 +36,9 @@ test("migrating from IaaS to PaaS quotes the new setup item by item, then shows 
   // Rented, so nothing up front: only a monthly column.
   await expect(setup.getByRole("columnheader", { name: "Up front" })).toHaveCount(0);
   await expect(student.getByTestId("quote-setup-monthly")).toHaveText("£1,800");
-  // Its £1,800 a month is in the double billing, with the platform's £1,500: £110 a day for 14 days.
-  await expect(student.getByTestId("quote-double")).toHaveText("£1,540");
+  // Its £1,800 a month is in the double billing, with the platform's £1,300 and £6 a day of power and cooling: £109 a
+  // day for 14 days.
+  await expect(student.getByTestId("quote-double")).toHaveText("£1,526");
   await expect(student.getByTestId("quote-ops")).toHaveText("1");
 
   await student.getByRole("button", { name: "Start migration" }).click();

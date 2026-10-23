@@ -14,6 +14,8 @@ const props = defineProps<{ summary: SummaryView; modelName: string; retired?: b
 const CATEGORY_LABELS: Record<SpendCategory, string> = {
   staff: "Staff",
   infrastructure: "Infrastructure",
+  cabling: "Cabling",
+  power: "Power and cooling",
   addons: "Add-ons",
   debt: "Debt",
 };

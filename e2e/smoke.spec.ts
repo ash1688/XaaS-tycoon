@@ -91,7 +91,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
 
   await goTo(student, "Finance");
   await expect(student.getByTestId("spend-infrastructure")).toHaveText("£2,000");
-  // £1,000 a month, plus £450 and £540 for the VMs.
+  // £700 a month and £300 of power and cooling, plus £450 and £540 for the VMs.
   await expect(student.getByTestId("model-costs")).toContainText("£1,990 a month");
 
   // Staff: the VMs need 1 ops, and a new company starts with 1.
@@ -128,13 +128,14 @@ test("teacher creates a code, student starts a game and presses Continue", async
   // Spend so far, split by category.
   await goTo(student, "Finance");
   await expect(student.getByTestId("spend-staff")).toHaveText("£580");
-  await expect(student.getByTestId("spend-infrastructure")).toHaveText("£2,066");
+  await expect(student.getByTestId("spend-infrastructure")).toHaveText("£2,056");
+  await expect(student.getByTestId("spend-power")).toHaveText("£10");
   await expect(student.getByTestId("spend-addons")).toHaveText("£0");
   await expect(student.getByTestId("spend-total")).toHaveText("£2,646");
   await expect(student.getByTestId("cash-chart")).toBeVisible();
 
   await goTo(student, "Home");
-  // £66 of IaaS (£33 running costs and £15 and £18 of VM rent, each a month ÷ 30) + 3 developers × £120 + 1 ops × £120
+  // £66 of IaaS (£23 running costs, £10 power and cooling, and £15 and £18 of VM rent) + 3 developers × £120 + 1 ops × £120
   // + 1 support × £100 out, and nothing in: the first users arrive at the end of day 2, a fifth of the game's launch
   // users. Home shows the users the API has.
   await expect(student.getByTestId("cash")).toHaveText("£12,354");
@@ -333,18 +334,18 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
   const quote = student.getByTestId("migration-quote");
   await expect(quote).toContainText("You switch on day 18");
   await expect(student.getByTestId("quote-days")).toHaveText("14 days");
-  // Default config: PaaS is £1,000 upfront and £110 a day with one instance and a small managed database, sized for the
-  // users; IaaS £66 a day with its VMs, and £3,000 to leave.
+  // Default config: PaaS is £1,000 upfront and £109 a day (power and cooling included) with one instance and a small
+  // managed database, sized for the users; IaaS £66 a day with its VMs, and £3,000 to leave.
   await expect(student.getByTestId("quote-upfront")).toHaveText("£1,000");
-  await expect(student.getByTestId("quote-double")).toHaveText("£1,540");
+  await expect(student.getByTestId("quote-double")).toHaveText("£1,526");
   await expect(student.getByTestId("quote-pro-rata")).toHaveText("£924");
   await expect(student.getByTestId("quote-exit")).toHaveText("£3,000");
-  await expect(student.getByTestId("quote-total")).toHaveText("£6,464");
+  await expect(student.getByTestId("quote-total")).toHaveText("£6,450");
   await expect(student.getByTestId("quote-overrun")).toContainText("chance of 2–5 extra days");
   // Nothing has started or been charged yet.
   const company = async () => (await request.get(`/api/codes/${code}/companies/${id}`)).json();
-  // IaaS's £2,000 up front and three days of its £66.
-  expect(await company()).toMatchObject({ migration: null, spend: { infrastructure: 2198 } });
+  // IaaS's £2,000 up front and three days of its £66: £56 of infrastructure and £10 of power and cooling.
+  expect(await company()).toMatchObject({ migration: null, spend: { infrastructure: 2168, power: 30 } });
   await student.getByRole("button", { name: "Start migration" }).click();
   await expect(quote).toHaveCount(0);
 
@@ -393,7 +394,7 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
   await goTo(student, "People");
   await expect(student.getByTestId("ops-needed")).toContainText("needs 1 ops staff");
   await goTo(student, "Finance");
-  await expect(student.getByTestId("model-costs")).toContainText("£1,500 a month plus your instances and managed services");
+  await expect(student.getByTestId("model-costs")).toContainText("£1,300 a month plus your instances and managed services");
   dayLog = await openDayLog(student);
   await expect(dayLog).toContainText("Migration complete");
   await expect(dayLog).toContainText("Exit penalty: leaving Rent VMs (IaaS)");
@@ -652,18 +653,19 @@ test("a company plays to the final day and sees its summary, again when reopened
   const money = (n: number) => n.toLocaleString("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 });
   await expect(student.getByTestId("summary-cash")).toHaveText(money(api.cash));
   await expect(student.getByTestId("summary-spend-total")).toHaveText(money(api.totalSpend));
-  for (const c of ["staff", "infrastructure", "addons"]) {
+  const categories = ["staff", "infrastructure", "cabling", "power", "addons"] as const;
+  for (const c of categories) {
     await expect(student.getByTestId(`summary-spend-${c}`)).toHaveText(money(api.spend[c]));
   }
-  expect(api.spend.staff + api.spend.infrastructure + api.spend.addons).toBe(api.totalSpend);
+  expect(categories.reduce((sum, c) => sum + api.spend[c], 0)).toBe(api.totalSpend);
 
   // The cost-over-time chart: a bar for every day, with the costliest day labelled. Day 1 has the £2,000 IaaS upfront
   // cost, but a scripted event can cost more.
   const chart = student.getByTestId("cost-chart");
   await expect(chart.getByRole("img", { name: "Spend each day" })).toBeVisible();
   await expect(chart.locator("g[data-day]")).toHaveCount(E2E_FINAL_DAY);
-  type Day = { day: number; staff: number; infrastructure: number; addons: number };
-  const spent = (d: Day) => d.staff + d.infrastructure + d.addons;
+  type Day = { day: number } & Record<(typeof categories)[number], number>;
+  const spent = (d: Day) => categories.reduce((sum, c) => sum + d[c], 0);
   expect(spent(api.days[0])).toBeGreaterThanOrEqual(2000);
   const peak = (api.days as Day[]).reduce((a, b) => (spent(b) > spent(a) ? b : a));
   await expect(student.getByTestId("cost-peak")).toHaveText(`Day ${peak.day}: ${money(spent(peak))}`);
@@ -928,8 +930,8 @@ test("a student sets a price, plays a day and sees the income on Finance", async
   // Against it, IaaS's £66 a day and 2 developers, 1 ops person and 1 support person (£460 a day). Over the game so
   // far, the income from the days users were arriving too, against IaaS's £2,000 up front and 4 days' costs.
   await expect(student.getByTestId("balance-day-profit")).toHaveText(pounds(dayIncome - 526));
-  const profit = income - (spend.staff + spend.infrastructure + spend.addons);
-  expect(spend.staff + spend.infrastructure).toBe(2_000 + 4 * 526);
+  const profit = income - (spend.staff + spend.infrastructure + spend.power + spend.addons);
+  expect(spend.staff + spend.infrastructure + spend.power).toBe(2_000 + 4 * 526);
   await expect(student.getByTestId("balance-income")).toHaveText(`£${income.toLocaleString("en-GB")}`);
   await expect(student.getByTestId("balance-profit")).toHaveText(`−£${(-profit).toLocaleString("en-GB")}`);
   await expect(student.getByTestId("cash-chart")).toBeVisible();

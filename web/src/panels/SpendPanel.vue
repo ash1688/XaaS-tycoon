@@ -40,7 +40,8 @@ const spendTotal = computed(() =>
       {{ formatCash(game.currentModel.monthlyCost) }} a month<template v-if="game.currentModel.monthlyCostPerUser">
         plus {{ formatPrice(game.currentModel.monthlyCostPerUser) }} per user</template
       ><template v-if="game.managed"> plus your instances and managed services</template
-      ><template v-else-if="game.units"> plus {{ game.buysServers ? "power and upkeep for" : "rent on" }} your servers</template>, billed a day at a time. At today's users that's
+      ><template v-else-if="game.units"> plus {{ game.buysServers ? "power and upkeep for" : "rent on" }} your servers</template>
+      and {{ formatCash(game.company.powerAndCooling) }} a day for power and cooling, billed a day at a time. At today's users that's
       <strong>{{ formatCash(game.company.monthlyInfrastructureCost) }}</strong> a month<template v-if="game.onSaas"
         >, plus <strong>{{ formatCash(game.company.monthlyAddonCost) }}</strong> a month for add-ons</template
       >.

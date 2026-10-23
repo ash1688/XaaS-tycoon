@@ -6,6 +6,7 @@ import {
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
   SimError,
+  SPEND_CATEGORIES,
   type Action,
   type DayLog,
   type GameConfig,
@@ -15,6 +16,7 @@ import {
   type ServerSize,
   type ServerType,
   type Sim,
+  type Spend,
   type UnitsView,
 } from "../src/index.ts";
 
@@ -138,6 +140,23 @@ function tryAction(sim: Sim, state: GameState, action: Action): GameState {
   }
 }
 
+/**
+ * Adds a server. On-prem, when no rack has room for it, first buys the biggest rack it can afford (bigger racks cost
+ * less per U), as a student would on being told to.
+ */
+function addServer(sim: Sim, state: GameState, action: Action): GameState {
+  if (action.type !== "buyServer") return tryAction(sim, state, action);
+  const racks = sim.racks(state);
+  if (racks && racks.mostFree < racks.serverUnits[action.size]) {
+    const withRack = [...racks.options]
+      .reverse()
+      .map((o) => tryAction(sim, state, { type: "buyRack", size: o.size }))
+      .find((s) => s !== state);
+    return withRack ? tryAction(sim, withRack, action) : state;
+  }
+  return tryAction(sim, state, action);
+}
+
 /** Hires or lets go one at a time until a pool has `target` people. */
 function staffTo(sim: Sim, state: GameState, pool: "ops" | "support", target: number): GameState {
   let s = state;
@@ -225,7 +244,7 @@ function scaleServers(sim: Sim, state: GameState, strategy: Strategy): GameState
   let s = state;
 
   const cuGap = units.cu.demand - units.cu.capacity;
-  if (cuGap > 0 && !pending("app")) s = tryAction(sim, s, { type: add, server: "app", size: sizeFor(sim, s, "app", cuGap, units.cu.capacity) });
+  if (cuGap > 0 && !pending("app")) s = addServer(sim, s, { type: add, server: "app", size: sizeFor(sim, s, "app", cuGap, units.cu.capacity) });
 
   const dbuGap = units.dbu.demand - units.dbu.capacity;
   if (dbuGap > 0 && !pending("database") && !pending("cache")) {
@@ -234,8 +253,8 @@ function scaleServers(sim: Sim, state: GameState, strategy: Strategy): GameState
     const cacheRoom = units.ch.demand - units.ch.capacity;
     s =
       cacheRoom > 0 && ofType("database").length > 0
-        ? tryAction(sim, s, { type: add, server: "cache", size: sizeFor(sim, s, "cache", Math.min(dbuGap, cacheRoom), units.ch.capacity) })
-        : tryAction(sim, s, { type: add, server: "database", size: sizeFor(sim, s, "database", dbuGap, units.dbu.capacity) });
+        ? addServer(sim, s, { type: add, server: "cache", size: sizeFor(sim, s, "cache", Math.min(dbuGap, cacheRoom), units.ch.capacity) })
+        : addServer(sim, s, { type: add, server: "database", size: sizeFor(sim, s, "database", dbuGap, units.dbu.capacity) });
   }
 
   // Load balancers for every app server, ready or not: one that covers them all.
@@ -243,7 +262,7 @@ function scaleServers(sim: Sim, state: GameState, strategy: Strategy): GameState
   const apps = after.filter((v) => v.type === "app").length;
   const coverage = after.filter((v) => v.type === "loadBalancer").reduce((sum, v) => sum + v.units, 0);
   if (apps >= sim.config.servers.loadBalancerFrom && coverage < apps && !pending("loadBalancer")) {
-    s = tryAction(sim, s, { type: add, server: "loadBalancer", size: sizeFor(sim, s, "loadBalancer", apps) });
+    s = addServer(sim, s, { type: add, server: "loadBalancer", size: sizeFor(sim, s, "loadBalancer", apps) });
   }
 
   // On IaaS, rentals are cancelled pro rata, so on a quiet day drop the smallest server there's plenty of room without:
@@ -407,11 +426,11 @@ export function playGame(sim: Sim, { model, productType, strategy, seed }: GameS
 
 /** The first day profit so far reached zero, counting only the interest in loan repayments, as the summary does. */
 function breakEven(state: GameState): number | null {
-  const spend = { staff: 0, infrastructure: 0, addons: 0, debt: 0 };
+  const spend = Object.fromEntries(SPEND_CATEGORIES.map((c) => [c, 0])) as Spend;
   let income = 0;
   let interest = 0;
   for (const d of state.spendByDay) {
-    for (const c of ["staff", "infrastructure", "addons", "debt"] as const) spend[c] += d[c];
+    for (const c of SPEND_CATEGORIES) spend[c] += d[c];
     income += d.income;
     interest += d.interest;
     if (income > 0 && income >= profitCosts(spend, interest)) return d.day;

@@ -15,6 +15,7 @@ import type {
   LoanQuote,
   LoanView,
   ManagedView,
+  RacksView,
   MigrationPhase,
   MigrationQuote,
   MigrationView,
@@ -82,10 +83,15 @@ export interface MetaView {
     stack: StackLayer[];
     /** Ops staff a new company on the model needs: the few PaaS and SaaS always need. Its servers' ops are on top. */
     opsNeeded: number;
-    /** Charged on adopting the model: on-prem, the server room. Servers are bought or rented on top. */
+    /**
+     * Charged on adopting the model: on-prem, the server room with its rack and cabling. Servers are bought or rented
+     * on top.
+     */
     upfrontCost: number;
     monthlyCost: number;
     monthlyCostPerUser: number;
+    /** Power and cooling a day, charged whatever the company runs: highest on-prem. */
+    powerAndCooling: number;
   }[];
   staff: { id: StaffPool; name: string; personName: string; dayRate: number }[];
   /** Developers a SaaS company needs to configure add-ons before it can buy one. */
@@ -235,6 +241,14 @@ export interface CompanyView {
    * Changes are instant, managed services need no ops, and the load balancer is built in. Null on other models.
    */
   managed: ManagedView | null;
+  /**
+   * On-prem: the company's racks (size, the rack units (U) each holds and its servers take, and what each would sell
+   * back for), the U each server size takes, and the racks it can buy with their price and cabling. Null on IaaS, PaaS
+   * and SaaS, which have no racks.
+   */
+  racks: RacksView | null;
+  /** What the current model charges a day for power and cooling: highest on-prem. */
+  powerAndCooling: number;
   /**
    * On SaaS: unlimited, provider-managed capacity, paid for through the per-user fee (free users included), shown as
    * that bill. Null on other models.

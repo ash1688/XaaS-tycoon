@@ -64,6 +64,7 @@ const sim = createSim({
       upfrontCost: 0,
       monthlyCost: 750,
       monthlyCostPerUser: 0,
+      powerAndCooling: 0,
       exitPenalty: 200,
       servers: {
         ...iaasServers,
@@ -84,6 +85,7 @@ const sim = createSim({
       upfrontCost: 100,
       monthlyCost: 300,
       monthlyCostPerUser: 0,
+      powerAndCooling: 0,
       servers: {
         ...paasServers,
         monthlyCost: {
@@ -969,8 +971,10 @@ describe("servers on-prem", () => {
 
   it("starts with the starter kit bought on top of the server room, and offers kit to buy", async () => {
     const { company } = await setup();
-    expect(company.cash).toBe(100_000 - 3_000 - 1_000 - 1_200);
+    // The server room (£2,500) with its medium rack (£500), the kit, and cabling for the rack and 2 servers.
+    expect(company.cash).toBe(100_000 - 2_500 - 500 - 1_000 - 1_200 - 150);
     expect(company.spend.infrastructure).toBe(5_200);
+    expect(company.spend.cabling).toBe(150);
     expect(company.servers).toEqual([
       expect.objectContaining({ id: 1, type: "app", size: "large", status: "ready", daysLeft: 0, paid: 1_000, sellBack: 400 }),
       expect.objectContaining({ id: 2, type: "database", size: "large", status: "ready", daysLeft: 0, paid: 1_200, sellBack: 480 }),
@@ -988,7 +992,7 @@ describe("servers on-prem", () => {
       }),
     );
     const meta = (await ownApp.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
-    expect(meta.models.find((m) => m.id === "onprem")!.upfrontCost).toBe(5_200);
+    expect(meta.models.find((m) => m.id === "onprem")).toMatchObject({ upfrontCost: 5_350, powerAndCooling: 25 });
   });
 
   it("buys kit, charging it at once, on order with the days left until it arrives", async () => {
@@ -996,7 +1000,7 @@ describe("servers on-prem", () => {
     const res = await act({ type: "buyServer", server: "app", size: "small" });
     expect(res.statusCode).toBe(200);
     const bought = res.json<CompanyView>();
-    expect(bought.cash).toBe(before.cash - onprem.purchase!.price.app.small);
+    expect(bought.cash).toBe(before.cash - onprem.purchase!.price.app.small - onprem.purchase!.cablingCost);
     expect(bought.servers.at(-1)).toMatchObject({ id: 3, type: "app", size: "small", status: "pending", daysLeft: 7 });
     // On order: no capacity and no ops needed until it arrives (its share shows in opsNeededOnceReady).
     expect({ ...bought.units, loadBalancerOnceReady: null }).toEqual({ ...before.units, loadBalancerOnceReady: null });
@@ -1015,7 +1019,7 @@ describe("servers on-prem", () => {
     expect(onOrder.json()).toMatchObject({ error: "on_order" });
     const sold = await act({ type: "sellServer", id: 2 });
     expect(sold.statusCode).toBe(200);
-    expect(sold.json<CompanyView>().cash).toBe(before.cash - onprem.purchase!.price.cache.small + 480);
+    expect(sold.json<CompanyView>().cash).toBe(before.cash - onprem.purchase!.price.cache.small - onprem.purchase!.cablingCost + 480);
     expect((await get()).servers.map((s) => s.id)).toEqual([1, 3]);
   });
 
@@ -1040,6 +1044,47 @@ describe("servers on-prem", () => {
     expect(refused.statusCode).toBe(400);
     expect(refused.json()).toMatchObject({ error: "not_for_sale" });
     expect(iaas.company.servers.every((s) => s.paid === null && s.sellBack === null)).toBe(true);
+  });
+
+  it("buys racks and installs servers in them, with cabling and power and cooling as costs of their own", async () => {
+    const { company: before, act, get, next } = await setup();
+    // The starter kit's large app server and database take 8U of the server room's medium rack (24U).
+    expect(before.racks).toMatchObject({ units: 24, used: 8, free: 16, mostFree: 16 });
+    expect(before.racks!.racks).toEqual([expect.objectContaining({ id: 1, size: "medium", servers: [1, 2] })]);
+    expect(before.servers.map((s) => s.rack)).toEqual([1, 1]);
+    expect(before.serverOptions.find((o) => o.size === "massive")).toMatchObject({ rackUnits: 8, cabling: 50 });
+    expect(before.powerAndCooling).toBe(defaultConfig.models.onprem.powerAndCooling);
+    // Two massive servers fill it: a third needs another rack.
+    for (let i = 0; i < 2; i++) expect((await act({ type: "buyServer", server: "app", size: "massive" })).statusCode).toBe(200);
+    const full = await act({ type: "buyServer", server: "app", size: "massive" });
+    expect(full.statusCode).toBe(400);
+    expect(full.json()).toMatchObject({ error: "no_rack_space" });
+    for (const payload of [
+      { type: "buyRack" },
+      { type: "buyRack", size: "massive" },
+      { type: "sellRack" },
+      { type: "sellRack", id: 0 },
+      { type: "buyServer", server: "app", size: "small", rack: 0 },
+    ]) {
+      expect((await act(payload)).statusCode, JSON.stringify(payload)).toBe(400);
+    }
+    const filled = await get();
+    const racked = await act({ type: "buyRack", size: "large" });
+    expect(racked.statusCode).toBe(200);
+    const withRack = racked.json<CompanyView>();
+    expect(withRack.cash).toBe(filled.cash - 800 - 50);
+    expect(withRack.spend.cabling).toBe(filled.spend.cabling + 50);
+    expect(withRack.racks).toMatchObject({ units: 66, mostFree: 42 });
+    const placed = (await act({ type: "buyServer", server: "app", size: "massive", rack: 2 })).json<CompanyView>();
+    expect(placed.servers.at(-1)!.rack).toBe(2);
+    expect((await act({ type: "sellRack", id: 2 })).json()).toMatchObject({ error: "rack_in_use" });
+    // A day's power and cooling, as its own cost.
+    const { company } = await next();
+    expect(company.spend.power - placed.spend.power).toBe(defaultConfig.models.onprem.powerAndCooling);
+
+    const iaas = await setup("iaas");
+    expect(iaas.company.racks).toBeNull();
+    expect((await iaas.act({ type: "buyRack", size: "small" })).json()).toMatchObject({ error: "no_racks" });
   });
 });
 
@@ -1188,7 +1233,7 @@ describe("ledger and bankruptcy", () => {
       { text: expect.stringContaining("running costs"), cashDelta: -25, category: "infrastructure" },
       { text: "Ops staff pay (1)", cashDelta: -4, category: "staff" },
     ]);
-    const spend = { staff: 8, infrastructure: 50, addons: 0, debt: 0 };
+    const spend = { staff: 8, infrastructure: 50, cabling: 0, power: 0, addons: 0, debt: 0 };
     expect(body!.company).toMatchObject({ cash: 1000 - 58, spend });
     expect((await app.inject({ method: "GET", url })).json<CompanyView>().spend).toEqual(spend);
   });
@@ -1355,7 +1400,7 @@ describe("bank loan", () => {
     expect(without.json()).toMatchObject({ error: "cant_afford", message: expect.stringContaining("bank loan") });
     const withLoan = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "onprem", takeLoan: true });
     expect(withLoan.statusCode).toBe(201);
-    expect(withLoan.json<CompanyView>().cash).toBe(1_000 + 35_000 - 5_200);
+    expect(withLoan.json<CompanyView>().cash).toBe(1_000 + 35_000 - 5_350);
   });
 });
 
@@ -1436,6 +1481,8 @@ describe("game end and summary", () => {
     expect(summary.spend).toEqual({
       staff: logged("staff"),
       infrastructure: logged("infrastructure"),
+      cabling: 0,
+      power: 0,
       addons: 0,
       debt: 0,
     });
@@ -2102,6 +2149,8 @@ describe("migration quote", () => {
       sizedFor: { cu: 1.25, dbu: 1.25 },
       headroom: 0.25,
       setupUpfront: 0,
+      racks: [],
+      cabling: 0,
       setupMonthly: 0,
       opsNeeded: 1,
       deliveryDays: null,
@@ -2130,7 +2179,9 @@ describe("migration quote", () => {
       { type: "database", size: "small", name: "Database", count: 1, units: 10, upfront: price.database.small, monthly: upkeep.database!.small!, daysLeft: 7 },
     ]);
     expect(onprem).toMatchObject({ setupUpfront: price.app.small + price.database.small, deliveryDays: 7 });
-    expect(onprem.upfrontCost).toBe(defaultConfig.models.onprem.upfrontCost + onprem.setupUpfront);
+    // With the server room's medium rack, and cabling for it and the 2 servers.
+    expect(onprem).toMatchObject({ racks: [{ size: "medium", count: 1, upfront: 500 }], cabling: 150 });
+    expect(onprem.upfrontCost).toBe(defaultConfig.models.onprem.upfrontCost + onprem.setupUpfront + 500 + 150);
     expect((await quote("saas")).json<MigrationQuoteView>()).toMatchObject({ setup: [], setupMonthly: 0 });
   });
 
