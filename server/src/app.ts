@@ -365,6 +365,7 @@ export async function buildApp(opts: AppOptions) {
       migrations: state.migrations,
       events: sim.events(state),
       featureGaps: sim.featureGaps(state),
+      api: sim.api(state),
     };
   }
 
@@ -624,6 +625,9 @@ export async function buildApp(opts: AppOptions) {
                 "setInstances",
                 "setManagedService",
                 "takeLoan",
+                "buyApi",
+                "switchServer",
+                "setApiInstances",
                 "repayLoan",
               ],
             },
@@ -644,14 +648,17 @@ export async function buildApp(opts: AppOptions) {
             server: { enum: [...SERVER_TYPES] },
             size: { enum: [...SERVER_SIZES, null] },
             // buyRack uses size too, for the rack's size: the sim checks it's one racks come in.
-            // cancelServer and sellServer: one of the company's servers, by id; sellRack, one of its racks. The sim checks
-            // it's theirs.
+            // cancelServer, sellServer and switchServer: one of the company's servers, by id; sellRack, one of its racks.
+            // The sim checks it's theirs.
             id: { type: "integer", minimum: 1 },
             // buyServer: the rack to install it in, by id. Left out, it goes in the first with room.
             rack: { type: "integer", minimum: 1 },
-            // setInstances: how many app instances to run on PaaS. The sim checks it against the platform's most.
+            // switchServer: whether the app server gives CU or APIU.
+            gives: { enum: ["cu", "apiu"] },
+            // setInstances: how many app instances to run on PaaS, and setApiInstances how many API instances (which
+            // can be none). The sim checks it against the platform's most.
             // hire and letGo: how many people at once, one if left out. Capped so a typo can't hire thousands.
-            count: { type: "integer", minimum: 1, maximum: 999 },
+            count: { type: "integer", minimum: 0, maximum: 999 },
             // setManagedService: a managed service on PaaS and its size, or null to turn the cache off.
             service: { enum: [...MANAGED_SERVICES] },
           },
@@ -665,6 +672,9 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { enum: ["cancelServer", "sellServer", "sellRack"] } } }, then: { required: ["id"] } },
             { if: { properties: { type: { const: "buyRack" } } }, then: { required: ["size"] } },
             { if: { properties: { type: { const: "setInstances" } } }, then: { required: ["count"] } },
+            { if: { properties: { type: { enum: ["hire", "letGo", "setInstances"] } } }, then: { properties: { count: { type: "integer", minimum: 1 } } } },
+            { if: { properties: { type: { const: "setApiInstances" } } }, then: { required: ["count"] } },
+            { if: { properties: { type: { const: "switchServer" } } }, then: { required: ["id", "gives"] } },
             {
               if: { properties: { type: { const: "setManagedService" } } },
               then: { required: ["service", "size"] },

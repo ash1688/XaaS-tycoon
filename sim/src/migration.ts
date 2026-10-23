@@ -142,7 +142,10 @@ export function createMigration(
       .map((item) => {
         const plural = item.count === 1 ? "" : "s";
         if (servers.isManaged(model) && item.type === "app") return `${item.count} app instance${plural}`;
-        return `${item.count} ${item.size} ${item.name.toLowerCase()}${plural}`;
+        if (servers.isManaged(model) && item.type === "api") return `${item.count} API instance${plural}`;
+        // "API" keeps its capitals mid-sentence.
+        const name = item.type === "api" ? item.name : item.name.toLowerCase();
+        return `${item.count} ${item.size} ${name}${plural}`;
       })
       .join(", ");
 
@@ -233,7 +236,11 @@ export function createMigration(
       to,
       days,
       setup,
-      sizedFor: { cu: tidy(usual.cu * (1 + room)), dbu: tidy(usual.dbu * (1 + room)) },
+      sizedFor: {
+        cu: tidy(usual.cu * (1 + room)),
+        dbu: tidy(usual.dbu * (1 + room)),
+        ...(usual.apiu !== undefined && { apiu: tidy(usual.apiu * (1 + room)) }),
+      },
       headroom: room,
       setupUpfront: setup.reduce((sum, item) => sum + item.upfront, 0),
       racks: RACK_SIZES.flatMap((size) => {

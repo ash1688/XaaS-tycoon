@@ -183,3 +183,50 @@ describe("rendering", () => {
     expect(renderCommands(sim, turn.state)).not.toMatch(/repayloan/);
   });
 });
+
+describe("the paid API", () => {
+  const shop = (model: "iaas" | "paas" | "saas") =>
+    sim.newGame({ companyName: "Shop Co", productType: "ecommerce", model, seed: 3, takeLoan: true });
+
+  it("reads its commands", () => {
+    expect(parseCommand("buyapi")).toEqual({ kind: "action", action: { type: "buyApi" }, times: 1 });
+    expect(parseCommand("switch 3 APIU")).toMatchObject({ action: { type: "switchServer", id: 3, gives: "apiu" } });
+    expect(parseCommand("apiinstances 2")).toMatchObject({ action: { type: "setApiInstances", count: 2 } });
+    expect(() => parseCommand("switch 3 dbu")).toThrow(/cu, apiu/);
+  });
+
+  it("offers it to buy, then shows its calls, APIU and income, and the commands for capacity", () => {
+    let state = shop("iaas");
+    expect(renderStatus(sim, state)).toMatch(/api: Shop API not bought \(£4,000 once/);
+    expect(renderCommands(sim, state)).toMatch(/buyapi/);
+    state = run(state, "buyapi").state;
+    state = run(state, "rent app large").state;
+    expect(renderStatus(sim, state)).toMatch(/api: Shop API 2,000 calls\/day .* \| APIU 2\/0 \|/);
+    const commands = renderCommands(sim, state);
+    expect(commands).not.toMatch(/buyapi/);
+    expect(commands).toMatch(/api: small 6 APIU/);
+    expect(commands).toMatch(/switch <app server id> <cu\|apiu>/);
+    state = run(state, "switch 1 apiu").state;
+    expect(renderStatus(sim, state)).toMatch(/#1 large app 20 APIU \(switched\)/);
+    // Ready tomorrow, so its APIU serve from the day after.
+    expect(renderStatus(sim, state)).toMatch(/APIU 2\/0 /);
+    expect(renderStatus(sim, sim.advance(state).state)).toMatch(/APIU [\d.]+\/20 /);
+  });
+
+  it("stops time when calls start being dropped", () => {
+    let state = run(shop("iaas"), "rent app large").state;
+    state = run(state, "rent database large").state;
+    state = run(state, "buyapi").state;
+    const turn = run(state, "next 7");
+    expect(turn.lines.at(-1)).toMatch(/API calls dropped/);
+    expect(turn.lines.some((l) => /Shop API: [\d,]+ calls dropped/.test(l))).toBe(true);
+  });
+
+  it("shows API instances on PaaS and the provider's fee on SaaS", () => {
+    const paas = run(shop("paas"), "buyapi").state;
+    expect(renderCommands(sim, paas)).toMatch(/apiinstances <0–20>/);
+    expect(renderStatus(sim, run(paas, "apiinstances 2").state)).toMatch(/2 API instances \(10 APIU each\)/);
+    const saas = run(shop("saas"), "buyapi").state;
+    expect(renderStatus(sim, saas)).toMatch(/the provider runs it at 0\.40p a call .* fee £8\/day/);
+  });
+});

@@ -13,6 +13,10 @@ const m = computed(() => game.managed);
 const instanceCu = computed(() => (m.value ? m.value.instances * m.value.instanceUnits : 0));
 
 const setInstances = (count: number) => game.act({ type: "setInstances", count });
+// With a paid API: API instances, the instance size, each giving APIU for its calls.
+const hasApi = computed(() => !!game.company?.api?.owned);
+const apiu = computed(() => (m.value ? m.value.apiInstances * m.value.apiInstanceUnits : 0));
+const setApiInstances = (count: number) => game.act({ type: "setApiInstances", count });
 
 // The database and cache: a size dropdown and a − / + pair. With none running, the dropdown picks the size + adds;
 // with one running, changing it resizes it at once. You run at most one of each, so + only adds when there's none,
@@ -87,6 +91,30 @@ const remove = (service: ManagedService) => game.act({ type: "setManagedService"
           testid="instances"
           @down="setInstances(m.instances - 1)"
           @up="setInstances(m.instances + 1)"
+        />
+      </li>
+
+      <li v-if="hasApi" data-testid="platform-api-instances">
+        <div class="server-info">
+          <strong>API instances</strong>
+          <span class="muted">
+            {{ m.instanceSize }} instances, {{ formatCount(m.apiInstanceUnits) }} APIU and
+            {{ formatCash(m.apiInstanceMonthlyCost) }} a month each: <strong>{{ formatCount(apiu) }} APIU</strong> in all.
+            Up to {{ m.maxInstances }}.
+          </span>
+          <span class="managed-note">Serves your API's calls. Managed by provider: no ops needed.</span>
+        </div>
+        <StepperControl
+          label="API instances"
+          :value="String(m.apiInstances)"
+          down-label="One fewer API instance"
+          up-label="One more API instance"
+          :down-why="m.apiInstances === 0 ? 'You run no API instances.' : undefined"
+          :up-why="m.apiInstances >= m.maxInstances ? `The platform runs at most ${m.maxInstances} API instances.` : undefined"
+          :disabled="game.busy || game.over"
+          testid="api-instances"
+          @down="setApiInstances(m.apiInstances - 1)"
+          @up="setApiInstances(m.apiInstances + 1)"
         />
       </li>
 

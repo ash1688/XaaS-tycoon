@@ -75,9 +75,9 @@ const sizes = (small: number, medium: number, large: number, massive: number) =>
 // nothing and IaaS bills only its flat monthly cost unless a test rents more.
 const rent = () => sizes(30, 60, 90, 0);
 const iaasServers = {
-  monthlyCost: { app: rent(), database: rent(), cache: rent(), loadBalancer: rent() },
+  monthlyCost: { app: rent(), database: rent(), cache: rent(), loadBalancer: rent(), api: rent() },
   readyDays: 1,
-  opsPerServer: { app: 1, database: 1, cache: 0.5, loadBalancer: 0.5 },
+  opsPerServer: { app: 1, database: 1, cache: 0.5, loadBalancer: 0.5, api: 1 },
   starter: [
     { type: "app" as const, size: "massive" as const, count: 1 },
     { type: "database" as const, size: "massive" as const, count: 1 },
@@ -87,7 +87,7 @@ const iaasServers = {
 // PaaS runs one massive app instance and a massive managed database, free like IaaS's starter, so it never runs out
 // unless a test makes it. Smaller instances and services cost the same as IaaS's VMs.
 const paasServers = {
-  monthlyCost: { app: rent(), database: rent(), cache: rent() },
+  monthlyCost: { app: rent(), database: rent(), cache: rent(), api: rent() },
   managed: {
     instanceSize: "massive" as const,
     maxInstances: 5,
@@ -186,6 +186,7 @@ const config: GameConfig = {
       database: { name: "Database", blurb: "", units: sizes(10, 100, 1_000, 10_000) },
       cache: { name: "Cache", blurb: "", units: sizes(10, 100, 1_000, 10_000) },
       loadBalancer: { name: "Load balancer", blurb: "", units: sizes(2, 4, 8, 16) },
+      api: { name: "API server", blurb: "", units: sizes(10, 100, 1_000, 10_000) },
     },
     loadBalancerFrom: 2,
     cacheableShare: 0.5,
@@ -218,6 +219,8 @@ const config: GameConfig = {
   // Conversion at its default strengths, but every product's base rate is 0 unless a test sets one.
   conversion: { ...defaultConfig.conversion },
   addons: { minConfigDevelopers: 1, setupFeePerDevDay: 0 },
+  // At its defaults, but no product here has a paid API unless a test gives it one.
+  api: { ...defaultConfig.api },
   migration: {
     phases: {
       planning: { name: "Planning", days: 5 },
@@ -1296,8 +1299,8 @@ describe("servers on IaaS", () => {
   it("starts a new IaaS game with the configured starter setup, ready for the first day", () => {
     const state = begin();
     expect(flat.servers(state)).toEqual([
-      { id: 1, type: "app", size: "massive", name: "App server", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, monthlyCost: 0, paid: null, sellBack: null, rack: null },
-      { id: 2, type: "database", size: "massive", name: "Database", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, monthlyCost: 0, paid: null, sellBack: null, rack: null },
+      { id: 1, type: "app", size: "massive", name: "App server", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, apiu: false, monthlyCost: 0, paid: null, sellBack: null, rack: null },
+      { id: 2, type: "database", size: "massive", name: "Database", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, apiu: false, monthlyCost: 0, paid: null, sellBack: null, rack: null },
     ]);
     expect(flat.units(state)).toMatchObject({ cu: { demand: 10, capacity: 10_000 }, dbu: { demand: 10, capacity: 10_000 } });
   });
@@ -1311,7 +1314,9 @@ describe("servers on IaaS", () => {
       expect(units.ch.capacity).toBe(expected);
     }
     const options = flat.serverOptions(begin());
-    expect(options).toHaveLength(SERVER_TYPES.length * SERVER_SIZES.length);
+    // API servers are offered once the company has a paid API.
+    expect(options).toHaveLength((SERVER_TYPES.length - 1) * SERVER_SIZES.length);
+    expect(options.some((o) => o.type === "api")).toBe(false);
     expect(options.find((o) => o.type === "database" && o.size === "large")).toMatchObject({
       name: "Database",
       units: 1_000,
@@ -1574,7 +1579,7 @@ describe("servers on-prem", () => {
   const still = { dailyGrowth: 0, growthNoise: 0, loadNoise: 0 };
   const each = (small: number, medium: number, large: number, massive: number) => {
     const s = sizes(small, medium, large, massive);
-    return { app: s, database: s, cache: s, loadBalancer: s };
+    return { app: s, database: s, cache: s, loadBalancer: s, api: s };
   };
   const onpremServers = {
     ...iaasServers,
@@ -3869,6 +3874,7 @@ describe("migration with servers", () => {
               database: sizes(1_500, 2_100, 2_700, 3_300),
               cache: sizes(450, 600, 750, 900),
               loadBalancer: sizes(600, 900, 1_350, 1_800),
+              api: sizes(1_200, 1_650, 2_100, 2_550),
             },
             sellBackShare: 0.4,
             cablingCost: 50,
@@ -3878,8 +3884,9 @@ describe("migration with servers", () => {
             database: sizes(50, 70, 90, 110),
             cache: sizes(15, 20, 25, 30),
             loadBalancer: sizes(20, 30, 45, 60),
+            api: sizes(40, 55, 70, 85),
           },
-          opsPerServer: { app: 0.6, database: 0.6, cache: 0.3, loadBalancer: 0.3 },
+          opsPerServer: { app: 0.6, database: 0.6, cache: 0.3, loadBalancer: 0.3, api: 0.6 },
           starter: [
             { type: "app", size: "large", count: 1 },
             { type: "database", size: "large", count: 1 },
@@ -3895,8 +3902,9 @@ describe("migration with servers", () => {
             database: sizes(500, 700, 900, 1_100),
             cache: sizes(150, 200, 250, 300),
             loadBalancer: sizes(200, 300, 450, 600),
+            api: sizes(400, 550, 700, 850),
           },
-          opsPerServer: { app: 0.5, database: 0.5, cache: 0.25, loadBalancer: 0.25 },
+          opsPerServer: { app: 0.5, database: 0.5, cache: 0.25, loadBalancer: 0.25, api: 0.5 },
           starter: [
             { type: "app", size: "medium", count: 1 },
             { type: "database", size: "medium", count: 1 },

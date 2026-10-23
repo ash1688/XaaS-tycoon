@@ -116,7 +116,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
       for (const size of SERVER_SIZES) {
         const name = base.servers.types[t]?.name ?? t;
         if (servers.managed) {
-          const managedName = t === "app" ? "App instance" : `Managed ${name.toLowerCase()}`;
+          const managedName = t === "app" ? "App instance" : t === "api" ? "API instance" : `Managed ${name.toLowerCase()}`;
           add(`models.${m}.servers.monthlyCost.${t}.${size}`, "Money", MODEL_LABELS[m], `${managedName} (${size}): monthly price`, "What one costs a month, billed daily. The provider runs it, so it's ready at once and needs no ops.", range(0, 100_000, 10));
         } else if (servers.purchase) {
           add(`models.${m}.servers.purchase.price.${t}.${size}`, "Money", MODEL_LABELS[m], `${name} (${size}): purchase price`, "What buying one of these servers costs, charged at once (capex).", range(0, 1_000_000, 100));
@@ -149,6 +149,14 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
       add(`${at}.addonPricePerUser`, "Money", s, `${f.name}: add-on price per user`, "On SaaS, the add-on's monthly price per user, billed daily.", PER_USER);
     }
   }
+  const A = "Paid API";
+  for (const p of PRODUCT_TYPE_IDS) {
+    const api = base.productTypes[p]?.api;
+    if (!api) continue;
+    add(`productTypes.${p}.api.price`, "Money", A, `${api.name}: price`, "What buying the product's paid API costs, once.", POUNDS);
+  }
+  add("api.pricePerCall", "Money", A, "Income per call", "What each API call served earns (0.01 = 1p).", range(0, 1, 0.001));
+  add("api.saasFeePerCall", "Money", A, "SaaS fee per call", "On SaaS the provider runs the API and takes this for each call served.", range(0, 1, 0.001));
 
   // Customers
   (base.launch?.rampShares ?? []).forEach((_, i) => {
@@ -209,6 +217,19 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("conversion.priceSensitivity", "Customers", C, "Price effect on conversion", "Above the fair price, conversion is multiplied by (price ÷ fair price) to minus this. 0 for no effect.", range(0, 5, 0.05));
   add("conversion.maxRate", "Customers", C, "Highest conversion rate", "The most of the free users who can start paying in a day, whatever helps.", range(0, 1, 0.005));
 
+  // Customers: API traffic
+  for (const p of PRODUCT_TYPE_IDS) {
+    const api = base.productTypes[p]?.api;
+    if (!api) continue;
+    add(`productTypes.${p}.api.callsPerPaidUser`, "Customers", A, `${api.name}: calls per paying user`, "API calls a day each paying user brings, before features: where the traffic heads.", range(0, 1_000, 0.5));
+  }
+  add("api.startingCalls", "Customers", A, "Calls when bought", "API calls a day when the API is bought.", range(0, 1_000_000, 100));
+  add("api.dailyGrowth", "Customers", A, "Traffic growth", "Share of the gap to the target traffic closed each day (0.1 = a tenth). Dropped calls slow it.", SHARE);
+  add("api.perFeature", "Customers", A, "Calls boost per feature", "Each feature built or add-on bought adds this to the target traffic's multiplier.", range(0, 2, 0.01));
+  add("api.outageDrop", "Customers", A, "Calls lost to an outage", "Share of the API traffic lost on a day with an outage.", SHARE);
+  add("api.slowDays", "Customers", A, "Slow growth after an outage (days)", "Days after an outage that API traffic grows slowly.", range(0, 60, 1));
+  add("api.slowGrowth", "Customers", A, "Growth while slow", "API traffic growth is multiplied by this while it's slow after an outage.", SHARE);
+
   // Customers: support tickets and satisfaction
   const TICKET_RATE = range(0, 1, 0.001);
   for (const p of PRODUCT_TYPE_IDS) {
@@ -247,13 +268,14 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   for (const t of SERVER_TYPES) {
     const type = base.servers.types[t];
     if (!type) continue;
-    const unit = t === "app" ? "CU" : t === "database" ? "DBU" : t === "cache" ? "CH" : "app servers served";
+    const unit = t === "app" ? "CU" : t === "database" ? "DBU" : t === "cache" ? "CH" : t === "api" ? "APIU" : "app servers served";
     for (const size of SERVER_SIZES) {
       add(`servers.types.${t}.units.${size}`, "Infrastructure", S, `${type.name} (${size}): ${unit}`, t === "loadBalancer" ? "How many app servers one load balancer of this size can serve." : `The ${unit} one server of this size gives.`, range(0, 10_000, 1));
     }
   }
   add("servers.loadBalancerFrom", "Infrastructure", S, "Load balancers needed from", "App servers from which load balancers are needed. Without one, traffic reaches only one app server.", range(1, 20, 1));
   add("servers.cacheableShare", "Infrastructure", S, "Cacheable share of database demand", "The most of the database demand caches can take, one cache hit for one DBU.", SHARE);
+  add("api.callsPerApiu", "Infrastructure", S, "API calls per APIU", "API calls one APIU serves in a day. Calls beyond the APIU are dropped.", range(1, 1_000_000, 100));
   for (const m of MODEL_IDS) {
     const servers = base.models[m]?.servers;
     if (!servers) continue;

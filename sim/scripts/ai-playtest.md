@@ -24,7 +24,7 @@ npm run -s play -- summary <game>
   `npm run -s play -- do <game> "preview 8; quote iaas"`.
 - `next [days]` (inside `do`) moves time on, 7 days by default, and **stops early** when something needs a
   decision: an event that hurts, an outage, a built feature, a server arriving, staff starting, capacity running out, satisfaction
-  falling, cash about to run out, or the price lock ending. Any commands after a stop are skipped. Events that need
+  falling, cash about to run out, the price lock ending, or paid API calls starting to be dropped. Any commands after a stop are skipped. Events that need
   nothing from you are shown but don't stop time.
 - Staff come in junior, mid and senior grades, each with its own pay and work a day, and each takes days to start
   after hiring (shown under staff until they do). `hire <pool> [grade] [n]` and `letgo <pool> [grade] [n]` take a
