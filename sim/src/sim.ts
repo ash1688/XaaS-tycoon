@@ -19,7 +19,7 @@ import { createLaunch, type LaunchView } from "./launch.ts";
 import { createLoan, type LoanQuote, type LoanView } from "./loan.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
 import { isNameAllowed } from "./nameFilter.ts";
-import { createPricing, type PricePreview, type PriceWaveView } from "./pricing.ts";
+import { createPricing, type CustomerMixView, type PricePreview, type PriceWaveView } from "./pricing.ts";
 import { createRacks, type RacksView } from "./racks.ts";
 import { seedRng } from "./rng.ts";
 import { createShares, type CapTableView, type FundingView, type ValuationView } from "./shares.ts";
@@ -55,7 +55,8 @@ export type { LaunchView } from "./launch.ts";
 export type { LoanQuote, LoanView } from "./loan.ts";
 export type { LostAddon, MigrationQuote, MigrationView, SetupRack } from "./migration.ts";
 export type { RackOption, RackView, RacksView } from "./racks.ts";
-export type { PricePreview, PriceWaveView } from "./pricing.ts";
+export type { CustomerMixView, CustomerTypeView, PricePreview, PriceWaveView, TypeReaction } from "./pricing.ts";
+export { weightedReaction } from "./pricing.ts";
 export type {
   LoadBalancerView,
   ManagedOption,
@@ -204,6 +205,8 @@ export interface Sim {
   priceWave(state: GameState): PriceWaveView | null;
   /** Days until the price can be changed again: 0 when it can. */
   priceLockDaysLeft(state: GameState): number;
+  /** The customer mix: each customer type's share of users, with its price threshold. Least willing to pay first. */
+  customerMix(state: GameState): CustomerMixView;
   /**
    * Load the company can serve in a day with its current model and staff. On a model with servers, the load its ready
    * servers carry at the product's usual demand. Null on SaaS, which has no capacity limit.
@@ -662,6 +665,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     pricePreview: (s, price) => pricing.pricePreview(load(s), price),
     priceWave: (s) => pricing.priceWave(load(s)),
     priceLockDaysLeft: (s) => pricing.lockDaysLeft(load(s)),
+    customerMix: (s) => pricing.customerMix(load(s)),
     capacity: (s) => infra.capacity(load(s)),
     units: (s) => infra.units(load(s)),
     servers: (s) => servers.servers(load(s)),

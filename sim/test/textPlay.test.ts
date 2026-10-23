@@ -65,6 +65,17 @@ describe("runCommand", () => {
     expect(turn.state).toBe(state);
     expect(turn.rows).toEqual([]);
   });
+
+  it("shows the customer mix with thresholds, and a rise's reaction by customer type", () => {
+    const state = advanceUntil(sim, run(start(), "instances 2").state, 20, who).state;
+    expect(renderStatus(sim, state)).toMatch(
+      /customer mix: casual 70% \(threshold £5\), enthusiasts 20% \(threshold £6\.25\), professionals 8% \(threshold £10\), businesses 2% \(threshold £15\)/,
+    );
+    const line = run(state, "preview 7.5").lines[0]!;
+    expect(line).toMatch(/reaction \d+\.\d% of payers = casual \d+\.\d% × 70% \+ enthusiasts .* \+ businesses \d+\.\d% × 2%/);
+    const raised = run(state, "price 7.5").state;
+    expect(renderStatus(sim, raised)).toMatch(/casual 70% \(threshold £5!\)/);
+  });
 });
 
 describe("advanceUntil", () => {

@@ -1,4 +1,4 @@
-import type { GameConfig, ProductTypeId } from "./config.ts";
+import { CUSTOMER_TYPE_IDS, type CustomerTypeId, type GameConfig, type ProductTypeId } from "./config.ts";
 import { count, pounds } from "./finance.ts";
 import { SimError, type GameState, type LogEntry, type PriceWave, type WaveEffect } from "./state.ts";
 import type { TicketBurst } from "./support.ts";
@@ -18,6 +18,13 @@ export interface PricePreview {
   paidUsers: number;
   /** The whole wave added up: paying users leaving and dropping to free, new users, upgrades, backlash tickets. */
   total: WaveEffect;
+  /**
+   * The price reaction to a rise: the share of paying users it loses, each customer type's reaction weighted by its
+   * share of users. 0 for a cut or no change.
+   */
+  reaction: number;
+  /** Each customer type's share of users and its own reaction to the change, which make up the reaction. */
+  reactions: TypeReaction[];
   /** What each day of the wave does, with the day it lands on. Empty when nothing changes. */
   days: (WaveEffect & { day: number })[];
   /** The price is locked from an earlier change: the preview shows what would happen once it's free. */
@@ -25,6 +32,43 @@ export interface PricePreview {
   lockDaysLeft: number;
   /** How long the price would be locked after this change. */
   lockDays: number;
+}
+
+/** One customer type's part in a price reaction: its share of users and the share of its paying users lost. */
+export interface TypeReaction {
+  id: CustomerTypeId;
+  share: number;
+  reaction: number;
+}
+
+/** One customer type in the customer mix, for the screens. */
+export interface CustomerTypeView {
+  id: CustomerTypeId;
+  name: string;
+  blurb: string;
+  /** The type's share of users (0.7 = 70%), and about how many users that is. */
+  share: number;
+  users: number;
+  /** The price at which this type starts to react badly, to the penny. */
+  threshold: number;
+  /** Today's price is above the type's threshold: it loses payers to the price each day, and reacts more to a rise. */
+  overThreshold: boolean;
+}
+
+/** The customer mix, for the screens: each type's share, with its price threshold to mark on the bar. */
+export interface CustomerMixView {
+  /** Least willing to pay first. */
+  types: CustomerTypeView[];
+  price: number;
+  fairPrice: number;
+}
+
+/**
+ * The price reaction: each customer type's reaction weighted by its share of users. A social network of 70% casual
+ * users (30% leave), 20% enthusiasts (10%), 8% professionals (2%) and 2% businesses (1%) loses 23.18%.
+ */
+export function weightedReaction(parts: { share: number; reaction: number }[]): number {
+  return parts.reduce((sum, p) => sum + p.share * p.reaction, 0);
 }
 
 /** The price wave under way, for the screens: where it's got to and what it has done. */
@@ -61,12 +105,29 @@ const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 export function createPricing(config: GameConfig) {
   const fairPrice = (productType: ProductTypeId) => config.productTypes[productType].pricing.fairPrice;
 
-  /** A new company's price and paid users: the fair price, and the product's starting free share. */
+  /** A product's customer mix, its shares scaled to add up to 1. All casual if they add up to nothing. */
+  function startingMix(productType: ProductTypeId): Record<CustomerTypeId, number> {
+    const mix = config.productTypes[productType].pricing.customerMix;
+    const sum = CUSTOMER_TYPE_IDS.reduce((total, t) => total + Math.max(0, mix[t] ?? 0), 0);
+    const shares = CUSTOMER_TYPE_IDS.map((t) => [t, sum > 0 ? Math.max(0, mix[t] ?? 0) / sum : t === "casual" ? 1 : 0]);
+    return Object.fromEntries(shares) as Record<CustomerTypeId, number>;
+  }
+
+  /** A customer type's price threshold for a product: the fair price times the type's multiple. */
+  const threshold = (productType: ProductTypeId, type: CustomerTypeId) =>
+    fairPrice(productType) * config.customerTypes[type].thresholdMultiple;
+
+  /** Each customer type with its share of users and its reaction, worked out from its threshold. */
+  const byType = (state: GameState, reaction: (threshold: number) => number): TypeReaction[] =>
+    CUSTOMER_TYPE_IDS.map((id) => ({ id, share: state.customerMix[id], reaction: reaction(threshold(state.productType, id)) }));
+
+  /** A new company's price, paid users and customer mix: the fair price, and the product's free share and mix. */
   function startingPricing(productType: ProductTypeId, users: number) {
     const { fairPrice, freeShare } = config.productTypes[productType].pricing;
     return {
       price: fairPrice,
       paidUsers: Math.round(users * (1 - freeShare)),
+      customerMix: startingMix(productType),
       income: 0,
       priceWave: null,
       priceLockedUntil: 0,
@@ -125,14 +186,36 @@ export function createPricing(config: GameConfig) {
   }
 
   /**
-   * The share of a wave that lands on its first day: firstDayShare, except for sticker shock. A rise to a dear price
-   * loses (1 - fair price / new price)^3 of its payers at once, before they pay it: an eighth on doubling the fair
-   * price, half at five times it and nearly all at many times it.
+   * The share of a wave that lands on its first day: firstDayShare, except for sticker shock. A rise to a price dear
+   * to a customer type loses (1 - its threshold / new price)^3 of the type's lost payers at once, before they pay it:
+   * an eighth on doubling its threshold, half at five times it and nearly all at many times it. Weighted by how many
+   * payers each type loses.
    */
   function firstDayShare(state: GameState, to: number): number {
     const { firstDayShare } = config.pricing;
     if (to <= state.price) return firstDayShare;
-    return Math.max(firstDayShare, Math.max(0, 1 - fairPrice(state.productType) / to) ** 3);
+    const lost = weightedReaction(riseReactions(state, to));
+    if (lost <= 0) return firstDayShare;
+    const shock = (th: number) => Math.max(0, 1 - th / to) ** 3;
+    const shocked = weightedReaction(riseReactions(state, to, shock));
+    return Math.max(firstDayShare, shocked / lost);
+  }
+
+  /**
+   * Each customer type's reaction to a rise from today's price to `to`: the share of its paying users lost, worked out
+   * as the alpha did for everyone but against the type's price threshold in place of the fair price. It scales with
+   * the rise against the threshold, raised to waveCurve, times how dear the new price is to the type, and the dearer
+   * it is, the fewer can stay. 0 for a cut. Each is multiplied by `times`, given the threshold, when there is one.
+   */
+  function riseReactions(state: GameState, to: number, times = (_threshold: number) => 1): TypeReaction[] {
+    const p = config.pricing;
+    return byType(state, (th) => {
+      if (to <= state.price) return 0;
+      const size = ((to - state.price) / th) ** p.waveCurve;
+      const dearer = Math.max(1, to / th) ** p.dearness;
+      const most = 1 - (1 - p.maxRiseShare) / dearer;
+      return Math.min(most, p.riseStrength * size * dearer) * times(th);
+    });
   }
 
   /**
@@ -162,9 +245,10 @@ export function createPricing(config: GameConfig) {
   }
 
   /**
-   * The whole wave a change from today's price to `to` would cause, from today's users. Its size scales with the
-   * change against the fair price, raised to waveCurve, so a small tweak barely registers and a big jump hits hard.
-   * A rise hits harder the dearer the new price, and at many times the fair price almost nobody keeps paying. A cut
+   * The whole wave a change from today's price to `to` would cause, from today's users. A rise loses the price
+   * reaction's share of paying users, each customer type's reaction weighted by its share (see riseReactions), and
+   * each type drops to free by its own share. A cut's size scales with the cut against the fair price, raised to
+   * waveCurve, so a small tweak barely registers and a big jump hits hard. A cut
    * counts only below the lowest price customers remember, and brings fewer the dearer it leaves the price: a cut from
    * £300 to £295 is still £295 to them.
    */
@@ -173,11 +257,10 @@ export function createPricing(config: GameConfig) {
     const fair = fairPrice(state.productType);
     const total = noEffect();
     if (to > state.price) {
-      const size = ((to - state.price) / fair) ** p.waveCurve;
-      const dearer = dearnessOf(state.productType, to);
-      const most = 1 - (1 - p.maxRiseShare) / dearer;
-      const affected = Math.round(state.paidUsers * Math.min(most, p.riseStrength * size * dearer));
-      total.toFree = Math.round(affected * p.dropToFreeShare);
+      const reactions = riseReactions(state, to);
+      const affected = Math.round(state.paidUsers * weightedReaction(reactions));
+      const toFree = reactions.map((r) => ({ ...r, reaction: r.reaction * config.customerTypes[r.id].toFreeShare }));
+      total.toFree = Math.min(affected, Math.round(state.paidUsers * weightedReaction(toFree)));
       total.left = affected - total.toFree;
       total.tickets = Math.round(affected * p.backlashTicketsPerUser);
     } else if (to < state.price) {
@@ -228,6 +311,7 @@ export function createPricing(config: GameConfig) {
     const paidUsers = state.paidUsers - total.left - total.toFree + total.joinedPaid + total.upgraded;
     const users = state.users - total.left + total.joined;
     const left = lockDaysLeft(state);
+    const reactions = riseReactions(state, to);
     return {
       price: to,
       currentPrice: state.price,
@@ -237,6 +321,8 @@ export function createPricing(config: GameConfig) {
       users,
       paidUsers,
       total,
+      reaction: weightedReaction(reactions),
+      reactions,
       days,
       locked: left > 0,
       lockDaysLeft: left,
@@ -360,12 +446,27 @@ export function createPricing(config: GameConfig) {
   }
 
   /**
-   * Share of paying users who stop paying in a day because the price is above what the product's worth: priceChurn
-   * times (price / fair price - 1)^2, at most maxPriceChurn. None at or below the fair price.
+   * Share of paying users who stop paying in a day because the price is above what they think it's worth: for each
+   * customer type, priceChurn times (price / its threshold - 1)^2, at most maxPriceChurn, weighted by its share of
+   * users. None at or below every threshold.
    */
   function priceChurn(state: GameState): number {
     const { priceChurn, maxPriceChurn } = config.pricing;
-    return Math.min(maxPriceChurn, priceChurn * Math.max(0, priceRatio(state) - 1) ** 2);
+    return weightedReaction(byType(state, (th) => Math.min(maxPriceChurn, priceChurn * Math.max(0, state.price / th - 1) ** 2)));
+  }
+
+  /** The customer mix for the screens: each type's share and users, and its price threshold to mark on the bar. */
+  function customerMix(state: GameState): CustomerMixView {
+    return {
+      types: CUSTOMER_TYPE_IDS.map((id) => {
+        const { name, blurb } = config.customerTypes[id];
+        const share = state.customerMix[id];
+        const th = Math.round(threshold(state.productType, id) * 100) / 100;
+        return { id, name, blurb, share, users: Math.round(state.users * share), threshold: th, overThreshold: state.price > th };
+      }),
+      price: state.price,
+      fairPrice: fairPrice(state.productType),
+    };
   }
 
   return {
@@ -380,6 +481,7 @@ export function createPricing(config: GameConfig) {
     paidUsersAfter,
     paidShareOfNew,
     priceChurn,
+    customerMix,
     dailyIncome,
     incomeEntries,
   };

@@ -63,7 +63,9 @@ const features = [
 ];
 
 // Everyone free unless a test says otherwise, and none converting, so income only shows up where a test looks for it.
-const pricing = { fairPrice: 30, freeShare: 1, conversionRate: 0 };
+// Every user casual, at the fair price and going free like the alpha's rise: a rise reacts as it did in the alpha.
+const allCasual = { casual: 1, enthusiasts: 0, professionals: 0, businesses: 0 };
+const pricing = { fairPrice: 30, freeShare: 1, conversionRate: 0, customerMix: allCasual };
 // No tickets unless a test says otherwise, so satisfaction stays at 100% and never touches growth.
 const support = { ticketsPerPaidUser: 0, ticketsPerFreeUser: 0 };
 
@@ -166,6 +168,10 @@ const config: GameConfig = {
       support,
       features,
     },
+  },
+  customerTypes: {
+    ...defaultConfig.customerTypes,
+    casual: { ...defaultConfig.customerTypes.casual, thresholdMultiple: 1, toFreeShare: 0.4 },
   },
   // No starting staff, so the model's running cost is the only charge unless a test hires someone.
   staff: {
@@ -2993,7 +2999,7 @@ describe("game end and summary", () => {
         ...shortConfig.productTypes,
         ecommerce: {
           ...shortConfig.productTypes.ecommerce,
-          pricing: { fairPrice: 30, freeShare: 0.4, conversionRate: 0 },
+          pricing: { fairPrice: 30, freeShare: 0.4, conversionRate: 0, customerMix: allCasual },
           support: { ticketsPerPaidUser: 0.05, ticketsPerFreeUser: 0.01 },
         },
       },
@@ -5003,9 +5009,9 @@ describe("pricing and income", () => {
       ...config,
       pricing: { ...config.pricing, ...overrides },
       productTypes: {
-        ecommerce: { ...config.productTypes.ecommerce, pricing: { fairPrice: 30, freeShare: freeShares.ecommerce, conversionRate: 0 } },
-        social: { ...config.productTypes.social, pricing: { fairPrice: 6, freeShare: freeShares.social, conversionRate: 0 } },
-        video: { ...config.productTypes.video, pricing: { fairPrice: 9, freeShare: freeShares.video, conversionRate: 0 } },
+        ecommerce: { ...config.productTypes.ecommerce, pricing: { fairPrice: 30, freeShare: freeShares.ecommerce, conversionRate: 0, customerMix: allCasual } },
+        social: { ...config.productTypes.social, pricing: { fairPrice: 6, freeShare: freeShares.social, conversionRate: 0, customerMix: allCasual } },
+        video: { ...config.productTypes.video, pricing: { fairPrice: 9, freeShare: freeShares.video, conversionRate: 0, customerMix: allCasual } },
       },
     });
   const s = priced();
@@ -5109,7 +5115,7 @@ describe("pricing and income", () => {
       models: { ...s.config.models, saas: { ...s.config.models.saas, monthlyCost: 0, monthlyCostPerUser: 0.3 } },
       productTypes: {
         ...s.config.productTypes,
-        ecommerce: { ...s.config.productTypes.ecommerce, pricing: { fairPrice: 30, freeShare: 0.9, conversionRate: 0 } },
+        ecommerce: { ...s.config.productTypes.ecommerce, pricing: { fairPrice: 30, freeShare: 0.9, conversionRate: 0, customerMix: allCasual } },
       },
     });
     let state = begin(sm, "ecommerce", "saas");
@@ -5185,7 +5191,7 @@ describe("support, tickets and satisfaction", () => {
         social: {
           ...config.productTypes.social,
           growth: { ...growth, dailyGrowth: 0 },
-          pricing: { fairPrice: 30, freeShare, conversionRate: 0 },
+          pricing: { fairPrice: 30, freeShare, conversionRate: 0, customerMix: allCasual },
           support: { ticketsPerPaidUser: 0.05, ticketsPerFreeUser: 0.01 },
         },
       },
@@ -5436,7 +5442,7 @@ describe("price waves and the price lock", () => {
         ecommerce: {
           ...config.productTypes.ecommerce,
           growth: { ...growth, dailyGrowth: 0, growthNoise: 0 },
-          pricing: { fairPrice: 30, freeShare: 0.4, conversionRate: 0 },
+          pricing: { fairPrice: 30, freeShare: 0.4, conversionRate: 0, customerMix: allCasual },
         },
       },
     });
@@ -5650,7 +5656,7 @@ describe("free-to-paid conversion", () => {
         social: {
           ...config.productTypes.social,
           growth: { ...growth, launchUsersMin: 10_000, launchUsersMax: 10_000, dailyGrowth: 0, growthNoise: 0 },
-          pricing: { fairPrice: 30, freeShare: 0.5, conversionRate: rate },
+          pricing: { fairPrice: 30, freeShare: 0.5, conversionRate: rate, customerMix: allCasual },
         },
       },
       support: { ...config.support, churnAtZero: 0 },
@@ -5855,7 +5861,7 @@ describe("alpha patch: pricing exploits and balance", () => {
         ecommerce: {
           ...config.productTypes.ecommerce,
           growth: { ...growth, dailyGrowth: 0, growthNoise: 0 },
-          pricing: { fairPrice: 30, freeShare: 0.4, conversionRate: 0 },
+          pricing: { fairPrice: 30, freeShare: 0.4, conversionRate: 0, customerMix: allCasual },
         },
       },
       ...extra,

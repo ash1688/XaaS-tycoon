@@ -5,6 +5,7 @@
 // id, other lists by position: "models.iaas.monthlyCost", "productTypes.video.features.hd.devDays",
 // "events.osPatch.encounter.chance". Overrides are a flat map of path to number: only the numbers that differ.
 import {
+  CUSTOMER_TYPE_IDS,
   DANGER_RISKS,
   GAME_LENGTH_IDS,
   MIGRATION_PHASES,
@@ -206,6 +207,10 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add(`${g}.seasonalSpike.growthMultiplier`, "Customers", s, "Seasonal spike: growth multiplier", "Growth is multiplied by this during a busy season.", MULTIPLIER);
     add(`productTypes.${p}.pricing.freeShare`, "Customers", s, "Free share", "Share of users on the free tier, at the start and among new users at the fair price.", SHARE);
     add(`productTypes.${p}.pricing.conversionRate`, "Customers", s, "Free-to-paid conversion rate", "Share of free users who start paying each day, before features, uptime, satisfaction and price (0.004 = 0.4%).", range(0, 0.1, 0.0005));
+    for (const t of CUSTOMER_TYPE_IDS) {
+      const type = base.customerTypes?.[t]?.name ?? t;
+      add(`productTypes.${p}.pricing.customerMix.${t}`, "Customers", s, `Customer mix: ${type.toLowerCase()}`, "This customer type's share of the product's users. The shares are scaled to add up to 100%.", SHARE);
+    }
     for (const f of product.features) {
       add(`productTypes.${p}.features.${f.id}.growthMultiplier`, "Customers", s, `${f.name}: growth multiplier`, "Once built or bought, daily growth is multiplied by this (1.1 = 10% faster).", range(0, 5, 0.01));
     }
@@ -216,6 +221,14 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("pricing.maxGrowthBoost", "Customers", "", "Most a low price speeds growth", "A price below the fair price multiplies growth by at most this.", range(1, 10, 0.05));
   add("pricing.paidShareSensitivity", "Customers", "", "Price effect on new payers", "The paid share of new users is multiplied by (price ÷ fair price) to minus this.", range(0, 5, 0.05));
 
+  // Customers: customer types
+  for (const t of CUSTOMER_TYPE_IDS) {
+    const type = base.customerTypes?.[t];
+    if (!type) continue;
+    add(`customerTypes.${t}.thresholdMultiple`, "Customers", "Customer types", `${type.name}: price threshold`, "The price at which this type starts to react badly, as a multiple of the product's fair price. A rise and a high price are measured against it.", range(0.1, 20, 0.05));
+    add(`customerTypes.${t}.toFreeShare`, "Customers", "Customer types", `${type.name}: drop to free share`, "Of this type's paying users a price rise loses, the share who drop to free. The rest leave.", SHARE);
+  }
+
   // Customers: price waves and the price lock
   const W = "Price changes";
   add("pricing.waveDays", "Customers", W, "Wave length (days)", "Days a price change's wave of reactions lasts: a small reaction on day 1, then the main effect.", range(1, 60, 1));
@@ -225,7 +238,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("pricing.riseStrength", "Customers", W, "Rise strength", "A rise affects this × (rise ÷ fair price)^curve of paying users, before the extra hit and the cap.", range(0, 5, 0.05));
   add("pricing.dearness", "Customers", W, "Extra hit when already dear", "A rise's effect is multiplied by (new price ÷ fair price) to this power. 0 for no effect.", range(0, 5, 0.05));
   add("pricing.maxRiseShare", "Customers", W, "Most payers one rise can lose", "The biggest share of paying users one rise can affect.", SHARE);
-  add("pricing.dropToFreeShare", "Customers", W, "Drop to free share", "Of the paying users a rise affects, the share who drop to free. The rest leave.", SHARE);
+  add("pricing.dropToFreeShare", "Customers", W, "Drop to free share", "Of the paying users who stop paying each day, the share who drop to free. The rest leave. A rise uses each customer type's own share.", SHARE);
   add("pricing.backlashTicketsPerUser", "Customers", W, "Backlash tickets per user", "Support tickets each affected user raises over a rise's backlash.", range(0, 20, 0.1));
   add("pricing.cutGainStrength", "Customers", W, "Cut: new users", "A cut brings this × (cut ÷ fair price)^curve new users, as a share of users, before the cap.", range(0, 5, 0.05));
   add("pricing.maxCutGain", "Customers", W, "Cut: most new users", "The most new users one cut can bring, as a share of users.", range(0, 5, 0.05));

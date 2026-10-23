@@ -22,6 +22,11 @@
   /* The bank's: debt */
   --debt: #a16207;
   --debt-soft: #fdf6dd;
+  /* Customer types, least willing to pay first */
+  --mix-casual: #93c5fd;
+  --mix-enthusiasts: #3b82f6;
+  --mix-professionals: #1d4ed8;
+  --mix-businesses: #172554;
   /* Running your own kit: cabling, and power and cooling */
   --cabling: #4338ca;
   --cabling-soft: #eceafd;
@@ -53,6 +58,10 @@
     --warn-soft: #3a1b1b;
     --debt: #facc15;
     --debt-soft: #352d10;
+    --mix-casual: #1e3a8a;
+    --mix-enthusiasts: #2563eb;
+    --mix-professionals: #60a5fa;
+    --mix-businesses: #bfdbfe;
     --cabling: #a5b4fc;
     --cabling-soft: #23244a;
     --power: #f472b6;
@@ -3593,4 +3602,153 @@ select:disabled {
 .log-actions .button-link:not(.ghost) {
   background: var(--accent);
   color: var(--accent-text);
+}
+
+/* The customer mix: a bar of each customer type's share, and a price scale with each type's threshold and yours. */
+.customer-mix .casual {
+  --type: var(--mix-casual);
+  --type-text: #0b1020;
+}
+
+.customer-mix .enthusiasts {
+  --type: var(--mix-enthusiasts);
+  --type-text: #ffffff;
+}
+
+.customer-mix .professionals {
+  --type: var(--mix-professionals);
+  --type-text: #ffffff;
+}
+
+.customer-mix .businesses {
+  --type: var(--mix-businesses);
+  --type-text: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  .customer-mix .casual,
+  .customer-mix .enthusiasts {
+    --type-text: #ffffff;
+  }
+
+  .customer-mix .professionals,
+  .customer-mix .businesses {
+    --type-text: #0b1020;
+  }
+}
+
+.mix-caption {
+  margin: 0.5rem 0 0.3rem;
+  font-size: 0.8rem;
+}
+
+.mix-bar {
+  display: flex;
+  height: 1.6rem;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--accent-soft);
+}
+
+.mix-segment {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  background: var(--type);
+  color: var(--type-text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.mix-segment + .mix-segment {
+  border-left: 2px solid var(--surface);
+}
+
+.mix-scale {
+  position: relative;
+  height: 2.6rem;
+  margin: 0 0 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.mix-threshold,
+.mix-price {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mix-threshold::before {
+  content: "";
+  width: 3px;
+  height: 0.7rem;
+  border-radius: 2px;
+  background: var(--type);
+}
+
+.mix-threshold-price {
+  color: var(--muted);
+}
+
+.mix-price {
+  top: auto;
+  bottom: 0;
+  color: var(--you);
+  font-weight: 700;
+}
+
+.mix-price::before {
+  content: "▲";
+  font-size: 0.65rem;
+  line-height: 1;
+}
+
+.mix-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 0.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.mix-table th,
+.mix-table td {
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.mix-table tbody th {
+  font-weight: 600;
+}
+
+.mix-table tbody th small {
+  display: block;
+  font-weight: 400;
+}
+
+.mix-table .num {
+  text-align: right;
+}
+
+.mix-over-note {
+  display: block;
+  white-space: nowrap;
+}
+
+.mix-swatch {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-right: 0.4rem;
+  border-radius: 3px;
+  background: var(--type);
 }

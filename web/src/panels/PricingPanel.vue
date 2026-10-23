@@ -94,6 +94,10 @@ const verdict = computed(() => {
       : `${formatCount(p.total.joined)} new users join and ${formatCount(p.total.upgraded)} free users start paying.`;
   return `At ${formatPrice(p.price)} you'd make ${income} once the wave settles. ${users}`;
 });
+/** A share as a percentage to one place: 0.2318 → "23.2%". */
+const sharePercent = (share: number) => `${(100 * share).toFixed(1).replace(/\.0$/, "")}%`;
+/** A customer type's name, lower case, from the company's mix. */
+const typeName = (id: string) => (game.company?.customerMix.types.find((t) => t.id === id)?.name ?? id).toLowerCase();
 // A step too small to matter: the student is better off trying a bigger one.
 const tinyStep = computed(() => {
   const p = preview.value;
@@ -291,6 +295,11 @@ async function save() {
             </template>
           </div>
           <WaveChart :days="preview.days" :direction="preview.direction === 'rise' ? 'rise' : 'cut'" />
+          <p v-if="preview.direction === 'rise'" class="muted" data-testid="preview-reaction">
+            Price reaction: {{ sharePercent(preview.reaction) }} of paying users. That's each customer type's reaction
+            weighted by its share of users:
+            {{ preview.reactions.filter((r) => r.share > 0).map((r) => `${typeName(r.id)} ${sharePercent(r.reaction)} × ${sharePercent(r.share)}`).join(", ") }}.
+          </p>
           <p class="muted">
             {{
               preview.direction === "rise"

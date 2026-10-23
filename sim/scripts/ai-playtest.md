@@ -36,6 +36,8 @@ npm run -s play -- summary <game>
   unpatched (fewer ops than your setup needs, on on-prem or IaaS), capacity overloaded, or unhappy customers. Which
   event comes next, and when, is hidden; your situation also changes which events are likely.
 - `preview <price>` and `quote <model>` show what a price change or migration would do without doing it.
+  A price rise's reaction is each customer type's reaction weighted by its share of users: the status shows your
+  customer mix, each type's price threshold, and `!` where your price is over it.
 - `valuation` shows what your company is worth, what's pushing it up or down, and who owns it. `funding` shows the
   friends and family and grant offers in full; `accept ff`, `accept grant`, `decline ff` and `decline grant` answer
   them, once each.

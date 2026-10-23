@@ -64,6 +64,8 @@ export interface Player {
 const UNIT: Record<ServerType, string> = { app: "CU", database: "DBU", cache: "CH", loadBalancer: "apps", api: "APIU" };
 
 const money = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
+/** A price, to the penny when it has pence: £7.50, £5. */
+const price = (n: number) => (Number.isInteger(n) ? money(n) : `£${n.toFixed(2)}`);
 const pct = (n: number) => `${Math.round(n)}%`;
 /** A share of the company, 0–1, to one decimal place of a percent. */
 const stake = (share: number) => `${Math.round(share * 1000) / 10}%`;
@@ -136,6 +138,14 @@ export function logRow(sim: Sim, state: GameState, who: Player, type: string, pa
   };
 }
 
+/** Each customer type's share of users and price threshold, "!" where today's price is over it. */
+export function renderMix(sim: Sim, state: GameState): string {
+  return sim
+    .customerMix(state)
+    .types.map((t) => `${t.id} ${pct(100 * t.share)} (threshold ${price(t.threshold)}${t.overThreshold ? "!" : ""})`)
+    .join(", ");
+}
+
 /** The company at a glance: everything a player sees on the dashboard, as short lines. */
 export function renderStatus(sim: Sim, state: GameState): string {
   const lines: string[] = [];
@@ -152,13 +162,14 @@ export function renderStatus(sim: Sim, state: GameState): string {
   lines.push(
     `cash ${money(state.cash)} | income ${money(dailyIncome(sim, state))}/day | costs ${money(dailyCosts(sim, state))}/day | runway ${lasts}`,
   );
-  lines.push(`price ${money(state.price)}/month (fair ${money(fair)}) | ${lock > 0 ? `locked ${lock} more days` : "can change"}`);
+  lines.push(`price ${price(state.price)}/month (fair ${price(fair)}) | ${lock > 0 ? `locked ${lock} more days` : "can change"}`);
   const wave = sim.priceWave(state);
   if (wave) {
     lines.push(
-      `price wave: ${wave.direction} ${money(wave.from)}→${money(wave.to)}, ${wave.remaining} days left; so far ${wave.done.left} left, ${wave.done.toFree} to free, ${wave.done.joined} joined`,
+      `price wave: ${wave.direction} ${price(wave.from)}→${price(wave.to)}, ${wave.remaining} days left; so far ${wave.done.left} left, ${wave.done.toFree} to free, ${wave.done.joined} joined`,
     );
   }
+  lines.push(`customer mix: ${renderMix(sim, state)}`);
   const conversion = sim.conversion(state);
   lines.push(
     `users ${state.users.toLocaleString("en-GB")} (paid ${state.paidUsers.toLocaleString("en-GB")}, free ${(state.users - state.paidUsers).toLocaleString("en-GB")}) | converting ${(conversion.rate * 100).toFixed(2)}%/day`,
@@ -527,8 +538,12 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
       state,
       rows: [],
       lines: [
-        `preview ${money(p.currentPrice)}→${money(p.price)} (${p.direction}): income ${money(p.currentDailyIncome)}→${money(p.dailyIncome)}/day once settled; ` +
+        `preview ${price(p.currentPrice)}→${price(p.price)} (${p.direction}): income ${money(p.currentDailyIncome)}→${money(p.dailyIncome)}/day once settled; ` +
           `${p.total.left} paying users leave, ${p.total.toFree} drop to free, ${p.total.joined} join (${p.total.joinedPaid} paying)` +
+          (p.direction === "rise"
+            ? `; reaction ${(100 * p.reaction).toFixed(1)}% of payers = ` +
+              p.reactions.map((t) => `${t.id} ${(100 * t.reaction).toFixed(1)}% × ${pct(100 * t.share)}`).join(" + ")
+            : "") +
           (p.locked ? `; price locked ${p.lockDaysLeft} more days` : ""),
       ],
     };
