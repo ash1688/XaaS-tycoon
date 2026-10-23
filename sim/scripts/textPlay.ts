@@ -622,7 +622,9 @@ function fundingLines(sim: Sim, state: GameState): string[] {
   else {
     const t = f.grant!;
     lines.push(
-      `grant: ${t.status} on day ${t.day}` +
+      `grant: ${t.status === "declined" ? "declined" : "accepted"} on day ${t.day}` +
+        (t.status === "met" ? `; condition met on day ${t.untilDay}` : "") +
+        (t.status === "withdrawn" ? `; withdrawn, ${t.hoursDown}h down of ${t.maxHoursDown}h allowed` : "") +
         (t.status !== "accepted"
           ? ""
           : t.untilDay === null
