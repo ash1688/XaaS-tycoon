@@ -3854,35 +3854,30 @@ select:disabled {
 }
 .bell-chart {
   width: 100%;
-  height: auto;
+  height: 14rem;
   display: block;
+  border-bottom: 1px solid var(--border);
 }
 .bell-offer {
   stroke: var(--muted);
   stroke-dasharray: 5 5;
 }
 .bell-axis {
-  fill: var(--muted);
-  font-size: 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0.25rem 0 1rem;
+  font-size: 0.85rem;
 }
 .bell-line {
   fill: none;
   stroke-width: 2.5;
   stroke-linejoin: round;
 }
-.bell-line.up,
-.bell-dot.up {
+.bell-line.up {
   stroke: var(--pos);
-  fill: none;
-}
-.bell-dot.up {
-  fill: var(--pos);
 }
 .bell-line.down {
-  stroke: var(--neg);
-}
-.bell-dot.down {
-  fill: var(--neg);
   stroke: var(--neg);
 }
 .bell-reasons {

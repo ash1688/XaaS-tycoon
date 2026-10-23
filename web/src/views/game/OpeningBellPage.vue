@@ -36,15 +36,20 @@ onUnmounted(() => clearInterval(timer));
 
 async function ring() {
   game.track("control", { control: "ipo-ring", value: String(percent.value) });
+  // Only the open shows until the day plays out, so the result can't be seen before it.
+  if (!reducedMotion) shown.value = 1;
   await game.act({ type: "ringBell", float: percent.value / 100 });
-  if (game.error || !result.value) return;
+  if (game.error || !result.value) {
+    shown.value = Number.POSITIVE_INFINITY;
+    return;
+  }
+  if (!reducedMotion) {
+    timer = setInterval(() => {
+      shown.value++;
+      if (shown.value >= result.value!.prices.length) clearInterval(timer);
+    }, TICK_MS);
+  }
   await game.loadSummary();
-  if (reducedMotion) return;
-  shown.value = 1;
-  timer = setInterval(() => {
-    shown.value++;
-    if (shown.value >= result.value!.prices.length) clearInterval(timer);
-  }, TICK_MS);
 }
 
 // The time of each price: the open at 09:30, then every half hour to the 16:00 close.
@@ -56,10 +61,11 @@ const prices = computed(() => result.value?.prices.slice(0, Math.min(shown.value
 const latest = computed(() => prices.value.at(-1) ?? 0);
 const change = computed(() => (result.value ? latest.value / result.value.offerPrice - 1 : 0));
 
-// The chart: price against time, with the offer price dashed across it.
-const W = 600;
-const H = 220;
-const M = { top: 14, right: 16, bottom: 28, left: 64 };
+// The chart: price against time, with the offer price dashed across it. Drawn to fill its box at any width, with the
+// labels in HTML around it so they stay readable on a phone.
+const W = 1000;
+const H = 400;
+const M = { top: 16, right: 8, bottom: 16, left: 8 };
 const range = computed(() => {
   const all = [...(result.value?.prices ?? []), result.value?.offerPrice ?? 0];
   const lo = Math.min(...all);
@@ -152,16 +158,22 @@ const describe = computed(() =>
         <span :class="up ? 'pos' : 'neg'">{{ change >= 0 ? "+" : "−" }}{{ (Math.abs(change) * 100).toFixed(1) }}%</span>
         <span class="muted">on the offer price of {{ formatSharePrice(result.offerPrice) }}</span>
       </p>
-      <svg :viewBox="`0 0 ${W} ${H}`" class="bell-chart" role="img" :aria-label="describe">
-        <line :x1="M.left" :x2="W - M.right" :y1="y(result.offerPrice)" :y2="y(result.offerPrice)" class="bell-offer" />
-        <text :x="M.left - 6" :y="y(result.offerPrice) + 4" text-anchor="end" class="bell-axis">
-          {{ formatSharePrice(result.offerPrice) }}
-        </text>
-        <polyline :points="line" :class="['bell-line', up ? 'up' : 'down']" />
-        <circle v-if="prices.length" :cx="x(prices.length - 1)" :cy="y(latest)" r="4" :class="['bell-dot', up ? 'up' : 'down']" />
-        <text :x="M.left" :y="H - 6" class="bell-axis">09:30</text>
-        <text :x="W - M.right" :y="H - 6" text-anchor="end" class="bell-axis">16:00</text>
+      <svg :viewBox="`0 0 ${W} ${H}`" preserveAspectRatio="none" class="bell-chart" role="img" :aria-label="describe">
+        <line
+          :x1="M.left"
+          :x2="W - M.right"
+          :y1="y(result.offerPrice)"
+          :y2="y(result.offerPrice)"
+          class="bell-offer"
+          vector-effect="non-scaling-stroke"
+        />
+        <polyline :points="line" :class="['bell-line', up ? 'up' : 'down']" vector-effect="non-scaling-stroke" />
       </svg>
+      <div class="bell-axis muted" aria-hidden="true">
+        <span>09:30</span>
+        <span>- - - the offer price, {{ formatSharePrice(result.offerPrice) }}</span>
+        <span>16:00</span>
+      </div>
 
       <template v-if="!playing">
         <div class="stats bell-result" data-testid="bell-result">

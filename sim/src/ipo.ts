@@ -88,6 +88,7 @@ const round1 = (n: number) => Math.round(n * 10) / 10;
 const pence = (n: number) => Math.round(n * 100) / 100;
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 const HOURS_PER_DAY = 24;
+const MODEL_NAMES = { onprem: "on-prem", iaas: "IaaS", paas: "PaaS", saas: "SaaS" } as const;
 
 /**
  * The IPO: the readiness check on the Finance page, applying (with its hidden cold-market chance), the float and the
@@ -184,7 +185,7 @@ export function createIpo(
         id: "costs",
         label: "Predictable costs",
         met: hasRecord && swing <= c.maxCostSwing,
-        needed: `Daily running costs over the last ${c.recordDays} days varying by no more than ${percent(c.maxCostSwing)}: big one-off purchases count against you`,
+        needed: `daily running costs over the last ${c.recordDays} days varying by no more than ${percent(c.maxCostSwing)}: big one-off purchases count against you`,
         now: recorded(`Varying by ${percent(swing)} around ${pounds(mean)} a day`),
       },
       c.maxCostSwing <= 0 ? 1 : clamp01((c.maxCostSwing - swing) / (c.comfortMargin * c.maxCostSwing)),
@@ -195,8 +196,8 @@ export function createIpo(
         label: "Security audit",
         met: patched,
         needed: yours
-          ? `Every server patched: on ${config.models[state.model].name} the OS is yours, so you need the ops staff your servers need`
-          : `Every server patched: on ${config.models[state.model].name} the provider patches the OS for you`,
+          ? `every server patched: on ${MODEL_NAMES[state.model]} the OS is yours, so you need the ops staff your servers need`
+          : `every server patched: on ${MODEL_NAMES[state.model]} the provider patches the OS for you`,
         now: yours
           ? `Ops staff doing ${round1(ops)} of the ${round1(opsNeeded)} needed`
           : "Covered by the provider",
@@ -208,7 +209,7 @@ export function createIpo(
         id: "profit",
         label: "Profitability",
         met: profitable || (income > 0 && net >= 0),
-        needed: `A profit over the last ${c.recordDays} days, or a clear path to one: making money on a usual day now`,
+        needed: `a profit over the last ${c.recordDays} days, or a clear path to one: making money on a usual day now`,
         now: `${profit >= 0 ? "Profit" : "Loss"} of ${pounds(Math.abs(profit))} over ${c.recordDays} days; ${net >= 0 ? "+" : "−"}${pounds(Math.abs(net))} on a usual day`,
       },
       profitable ? clamp01(margin / c.comfortMargin) : 0,
