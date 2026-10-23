@@ -5894,12 +5894,83 @@ describe("alpha patch: pricing exploits and balance", () => {
       // Below £30 it counts for the part below: a cut to £25 brings about what £30 to £25 would, not £45 to £25.
       expect(gained(s, risen, 25)).toBeGreaterThan(0);
       expect(gained(s, risen, 25)).toBeLessThanOrEqual(gained(s, begin(), 25));
-      // Once customers have forgotten £30, the cut back counts in full.
-      const later = s.advance(risen, defaultConfig.pricing.priceMemoryDays).state;
-      expect(gained(s, later, 30)).toBeGreaterThan(0);
-      // The memory is config: with none, every cut counts from today's price.
+      // Down to £20, back up to £30 and down to £20 again: customers remember £20, so the second cut brings nothing.
+      const cycle = (sm: Sim) => {
+        const down = sm.advance(sm.applyAction(begin(sm), setPrice(20)), 14).state;
+        return sm.advance(sm.applyAction(down, setPrice(30)), 14).state;
+      };
+      expect(gained(s, cycle(s), 20)).toBe(0);
+      // The memory is config: with none, every cut counts from today's price, as far as the fair price.
       const forgetful = priced({ priceMemoryDays: 0 });
-      expect(gained(forgetful, forgetful.advance(forgetful.applyAction(begin(forgetful), setPrice(45)), 14).state, 30)).toBeGreaterThan(0);
+      expect(gained(forgetful, cycle(forgetful), 20)).toBeGreaterThan(0);
+    });
+
+    it("brings no wave from a cut back to the fair price, however long the price was dear", () => {
+      // £45 for well past the price memory, so £45 is all customers remember: the cut back to £30 is still no bargain.
+      const dear = s.advance(s.applyAction(begin(), setPrice(45)), defaultConfig.pricing.priceMemoryDays + 10).state;
+      expect(s.pricePreview(dear, 30).total).toMatchObject({ joined: 0, joinedPaid: 0, upgraded: 0 });
+      // A cut below the fair price counts only for the part below it: £45 to £25 brings what £30 to £25 would.
+      const fromFair = s.pricePreview(begin(), 25).total;
+      const fromDear = s.pricePreview(dear, 25).total;
+      expect(fromDear.joined / dear.users).toBeCloseTo(fromFair.joined / begin().users, 2);
+      const free = (state: GameState) => state.users - state.paidUsers;
+      expect(fromDear.upgraded / free(dear)).toBeCloseTo(fromFair.upgraded / free(begin()), 2);
+    });
+
+    it("earns no more from rising and cutting back to the fair price than from holding it", () => {
+      const play = (prices: [day: number, price: number][], days: number) => {
+        let state = begin();
+        let earned = 0;
+        for (let day = 1; day <= days; day++) {
+          const change = prices.find(([d]) => d === day);
+          if (change) state = s.applyAction(state, setPrice(change[1]));
+          const played = s.advance(state);
+          state = played.state;
+          earned += income(played.log);
+        }
+        return { earned, paidUsers: state.paidUsers };
+      };
+      const held = play([], 170);
+      // Up to £45, held past the price memory, back to £30, twice.
+      const cycled = play([[1, 45], [75, 30], [90, 45], [160, 30]], 170);
+      expect(cycled.earned).toBeLessThan(held.earned);
+      expect(cycled.paidUsers).toBeLessThan(held.paidUsers);
+      // Rising and cutting back each lock comes out no better.
+      const quick = play(Array.from({ length: 12 }, (_, i) => [1 + 14 * i, i % 2 ? 30 : 45] as [number, number]), 170);
+      expect(quick.earned).toBeLessThan(held.earned);
+    });
+  });
+
+  describe("small rises", () => {
+    // Daily price churn off, so only the rises' waves move paying users.
+    const flat = priced({ priceChurn: 0 });
+    const ladder = [33, 36.3, 39.93, 43.92];
+    const climb = (prices: number[]) => {
+      let state = begin(flat);
+      for (const price of prices) state = flat.advance(flat.applyAction(state, setPrice(price)), defaultConfig.pricing.lockDays).state;
+      return flat.advance(state, defaultConfig.pricing.waveDays).state;
+    };
+
+    it("loses as many paying users to a run of small rises as to one rise to the same price", () => {
+      const lostToLadder = 600 - climb(ladder).paidUsers;
+      const lostToOne = 600 - climb([43.92]).paidUsers;
+      expect(lostToOne).toBeGreaterThan(150);
+      expect(Math.abs(lostToLadder - lostToOne)).toBeLessThanOrEqual(lostToOne * 0.02);
+      // Each step's preview shows its share of the whole: the second step loses more than the first did alone.
+      const firstStep = flat.applyAction(begin(flat), setPrice(33));
+      const afterFirst = flat.advance(firstStep, defaultConfig.pricing.lockDays).state;
+      expect(flat.pricePreview(afterFirst, 36.3).reaction).toBeGreaterThan(flat.pricePreview(begin(flat), 33).reaction * 2);
+    });
+
+    it("measures a rise from the lowest price customers remember, so stepping back up after a cut counts in full", () => {
+      const cut = flat.advance(flat.applyAction(begin(flat), setPrice(20)), defaultConfig.pricing.lockDays).state;
+      const upInSteps = (state: GameState) => {
+        for (const price of [25, 30]) state = flat.advance(flat.applyAction(state, setPrice(price)), defaultConfig.pricing.lockDays).state;
+        return state;
+      };
+      const oneStep = flat.pricePreview(cut, 30).reaction;
+      const stepped = upInSteps(cut);
+      expect(1 - stepped.paidUsers / cut.paidUsers).toBeCloseTo(oneStep, 2);
     });
   });
 

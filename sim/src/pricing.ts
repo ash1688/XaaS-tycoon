@@ -206,30 +206,37 @@ export function createPricing(config: GameConfig) {
    * as the alpha did for everyone but against the type's price threshold in place of the fair price. It scales with
    * the rise against the threshold, raised to waveCurve, times how dear the new price is to the type, and the dearer
    * it is, the fewer can stay. 0 for a cut. Each is multiplied by `times`, given the threshold, when there is one.
+   *
+   * The rise is measured from the lowest price customers remember, less what the rises since have already lost, so a
+   * run of small rises loses as many payers as one rise to the same price: £20 to £30 in five steps is £20 to £30.
    */
   function riseReactions(state: GameState, to: number, times = (_threshold: number) => 1): TypeReaction[] {
     const p = config.pricing;
+    const from = rememberedPrice(state);
+    // The share of the type's payers a rise from the remembered price to `price` loses in all.
+    const lost = (price: number, th: number) => {
+      if (price <= from) return 0;
+      const size = ((price - from) / th) ** p.waveCurve;
+      const dearer = Math.max(1, price / th) ** p.dearness;
+      const most = 1 - (1 - p.maxRiseShare) / dearer;
+      return Math.min(most, p.riseStrength * size * dearer);
+    };
     return byType(state, (th) => {
       if (to <= state.price) return 0;
-      const size = ((to - state.price) / th) ** p.waveCurve;
-      const dearer = Math.max(1, to / th) ** p.dearness;
-      const most = 1 - (1 - p.maxRiseShare) / dearer;
-      return Math.min(most, p.riseStrength * size * dearer) * times(th);
+      // Of the payers still here at today's price, the share the whole rise to `to` would have lost on top.
+      const already = lost(state.price, th);
+      return (Math.max(0, lost(to, th) - already) / (1 - already)) * times(th);
     });
   }
 
   /**
-   * The lowest price customers remember: the lowest in effect over the last priceMemoryDays, today's included. A cut
-   * only counts below it.
+   * The lowest price customers remember: the lowest in effect over the last priceMemoryDays, today's included. A rise
+   * is measured from it, and a cut only counts below it.
    */
   function rememberedPrice(state: GameState): number {
     const since = state.day - config.pricing.priceMemoryDays;
     return state.priceChanges.reduce((low, c) => (c.day > since ? Math.min(low, c.from) : low), state.price);
   }
-
-  /** How dear a price is: (price / fair price)^dearness, and 1 at or below the fair price. */
-  const dearnessOf = (productType: ProductTypeId, price: number) =>
-    Math.max(1, price / fairPrice(productType)) ** config.pricing.dearness;
 
   /** Splits a whole number over the shape so the days add up to it exactly. */
   function spread(total: number, shape: number[]): number[] {
@@ -248,9 +255,9 @@ export function createPricing(config: GameConfig) {
    * The whole wave a change from today's price to `to` would cause, from today's users. A rise loses the price
    * reaction's share of paying users, each customer type's reaction weighted by its share (see riseReactions), and
    * each type drops to free by its own share. A cut's size scales with the cut against the fair price, raised to
-   * waveCurve, so a small tweak barely registers and a big jump hits hard. A cut
-   * counts only below the lowest price customers remember, and brings fewer the dearer it leaves the price: a cut from
-   * £300 to £295 is still £295 to them.
+   * waveCurve, so a small tweak barely registers and a big jump hits hard. A cut counts only below both the fair
+   * price and the lowest price customers remember: coming back down to the fair price is no bargain, however long the
+   * price was dear, and a cut from £300 to £295 is still £295 to them.
    */
   function waveTotal(state: GameState, to: number): WaveEffect {
     const p = config.pricing;
@@ -264,12 +271,11 @@ export function createPricing(config: GameConfig) {
       total.left = affected - total.toFree;
       total.tickets = Math.round(affected * p.backlashTicketsPerUser);
     } else if (to < state.price) {
-      const size = (Math.max(0, rememberedPrice(state) - to) / fair) ** p.waveCurve;
-      const appeal = 1 / dearnessOf(state.productType, to);
-      total.joined = Math.round(state.users * Math.min(p.maxCutGain, p.cutGainStrength * size) * appeal);
+      const size = (Math.max(0, Math.min(rememberedPrice(state), fair) - to) / fair) ** p.waveCurve;
+      total.joined = Math.round(state.users * Math.min(p.maxCutGain, p.cutGainStrength * size));
       total.joinedPaid = Math.round(total.joined * paidShareOfNew({ ...state, price: to }));
       const free = state.users - state.paidUsers;
-      total.upgraded = Math.round(free * Math.min(p.maxCutUpgrade, p.cutUpgradeStrength * size) * appeal);
+      total.upgraded = Math.round(free * Math.min(p.maxCutUpgrade, p.cutUpgradeStrength * size));
     }
     return total;
   }
