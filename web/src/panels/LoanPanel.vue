@@ -85,7 +85,7 @@ async function payOff() {
       <p class="muted">
         {{ formatCash(open.repaid) }} of {{ formatCash(open.total) }} repaid: what you borrowed plus
         {{ formatCash(open.total - open.amount) }} interest. Repayments are a fixed cost: they're charged every day,
-        however the business is doing, and running out of cash still means bankruptcy.
+        however the business is doing, and running out of cash still means a rescue buyout, or liquidation.
       </p>
       <p v-if="!game.over" data-testid="loan-payoff">
         Paying it off now costs <strong>{{ formatCash(open.payoff) }}</strong>, what's left of the money you borrowed,
@@ -103,8 +103,8 @@ async function payOff() {
       <template v-else>in full: {{ formatCash(loan.interestPaid) }} interest.</template>
     </p>
 
-    <p v-if="!open && game.bankrupt" class="muted" data-testid="loan-bankrupt">
-      No loan now: banks don't lend to a company that has gone bankrupt. A loan has to be taken before cash runs out.
+    <p v-if="!open && game.liquidated" class="muted" data-testid="loan-liquidated">
+      No loan now: banks don't lend to a company in liquidation. A loan has to be taken before cash runs out.
     </p>
 
     <p v-else-if="!open && game.over" class="muted" data-testid="loan-over">

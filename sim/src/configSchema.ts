@@ -7,6 +7,8 @@
 import {
   CUSTOMER_TYPE_IDS,
   DANGER_RISKS,
+  DIFFICULTIES,
+  DIFFICULTY_IDS,
   GAME_LENGTH_IDS,
   MIGRATION_PHASES,
   MODEL_IDS,
@@ -56,6 +58,13 @@ export const CONFIG_EXCLUSIONS: Record<string, string> = {
   "shares.min": "The range of shares a student can pick is fixed by the design: 10,000 to 100,000.",
   "shares.max": "The range of shares a student can pick is fixed by the design: 10,000 to 100,000.",
   "shares.default": "Only what the new-company form starts on; the student picks their own.",
+  "calendar.startYear": "The server starts each game in the current year; this is only the sim's default.",
+  // A holiday's dates are the real calendar's: Christmas is on the 25th whatever the preset.
+  ...Object.fromEntries(
+    defaultConfig.calendar.holidays.flatMap((h) =>
+      numericPaths(h.start, `calendar.holidays.${h.id}.start`).map((p) => [p, "A holiday falls on its real dates every year."]),
+    ),
+  ),
 };
 
 const MODEL_LABELS = { onprem: "On-prem", iaas: "IaaS", paas: "PaaS", saas: "SaaS" } as const;
@@ -79,7 +88,7 @@ const HOURS = range(0, 24, 1);
 
 /**
  * The numbers an event's effect on one model can set, relative to the effect. The same with "shortOfOps." in front
- * for what happens without enough ops. An effect only gets a field for the numbers it sets in the base config.
+ * for what happens without enough ops, and "unpatched." for what happens with patches overdue. An effect only gets a field for the numbers it sets in the base config.
  */
 const EFFECT_FIELDS: Record<string, { label: string; help: string } & Range> = {
   opsNeeded: { label: "ops needed", help: "Ops staff needed to deal with it; with fewer, the short-of-ops outcome happens.", ...HEADCOUNT },
@@ -88,6 +97,8 @@ const EFFECT_FIELDS: Record<string, { label: string; help: string } & Range> = {
   "cost.amount": { label: "clean-up cost", help: "A one-off charge for dealing with it.", ...POUNDS },
   "priceRise.percent": { label: "price rise %", help: "The provider's prices go up by this percent for good.", ...range(0, 200, 1) },
   "featureGap.growthMultiplier": { label: "growth while the gap is open", help: "Daily growth is multiplied by this until the company migrates off the model.", ...range(0, 2, 0.05) },
+  "freeUsers.share": { label: "new free users (share of users)", help: "A wave of free users arrives the day it fires, as a share of the users there (0.25 = a quarter more), as far as the market has room.", ...range(0, 5, 0.05) },
+  "freeUsers.min": { label: "fewest new free users", help: "The wave brings at least this many free users, as far as the market has room.", ...range(0, 100_000, 100) },
 };
 
 /** Every editable number, with its default from the base config. The server's base is defaultConfig plus env. */
@@ -154,6 +165,21 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("ipo.swingAtMinFloat", "Money", "IPO", "First-day swing, smallest float", "How far luck can move the first day at the smallest float, about (0.2 = 20% either way): scarce shares swing further.", SHARE);
   add("ipo.swingAtMaxFloat", "Money", "IPO", "First-day swing, largest float", "The same at the largest float: plenty of shares make a steadier day.", SHARE);
   add("ipo.lowestClose", "Money", "IPO", "Lowest close", "The close is never below this share of the offer price.", SHARE);
+  add("negotiation.dieSides", "Money", "Negotiation", "Sides on the die", "Each counter is answered by a roll of a die with this many sides.", range(2, 100, 1));
+  add("negotiation.highFrom", "Money", "Negotiation", "High roll from", "A roll of this or more, after the penalty for asking a lot, moves the next offer most of the way to the counter.", range(1, 100, 1));
+  add("negotiation.middleFrom", "Money", "Negotiation", "Middle roll from", "A roll of this or more, but below a high roll, meets the counter about halfway.", range(1, 100, 1));
+  add("negotiation.greedPenalty", "Money", "Negotiation", "Penalty per 100% asked", "Taken off the roll for a counter asking 100% better terms, and in step for less: 30 is 3 per 10%.", range(0, 200, 1));
+  add("negotiation.maxAsk", "Money", "Negotiation", "Most a counter can ask", "The most a counter can ask for in all, as a share of the offer (0.5 = 50% better terms).", range(0.05, 5, 0.05));
+  add("negotiation.moves.high", "Money", "Negotiation", "High roll moves", "Share of the way from the offer to the counter the next offer moves on a high roll.", SHARE);
+  add("negotiation.moves.middle", "Money", "Negotiation", "Middle roll moves", "Share of the way the next offer moves on a middle roll.", SHARE);
+  add("negotiation.moves.low", "Money", "Negotiation", "Low roll moves", "Share of the way the next offer moves on a low roll.", SHARE);
+  add("rescue.breathingDays", "Money", "Rescue buyout", "Breathing space", "Days of losses the vulture VC's cash covers after the cost cuts, on top of what took cash below £0.", GAME_DAY);
+  add("rescue.minCover", "Money", "Rescue buyout", "Least cover a day", "The breathing space counts at least this share of a day's running costs, even if the company is losing less.", SHARE);
+  add("rescue.share", "Money", "Rescue buyout", "Share taken", "The vulture VC's share of the company once its new shares are issued (0.75 = 75%).", range(0.01, 0.99, 0.01));
+  add("rescue.staffCut", "Money", "Rescue buyout", "Staff cut", "Share of each team let go in the forced cost cuts, rounded up, the dearest grades first. Ops are kept to what the servers need.", SHARE);
+  add("rescue.buyBackPremium", "Money", "Rescue buyout", "Buy-back premium", "To sell its shares back, the vulture VC asks this many times its share of today's valuation, leaving out the company's cash.", MULTIPLIER);
+  add("rescue.minReturn", "Money", "Rescue buyout", "Least buy-back price", "The vulture VC never sells its shares back for less than this many times the cash it put in.", MULTIPLIER);
+
   add("billing.daysPerMonth", "Money", "", "Days in a billing month", "Monthly costs are charged a day at a time: the monthly cost ÷ this.", range(28, 31, 1));
   for (const m of MODEL_IDS) {
     const s = MODEL_LABELS[m];
@@ -229,10 +255,6 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add(`${g}.marketSize`, "Customers", s, "Market size", "Users the product can reach. Growth slows as users approach it.", range(1, 10_000_000, 1_000));
     add(`${g}.dailyGrowth`, "Customers", s, "Daily growth", "Share of users added each day while the market is wide open (0.05 = 5%).", range(0, 1, 0.005));
     add(`${g}.growthNoise`, "Customers", s, "Growth variation", "Daily growth varies randomly by up to this share either way.", SHARE);
-    add(`${g}.seasonalSpike.firstDay`, "Customers", s, "Seasonal spike: first day", "The day the first busy season starts.", GAME_DAY);
-    add(`${g}.seasonalSpike.every`, "Customers", s, "Seasonal spike: every (days)", "Days from the start of one busy season to the next.", GAME_DAY);
-    add(`${g}.seasonalSpike.length`, "Customers", s, "Seasonal spike: length (days)", "How many days each busy season lasts.", GAME_DAY);
-    add(`${g}.seasonalSpike.growthMultiplier`, "Customers", s, "Seasonal spike: growth multiplier", "Growth is multiplied by this during a busy season.", MULTIPLIER);
     add(`productTypes.${p}.pricing.freeShare`, "Customers", s, "Free share", "Share of users on the free tier, at the start and among new users at the fair price.", SHARE);
     add(`productTypes.${p}.pricing.conversionRate`, "Customers", s, "Free-to-paid conversion rate", "Share of free users who start paying each day, before features, uptime, satisfaction and price (0.004 = 0.4%).", range(0, 0.1, 0.0005));
     for (const t of CUSTOMER_TYPE_IDS) {
@@ -324,7 +346,6 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     const g = `productTypes.${p}.growth`;
     add(`${g}.loadPerUser`, "Infrastructure", product.name, "Load per user", "Load each user puts on the system per day.", range(0, 100, 0.1));
     add(`${g}.loadNoise`, "Infrastructure", product.name, "Load variation", "Daily load varies randomly by up to this share either way.", SHARE);
-    add(`${g}.seasonalSpike.loadMultiplier`, "Infrastructure", product.name, "Seasonal spike: load multiplier", "Load is multiplied by this during a busy season.", MULTIPLIER);
   }
   for (const p of PRODUCT_TYPE_IDS) {
     const product = base.productTypes[p];
@@ -419,12 +440,27 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     const name = l === "180-days" ? "the short game" : gameLengthName(base, l);
     add(`allowedGameLengths.${l}`, "Events", "Game length", `Allow ${name}`, "Students can pick this length when starting a company. A change only affects new games.", TOGGLE);
   }
+  add("timedFlow", "Events", "Game length", "Timed flow", "Time runs on its own, with pause and speed settings, and pauses itself when something needs the student. Off, students play each day (or week, in a career) with Continue. A change reaches games already being played.", TOGGLE);
+  for (const d of DIFFICULTY_IDS) {
+    add(`allowedDifficulties.${d}`, "Events", "Difficulty", `Allow ${DIFFICULTIES[d].name}`, `Students can pick this difficulty when starting a company. ${DIFFICULTIES[d].blurb} A change only affects new games.`, TOGGLE);
+  }
   add("encounters.dailyRise", "Events", "Danger meter", "Daily rise", "How much the danger meter rises on a well-run day after launch. A random event fires when it reaches the next threshold on the encounter list.", range(0, 20, 0.1));
   for (const r of DANGER_RISKS) {
     add(`encounters.riskRise.${r}`, "Events", "Danger meter", `Extra rise: ${RISK_LABELS[r]}`, "Added to the day's rise on a day with this risk.", range(0, 20, 0.1));
   }
   add("encounters.thresholdMin", "Events", "Danger meter", "Lowest threshold", "No event's threshold is lower: over the most a day can rise, the shortest gap between random events.", range(1, 365, 1));
   add("encounters.thresholdMax", "Events", "Danger meter", "Highest threshold", "No event's threshold is higher. Unlikely events get thresholds up to this.", range(1, 365, 1));
+  add("calendar.noticeDays", "Events", "Calendar", "Holiday notice (days)", "A holiday that hits the product is announced in the log this many days before it starts.", range(0, 90, 1));
+  for (const holiday of base.calendar.holidays) {
+    const at = `calendar.holidays.${holiday.id}`;
+    const s = holiday.name;
+    add(`${at}.days`, "Events", s, "Days it lasts", "Days it lasts every year, from its real start date.", range(1, 90, 1));
+    for (const p of PRODUCT_TYPE_IDS) {
+      const product = base.productTypes[p]?.name ?? p;
+      add(`${at}.effects.${p}.loadMultiplier`, "Events", s, `${product}: load multiplier`, "Load and CU and DBU demand are multiplied by this on each of its days.", MULTIPLIER);
+      add(`${at}.effects.${p}.growthMultiplier`, "Events", s, `${product}: growth multiplier`, "Growth is multiplied by this on each of its days: below 1, fewer sign-ups.", MULTIPLIER);
+    }
+  }
   for (const event of base.events) {
     const at = `events.${event.id}`;
     const s = event.name;
@@ -435,6 +471,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
       }
       add(`${at}.encounter.maxTimes`, "Events", s, "Most times per game", "After firing this many times it no longer goes on the encounter list.", range(0, 20, 1));
       add(`${at}.encounter.fromDay`, "Events", s, "Earliest day", "It can't go on an encounter list rolled before this day.", GAME_DAY);
+      add(`${at}.encounter.followsWithinDays`, "Events", s, "Only within days of what it follows", `It can only fire within this many days of the event it follows (${event.encounter.follows?.join(", ")}).`, GAME_DAY);
     }
     event.schedule?.days.forEach((_, i) => {
       add(`${at}.schedule.days.${i}`, "Events", s, `Fires on day (${i + 1})`, "A day it fires on in every game, outside the danger meter.", GAME_DAY);
@@ -446,8 +483,12 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     for (const m of MODEL_IDS) {
       if (!event.effects[m]) continue;
       for (const [rel, meta] of Object.entries(EFFECT_FIELDS)) {
-        for (const [prefix, when] of [["", ""], ["shortOfOps.", ", short of ops"]] as const) {
-          const help = prefix ? `Without enough ops: ${meta.help[0]!.toLowerCase()}${meta.help.slice(1)}` : meta.help;
+        for (const [prefix, when, lead] of [
+          ["", "", ""],
+          ["shortOfOps.", ", short of ops", "Without enough ops"],
+          ["unpatched.", ", patches overdue", "With patches overdue"],
+        ] as const) {
+          const help = lead ? `${lead}: ${meta.help[0]!.toLowerCase()}${meta.help.slice(1)}` : meta.help;
           add(`${at}.effects.${m}.${prefix}${rel}`, "Events", s, `${MODEL_LABELS[m]}${when}: ${meta.label}`, help, meta);
         }
       }
@@ -529,10 +570,18 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
       ]),
     ),
     ["encounters.thresholdMin", "encounters.thresholdMax", "The highest threshold can't be below the lowest."],
+    ["negotiation.middleFrom", "negotiation.highFrom", "A high roll can't start below a middle one."],
+    ["negotiation.highFrom", "negotiation.dieSides", "A high roll has to be possible on the die."],
+    ["negotiation.moves.low", "negotiation.moves.middle", "A middle roll can't move less than a low one."],
+    ["negotiation.moves.middle", "negotiation.moves.high", "A high roll can't move less than a middle one."],
   ];
   if (GAME_LENGTH_IDS.every((l) => config.allowedGameLengths[l] !== 1)) {
     const changed = GAME_LENGTH_IDS.find((l) => `allowedGameLengths.${l}` in overrides) ?? GAME_LENGTH_IDS[0];
     errors[`allowedGameLengths.${changed}`] = "At least one game length must be allowed.";
+  }
+  if (DIFFICULTY_IDS.every((d) => config.allowedDifficulties[d] !== 1)) {
+    const changed = DIFFICULTY_IDS.find((d) => `allowedDifficulties.${d}` in overrides) ?? "normal";
+    errors[`allowedDifficulties.${changed}`] = "At least one difficulty must be allowed.";
   }
   for (const [low, high, message] of pairs) {
     if ((getAt(config, high) as number) < (getAt(config, low) as number)) {

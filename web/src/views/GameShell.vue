@@ -31,6 +31,11 @@ watch(
   { immediate: true },
 );
 
+function changeSpeed(id: string) {
+  game.track("control", { control: "timed-speed", value: id });
+  game.setSpeed(id as NonNullable<typeof game.speed>["id"]);
+}
+
 function togglePlay() {
   game.track("control", { control: "timed-flow", value: game.playing ? "pause" : "play" });
   if (game.playing) game.pause();
@@ -77,21 +82,32 @@ async function closeMenu() {
         <span class="day-counter">
           <span class="label">Day</span>
           <strong data-testid="day">{{ game.company.day }} <small v-if="game.company.finalDay !== null">of {{ game.company.finalDay }}</small></strong>
+          <span class="date" data-testid="date">{{ game.company.calendar.today.text }}</span>
         </span>
         <div v-if="game.timedFlow && !game.over && !game.ipoApproved" class="timed-flow" data-testid="timed-flow">
           <!-- One button whose label changes, so keyboard focus stays on it. -->
           <button class="ghost play-pause" @click="togglePlay">
             {{ game.playing ? "Pause" : "Play" }}
           </button>
+          <select
+            class="speed"
+            aria-label="Speed"
+            data-testid="timed-speed"
+            :value="game.speed?.id"
+            @change="changeSpeed(($event.target as HTMLSelectElement).value)"
+          >
+            <option v-for="s in game.timedFlow.speeds" :key="s.id" :value="s.id">{{ s.name }}</option>
+          </select>
           <p class="muted timed-status" data-testid="timed-status">
-            <span v-if="game.playing" role="timer">Next day in {{ game.secondsLeft }}s</span>
-            <template v-else>Paused. A day plays every {{ game.timedFlow.seconds }}s.</template>
+            <span v-if="game.playing" role="timer">Next {{ game.tickName }} in {{ game.secondsLeft }}s</span>
+            <template v-else>Paused. A {{ game.tickName }} plays every {{ game.speed?.seconds }}s.</template>
           </p>
         </div>
         <button
           class="continue"
           :disabled="game.busy || game.over || game.playing || game.ipoApproved"
           :title="game.over ? 'This game has ended' : game.ipoApproved ? 'Ring the opening bell first' : undefined"
+          :aria-label="game.tickName === 'week' ? 'Continue a week' : 'Continue'"
           @click="game.continueDay()"
         >
           Continue
@@ -115,14 +131,26 @@ async function closeMenu() {
         </p>
       </div>
       <p v-if="game.error" class="error game-error" role="alert">{{ game.error }}</p>
+      <div v-if="game.pauses.length && !game.over" class="pause-reasons" role="status" data-testid="pause-reasons">
+        <span class="badge">Paused</span>
+        <p>
+          <strong>Time stopped on day {{ game.pausedOnDay }}, {{ game.company.calendar.today.text }},</strong> because
+          something needs you:
+        </p>
+        <ul>
+          <li v-for="p in game.pauses" :key="p.id">{{ p.text }}</li>
+        </ul>
+      </div>
       <div v-if="game.lowCash && game.runway" class="low-cash" role="status" data-testid="low-cash">
         <span class="badge">Low cash</span>
         <p>
           <strong>
             {{ game.runway.days ? `Cash runs out in about ${days(game.runway.days)}.` : "Cash runs out on the next day you play." }}
           </strong>
-          You're losing {{ formatCash(-game.runway.dailyNet) }} a day and have {{ formatCash(game.company.cash) }}. Below £0
-          the game ends, and the bank won't lend once you've gone under.
+          You're losing {{ formatCash(-game.runway.dailyNet) }} a day and have {{ formatCash(game.company.cash) }}. <template v-if="game.company.rescue">Below £0
+            again there's no second rescue: it's liquidation, and the game ends.</template>
+          <template v-else>Below £0 a vulture VC rescues the company, but takes most of it; a second time is
+            liquidation.</template>
           <template v-if="game.company.loanQuote">
             Take a {{ formatCash(game.company.loanQuote.amount) }} bank loan now, or cut costs: let staff go or drop servers.
           </template>

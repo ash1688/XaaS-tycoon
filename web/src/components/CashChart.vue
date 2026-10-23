@@ -4,7 +4,7 @@ import { SPEND_CATEGORIES, type SummaryDay } from "@xaas/sim";
 import { formatCash } from "../api";
 import { dayTicks, formatAxisCash, niceTicks, useWidth } from "../chart";
 
-// Cash left at the end of each day, as a line on the same day axis as the cost chart. Below £0 is bankruptcy.
+// Cash left at the end of each day, as a line on the same day axis as the cost chart. Below £0 is a rescue buyout the first time, and liquidation the second.
 const props = defineProps<{ days: SummaryDay[]; finalDay: number | null }>();
 
 const el = ref<HTMLElement>();

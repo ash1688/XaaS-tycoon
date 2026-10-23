@@ -159,6 +159,7 @@ describe("applying and the cold market", () => {
     expect(refusal(() => s.applyAction(approved, { type: "applyForIpo" }))).toBe("ipo_approved");
     // The game holds at the offer until the bell is rung.
     expect(refusal(() => s.advance(approved))).toBe("ring_the_bell");
+    expect(refusal(() => s.tick(approved))).toBe("ring_the_bell");
   });
 
   it("postpones a cold market by about 30 days, with satisfaction lost, then lets the company try again", () => {

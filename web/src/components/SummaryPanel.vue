@@ -39,11 +39,18 @@ const biggest = computed(() =>
     <p class="muted">
       <template v-if="summary.ending === 'completed'">Played all {{ summary.finalDay }} days</template>
       <template v-else-if="summary.ending === 'ipo'">Floated on {{ dayOf(summary.day, summary.finalDay) }}</template>
-      <template v-else-if="summary.ending === 'bankrupt'">Ran out of cash on {{ dayOf(summary.day, summary.finalDay) }}</template>
+      <template v-else-if="summary.ending === 'liquidation'">
+        Went into liquidation on {{ dayOf(summary.day, summary.finalDay) }}
+      </template>
       <template v-else-if="summary.ending === 'ended'">Ended by the teacher on {{ dayOf(summary.day, summary.finalDay) }}</template>
       <template v-else-if="retired">Retired on {{ dayOf(summary.day, summary.finalDay) }}</template>
       <template v-else>So far: {{ dayOf(summary.day, summary.finalDay) }}</template>
       · ended on {{ modelName }}
+    </p>
+    <p v-if="summary.rescue" class="muted" data-testid="summary-rescue">
+      Rescued by a vulture VC on day {{ summary.rescue.day }}: {{ formatCash(summary.rescue.amount) }} for
+      {{ Math.round(summary.rescue.share * 100) }}% of the company<template v-if="summary.rescue.boughtBack">,
+        bought back on day {{ summary.rescue.boughtBack.day }} for {{ formatCash(summary.rescue.boughtBack.price) }}</template>.
     </p>
 
     <div :class="['summary-headline', loss ? 'loss' : 'profit']" data-testid="summary-headline">

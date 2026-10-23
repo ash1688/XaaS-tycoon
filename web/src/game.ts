@@ -1,10 +1,13 @@
 // The game being played: loaded once by the game shell and shared with its pages, cards and modals through
 // provide/inject, so switching page never re-fetches the company. Reactive, so templates read its refs unwrapped.
 import { computed, inject, onUnmounted, provide, reactive, ref, watch, type InjectionKey } from "vue";
-import type { DayLog, EventView, FeatureGapView, LayerId, ModelId, StaffGrade, StaffPool, UnitTier } from "@xaas/sim";
-import type { ActionBody, CompanyView, MetaView, SummaryView } from "@xaas/server/api-types";
+import type { DayLog, EventView, FeatureGapView, LayerId, ModelId, PauseReason, StaffGrade, StaffPool, UnitTier } from "@xaas/sim";
+import type { ActionBody, CompanyView, MetaView, SummaryView, TimedFlowSpeedView } from "@xaas/server/api-types";
 import { api, RequestError } from "./api";
 import { createUiLog } from "./playLog";
+
+/** Where the student's timed flow speed is kept, in their browser. */
+const SPEED_KEY = "xaas-timed-speed";
 
 export const days = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
 
@@ -69,14 +72,14 @@ export function createGame(code: string, id: string) {
   // The add-ons left behind by a migration that completed today, shown with the features until the next day.
   const leftBehind = ref<string[]>([]);
 
-  const bankrupt = computed(() => company.value?.status === "bankrupt");
+  const liquidated = computed(() => company.value?.status === "liquidated");
   const finished = computed(() => company.value?.status === "finished");
   const retired = computed(() => company.value?.status === "retired");
   // The IPO: approved, the game holds until the opening bell is rung; floated, the game is over.
   const ipoApproved = computed(() => company.value?.ipo.status === "approved");
   const floated = computed(() => company.value?.ipo.status === "floated");
-  // Once the game is over, bankrupt, played to the end or retired, it's read-only and Home shows its summary.
-  const over = computed(() => bankrupt.value || finished.value || retired.value);
+  // Once the game is over, liquidated, played to the end, floated or retired, it's read-only and Home shows its summary.
+  const over = computed(() => liquidated.value || finished.value || retired.value);
   const summary = ref<SummaryView>();
 
   // Staff by grade. Needs (ops needed, the configuration team, support to keep up) count work in mids, so a team of
@@ -232,10 +235,16 @@ export function createGame(code: string, id: string) {
     return act(action);
   }
 
+  // Why time last stopped by itself, and the day it stopped on: shown until the next tick is played.
+  const pauses = ref<PauseReason[]>([]);
+  const pausedOnDay = ref(0);
+
+  /** Plays one tick: a day, or a week in a career, which stops early on the day something needs the student. */
   async function continueDay() {
     if (over.value || ipoApproved.value) return;
     busy.value = true;
     error.value = "";
+    pauses.value = [];
     try {
       const before = company.value?.model;
       const users = company.value?.users;
@@ -250,6 +259,8 @@ export function createGame(code: string, id: string) {
       previousSatisfaction.value = satisfaction;
       company.value = result.company;
       dayLogs.value = [...dayLogs.value, ...result.log];
+      pauses.value = result.pauses;
+      pausedOnDay.value = result.company.day;
       if (over.value) await loadSummary();
     } catch (e) {
       await showError(e);
@@ -258,22 +269,52 @@ export function createGame(code: string, id: string) {
     }
   }
 
-  // Timed flow, off unless the server turns it on: plays a day every few seconds through the same continue as the
-  // button. The next day is only scheduled once the last one has come back, so requests never overlap.
+  // Timed flow, on unless the server or teacher switches it off: plays a tick every few seconds through the same
+  // continue as the button, and pauses itself when the sim says something needs the student. The next tick is only
+  // scheduled once the last one has come back, so requests never overlap.
   const timedFlow = computed(() => (meta.value?.timedFlow.enabled ? meta.value.timedFlow : undefined));
   const playing = ref(false);
   const secondsLeft = ref(0);
+  const speedId = ref<TimedFlowSpeedView["id"]>(storedSpeed());
+  const speed = computed(() => timedFlow.value?.speeds.find((s) => s.id === speedId.value) ?? timedFlow.value?.speeds[1]);
+  /** "day", or "week" in a career: what one tick plays. */
+  const tickName = computed(() => (company.value?.tickDays === 7 ? "week" : "day"));
   let deadline = 0;
   let timer: number | undefined;
-  // A timed day's request is in flight.
+  // A timed tick's request is in flight.
   let ticking = false;
   // Paused because the tab was hidden, so it carries on when the student comes back.
   let hiddenWhilePlaying = false;
 
+  function storedSpeed(): TimedFlowSpeedView["id"] {
+    try {
+      const stored = localStorage.getItem(SPEED_KEY);
+      if (stored === "slow" || stored === "normal" || stored === "fast" || stored === "fastest") return stored;
+    } catch {
+      // Storage blocked: the normal speed.
+    }
+    return "normal";
+  }
+
+  /** Changes the speed, from the next tick on (the countdown restarts at the new speed). */
+  function setSpeed(id: TimedFlowSpeedView["id"]) {
+    speedId.value = id;
+    try {
+      localStorage.setItem(SPEED_KEY, id);
+    } catch {
+      // Kept for this page only.
+    }
+    if (timer) {
+      clearTimer();
+      schedule();
+    }
+  }
+
   function schedule() {
-    deadline = Date.now() + timedFlow.value!.seconds * 1000;
-    secondsLeft.value = Math.ceil(timedFlow.value!.seconds);
-    timer = window.setInterval(tick, 250);
+    const seconds = speed.value!.seconds;
+    deadline = Date.now() + seconds * 1000;
+    secondsLeft.value = Math.ceil(seconds);
+    timer = window.setInterval(tick, 100);
   }
 
   function clearTimer() {
@@ -293,14 +334,15 @@ export function createGame(code: string, id: string) {
     } finally {
       ticking = false;
     }
-    // Stops when the game ends or the day failed (its message stays on screen).
-    if (over.value || error.value) pause();
+    // Stops when the game ends, the tick failed (its message stays on screen) or something needs the student.
+    if (over.value || error.value || pauses.value.length) pause();
     else if (playing.value && !timer) schedule();
   }
 
   function play() {
     if (!timedFlow.value || over.value || ipoApproved.value) return;
     playing.value = true;
+    pauses.value = [];
     if (!timer && !ticking) schedule();
   }
 
@@ -350,7 +392,7 @@ export function createGame(code: string, id: string) {
     currentModel,
     previousModel,
     leftBehind,
-    bankrupt,
+    liquidated,
     finished,
     retired,
     ipoApproved,
@@ -402,6 +444,11 @@ export function createGame(code: string, id: string) {
     timedFlow,
     playing,
     secondsLeft,
+    speed,
+    tickName,
+    setSpeed,
+    pauses,
+    pausedOnDay,
     play,
     pause,
     track: uiLog.track,

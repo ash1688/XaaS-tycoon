@@ -4,6 +4,7 @@ import type {
   ApiError,
   CodeView,
   CompanyView,
+  CounterOddsView,
   EndGamesResult,
   ContinueResult,
   LogDeleteResult,
@@ -79,6 +80,13 @@ export const api = {
     request<PricePreviewView>(
       "GET",
       `/api/codes/${enc(code)}/companies/${enc(id)}/price-preview?price=${enc(String(price))}`,
+    ),
+
+  // What a counter to a funder's offer would do, for the negotiation modal's live odds. Changes nothing.
+  counterOdds: (code: string, id: string, funder: string, terms: Record<string, number>) =>
+    request<CounterOddsView>(
+      "GET",
+      `/api/codes/${enc(code)}/companies/${enc(id)}/counter-odds?${new URLSearchParams({ funder, ...Object.fromEntries(Object.entries(terms).map(([k, v]) => [k, String(v)])) })}`,
     ),
 
   teacherLogin: (password: string) => request<{ ok: true }>("POST", "/api/teacher/login", { password }),
