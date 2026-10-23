@@ -64,6 +64,8 @@ export interface CounterOdds {
 /** The most offers a negotiation has: the opening, and one after each of two counters. */
 export const MAX_OFFERS = 3;
 
+/** A share as a percent, to a tenth where a whole percent would hide it: 50.2%, not 50%. */
+const percent = (n: number) => `${Math.round(n * 1000) / 10}%`;
 const roundTo = (n: number, step: number) => Number((Math.round(n / step) * step).toPrecision(12));
 
 /**
@@ -92,6 +94,8 @@ export function createNegotiation(config: NegotiationConfig) {
   function check(offer: Terms, asked: Partial<Terms>, specs: TermSpec[]): { counter: Terms; ask: number } {
     const counter: Terms = { ...offer };
     let ask = 0;
+    // A counter has to move at least one term by its step, or it would spend a roll on nothing.
+    let moved = false;
     for (const spec of specs) {
       const value = asked[spec.key] ?? offer[spec.key]!;
       const was = offer[spec.key]!;
@@ -107,13 +111,15 @@ export function createNegotiation(config: NegotiationConfig) {
         throw new SimError("bad_counter", `${spec.label[0]!.toUpperCase()}${spec.label.slice(1)} can't go below ${spec.min}.`);
       }
       counter[spec.key] = value;
+      if (gain >= spec.step - 1e-9) moved = true;
       if (was !== 0) ask += gain / Math.abs(was);
     }
     if (ask <= 1e-9) throw new SimError("empty_counter", "That counter asks for the terms already offered: ask for something better.");
+    if (!moved) throw new SimError("empty_counter", "That counter asks for too little to change the offer: ask for something better.");
     if (ask > maxAsk + 1e-9) {
       throw new SimError(
         "counter_too_far",
-        `That counter asks for ${Math.round(ask * 100)}% better terms in all; the most a counter can ask is ${Math.round(maxAsk * 100)}%.`,
+        `That counter asks for ${percent(ask)} better terms in all; the most a counter can ask is ${percent(maxAsk)}.`,
         { ask, maxAsk },
       );
     }

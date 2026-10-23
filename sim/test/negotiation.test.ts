@@ -136,6 +136,10 @@ describe("negotiating friends and family's offer", () => {
       "bad_counter",
     );
     expect(refusal(() => counterFf(state, { amount: Number.NaN }))).toBe("bad_counter");
+    // Less than a step on every term would spend a roll on nothing.
+    expect(refusal(() => counterFf(state, { amount: opening!.amount + 0.5 }))).toBe("empty_counter");
+    // Just over the most is said as such, not rounded down to it.
+    expect(() => counterFf(state, { share: opening!.share * 0.498 })).toThrow(/asks for 50.2% better terms in all; the most a counter can ask is 50%/);
   });
 
   it("doesn't change the rest of the game: the game's own random sequence is untouched", () => {

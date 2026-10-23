@@ -724,7 +724,7 @@ function fundingLines(sim: Sim, state: GameState): string[] {
   const ff = f.friendsAndFamilyOffer;
   if (ff) {
     lines.push(
-      `friends and family (accept ff): ${money(ff.amount)} for ${ff.newShares.toLocaleString("en-GB")} new shares at ${perShare(ff.sharePrice)} (valuation ${money(ff.valuation)}). ` +
+      `friends and family (accept ff): ${money(ff.amount)} for ${ff.newShares.toLocaleString("en-GB")} new shares at ${perShare(ff.sharePrice)} (${f.negotiations.friendsAndFamily?.rounds.length ? "the price they're paying values the company at" : "valuation"} ${money(ff.valuation)}). ` +
         `They'd own ${stake(ff.theirShare)}; you'd go from ${stake(ff.yourShareBefore)} to ${stake(ff.yourShareAfter)}. Paid now, no target. ` +
         `Negotiation: ${standing(f.negotiations.friendsAndFamily!)}.`,
       ...negotiationLines("friendsAndFamily", f.negotiations.friendsAndFamily),
