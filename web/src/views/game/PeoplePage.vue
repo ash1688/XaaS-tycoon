@@ -63,8 +63,18 @@ const game = useGame();
             <td>{{ g.output }}× a mid's</td>
             <td>{{ g.leadDays === 0 ? "at once" : days(g.leadDays) + " after hiring" }}</td>
           </tr>
+          <tr data-testid="agency-terms">
+            <th scope="row">Agency</th>
+            <td>{{ game.meta.agency.payMultiplier }}× the same grade's</td>
+            <td>{{ game.meta.agency.output }}× the same grade's</td>
+            <td>{{ game.meta.agency.leadDays === 0 ? "at once" : days(game.meta.agency.leadDays) + " after hiring" }}</td>
+          </tr>
         </tbody>
       </table>
+      <p class="muted" data-testid="severance-terms">
+        Agency staff are the dear way to cover a short gap: they start soon and go with no severance. Letting go permanent
+        staff pays them {{ game.meta.severanceDays === 1 ? "a day's" : `${game.meta.severanceDays} days'` }} pay each in severance, at once.
+      </p>
     </section>
   </div>
 </template>

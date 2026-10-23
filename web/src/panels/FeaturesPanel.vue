@@ -6,6 +6,12 @@ import { namesList, useGame } from "../game";
 // Features to build, one at a time, or on SaaS the add-on shop.
 const game = useGame();
 const growthBoost = (multiplier: number) => `+${Math.round(100 * (multiplier - 1))}% growth`;
+/** The customer types a feature pulls in among new users: " · pulls in professionals". */
+const pulls = (appeal?: Partial<Record<string, number>>) => {
+  const types = game.company?.customerMix.types ?? [];
+  const names = Object.keys(appeal ?? {}).map((id) => types.find((t) => t.id === id)?.name.toLowerCase() ?? id);
+  return names.length ? ` · pulls in ${namesList(names)}` : "";
+};
 // Built features, or add-ons bought on SaaS.
 const activeCount = computed(
   () => game.company?.features.filter((f) => f.status === "built" || f.status === "addon").length ?? 0,
@@ -68,10 +74,10 @@ const activeCount = computed(
             <strong :id="`feature-${feature.id}`">{{ feature.name }}</strong>
             <span class="muted">{{ feature.blurb }}</span>
             <span v-if="game.onSaas" class="muted feature-cost" :data-testid="`addon-price-${feature.id}`">
-              {{ formatPrice(feature.addonPricePerUser) }} per user a month · {{ growthBoost(feature.growthMultiplier) }}
+              {{ formatPrice(feature.addonPricePerUser) }} per user a month · {{ growthBoost(feature.growthMultiplier) }}{{ pulls(feature.appeal) }}
             </span>
             <span v-else class="muted feature-cost">
-              {{ feature.devDays }} developer-days · {{ growthBoost(feature.growthMultiplier) }}
+              {{ feature.devDays }} developer-days · {{ growthBoost(feature.growthMultiplier) }}{{ pulls(feature.appeal) }}
             </span>
           </div>
           <span v-if="feature.status === 'built'" class="badge built-badge">Built</span>

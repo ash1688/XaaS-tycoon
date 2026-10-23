@@ -15,7 +15,7 @@ const cuts = computed(() => {
   const people = r.cuts.map((c) => {
     const pool = pools.find((p) => p.pool === c.pool);
     const grade = pool?.grades.find((g) => g.grade === c.grade)?.name.toLowerCase() ?? c.grade;
-    return `${c.count} ${grade} ${pool?.name.toLowerCase() ?? c.pool}`;
+    return `${c.count} ${c.agency ? "agency " : ""}${grade} ${pool?.name.toLowerCase() ?? c.pool}`;
   });
   return r.hiresCancelled ? [...people, `${r.hiresCancelled} hire${r.hiresCancelled === 1 ? "" : "s"} still to start`] : people;
 });
@@ -31,14 +31,15 @@ const cuts = computed(() => {
     </div>
     <p data-testid="rescue-terms">
       Cash ran out on day {{ rescue.day }}, and a vulture VC rescued the company. It put in
-      <strong>{{ formatCash(rescue.amount) }}</strong>: {{ formatCash(rescue.losses) }} to cover the losses, and the rest
-      for breathing space. For it, it took <strong>{{ rescue.shares.toLocaleString("en-GB") }} new shares</strong>,
+      <strong>{{ formatCash(rescue.amount) }}</strong>: {{ formatCash(rescue.losses) }} to cover the losses,<template v-if="rescue.severance">
+        {{ formatCash(rescue.severance) }} for severance,</template> and the rest for breathing space. For it, it took <strong>{{ rescue.shares.toLocaleString("en-GB") }} new shares</strong>,
       {{ formatShare(rescue.share) }} of the company.
     </p>
     <p data-testid="rescue-cuts">
       <template v-if="cuts.length">
         Forced cost cuts: it let go {{ cuts.join(", ") }}<template v-if="rescue.savedPerDay">
-          , saving {{ formatCash(rescue.savedPerDay) }} a day</template>.
+          , saving {{ formatCash(rescue.savedPerDay) }} a day</template><template v-if="rescue.severance">
+          and paying {{ formatCash(rescue.severance) }} in severance</template>.
       </template>
       <template v-else>Forced cost cuts: none, as the team was already as lean as it would go.</template>
     </p>

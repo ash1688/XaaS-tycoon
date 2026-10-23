@@ -34,7 +34,8 @@ npm run -s play -- summary <game>
   alert (capacity over 100%, satisfaction falling below the poor mark, the grant withdrawn, paid API calls starting
   to be dropped), a new offer, cash about to run out, or something finished (a feature
   built, the launch over, servers ready, a migration step, the grant's condition met). The text interface also
-  stops for a new risk on the danger meter, staff starting, satisfaction falling hard and the price lock ending.
+  stops for a new risk on the danger meter, staff starting, satisfaction falling hard, reports going unhandled and the price lock
+  ending.
   Any commands after a stop are not run, and each says so ("not run: time stopped"). Events that need nothing from
   you are shown but don't stop time. Each advance ends with how the users changed, and each day shows paying users
   lost to a dear price, poor support or downtime.
@@ -43,6 +44,14 @@ npm run -s play -- summary <game>
 - Staff come in junior, mid and senior grades, each with its own pay and work a day, and each takes days to start
   after hiring (shown under staff until they do). `hire <pool> [grade] [n]` and `letgo <pool> [grade] [n]` take a
   grade; without one it's mids. Time also stops when hires start.
+- Add `agency` before the grade for **agency staff** (`hire support agency 2`, `letgo support agency 2`): they start
+  the next day, cost 1.25× and do half the work of permanent staff of the same grade, and go with no severance. They're
+  listed apart from permanent staff. Letting go **permanent staff** pays their severance at once (shown per grade under
+  staff, and on the `letgo` line); it's refused if you haven't the cash. `move` only moves permanent staff.
+- On a social network or video platform, users post content and report some of it. **Moderators** are a fourth
+  staff pool there (not on an e-commerce shop): `hire moderators [grade] [n]`. The status shows the reports a day,
+  what your moderators handle and what's left unhandled. Unhandled reports pull satisfaction down and raise the odds
+  of a lawsuit (shown as a multiplier).
 - Random events come from an encounter system. The **danger meter** in `look` rises every day after launch and goes
   back to 0 when a random event fires. It creeps on a well-run day and climbs faster with risky play: servers going
   unpatched (fewer ops than your setup needs, on on-prem or IaaS), capacity overloaded, or unhappy customers. Which
@@ -55,6 +64,10 @@ npm run -s play -- summary <game>
 - `preview <price>` and `quote <model>` show what a price change or migration would do without doing it.
   A price rise's reaction is each customer type's reaction weighted by its share of users: the status shows your
   customer mix, each type's price threshold, and `!` where your price is over it.
+- The mix shifts. `new users join as` shows the mix new users arrive in: the product's own, tilted by your features
+  (each pulls a customer type, shown in `features` as `[pulls ...]`) and your price (above a type's threshold, fewer
+  of that type join). A rise loses casual users first, and downtime drives businesses and professionals out. A
+  pricier company ends up more professional, so its next rise hurts less.
 - `valuation` shows what your company is worth, what's pushing it up or down, and who owns it. `funding` shows the
   friends and family and grant offers in full; `accept ff`, `accept grant`, `decline ff` and `decline grant` answer
   them, once each. Either can be negotiated first: `counter ff amount 18000 share 18` asks friends and family for more

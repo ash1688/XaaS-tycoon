@@ -263,6 +263,11 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     }
     for (const f of product.features) {
       add(`productTypes.${p}.features.${f.id}.growthMultiplier`, "Customers", s, `${f.name}: growth multiplier`, "Once built or bought, daily growth is multiplied by this (1.1 = 10% faster).", range(0, 5, 0.01));
+      for (const t of CUSTOMER_TYPE_IDS) {
+        if (f.appeal?.[t] === undefined) continue;
+        const type = base.customerTypes?.[t]?.name ?? t;
+        add(`productTypes.${p}.features.${f.id}.appeal.${t}`, "Customers", s, `${f.name}: appeal to ${type.toLowerCase()}`, "Once built or bought, this customer type's weight among new users is multiplied by this (1.5 = half as many again). 1 for no effect.", MULTIPLIER);
+      }
     }
   }
   add("outage.growthMultiplier", "Customers", "", "Growth on an outage day", "Growth is multiplied by this on a day with an outage.", SHARE);
@@ -270,6 +275,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("pricing.growthSensitivity", "Customers", "", "Price effect on growth", "Growth is multiplied by (price ÷ fair price) to minus this. 0 for no effect.", range(0, 5, 0.05));
   add("pricing.maxGrowthBoost", "Customers", "", "Most a low price speeds growth", "A price below the fair price multiplies growth by at most this.", range(1, 10, 0.05));
   add("pricing.paidShareSensitivity", "Customers", "", "Price effect on new payers", "The paid share of new users is multiplied by (price ÷ fair price) to minus this.", range(0, 5, 0.05));
+  add("pricing.newUserFilter", "Customers", "", "Price effect on who joins", "Above a customer type's price threshold, its weight among new users is multiplied by (price ÷ threshold) to minus this, so a dear price brings fewer casual users. 0 for no effect.", range(0, 5, 0.05));
 
   // Customers: customer types
   for (const t of CUSTOMER_TYPE_IDS) {
@@ -277,6 +283,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     if (!type) continue;
     add(`customerTypes.${t}.thresholdMultiple`, "Customers", "Customer types", `${type.name}: price threshold`, "The price at which this type starts to react badly, as a multiple of the product's fair price. A rise and a high price are measured against it.", range(0.1, 20, 0.05));
     add(`customerTypes.${t}.toFreeShare`, "Customers", "Customer types", `${type.name}: drop to free share`, "Of this type's paying users a price rise loses, the share who drop to free. The rest leave.", SHARE);
+    add(`customerTypes.${t}.outageLeavePerHour`, "Customers", "Customer types", `${type.name}: users lost per hour down`, "Share of this type's users, paying or free, who leave for each hour of downtime (0.01 = 1%), on top of the payers every type loses. Poor uptime drives the type out.", range(0, 0.1, 0.0005));
   }
 
   // Customers: price waves and the price lock
@@ -338,6 +345,17 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("support.growthAtZero", "Customers", "Support", "Growth at 0% satisfaction", "Daily growth is multiplied by this at 0% satisfaction, rising to 1 at good satisfaction.", SHARE);
   add("support.churnAtZero", "Customers", "Support", "Churn at 0% satisfaction", "Share of users who leave each day at 0% satisfaction, falling to none at good satisfaction.", range(0, 0.5, 0.001));
   add("support.paidChurnAtZero", "Customers", "Support", "Payers lost at 0% satisfaction", "On top, the share of paying users who stop paying each day at 0% satisfaction, falling to none at good satisfaction.", range(0, 0.5, 0.001));
+
+  // Customers: reports on user content and moderators, on products with user content
+  for (const p of PRODUCT_TYPE_IDS) {
+    const product = base.productTypes[p];
+    if (!product?.moderation) continue;
+    add(`productTypes.${p}.moderation.reportsPerUser`, "Customers", product.name, "Reports per user", "Reports on user content each user raises a day, paying or free (0.002 = 2 per 1,000 users).", TICKET_RATE);
+  }
+  add("moderation.reportsPerPerson", "Customers", "Moderation", "Reports per moderator", "Reports one mid moderator handles a day.", range(1, 10_000, 1));
+  add("moderation.backlogPerUserAtZero", "Customers", "Moderation", "Unhandled reports per user for 0% satisfaction", "Unhandled reports pull the satisfaction target down in a straight line, to 0% at this many per user (0.05 = 1 per 20).", range(0.001, 1, 0.001));
+  add("moderation.lawsuitOddsAtZero", "Customers", "Moderation", "Lawsuit odds at the worst", "Lawsuit odds are multiplied by this at that many unhandled reports per user, rising from 1 at none.", range(1, 20, 0.1));
+  add("moderation.warnShare", "Customers", "Moderation", "Unhandled reports worth logging", "Unhandled reports are logged once they take this share off the satisfaction target.", SHARE);
 
   // Infrastructure
   for (const p of PRODUCT_TYPE_IDS) {
@@ -408,6 +426,10 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add(`staffGrades.${grade}.output`, "People", `${g} staff`, "Output", "Work a day as a multiple of a mid's: developer-days, tickets cleared, or cover towards ops needed.", MULTIPLIER);
     add(`staffGrades.${grade}.leadDays`, "People", `${g} staff`, "Lead time (days)", "Days from hiring to starting work (0 = at once). They're paid only once they start.", range(0, 60, 1));
   }
+  add("agency.payMultiplier", "People", "Agency staff", "Pay multiplier", "Agency staff's pay as a multiple of a permanent member of the same grade's.", MULTIPLIER);
+  add("agency.output", "People", "Agency staff", "Output", "Agency staff's work a day as a multiple of a permanent member of the same grade's.", MULTIPLIER);
+  add("agency.leadDays", "People", "Agency staff", "Lead time (days)", "Days from hiring agency staff to their starting work, whatever the grade (0 = at once, 1 = the next day).", range(0, 60, 1));
+  add("severance.days", "People", "", "Severance (days of pay)", "Letting go permanent staff pays each this many days of their pay at once. Agency staff get none.", range(0, 365, 1));
   for (const m of MODEL_IDS) {
     add(`models.${m}.opsNeeded`, "People", MODEL_LABELS[m], "Ops needed", "Ops staff this model needs to keep the service running, however big it gets. Too few cuts capacity on a model with servers.", HEADCOUNT);
     for (const t of SERVER_TYPES) {

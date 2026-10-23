@@ -185,7 +185,8 @@ describe("valuation", () => {
   });
 
   it("doesn't count the launch ramp's users arriving as growth", () => {
-    const ramping = begin();
+    // Moderators enough for the social network's reports, so its users grow steadily after the ramp.
+    const ramping = { ...begin(), staff: { ...begin().staff, moderators: { junior: 0, mid: 2, senior: 0 } } };
     expect(sim.launch(ramping).status).toBe("launching");
     expect(sim.valuation({ ...ramping, paidUsers: ramping.paidUsers * 5 }).growth).toBe(0);
     const launched = sim.advance(ramping, 5).state;

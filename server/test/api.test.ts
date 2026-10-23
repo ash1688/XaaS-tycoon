@@ -111,6 +111,7 @@ const sim = createSim({
     developers: { ...defaultConfig.staff.developers, dayRate: 10, startingCount: 0 },
     ops: { ...defaultConfig.staff.ops, dayRate: 4, startingCount: 0 },
     support: { ...defaultConfig.staff.support, dayRate: 3, startingCount: 0 },
+    moderators: { ...defaultConfig.staff.moderators, dayRate: 2, startingCount: 0 },
   },
   // Mids (the default hire) and seniors start at once, so tests needn't wait; juniors wait 3 days, to test lead times.
   staffGrades: {
@@ -536,6 +537,30 @@ describe("staff actions", () => {
     expect(played.company.cash).toBe(1000 - 45);
   });
 
+  it("hires moderators only on a product with user content, and shows its reports", async () => {
+    const { code, act } = await setup();
+    const refused = await act({ type: "hire", pool: "moderators" });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toMatchObject({ error: "no_content" });
+    const shop = (await act({ type: "hire", pool: "support" })).json<CompanyView>();
+    expect(shop).toMatchObject({ moderators: 0, moderation: null });
+    expect(shop.staff.map((p) => p.pool)).not.toContain("moderators");
+
+    const social = (await newCompany(code, { name: "Chatter", productType: "social", model: "saas" })).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${social.id}`;
+    expect(social.staff.map((p) => p.pool)).toContain("moderators");
+    expect(social.moderation).toMatchObject({ backlog: 0, dailyClearance: 0, lawsuitOdds: 1 });
+    // With no moderators, the reports the users raise go unhandled, and the lawsuit odds rise.
+    const played = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>().company;
+    expect(played.moderation!.reportsToday).toBeGreaterThan(0);
+    expect(played.moderation!.backlog).toBe(played.moderation!.reportsToday);
+    expect(played.moderation!.lawsuitOdds).toBeGreaterThan(1);
+    const hired = await app.inject({ method: "POST", url: `${url}/actions`, payload: { type: "hire", pool: "moderators", count: 2 } });
+    expect(hired.json<CompanyView>()).toMatchObject({ moderators: 2, moderation: { dailyClearance: 2 * defaultConfig.moderation.reportsPerPerson } });
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.reportsPerPerson).toBe(defaultConfig.moderation.reportsPerPerson);
+  });
+
   it("rejects letting go below zero with 400 and changes nothing", async () => {
     const { url, act } = await setup();
     const res = await act({ type: "letGo", pool: "ops" });
@@ -589,6 +614,35 @@ describe("staff actions", () => {
     expect(played!.company).toMatchObject({ day: 4, support: 3, dailyStaffCost: 8 });
     expect(played!.log[0]!.entries).toContainEqual({ text: "2 junior support staff started work.", cashDelta: 0, kind: "staff" });
     expect((await act({ type: "hire", pool: "support", grade: "intern" })).statusCode).toBe(400);
+  });
+
+  it("hires agency staff for the next day, shown apart, and charges severance only for permanent staff", async () => {
+    const { url, act } = await setup();
+    // An agency mid in support is £3 × 1.25 = £3.75, rounded to £4, and does half a mid's work.
+    const hired = (await act({ type: "hire", pool: "support", agency: true, count: 2 })).json<CompanyView>();
+    expect(hired.staff.find((p) => p.pool === "support")).toMatchObject({
+      headcount: 0,
+      agencyCount: 0,
+      hiring: [{ grade: "mid", count: 2, agency: true, arrivesOn: 2, daysLeft: 1 }],
+    });
+    const played = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    expect(played.company).toMatchObject({ support: 0, dailyStaffCost: 8, dailyClearance: 30 });
+    expect(played.company.staff.find((p) => p.pool === "support")).toMatchObject({
+      agencyCount: 2,
+      output: 1,
+      agency: [{ grade: "junior", count: 0 }, { grade: "mid", count: 2, dayRate: 4, output: 0.5, severance: 0 }, { grade: "senior", count: 0 }],
+    });
+    expect(played.log[0]!.entries).toContainEqual({ text: "Agency support staff pay (2 mids)", cashDelta: -8, category: "staff" });
+
+    const cash = played.company.cash;
+    const agencyGone = (await act({ type: "letGo", pool: "support", agency: true, count: 2 })).json<CompanyView>();
+    expect(agencyGone).toMatchObject({ cash, dailyStaffCost: 0 });
+
+    // A permanent mid in support is £3 a day: severance is 14 days' pay, £42, shown before they go and paid at once.
+    const permanent = (await act({ type: "hire", pool: "support" })).json<CompanyView>();
+    const mid = permanent.staff.find((p) => p.pool === "support")!.grades.find((g) => g.grade === "mid")!;
+    expect(mid.severance).toBe(42);
+    expect((await act({ type: "letGo", pool: "support" })).json<CompanyView>()).toMatchObject({ support: 0, cash: cash - 42 });
   });
 
   it("lists the grades in the game's meta", async () => {
@@ -3042,6 +3096,7 @@ describe("meta", () => {
       ["developers", 10],
       ["ops", 4],
       ["support", 3],
+      ["moderators", 2],
     ]);
     // On-prem's and IaaS's from their starter servers; PaaS's and SaaS's a small fixed number.
     expect(meta.models.map((m) => m.opsNeeded)).toEqual([2, 1, 1, 1]);

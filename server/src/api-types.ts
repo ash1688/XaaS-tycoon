@@ -29,6 +29,7 @@ import type {
   MigrationQuote,
   CounterOdds,
   MigrationView,
+  ModerationView,
   ModelComparison,
   PauseReason,
   PricePreview,
@@ -139,10 +140,16 @@ export interface MetaView {
   staff: { id: StaffPool; name: string; personName: string; dayRate: number }[];
   /** Junior, mid and senior: pay and work a day against a mid's, and days from hiring to starting work. */
   grades: { id: StaffGrade; name: string; payMultiplier: number; output: number; leadDays: number }[];
+  /** Agency staff: pay and work against a permanent member of the same grade's, and days from hiring to starting work. */
+  agency: { payMultiplier: number; output: number; leadDays: number };
+  /** Days of pay each permanent member of staff is paid in severance when let go. */
+  severanceDays: number;
   /** Developers a SaaS company needs to configure add-ons before it can buy one. */
   minConfigDevelopers: number;
   /** Tickets one support person clears a day. */
   ticketsPerPerson: number;
+  /** Reports on user content one mid moderator handles a day. */
+  reportsPerPerson: number;
   /** At or above this satisfaction %, customers are happy: no slower growth or extra churn. */
   goodSatisfaction: number;
   /** Below this satisfaction %, customers are angry. */
@@ -207,6 +214,8 @@ export interface CompanyView {
   ops: number;
   /** Support staff: they answer customers' tickets, on every model. */
   support: number;
+  /** Moderators: they handle reports on user content. Always 0 on a product without user content. */
+  moderators: number;
   /**
    * Each pool by grade: who's on the team, their work a day in mids (what's measured against ops needed, a build's
    * developer-days and tickets cleared), and hires still to start.
@@ -276,6 +285,11 @@ export interface CompanyView {
   usualTickets: number;
   /** Tickets the support staff can clear in a day. */
   dailyClearance: number;
+  /**
+   * On a product with user content: reports a day against what the moderators handle, those left unhandled, and what
+   * they do to satisfaction and the odds of a lawsuit. Null on a product without user content (no moderators either).
+   */
+  moderation: ModerationView | null;
   /** Load on the day just played. */
   load: number;
   /**
@@ -625,6 +639,8 @@ export interface PlaySnapshot {
   developers: number;
   ops: number;
   support: number;
+  /** Missing from snapshots logged before moderators. */
+  moderators?: number;
   loan: "none" | "repaying" | "repaid";
   loanRemaining: number | null;
 }

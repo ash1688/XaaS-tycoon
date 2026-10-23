@@ -1,7 +1,7 @@
 import { STAFF_POOLS, type GameConfig, type StaffGrade, type StaffPool } from "./config.ts";
 import { count, pounds, type Finance, type RescueHook } from "./finance.ts";
 import type { Shares } from "./shares.ts";
-import { dailyStaffCost, headcount, staffOutput } from "./staff.ts";
+import { dailyStaffCost, headcount, severanceFor, staffOutput } from "./staff.ts";
 import { SimError, type GameState, type GradeCounts, type LogEntry, type Rescue, type StaffCut } from "./state.ts";
 
 /** The rescue buyout once it has happened, with the vulture VC's stake now and its price to sell it back. */
@@ -40,36 +40,46 @@ export function createRescue(
   opsNeeded: (state: GameState) => number,
 ) {
   const r = config.rescue;
-  /** "2 senior developers", "1 mid ops person". */
-  const people = ({ pool, grade, count: n }: StaffCut) =>
-    `${n} ${config.staffGrades[grade].name.toLowerCase()} ${n === 1 ? config.staff[pool].personName : config.staff[pool].name.toLowerCase()}`;
+  /** "2 senior developers", "1 agency mid ops person". */
+  const people = ({ pool, grade, count: n, agency }: StaffCut) =>
+    `${n} ${agency ? "agency " : ""}${config.staffGrades[grade].name.toLowerCase()} ${n === 1 ? config.staff[pool].personName : config.staff[pool].name.toLowerCase()}`;
+  const copy = (counts: Record<StaffPool, GradeCounts>) =>
+    Object.fromEntries(STAFF_POOLS.map((p) => [p, { ...counts[p] }])) as Record<StaffPool, GradeCounts>;
 
   /**
-   * The forced cost cuts: hires still to start cancelled, and staffCut of each team let go, to the nearest person, the
-   * dearest grades first. Ops are only let go while those left still cover the ops the servers need.
+   * The forced cost cuts: hires still to start cancelled, and staffCut of each team let go, to the nearest person:
+   * agency staff first, as they go with no severance, then permanent staff, the dearest grades first, paid their
+   * severance. Ops are only let go while those left still cover the ops the servers need.
    */
-  function cutCosts(state: GameState): { state: GameState; cuts: StaffCut[]; hiresCancelled: number } {
-    const staff = Object.fromEntries(STAFF_POOLS.map((p) => [p, { ...state.staff[p] }])) as Record<StaffPool, GradeCounts>;
+  function cutCosts(state: GameState): { state: GameState; cuts: StaffCut[]; hiresCancelled: number; severance: number } {
+    const counts = { staff: copy(state.staff), agency: copy(state.agency) };
     const needed = opsNeeded(state);
     const cuts: StaffCut[] = [];
+    let severance = 0;
     for (const pool of STAFF_POOLS) {
-      let left = Math.round(headcount(state, pool) * r.staffCut);
-      for (const grade of CUT_ORDER) {
-        let n = 0;
-        while (left > 0 && staff[pool][grade] > 0) {
-          if (pool === "ops") {
-            const after = { ...state, staff: { ...staff, ops: { ...staff.ops, [grade]: staff.ops[grade] - 1 } } };
-            if (staffOutput(config, after, "ops") < needed) break;
+      let left = Math.round((headcount(state, pool) + headcount(state, pool, true)) * r.staffCut);
+      for (const agency of [true, false]) {
+        const team = agency ? counts.agency : counts.staff;
+        for (const grade of CUT_ORDER) {
+          let n = 0;
+          while (left > 0 && team[pool][grade] > 0) {
+            if (pool === "ops") {
+              team.ops[grade]--;
+              const short = staffOutput(config, { ...state, ...counts }, "ops") < needed;
+              team.ops[grade]++;
+              if (short) break;
+            }
+            team[pool][grade]--;
+            left--;
+            n++;
           }
-          staff[pool][grade]--;
-          left--;
-          n++;
+          if (n) cuts.push({ pool, grade, count: n, agency });
+          if (n && !agency) severance += n * severanceFor(config, pool, grade);
         }
-        if (n) cuts.push({ pool, grade, count: n });
       }
     }
     const hiresCancelled = state.hiring.reduce((sum, h) => sum + h.count, 0);
-    return { state: { ...state, staff, hiring: [] }, cuts, hiresCancelled };
+    return { state: { ...state, ...counts, hiring: [] }, cuts, hiresCancelled, severance };
   }
 
   /** The rescue buyout, on the day cash first went below £0: cuts, then cash for new shares. */
@@ -79,7 +89,8 @@ export function createRescue(
     const day = usualDay(cut.state);
     const losses = -state.cash;
     const cover = Math.max(-day.dailyNet, r.minCover * day.dailyCosts);
-    const amount = Math.ceil((losses + r.breathingDays * cover) / 100) * 100;
+    // It pays the severance of the permanent staff it lets go, on top of the losses.
+    const amount = Math.ceil((losses + cut.severance + r.breathingDays * cover) / 100) * 100;
     const inIssue = state.shareholders.reduce((sum, h) => sum + h.shares, 0);
     const newShares = Math.round((inIssue * r.share) / (1 - r.share));
     const share = newShares / (inIssue + newShares);
@@ -90,7 +101,7 @@ export function createRescue(
     ];
     const entries: LogEntry[] = [
       {
-        text: `Cash ran out, and a vulture VC rescued ${state.companyName}: it put in ${pounds(amount)} (${pounds(losses)} to cover the losses and about ${r.breathingDays} days of breathing space) for ${count.format(newShares)} new shares, ${percent(share)} of the company. You now own ${percent(yours)}. Run out of cash again and it's liquidation.`,
+        text: `Cash ran out, and a vulture VC rescued ${state.companyName}: it put in ${pounds(amount)} (${pounds(losses)} to cover the losses${cut.severance ? `, ${pounds(cut.severance)} for severance` : ""} and about ${r.breathingDays} days of breathing space) for ${count.format(newShares)} new shares, ${percent(share)} of the company. You now own ${percent(yours)}. Run out of cash again and it's liquidation.`,
         cashDelta: amount,
         kind: "rescue",
       },
@@ -101,6 +112,9 @@ export function createRescue(
         cashDelta: 0,
         kind: "rescue",
       },
+      ...(cut.severance
+        ? [{ text: "Severance for the permanent staff let go in the cuts", cashDelta: -cut.severance, category: "staff" as const }]
+        : []),
     ];
     const record: Rescue = {
       day: state.day,
@@ -111,6 +125,7 @@ export function createRescue(
       cuts: cut.cuts,
       hiresCancelled: cut.hiresCancelled,
       savedPerDay,
+      severance: cut.severance,
       boughtBack: null,
     };
     return {

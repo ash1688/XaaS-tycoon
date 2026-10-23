@@ -30,7 +30,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 35;
+export const GAME_STATE_VERSION = 36;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -40,7 +40,9 @@ export interface Hire {
   pool: StaffPool;
   grade: StaffGrade;
   count: number;
-  /** The first day they work and are paid: the day hired plus their grade's lead time. */
+  /** Agency staff, rather than permanent. */
+  agency: boolean;
+  /** The first day they work and are paid: the day hired plus their grade's lead time, or the agency's. */
   arrivesOn: number;
 }
 
@@ -194,6 +196,8 @@ export interface StaffCut {
   pool: StaffPool;
   grade: StaffGrade;
   count: number;
+  /** Agency staff, rather than permanent. */
+  agency: boolean;
 }
 
 /**
@@ -214,6 +218,8 @@ export interface Rescue {
   hiresCancelled: number;
   /** What the cuts save a day in pay. */
   savedPerDay: number;
+  /** Severance paid to the permanent staff let go, out of the cash put in. */
+  severance: number;
   /** The day the student bought the vulture VC's shares back and what it cost, or null. */
   boughtBack: { day: number; price: number } | null;
 }
@@ -288,6 +294,11 @@ export interface PriceWave {
   days: WaveEffect[];
   /** What it has done so far. Less than the plan only where users had already gone. */
   done: WaveEffect;
+  /**
+   * For a rise, who the users it loses are: each customer type's weight among them, its share of users × its reaction
+   * × the share of its lost payers who leave rather than go free. Casual users leave first. Null for a cut.
+   */
+  leftMix: Record<CustomerTypeId, number> | null;
 }
 
 /**
@@ -442,6 +453,8 @@ export interface GameState {
    * customers' tickets on every model. Hires still to start aren't here.
    */
   staff: Record<StaffPool, GradeCounts>;
+  /** Agency staff on the team, by pool and grade: apart from the permanent staff above, and doing half their work. */
+  agency: Record<StaffPool, GradeCounts>;
   /** Hires waiting to start, in the order they were made. */
   hiring: Hire[];
   /**
@@ -460,7 +473,8 @@ export interface GameState {
   paidUsers: number;
   /**
    * Each customer type's share of the users, adding up to 1: the product's mix to begin with. A price change's reaction
-   * is each type's reaction weighted by its share.
+   * is each type's reaction weighted by its share. It shifts as users come and go (see CustomerMix): new users arrive
+   * in a mix features and the price tilt, casual users leave first over the price and businesses over downtime.
    */
   customerMix: Record<CustomerTypeId, number>;
   /** The monthly price each paying user pays, a day's share at a time. A change applies from the next day played. */
@@ -549,8 +563,17 @@ export interface GameState {
   clearedToday: number;
   /** Tickets still unanswered at the end of the day just played. They carry over. */
   backlog: number;
-  /** Customer satisfaction, 0–100. Moves a share of the way each day towards a target set by the backlog. */
+  /**
+   * Customer satisfaction, 0–100. Moves a share of the way each day towards a target set by the backlog, and on a
+   * product with user content, the reports left unhandled.
+   */
   satisfaction: number;
+  /** Reports on user content raised on the day just played. Always 0 on a product without user content. */
+  reportsToday: number;
+  /** Reports moderators handled on the day just played, from the backlog and today's. */
+  reportsHandled: number;
+  /** Reports still unhandled at the end of the day just played. They carry over. */
+  reportBacklog: number;
   /** Hours down on each of the last days played, oldest first, up to conversion.uptimeDays: recent uptime. */
   recentHoursDown: number[];
   /** Free users who started paying on the day just played (not counting a price wave's upgrades). */
@@ -565,10 +588,11 @@ export interface GameState {
 export type Action =
   /**
    * Hires or lets go people of one grade in one pool: `count` of them, one if it's left out, mids if the grade is.
-   * Hires start after their grade's lead time; letting go is at once, and only of those on the team.
+   * Permanent staff unless `agency`. Hires start after their grade's lead time, or agency staff the next day; letting
+   * go is at once, and only of those on the team. Letting go permanent staff pays their severance at once.
    */
-  | { type: "hire"; pool: StaffPool; grade?: StaffGrade; count?: number }
-  | { type: "letGo"; pool: StaffPool; grade?: StaffGrade; count?: number }
+  | { type: "hire"; pool: StaffPool; grade?: StaffGrade; count?: number; agency?: boolean }
+  | { type: "letGo"; pool: StaffPool; grade?: StaffGrade; count?: number; agency?: boolean }
   /** Starts building one of the product's features. One build at a time; not on SaaS. */
   | { type: "buildFeature"; feature: string }
   /** Buys one of the product's features as an add-on, active at once. SaaS only, with a configuration team. */

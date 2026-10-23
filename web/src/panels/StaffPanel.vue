@@ -1,47 +1,84 @@
 <script setup lang="ts">
-import { computed, reactive, useId } from "vue";
+import { computed, reactive, ref, useId } from "vue";
 import type { StaffGrade, StaffPool } from "@xaas/sim";
 import { formatCash, formatCount } from "../api";
 import GradeCounter from "../components/GradeCounter.vue";
+import LetGoConfirm from "../components/LetGoConfirm.vue";
 import { useGame } from "../game";
 
-// Developers, ops and support, each in junior, mid and senior grades: hire, let go, and retrain someone into another
-// team. Pick a grade, then − and + move one person; the number box hires or lets go that many of the grade at once, so
-// a big team doesn't take hundreds of clicks. Hires start after their grade's lead time.
+// Developers, ops, support and (on a product with user content) moderators, each in junior, mid and senior grades, as
+// permanent or agency staff: hire, let go, and retrain someone into another team. Pick permanent or agency and a grade,
+// then − and + move one person; the number box hires or lets go that many at once, so a big team doesn't take hundreds
+// of clicks. Hires start after their grade's lead time, agency staff the next day. Letting go permanent staff asks
+// first, showing their severance.
 const game = useGame();
 const id = useId();
 const MAX_AT_ONCE = 999;
-const amounts = reactive<Record<StaffPool, number | "">>({ developers: 10, ops: 10, support: 10 });
-const grades = reactive<Record<StaffPool, StaffGrade>>({ developers: "mid", ops: "mid", support: "mid" });
+const amounts = reactive<Record<StaffPool, number | "">>({ developers: 10, ops: 10, support: 10, moderators: 10 });
+const grades = reactive<Record<StaffPool, StaffGrade>>({ developers: "mid", ops: "mid", support: "mid", moderators: "mid" });
+const agency = reactive<Record<StaffPool, boolean>>({ developers: false, ops: false, support: false, moderators: false });
+// The permanent staff waiting on the student to confirm letting them go, with their severance.
+const confirming = ref<{ pool: StaffPool; grade: StaffGrade; count: number }>();
+// The pools this company can staff: no moderators without user content.
+const pools = computed(() => (game.meta?.staff ?? []).filter((s) => game.company?.staff.some((p) => p.pool === s.id)));
 // The number in the box, or 0 when it isn't a whole number from 1 to the most at once.
 const amountOf = (pool: StaffPool) => {
   const n = amounts[pool];
   return typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= MAX_AT_ONCE ? n : 0;
 };
-const gradeOf = (pool: StaffPool) => game.staffPool(pool)?.grades.find((g) => g.grade === grades[pool]);
+// The picked grade, permanent or agency as picked.
+const gradeOf = (pool: StaffPool) =>
+  (agency[pool] ? game.staffPool(pool)?.agency : game.staffPool(pool)?.grades)?.find((g) => g.grade === grades[pool]);
 const people = (pool: StaffPool, n: number) => {
   const p = game.meta?.staff.find((s) => s.id === pool);
   const grade = gradeOf(pool)?.name.toLowerCase() ?? grades[pool];
-  return `${grade} ${n === 1 ? (p?.personName ?? pool) : (p?.name.toLowerCase() ?? pool)}`;
+  return `${agency[pool] ? "agency " : ""}${grade} ${n === 1 ? (p?.personName ?? pool) : (p?.name.toLowerCase() ?? pool)}`;
 };
 function change(type: "hire" | "letGo", pool: StaffPool, count: number) {
   if (count < 1) return;
-  game.actFrom(`staff-${type === "hire" ? "hire" : "let-go"}-many-${pool}`, { type, pool, grade: grades[pool], count });
+  if (type === "letGo" && !agency[pool]) {
+    confirming.value = { pool, grade: grades[pool], count };
+    return;
+  }
+  game.actFrom(`staff-${type === "hire" ? "hire" : "let-go"}-many-${pool}`, {
+    type,
+    pool,
+    grade: grades[pool],
+    count,
+    ...(agency[pool] ? { agency: true } : {}),
+  });
 }
-// Short of ops or support, in mids' work, counting hires on the way: how many of the picked grade cover it.
+// Short of ops, support or moderators: permanent staff of the picked grade, as they're the ones to keep.
+function hireShort(pool: StaffPool) {
+  game.actFrom(`staff-hire-many-${pool}`, { type: "hire", pool, grade: grades[pool], count: toCover(pool) });
+}
+// Short of ops, support or moderators, in mids' work, counting hires on the way: how many permanent staff of the picked grade
+// cover it.
 const need = (pool: StaffPool) =>
-  pool === "ops" ? (game.company?.opsNeeded ?? 0) : pool === "support" ? game.supportNeeded : 0;
+  pool === "ops"
+    ? (game.company?.opsNeeded ?? 0)
+    : pool === "support"
+      ? game.supportNeeded
+      : pool === "moderators"
+        ? game.moderatorsNeeded
+        : 0;
 const shortAfterHires = (pool: StaffPool) => game.midsShort(need(pool), game.work(pool) + game.workComing(pool));
+const permanentGrade = (pool: StaffPool) => game.staffPool(pool)?.grades.find((g) => g.grade === grades[pool]);
+const permanentPeople = (pool: StaffPool, n: number) => {
+  const p = game.meta?.staff.find((s) => s.id === pool);
+  const grade = permanentGrade(pool)?.name.toLowerCase() ?? grades[pool];
+  return `${grade} ${n === 1 ? (p?.personName ?? pool) : (p?.name.toLowerCase() ?? pool)}`;
+};
 const toCover = (pool: StaffPool) => {
-  const output = gradeOf(pool)?.output ?? 1;
+  const output = permanentGrade(pool)?.output ?? 1;
   return output > 0 ? Math.ceil(Math.round((shortAfterHires(pool) / output) * 100) / 100) : 0;
 };
 // Every move from one team to another, developers and ops first as they're the usual swap.
-const moves = computed(() => {
-  const pools = game.meta?.staff ?? [];
-  return pools.flatMap((to) => pools.filter((from) => from.id !== to.id).map((from) => ({ from, to })));
-});
-const moveOrder = (from: StaffPool, to: StaffPool) => (from === "support" || to === "support" ? 1 : 0);
+const moves = computed(() =>
+  pools.value.flatMap((to) => pools.value.filter((from) => from.id !== to.id).map((from) => ({ from, to }))),
+);
+const rank = (pool: StaffPool) => (pool === "moderators" ? 2 : pool === "support" ? 1 : 0);
+const moveOrder = (from: StaffPool, to: StaffPool) => Math.max(rank(from), rank(to));
 const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.from.id, a.to.id) - moveOrder(b.from.id, b.to.id)));
 </script>
 
@@ -58,7 +95,7 @@ const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.fr
       start. Work is counted in mids: what's measured against ops needed, a build's developer-days and tickets cleared.
     </p>
     <ul class="staff">
-      <li v-for="pool in game.meta.staff" :key="pool.id" :data-pool="pool.id">
+      <li v-for="pool in pools" :key="pool.id" :data-pool="pool.id">
         <div class="staff-info">
           <strong>{{ pool.name }}</strong>
           <span class="muted" :data-testid="`${pool.id}-work`">
@@ -69,8 +106,13 @@ const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.fr
             {{ formatCount(game.company.usualTickets) }} a day, so you need the work of
             {{ game.supportNeeded }}<template v-if="game.company.backlog">, plus more to clear the backlog</template>.
           </span>
+          <span v-if="pool.id === 'moderators' && game.moderation" class="muted" data-testid="moderators-hint">
+            A mid handles {{ formatCount(game.meta.reportsPerPerson) }} reports a day. Your users report about
+            {{ formatCount(game.moderation.usualReports) }} posts a day, so you need the work of
+            {{ game.moderatorsNeeded }}<template v-if="game.moderation.backlog">, plus more to clear the unhandled ones</template>.
+          </span>
         </div>
-        <GradeCounter v-model:grade="grades[pool.id]" :pool="pool.id" source="staff" />
+        <GradeCounter v-model:grade="grades[pool.id]" v-model:agency="agency[pool.id]" :pool="pool.id" source="staff" />
         <div class="staff-bulk" :data-testid="`${pool.id}-bulk`">
           <label :for="`${id}-${pool.id}-amount`" class="muted">How many</label>
           <input
@@ -102,16 +144,18 @@ const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.fr
           </button>
           <span v-if="amountOf(pool.id)" class="muted staff-bulk-cost">
             {{ formatCash(amountOf(pool.id) * (gradeOf(pool.id)?.dayRate ?? pool.dayRate)) }} a day for
-            {{ amountOf(pool.id) }} {{ people(pool.id, amountOf(pool.id)) }}
+            {{ amountOf(pool.id) }} {{ people(pool.id, amountOf(pool.id)) }}<template v-if="!agency[pool.id]"
+              >; {{ formatCash(amountOf(pool.id) * (gradeOf(pool.id)?.severance ?? 0)) }} severance to let them go</template
+            >
           </span>
           <span v-else class="muted staff-bulk-cost">Enter a whole number from 1 to {{ MAX_AT_ONCE }}.</span>
           <button
             v-if="toCover(pool.id) > 0"
             :disabled="game.busy || game.over"
             :data-testid="`${pool.id}-hire-short`"
-            @click="change('hire', pool.id, toCover(pool.id))"
+            @click="hireShort(pool.id)"
           >
-            Hire {{ toCover(pool.id) }} {{ people(pool.id, toCover(pool.id)) }} to cover the shortfall
+            Hire {{ toCover(pool.id) }} {{ permanentPeople(pool.id, toCover(pool.id)) }} to cover the shortfall
           </button>
         </div>
       </li>
@@ -131,6 +175,15 @@ const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.fr
         </button>
       </div>
     </div>
+    <LetGoConfirm
+      v-if="confirming"
+      :open="!!confirming"
+      :pool="confirming.pool"
+      :grade="confirming.grade"
+      :count="confirming.count"
+      :control="`staff-let-go-many-${confirming.pool}`"
+      @update:open="(o) => !o && (confirming = undefined)"
+    />
     <p :class="['ops-needed', { warn: game.understaffed }]" data-testid="ops-needed">
       <span>{{ game.modelName(game.company.model) }} needs <strong>{{ game.company.opsNeeded }}</strong> ops staff.</span>
       <span v-if="game.company.opsNeededOnceReady > game.company.opsNeeded" data-testid="ops-needed-soon">

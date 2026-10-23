@@ -107,12 +107,16 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await expect(student.getByTestId("staff-cost")).toHaveText("£460");
   // The grades: a junior would start in 3 days, a senior in 14.
   await student.getByRole("radio", { name: "Junior" }).first().check();
-  await expect(student.getByTestId("developers-grade-note")).toContainText("Juniors: £90 each a day, 0.65× a mid's work, start 3 days after hiring.");
+  await expect(student.getByTestId("developers-grade-note")).toContainText(
+    "Juniors: £90 each a day, 0.65× a mid's work, start 3 days after hiring, £1,260 severance each if let go.",
+  );
 
   // Features: IaaS builds them in developer-days, one at a time.
   await goTo(student, "Product");
   const features = student.getByTestId("features");
   await expect(features.locator('[data-feature="photos"]')).toHaveAttribute("data-status", "notStarted");
+  // Each feature pulls in a customer type among new users.
+  await expect(features.locator('[data-feature="groups"]')).toContainText("+15% growth · pulls in professionals");
   await student.getByRole("button", { name: "Build Photo sharing" }).click();
   await expect(features.locator('[data-feature="photos"]')).toHaveAttribute("data-status", "building");
   await expect(student.getByTestId("feature-progress-photos")).toContainText("0 of 16 developer-days");
@@ -320,7 +324,10 @@ test("a SaaS company buys an add-on and pays for it per user", async ({ browser,
   // Add-ons need a configuration team of 2 developers: with 1, they can't be bought.
   await expect(student.getByTestId("config-team")).toContainText("at least 2 developers");
   await goTo(student, "People");
+  // Permanent staff are paid severance when let go, shown before confirming: 14 days of a mid developer's £120.
   await student.getByRole("button", { name: "Let go one mid developer" }).click();
+  await expect(student.getByTestId("severance-cost")).toHaveText("£1,680");
+  await student.getByTestId("severance-confirm").click();
   await expect(student.getByTestId("developers-count")).toHaveText("1");
   await goTo(student, "Product");
   await expect(student.getByTestId("config-team")).toContainText("Hire 1 more to buy add-ons");
@@ -908,7 +915,8 @@ test("a Home card opens an accessible modal with its controls, and Continue work
   const modal = student.getByRole("dialog", { name: "Staff" });
   await expect(modal).toBeVisible();
   await expect(modal).toHaveAttribute("aria-modal", "true");
-  await expect(modal.getByRole("radio", { name: "Junior" }).first()).toBeFocused();
+  // The first control: permanent or agency staff.
+  await expect(modal.getByRole("radio", { name: "Permanent" }).first()).toBeFocused();
 
   // Its quick actions work in place. A hire waits for its grade's lead time; a move is at once, and the card behind
   // it keeps up.
@@ -1114,6 +1122,9 @@ test("a student previews prices live, raises the price, and sees the backlash an
   await expect(mix.getByTestId("mix-over")).toContainText("above what casual users think it's worth");
   await expect(mix.locator('tr[data-type="casual"] td').last()).toHaveText(/^\s*£5\s*you're over\s*$/);
   await expect(mix.locator('tr[data-type="enthusiasts"]')).not.toContainText("you're over");
+  // And it filters who joins: £6.25 is 1.25 times the casual threshold, so 0.64 as many casual users join.
+  await expect(mix.locator('tr[data-type="casual"] [data-testid="mix-new"]')).toContainText("price ×0.64");
+  await expect(mix.locator('tr[data-type="businesses"] [data-testid="mix-new"]')).toHaveText(/^\s*\d+%\s*$/);
 });
 
 test("a SaaS company without support builds a backlog, hires support from Home and sees it cleared", async ({
@@ -1224,6 +1235,9 @@ test("free users start paying each day, and Customers shows what's helping or hu
   await expect(mix.getByRole("img")).toHaveAttribute("aria-label", "Casual users 70%, Enthusiasts 20%, Professionals 8%, Businesses 2%");
   await expect(mix.getByTestId("mix-thresholds").locator(".mix-threshold")).toHaveText(["£5", "£6.25", "£10", "£15"]);
   await expect(mix.getByTestId("mix-over")).toBeHidden();
+  // New users join in the product's mix, with nothing tilting it yet.
+  await expect(mix.getByTestId("mix-new")).toHaveText(["70%", "20%", "8%", "2%"]);
+  await expect(mix.getByTestId("mix-shifts")).toContainText("A rise loses casual users first");
 
   // The day log says so too.
   await expect((await openDayLog(student)).locator('[data-kind="conversion"]')).toContainText("Free to paid:");

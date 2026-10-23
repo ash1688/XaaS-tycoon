@@ -5,9 +5,13 @@ import GradeCounter from "../components/GradeCounter.vue";
 import { useGame } from "../game";
 
 // Customer care: today's tickets, what support cleared, the backlog left and the satisfaction it sets, with a quick
-// hire. Support is the company's job on every model, SaaS included.
+// hire. Support is the company's job on every model, SaaS included. On a product with user content, the reports and
+// the moderators who handle them too.
 const game = useGame();
 const pool = computed(() => game.meta?.staff.find((s) => s.id === "support"));
+const moderators = computed(() => game.meta?.staff.find((s) => s.id === "moderators"));
+// How much unhandled reports take off the satisfaction target, as a whole percentage.
+const reportsCost = computed(() => (game.moderation ? Math.round(100 * (1 - game.moderation.satisfactionFactor)) : 0));
 const satisfactionChange = computed(() =>
   game.company && game.previousSatisfaction !== undefined
     ? game.company.satisfaction - game.previousSatisfaction
@@ -80,5 +84,53 @@ const satisfactionChange = computed(() =>
       every model: even on SaaS the provider fixes the platform, but it doesn't answer your customers. Tickets nobody
       answers wait in the backlog, and satisfaction falls the longer it grows.
     </p>
+    <div v-if="game.moderation && moderators" class="moderation" data-testid="moderation">
+      <div class="row-between panel-head">
+        <h3>Reports on user content</h3>
+        <span class="muted">{{ formatCash(moderators.dayRate) }} per mid moderator a day</span>
+      </div>
+      <div class="stats">
+        <div class="stat">
+          <span class="label">Reports today</span>
+          <span class="value" data-testid="reports-today">{{ formatCount(game.moderation.reportsToday) }}</span>
+        </div>
+        <div class="stat">
+          <span class="label">Handled</span>
+          <span class="value" data-testid="reports-handled">{{ formatCount(game.moderation.handledToday) }}</span>
+          <small>Up to {{ formatCount(game.moderation.dailyClearance) }} a day</small>
+        </div>
+        <div class="stat">
+          <span class="label">Unhandled</span>
+          <span :class="['value', { neg: game.moderation.backlog > 0 }]" data-testid="reports-backlog"
+            >{{ formatCount(game.moderation.backlog) }}</span
+          >
+          <small v-if="reportsCost">−{{ reportsCost }}% off satisfaction</small>
+          <small v-else>reports waiting</small>
+        </div>
+        <div class="stat">
+          <span class="label">Lawsuit odds</span>
+          <span :class="['value', { neg: game.moderation.lawsuitOdds > 1 }]" data-testid="lawsuit-odds"
+            >×{{ game.moderation.lawsuitOdds.toFixed(1) }}</span
+          >
+          <small>{{ game.moderation.lawsuitOdds > 1 ? "from content left up" : "as low as they go" }}</small>
+        </div>
+      </div>
+      <div class="support-hire">
+        <div class="staff-info">
+          <strong>Moderators</strong>
+          <span class="muted" data-testid="moderators-needed">
+            A mid handles {{ formatCount(game.meta.reportsPerPerson) }} reports a day. You need the work of about
+            {{ game.moderatorsNeeded }} for your users' usual {{ formatCount(game.moderation.usualReports) }} a day<template
+              v-if="game.moderation.backlog"
+            >, and more to clear the unhandled ones</template>.
+          </span>
+        </div>
+        <GradeCounter :pool="'moderators'" source="support-panel" />
+      </div>
+      <p>
+        Your users post content, and report some of it. Moderators handle the reports. Reports nobody handles pull
+        satisfaction down, and content left up makes a lawsuit more likely.
+      </p>
+    </div>
   </section>
 </template>

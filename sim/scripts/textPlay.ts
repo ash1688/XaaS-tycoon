@@ -16,6 +16,7 @@ import {
   type Action,
   type CounterOdds,
   type DayLog,
+  type FeatureView,
   type FunderId,
   type GameDate,
   type GameState,
@@ -58,6 +59,8 @@ export interface LogRow {
   developers: number;
   ops: number;
   support: number;
+  /** Moderators: 0 on a product without user content. */
+  moderators: number;
   loan: string;
   loanRemaining: number | null;
   params: Record<string, unknown>;
@@ -76,6 +79,7 @@ const money = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
 /** A price, to the penny when it has pence: £7.50, £5. */
 const price = (n: number) => (Number.isInteger(n) ? money(n) : `£${n.toFixed(2)}`);
 const pct = (n: number) => `${Math.round(n)}%`;
+const share = (n: number) => `${(100 * n).toFixed(1)}%`;
 /** A share of the company, 0–1, to one decimal place of a percent. */
 const stake = (share: number) => `${Math.round(share * 1000) / 10}%`;
 /** A share price, which can be under a penny with many shares. */
@@ -130,7 +134,7 @@ export function runway(sim: Sim, state: GameState): number | null {
 export function logRow(sim: Sim, state: GameState, who: Player, type: string, params: Record<string, unknown>, error: string | null = null): LogRow {
   const { tier, use } = tierUse(sim, state);
   const loan = sim.loan(state);
-  const heads = (pool: StaffPool) => sim.staff(state).find((p) => p.pool === pool)!.headcount;
+  const heads = (pool: StaffPool) => sim.staff(state).find((p) => p.pool === pool)?.headcount ?? 0;
   return {
     at: new Date().toISOString(),
     player: who.player,
@@ -153,19 +157,40 @@ export function logRow(sim: Sim, state: GameState, who: Player, type: string, pa
     developers: heads("developers"),
     ops: heads("ops"),
     support: heads("support"),
+    moderators: heads("moderators"),
     loan: !loan ? "none" : loan.remaining > 0 ? "repaying" : "repaid",
     loanRemaining: loan ? Math.round(loan.remaining) : null,
     params,
   };
 }
 
-/** Each customer type's share of users and price threshold, "!" where today's price is over it. */
+/** Each customer type's share of users, to a tenth of a percent so a shift shows, and price threshold, "!" where today's price is over it. */
 export function renderMix(sim: Sim, state: GameState): string {
   return sim
     .customerMix(state)
-    .types.map((t) => `${t.id} ${pct(100 * t.share)} (threshold ${price(t.threshold)}${t.overThreshold ? "!" : ""})`)
+    .types.map((t) => `${t.id} ${share(t.share)} (threshold ${price(t.threshold)}${t.overThreshold ? "!" : ""})`)
     .join(", ");
 }
+
+/** Each customer type's share of today's new users, with what tilts it from the product's mix: features and the price. */
+export function renderNewUsers(sim: Sim, state: GameState): string {
+  return sim
+    .customerMix(state)
+    .types.map((t) => {
+      const why = [
+        t.featureAppeal !== 1 ? `features x${+t.featureAppeal.toFixed(2)}` : "",
+        t.priceFilter !== 1 ? `price x${+t.priceFilter.toFixed(2)}` : "",
+      ].filter(Boolean);
+      return `${t.id} ${share(t.newShare)}${why.length ? ` (${why.join(", ")})` : ""}`;
+    })
+    .join(", ");
+}
+
+/** Who a feature appeals to: " [pulls professionals x1.5]". */
+const appeal = (a: FeatureView["appeal"]) => {
+  const parts = Object.entries(a ?? {}).map(([t, m]) => `${t} x${m}`);
+  return parts.length ? ` [pulls ${parts.join(", ")}]` : "";
+};
 
 /** The company at a glance: everything a player sees on the dashboard, as short lines. */
 export function renderStatus(sim: Sim, state: GameState): string {
@@ -192,6 +217,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
     );
   }
   lines.push(`customer mix: ${renderMix(sim, state)}`);
+  lines.push(`new users join as: ${renderNewUsers(sim, state)}`);
   const conversion = sim.conversion(state);
   lines.push(
     `users ${state.users.toLocaleString("en-GB")} (paid ${state.paidUsers.toLocaleString("en-GB")}, free ${(state.users - state.paidUsers).toLocaleString("en-GB")}) | converting ${(conversion.rate * 100).toFixed(2)}%/day`,
@@ -199,6 +225,13 @@ export function renderStatus(sim: Sim, state: GameState): string {
   lines.push(
     `satisfaction ${pct(state.satisfaction)} | uptime ${sim.uptime(state).toFixed(1)}% | tickets ${Math.round(sim.usualTickets(state))}/day vs ${Math.round(sim.dailyClearance(state))} cleared, backlog ${Math.round(state.backlog)}`,
   );
+  const moderation = sim.moderation(state);
+  if (moderation) {
+    lines.push(
+      `reports ${moderation.usualReports}/day | moderators can handle ${Math.round(moderation.dailyClearance)}/day (a mid ${sim.config.moderation.reportsPerPerson}), handled ${moderation.handledToday} yesterday | unhandled ${moderation.backlog}` +
+        ` | satisfaction target ×${moderation.satisfactionFactor.toFixed(2)} | lawsuit odds ×${moderation.lawsuitOdds.toFixed(2)}`,
+    );
+  }
   lines.push(`power and cooling ${money(sim.powerAndCooling(state.model))}/day`);
   lines.push(...staffLines(sim, state));
 
@@ -264,7 +297,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const features = sim.features(state);
   lines.push(
     `features: ${features
-      .map((f) => `${f.id} ${f.status === "notStarted" ? "not started" : f.status}${f.daysLeft ? ` (${f.daysLeft}d left)` : ""}`)
+      .map((f) => `${f.id} ${f.status === "notStarted" ? "not started" : f.status}${f.daysLeft ? ` (${f.daysLeft}d left)` : ""}${appeal(f.appeal)}`)
       .join(", ")}`,
   );
 
@@ -428,12 +461,12 @@ function rescueLines(sim: Sim, state: GameState): string[] {
   const r = sim.rescue(state);
   if (!r) return ["no rescue yet: the first time cash runs out, a vulture VC rescues the company; the second time is liquidation"];
   const cuts = [
-    ...r.cuts.map((c) => `${c.count} ${c.grade} ${c.pool}`),
+    ...r.cuts.map((c) => `${c.count} ${c.agency ? "agency " : ""}${c.grade} ${c.pool}`),
     ...(r.hiresCancelled ? [`${r.hiresCancelled} hires cancelled`] : []),
   ];
   return [
-    `rescue on day ${r.day}: a vulture VC put in ${money(r.amount)} (${money(r.losses)} of losses, the rest breathing space) for ${r.shares.toLocaleString("en-GB")} new shares, ${stake(r.share)} of the company`,
-    `forced cuts: ${cuts.length ? cuts.join(", ") : "none"}${r.savedPerDay ? `, saving ${money(r.savedPerDay)}/day` : ""}`,
+    `rescue on day ${r.day}: a vulture VC put in ${money(r.amount)} (${money(r.losses)} of losses${r.severance ? `, ${money(r.severance)} of severance` : ""}, the rest breathing space) for ${r.shares.toLocaleString("en-GB")} new shares, ${stake(r.share)} of the company`,
+    `forced cuts: ${cuts.length ? cuts.join(", ") : "none"}${r.savedPerDay ? `, saving ${money(r.savedPerDay)}/day` : ""}${r.severance ? `, paying ${money(r.severance)} severance` : ""}`,
     r.boughtBack
       ? `bought back on day ${r.boughtBack.day} for ${money(r.boughtBack.price)}`
       : r.buyBackPrice === null
@@ -443,22 +476,33 @@ function rescueLines(sim: Sim, state: GameState): string[] {
 }
 
 /**
- * Staff by pool: headcount by grade, their work a day in mids (what's measured against ops needed, build days and
- * tickets), each grade's pay, and hires still to start.
+ * Staff by pool: permanent headcount by grade, any agency staff apart, everyone's work a day in mids (what's measured
+ * against ops needed, build days and tickets), each grade's pay and severance, agency pay, and hires still to start.
  */
 function staffLines(sim: Sim, state: GameState): string[] {
   const g = sim.config.staffGrades;
+  const a = sim.config.agency;
   const lines = [
     `staff: cost ${money(sim.dailyStaffCost(state))}/day | grades: ${STAFF_GRADES.map((grade) => `${grade} work ${g[grade].output}, starts ${g[grade].leadDays}d after hiring`).join("; ")}`,
+    `  agency staff: ${a.payMultiplier}x the pay and ${a.output}x the work of the same grade, start ${a.leadDays}d after hiring, ` +
+      `no severance | letting go permanent staff pays ${sim.config.severance.days} days' pay each in severance, at once`,
   ];
   for (const p of sim.staff(state)) {
     const grades = p.grades.map((x) => `${x.count} ${x.grade}`).join(", ");
+    const agency = p.agencyCount
+      ? ` + agency ${p.agencyCount} (${p.agency.filter((x) => x.count).map((x) => `${x.count} ${x.grade}`).join(", ")})`
+      : "";
     const pay = p.grades.map((x) => money(x.dayRate)).join("/");
+    const agencyPay = p.agency.map((x) => money(x.dayRate)).join("/");
+    const severance = p.grades.map((x) => money(x.severance)).join("/");
     const need = p.pool === "ops" ? `, need ${sim.opsNeededNow(state)}` : "";
     const hiring = p.hiring.length
-      ? ` | hired, not started: ${p.hiring.map((h) => `${h.count} ${h.grade} on day ${h.arrivesOn} (${h.daysLeft}d)`).join(", ")}`
+      ? ` | hired, not started: ${p.hiring.map((h) => `${h.count} ${h.agency ? "agency " : ""}${h.grade} on day ${h.arrivesOn} (${h.daysLeft}d)`).join(", ")}`
       : "";
-    lines.push(`  ${p.pool} ${p.headcount} (${grades}) work ${p.output}${need} | pay junior/mid/senior ${pay}/day${hiring}`);
+    lines.push(
+      `  ${p.pool} ${p.headcount} (${grades})${agency} work ${p.output}${need} | pay junior/mid/senior ${pay}/day, ` +
+        `agency ${agencyPay}/day | severance ${severance} each${hiring}`,
+    );
   }
   return lines;
 }
@@ -466,9 +510,13 @@ function staffLines(sim: Sim, state: GameState): string[] {
 /** Every command that does something right now, with the values it takes. */
 export function renderCommands(sim: Sim, state: GameState): string {
   const lines = ["commands (join several with ';'):"];
-  const pools = STAFF_POOLS.join("|");
+  // Moderators only on a product with user content.
+  const pools = sim.staff(state).map((p) => p.pool).join("|");
   const grades = STAFF_GRADES.join("|");
-  lines.push(`  hire <${pools}> [${grades}] [n] | letgo <${pools}> [${grades}] [n] | move <to> [from] [${grades}]   (grade defaults to mid)`);
+  lines.push(
+    `  hire <${pools}> [agency] [${grades}] [n] | letgo <${pools}> [agency] [${grades}] [n] | move <to> [from] [${grades}]   ` +
+      `(grade defaults to mid; permanent staff unless "agency"; move is permanent staff only)`,
+  );
   if (sim.priceLockDaysLeft(state) === 0) lines.push(`  price <0.01–${sim.config.pricing.maxPrice}>`);
   lines.push(`  preview <price>   (what a price would do; changes nothing)`);
   const notStarted = sim.features(state).filter((f) => f.status === "notStarted");
@@ -620,10 +668,13 @@ export function parseCommand(text: string): Command {
   };
   const service = (w: string | undefined) => oneOf<ManagedService>(w, MANAGED_SERVICES, "a managed service");
   const pool = (w: string | undefined) => oneOf<StaffPool>(w, STAFF_POOLS, "a staff pool");
-  // An optional grade before the count: "hire support junior 5", "hire support 5" (mids).
-  const staffArgs = (rest: string[]): { grade?: StaffGrade; count: number } => {
+  // Optional "agency", then an optional grade, before the count: "hire support junior 5", "hire support 5" (mids),
+  // "hire support agency 2", "letgo ops agency senior".
+  const staffArgs = (words: string[]): { grade?: StaffGrade; count: number; agency?: true } => {
+    const agency = words[0] === "agency";
+    const rest = agency ? words.slice(1) : words;
     const grade = rest[0] !== undefined && /^[a-z]/.test(rest[0]) ? oneOf<StaffGrade>(rest[0], STAFF_GRADES, "a grade") : undefined;
-    return { ...(grade ? { grade } : {}), count: count(grade ? rest[1] : rest[0]) };
+    return { ...(agency ? { agency } : {}), ...(grade ? { grade } : {}), count: count(grade ? rest[1] : rest[0]) };
   };
   const one = (action: Action): Command => ({ kind: "action", action, times: 1 });
   const funder = (w: string | undefined): FunderId => {
@@ -799,6 +850,9 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
       return { state: current, rows, lines: [what + err.message + teamNow(sim, current, command.action, err)] };
     }
   }
+  // Letting go permanent staff pays their severance at once.
+  const severance = current.spend.staff - state.spend.staff;
+  const paid = severance > 0 ? `, paid ${money(severance)} severance` : "";
   if (command.action.type === "applyForIpo") {
     const ipo = sim.ipo(current);
     const lines =
@@ -813,7 +867,7 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
     return { state: current, rows, lines: [...bellLines(current.ipo.result!), `GAME OVER: floated on day ${current.day}`] };
   }
   if (command.action.type === "counterFunding") return { state: current, rows, lines: [counterLine(sim, current, command.action.funder)] };
-  return { state: current, rows, lines: [`${command.action.type}${command.times > 1 ? ` ×${done}` : ""}: done`] };
+  return { state: current, rows, lines: [`${command.action.type}${command.times > 1 ? ` ×${done}` : ""}: done${paid}`] };
 }
 
 /** What a counter's roll did, and the offer that stands now. */
@@ -848,7 +902,9 @@ function teamNow(sim: Sim, state: GameState, action: Action, err: SimError): str
   if (err.code !== "no_staff" || (action.type !== "letGo" && action.type !== "moveStaff")) return "";
   const pool = action.type === "letGo" ? action.pool : (action.from ?? (action.to === "developers" ? "ops" : "developers"));
   const team = sim.staff(state).find((p) => p.pool === pool);
-  return team ? ` (${pool} now: ${team.grades.map((x) => `${x.count} ${x.grade}`).join(", ")})` : "";
+  if (!team) return "";
+  const agency = action.type === "letGo" && action.agency;
+  return ` (${pool} now: ${(agency ? team.agency : team.grades).map((x) => `${x.count} ${agency ? "agency " : ""}${x.grade}`).join(", ")})`;
 }
 
 /**
@@ -960,6 +1016,10 @@ function extraStops(sim: Sim, before: GameState, after: GameState, pauses: Pause
   if (after.hiring.length < before.hiring.length) reasons.push("staff started");
   const fell = after.satisfaction <= before.satisfaction - 15 || (after.satisfaction < 50 && before.satisfaction >= 50);
   if (fell && !pauses.some((p) => p.id === "satisfaction")) reasons.push(`satisfaction fell to ${pct(after.satisfaction)}`);
+  // Reports left unhandled long enough to cost satisfaction: the same point the game logs its warning.
+  const warnAt = 1 - sim.config.moderation.warnShare;
+  const factor = (st: GameState) => sim.moderation(st)?.satisfactionFactor ?? 1;
+  if (factor(after) < warnAt && factor(before) >= warnAt) reasons.push(`reports unhandled (${after.reportBacklog})`);
   if (sim.priceLockDaysLeft(before) > 0 && sim.priceLockDaysLeft(after) === 0) reasons.push("price can change again");
   return reasons;
 }
@@ -968,8 +1028,8 @@ function extraStops(sim: Sim, before: GameState, after: GameState, pauses: Pause
  * Plays ticks until at least `days` days have gone by: a tick is a day, or a week in a career, as Continue plays on
  * the game page. Stops early when the sim pauses itself (an event that hurts, an alert, an offer, low cash or something
  * finished), on the day it does, and also when a new risk climbs the danger meter, staff start, satisfaction falls
- * hard or the price unlocks. Logs one Continue a tick, as the classroom server does. Returns the notable lines of each
- * day played and why it stopped.
+ * hard, reports go unhandled or the price unlocks. Logs one Continue a tick, as the classroom server does. Returns the
+ * notable lines of each day played and why it stopped.
  */
 export function advanceUntil(sim: Sim, state: GameState, days: number, who: Player): Turn {
   let current = state;

@@ -52,6 +52,32 @@ describe("runCommand", () => {
     expect(later.rows.at(-1)).toMatchObject({ support: 4 });
   });
 
+  it("hires agency staff for the next day, shows them apart, and lets them go with no severance", () => {
+    expect(parseCommand("hire support agency junior 2")).toMatchObject({
+      action: { type: "hire", pool: "support", agency: true, grade: "junior", count: 2 },
+    });
+    expect(parseCommand("letgo ops agency")).toMatchObject({ action: { type: "letGo", pool: "ops", agency: true, count: 1 } });
+    const hired = run(start(), "hire support agency 2");
+    expect(renderStatus(sim, hired.state)).toMatch(/hired, not started: 2 agency mid on day 2 \(1d\)/);
+    expect(renderStatus(sim, hired.state)).toMatch(/agency staff: 1\.25x the pay and 0\.5x the work .*start 1d after hiring/);
+    const started = run(hired.state, "next 1");
+    expect(started.lines).toContain("  day 2: 2 agency mid support staff started work.");
+    // One permanent mid's work, and two agency mids' at half each.
+    expect(renderStatus(sim, started.state)).toMatch(/support 1 \(0 junior, 1 mid, 0 senior\) \+ agency 2 \(2 mid\) work 2 /);
+    const gone = run(started.state, "letgo support agency 2");
+    expect(gone.lines).toEqual(["letGo: done"]);
+    expect(gone.state.cash).toBe(started.state.cash);
+  });
+
+  it("shows severance for each grade, and pays it when permanent staff go", () => {
+    // Support are £100 a day for a mid by default: 14 days' pay is £1,400.
+    const state = start();
+    expect(renderStatus(sim, state)).toMatch(/support 1 .*\| severance £1,050\/£1,400\/£1,820 each/);
+    const gone = run(state, "letgo support");
+    expect(gone.lines).toEqual(["letGo: done, paid £1,400 severance"]);
+    expect(gone.state.cash).toBe(state.cash - 1_400);
+  });
+
   it("reports a refused action and logs it with its error code, without throwing", () => {
     const turn = run(start(), "instances 999");
     expect(turn.lines[0]).toMatch(/refused/);
@@ -69,12 +95,25 @@ describe("runCommand", () => {
   it("shows the customer mix with thresholds, and a rise's reaction by customer type", () => {
     const state = advanceUntil(sim, run(start(), "instances 2").state, 20, who).state;
     expect(renderStatus(sim, state)).toMatch(
-      /customer mix: casual 70% \(threshold £5\), enthusiasts 20% \(threshold £6\.25\), professionals 8% \(threshold £10\), businesses 2% \(threshold £15\)/,
+      /customer mix: casual 70\.\d% \(threshold £5\), enthusiasts 20\.\d% \(threshold £6\.25\), professionals \d\.\d% \(threshold £10\), businesses \d\.\d% \(threshold £15\)/,
     );
     const line = run(state, "preview 7.5").lines[0]!;
     expect(line).toMatch(/reaction \d+\.\d% of payers = casual \d+\.\d% × 70% \+ enthusiasts .* \+ businesses \d+\.\d% × 2%/);
     const raised = run(state, "price 7.5").state;
-    expect(renderStatus(sim, raised)).toMatch(/casual 70% \(threshold £5!\)/);
+    expect(renderStatus(sim, raised)).toMatch(/casual 70\.\d% \(threshold £5!\)/);
+  });
+
+  it("shows who new users join as, and what features and the price pull in", () => {
+    const state = advanceUntil(sim, run(start(), "instances 2").state, 20, who).state;
+    expect(renderStatus(sim, state)).toMatch(
+      /new users join as: casual 70\.0%, enthusiasts 20\.0%, professionals 8\.0%, businesses 2\.0%\n/,
+    );
+    expect(renderStatus(sim, state)).toMatch(/groups not started \[pulls professionals x1\.5\]/);
+    // Twice the fair price: a quarter as many casual users join.
+    const dear = run(state, "price 10").state;
+    expect(renderStatus(sim, dear)).toMatch(/new users join as: casual \d+\.\d% \(price x0\.25\), enthusiasts \d+\.\d% \(price x0\.39\), professionals/);
+    const grouped: GameState = { ...state, features: { groups: { status: "built", progress: 0 } } };
+    expect(renderStatus(sim, grouped)).toMatch(/professionals 11\.5% \(features x1\.44\)/);
   });
 });
 
@@ -89,7 +128,7 @@ describe("runScript", () => {
       "> dance",
       expect.stringMatching(/^refused: Unknown command "dance"/),
       "> letgo support",
-      "letGo: done",
+      "letGo: done, paid £1,400 severance",
     ]);
     expect(turn.rows.map((r) => r.ok)).toEqual([false, false, true]);
     expect(turn.state.staff.support).toEqual({ junior: 0, mid: 0, senior: 0 });
@@ -180,7 +219,12 @@ describe("advanceUntil", () => {
   });
 
   it("plays a week a tick in a career, logging one Continue a week, and stops mid-week on the day something needs you", () => {
-    const careers = createSim({ ...defaultConfig, allowedGameLengths: { "180-days": 0, "until-ipo": 0, "1-year": 0, career: 1 } });
+    // No moderation, as on main before moderators: this is about something else.
+    const careers = createSim({
+      ...defaultConfig,
+      allowedGameLengths: { "180-days": 0, "until-ipo": 0, "1-year": 0, career: 1 },
+      productTypes: { ...defaultConfig.productTypes, social: { ...defaultConfig.productTypes.social, moderation: undefined } },
+    });
     const career = careers.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3, gameLength: "career" });
     expect(renderCommands(careers, career)).toMatch(/next \[days\]\s+\(play ticks of a week \(this is a career\)/);
     // The launch is over on day 3, two days into the first week: time stops there.
@@ -513,6 +557,8 @@ describe("the IPO checklist over time", () => {
   it("stops time when the company is no longer ready", () => {
     const s = createSim({
       ...defaultConfig,
+      // No moderation, as on main before moderators: this is about something else.
+      productTypes: { ...defaultConfig.productTypes, social: { ...defaultConfig.productTypes.social, moderation: undefined } },
       // A provider outage on day 30 is the only event: it breaks the uptime record.
       events: [
         {
@@ -626,5 +672,40 @@ describe("the calendar", () => {
     expect(started.state.day).toBe(27);
     expect(started.lines.at(-1)).toContain("Holiday started: Black Friday, for 4 days");
     expect(renderStatus(full, started.state)).toContain("Black Friday on now to day 30 (load ×2.2, growth ×2.5)");
+  });
+});
+
+describe("moderators", () => {
+  const shop = () => sim.newGame({ companyName: "Test Co", productType: "ecommerce", model: "paas", seed: 3 });
+  const launchedSocial = () => {
+    let state = run(start(), "instances 2").state;
+    state = run(state, "managed database small").state;
+    while (sim.launch(state).status !== "launched") state = run(state, "next 1").state;
+    return state;
+  };
+
+  it("shows reports and hires moderators on a content product, and neither on a shop", () => {
+    const state = launchedSocial();
+    const status = renderStatus(sim, state);
+    expect(status).toMatch(/reports \d+\/day \| moderators can handle 0\/day \(a mid 60\), handled 0 yesterday \| unhandled \d+ \| satisfaction target ×[\d.]+ \| lawsuit odds ×[\d.]+/);
+    expect(renderCommands(sim, state)).toContain("hire <developers|ops|support|moderators>");
+    const hired = run(state, "hire moderators junior 2");
+    expect(hired.rows[0]).toMatchObject({ ok: true, params: { pool: "moderators", grade: "junior", count: 2 } });
+    expect(renderStatus(sim, hired.state)).toMatch(/moderators 0 .*hired, not started: 2 junior/);
+
+    expect(renderStatus(sim, shop())).not.toMatch(/reports|moderators/);
+    expect(renderCommands(sim, shop())).toContain("hire <developers|ops|support>");
+    const refused = run(shop(), "hire moderators");
+    expect(refused.lines[0]).toMatch(/refused: .*no user content to moderate/);
+    expect(refused.rows[0]).toMatchObject({ ok: false, error: "no_content", moderators: 0 });
+  });
+
+  it("stops time when reports go unhandled, and logs moderators in each row", () => {
+    let turn = run(launchedSocial(), "next 30");
+    while (!/reports unhandled/.test(turn.lines.at(-1)!) && turn.state.day < 30) turn = run(turn.state, "next 30");
+    expect(turn.lines.at(-1)).toMatch(/^stopped on day \d+: .*reports unhandled \(\d+\)/);
+    expect(turn.lines.some((l) => /reports on user content are waiting for a moderator/.test(l))).toBe(true);
+    const staffed = run(turn.state, "move moderators developers");
+    expect(staffed.rows[0]).toMatchObject({ ok: true, moderators: 1 });
   });
 });

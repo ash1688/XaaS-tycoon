@@ -33,7 +33,7 @@ export interface Strategy {
   description: string;
   /** The price it sets on day 1, as a share of the fair price: 1 keeps the fair price. */
   priceFactor: number;
-  /** Hires and lets go support staff to keep up with the tickets. Without it, keeps the starting staff. */
+  /** Hires and lets go support staff to keep up with the tickets, and moderators the reports. Without it, keeps the starting staff. */
   support: boolean;
   /**
    * "ahead" adds servers ahead of demand (and on IaaS and PaaS, drops ones it doesn't need); "reactive" scales the
@@ -63,7 +63,7 @@ export const STRATEGIES: Strategy[] = [
   },
   { id: "over-priced", description: "As sensible, at twice the fair price from day 1.", priceFactor: 2, support: true, scaling: "ahead", loan: "onprem" },
   { id: "under-priced", description: "As sensible, at 60% of the fair price from day 1.", priceFactor: 0.6, support: true, scaling: "ahead", loan: "onprem" },
-  { id: "no-support", description: "As sensible, but never hires support beyond the starting staff.", priceFactor: 1, support: false, scaling: "ahead", loan: "onprem" },
+  { id: "no-support", description: "As sensible, but never hires support or moderators beyond the starting staff.", priceFactor: 1, support: false, scaling: "ahead", loan: "onprem" },
   { id: "no-scaling", description: "As sensible, but never adds servers to its launch setup.", priceFactor: 1, support: true, scaling: "none", loan: "onprem" },
   {
     id: "reactive-scaling",
@@ -143,7 +143,7 @@ export interface GameResult {
   migrationDay: number | null;
   /** Spend by category, and staff at the end. */
   spend: Record<string, number>;
-  staff: { developers: number; ops: number; support: number };
+  staff: { developers: number; ops: number; support: number; moderators: number };
 }
 
 /** Applies an action, or leaves the state as it was if the rules refuse it (can't afford it, price locked…). */
@@ -175,22 +175,40 @@ function addServer(sim: Sim, state: GameState, action: Action): GameState {
 
 /**
  * Brings a pool's work a day (in mids) up to what it needs now and in a week, counting hires still to start. Short now,
- * it hires juniors, the quickest to arrive; short of next week's need, mids, who arrive in time for it. Over by more than
- * a person's work, it lets go juniors first, then mids, then seniors.
+ * it hires juniors, the quickest permanent staff to arrive; short of next week's need, mids, who arrive in time for it.
+ * A passing surge on top of today's need (a backlog to clear) it covers with agency mids, who start the next day, and
+ * lets go with no severance as soon as the rest cover it. Permanent staff over by more than a person's work go juniors
+ * first, then mids, then seniors, while there's the cash for their severance.
  */
-function staffTo(sim: Sim, state: GameState, pool: "ops" | "support", now: number, nextWeek = now): GameState {
+function staffTo(sim: Sim, state: GameState, pool: "ops" | "support" | "moderators", now: number, nextWeek = now, surge = 0): GameState {
   let s = state;
   const view = () => sim.staff(s).find((p) => p.pool === pool)!;
-  const output = (g: StaffGrade) => sim.config.staffGrades[g].output;
-  const planned = () => view().output + view().hiring.reduce((sum, h) => sum + h.count * output(h.grade), 0);
-  const hire = (grade: StaffGrade, short: number) => {
-    if (short > 0) s = sim.applyAction(s, { type: "hire", pool, grade, count: Math.ceil(short / output(grade)) });
+  const output = (g: StaffGrade, agency = false) => sim.config.staffGrades[g].output * (agency ? sim.config.agency.output : 1);
+  const workOf = (grades: { grade: StaffGrade; count: number }[], agency: boolean) =>
+    grades.reduce((sum, g) => sum + g.count * output(g.grade, agency), 0);
+  // Permanent staff's work once every permanent hire has started.
+  const permanent = () => workOf(view().grades, false) + workOf(view().hiring.filter((h) => !h.agency), false);
+  // Everyone's work tomorrow, counting the hires who start then.
+  const tomorrow = () => view().output + view().hiring.filter((h) => h.daysLeft <= 1).reduce((sum, h) => sum + h.count * output(h.grade, h.agency), 0);
+  const hire = (grade: StaffGrade, short: number, agency = false) => {
+    const count = Math.ceil(Math.round((short / output(grade, agency)) * 100) / 100);
+    if (count > 0) s = sim.applyAction(s, { type: "hire", pool, grade, count, agency });
   };
-  hire("junior", now - planned());
-  hire("mid", nextWeek - planned());
+  // A surge covered with permanent juniors leaves them over once it's past, to keep or pay severance on.
+  hire("junior", now - permanent());
+  hire("mid", nextWeek - permanent());
+  hire("mid", now + surge - tomorrow(), true);
+  for (const grade of ["junior", "mid", "senior"] as const) {
+    while (view().agency.find((g) => g.grade === grade)!.count > 0 && tomorrow() - output(grade, true) >= now + surge) {
+      s = sim.applyAction(s, { type: "letGo", pool, grade, agency: true });
+    }
+  }
   const target = Math.max(now, nextWeek);
   for (const grade of ["junior", "mid", "senior"] as const) {
-    while (view().grades.find((g) => g.grade === grade)!.count > 0 && planned() - output(grade) >= target) {
+    while (view().grades.find((g) => g.grade === grade)!.count > 0 && permanent() - output(grade) >= target) {
+      // Only with two weeks' running costs left after their severance: otherwise they stay.
+      const severance = view().grades.find((g) => g.grade === grade)!.severance;
+      if (severance > 0 && s.cash - severance < 14 * sim.runway(s).dailyCosts) break;
       s = sim.applyAction(s, { type: "letGo", pool, grade });
     }
   }
@@ -389,12 +407,21 @@ export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameSta
   const eventOpsNow = s.launchDay === null ? 0 : eventOps;
   s = staffTo(sim, s, "ops", Math.max(sim.opsNeededNow(s), eventOpsNow), Math.max(sim.opsNeededOnceReady(s), eventOps));
   if (strategy.support) {
-    // Enough to clear today's tickets with a little to spare, and a fifth of the backlog; and next week's at this growth.
+    // Enough to clear today's tickets with a little to spare, and next week's at this growth; and from an agency, a fifth
+    // of the backlog.
     const perPerson = sim.config.support.ticketsPerPerson;
-    const needed = Math.max(1, (sim.usualTickets(s) * 1.1 + s.backlog / 5) / perPerson);
+    const needed = Math.max(1, (sim.usualTickets(s) * 1.1) / perPerson);
     const weekGrowth = dailyGrowth(sim, s) ** sim.config.staffGrades.mid.leadDays;
     const nextWeek = Math.max(1, (sim.usualTickets(s) * 1.1 * weekGrowth) / perPerson);
-    s = staffTo(sim, s, "support", needed, nextWeek);
+    s = staffTo(sim, s, "support", needed, nextWeek, s.backlog / 5 / perPerson);
+    // On a product with user content, moderators the same way for the reports, with agency staff for the backlog.
+    const moderation = sim.moderation(s);
+    if (moderation) {
+      const perModerator = sim.config.moderation.reportsPerPerson;
+      const reportsNow = (moderation.usualReports * 1.1) / perModerator;
+      const reportsNextWeek = (moderation.usualReports * 1.1 * weekGrowth) / perModerator;
+      s = staffTo(sim, s, "moderators", reportsNow, reportsNextWeek, moderation.backlog / 5 / perModerator);
+    }
   }
   return buildFeatures(sim, s);
 }
@@ -516,7 +543,7 @@ function emptyResult(model: ModelId, productType: ProductTypeId, strategy: strin
     endModel: model,
     migrationDay: null,
     spend: {},
-    staff: { developers: 0, ops: 0, support: 0 },
+    staff: { developers: 0, ops: 0, support: 0, moderators: 0 },
   };
 }
 

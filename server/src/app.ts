@@ -350,7 +350,10 @@ export async function buildApp(opts: AppOptions) {
   function view(row: CompanyRow, sim = simOf(row)): CompanyView {
     const state = sim.load(row.state);
     const staff = sim.staff(state);
-    const headcounts = Object.fromEntries(staff.map((p) => [p.pool, p.headcount])) as Record<StaffPool, number>;
+    // Every pool, 0 for one the company can't staff (moderators without user content).
+    const headcounts = Object.fromEntries(
+      STAFF_POOLS.map((pool) => [pool, staff.find((p) => p.pool === pool)?.headcount ?? 0]),
+    ) as Record<StaffPool, number>;
     return {
       id: row.id,
       name: row.name,
@@ -391,6 +394,7 @@ export async function buildApp(opts: AppOptions) {
       satisfaction: Math.round(state.satisfaction),
       usualTickets: sim.usualTickets(state),
       dailyClearance: sim.dailyClearance(state),
+      moderation: sim.moderation(state),
       load: state.load,
       capacity: sim.capacity(state),
       units: sim.units(state),
@@ -498,8 +502,11 @@ export async function buildApp(opts: AppOptions) {
         return { id, name, personName, dayRate };
       }),
       grades: STAFF_GRADES.map((id) => ({ id, ...config.staffGrades[id] })),
+      agency: config.agency,
+      severanceDays: config.severance.days,
       minConfigDevelopers: config.addons.minConfigDevelopers,
       ticketsPerPerson: config.support.ticketsPerPerson,
+      reportsPerPerson: config.moderation.reportsPerPerson,
       goodSatisfaction: config.support.goodSatisfaction,
       poorSatisfaction: config.support.poorSatisfaction,
       maxPrice: config.pricing.maxPrice,
@@ -754,6 +761,8 @@ export async function buildApp(opts: AppOptions) {
             pool: { enum: [...STAFF_POOLS] },
             // hire, letGo and moveStaff: the grade, mid if left out.
             grade: { enum: [...STAFF_GRADES] },
+            // hire and letGo: agency staff rather than permanent, false if left out.
+            agency: { type: "boolean" },
             // Checked against the product's list by the sim.
             feature: { type: "string", maxLength: 64 },
             // moveStaff: the pool one person moves into, and optionally the one they leave.
