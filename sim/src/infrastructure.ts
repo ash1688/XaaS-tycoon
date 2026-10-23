@@ -1,4 +1,4 @@
-import type { GameConfig, ModelId } from "./config.ts";
+import type { GameConfig, ModelId, ProductTypeId } from "./config.ts";
 import type { Customers } from "./customers.ts";
 import type { EventToday, Events } from "./events.ts";
 import { count, pounds, risen } from "./finance.ts";
@@ -77,11 +77,16 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     return [{ text, cashDelta: -Math.round(powerAndCooling * days), category: "power" }];
   }
 
-  /** A model's monthly and per-user prices, after any provider price rises. */
+  /** A model's monthly and per-user prices for the company's product, after any provider price rises. */
   function modelPrices(state: GameState, modelId: ModelId) {
     const rise = state.priceRises[modelId] ?? 1;
-    const { monthlyCost, monthlyCostPerUser } = config.models[modelId];
-    return { monthlyCost: risen(monthlyCost, rise), monthlyCostPerUser: risen(monthlyCostPerUser, rise) };
+    const { monthlyCost } = config.models[modelId];
+    return { monthlyCost: risen(monthlyCost, rise), monthlyCostPerUser: risen(perUserFee(state.productType, modelId), rise) };
+  }
+
+  /** A model's per-user fee for a product, before any provider price rise: dearer for a product heavy on compute. */
+  function perUserFee(productType: ProductTypeId, modelId: ModelId): number {
+    return config.models[modelId].monthlyCostPerUser * config.productTypes[productType].demand.perUserFeeMultiplier;
   }
 
   /**
@@ -308,6 +313,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     monthlyInfrastructureCost,
     capacity,
     provider,
+    perUserFee,
     units,
     uptime,
     serveLoad,

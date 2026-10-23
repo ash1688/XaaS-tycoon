@@ -7,7 +7,7 @@
 //   npm run play -- do <game.json> "hire support 3; price 6; next 7"
 //   npm run play -- summary <game.json>
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { createSim, defaultConfig, DIFFICULTIES, DIFFICULTY_IDS, GAME_LENGTH_IDS, SimError, type GameState } from "../src/index.ts";
+import { createSim, defaultConfig, DIFFICULTIES, DIFFICULTY_IDS, GAME_LENGTH_IDS, PRODUCT_TYPE_IDS, SimError, type GameState } from "../src/index.ts";
 import {
   logRow,
   renderCommands,
@@ -48,13 +48,21 @@ function flag(args: string[], name: string): string | undefined {
   return i >= 0 ? args[i + 1] : undefined;
 }
 
+/** The products to pick from, for --product: "ecommerce (E-commerce platform: Big seasonal traffic spikes), ...". */
+const productList = () =>
+  PRODUCT_TYPE_IDS.map((id) => `${id} (${defaultConfig.productTypes[id].name}: ${defaultConfig.productTypes[id].profile})`).join(", ");
+
 function newGame(file: string, args: string[]) {
+  const product = flag(args, "product") ?? "";
+  if (!(PRODUCT_TYPE_IDS as readonly string[]).includes(product)) {
+    throw new SimError("unknown_product_type", `Pick a product with --product: ${productList()}.`);
+  }
   const seed = Number(flag(args, "seed") ?? Math.floor(Math.random() * 1_000_000));
   const player = flag(args, "player") ?? "AI playtester";
   const playstyle = flag(args, "playstyle");
   const state = sim.newGame({
     companyName: flag(args, "name") ?? "AI Test Co",
-    productType: flag(args, "product") ?? "",
+    productType: product,
     model: flag(args, "model") ?? "",
     seed,
     takeLoan: args.includes("--loan"),

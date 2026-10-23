@@ -270,7 +270,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const status = state.ipo.result ? "FLOATED" : state.endedByTeacher ? "ENDED BY TEACHER" : state.status.toUpperCase();
   const calendar = sim.calendar(state);
   lines.push(
-    `== ${state.companyName} | ${state.productType} on ${state.model} | day ${state.day}${state.finalDay === null ? "" : `/${state.finalDay}`} ` +
+    `== ${state.companyName} | ${sim.config.productTypes[state.productType].name} (${state.productType}) on ${state.model} | day ${state.day}${state.finalDay === null ? "" : `/${state.finalDay}`} ` +
       `(${gameLengthName(sim.config, state.gameLength)}, ${DIFFICULTIES[state.difficulty].name}${sim.tickDays(state) === 7 ? ", a week a tick" : ""}) | ${calendar.today.text} | ${status}`,
   );
   lines.push(
@@ -324,7 +324,11 @@ export function renderStatus(sim: Sim, state: GameState): string {
     }
   } else if (state.model === "saas") {
     const provider = sim.provider(state);
-    if (provider) lines.push(`capacity: the provider's (no limit) | per-user bill ${money(provider.monthlyCost)}/month`);
+    if (provider) {
+      lines.push(
+        `capacity: the provider's (no limit) | ${price(provider.perUserFee)}/user/month on ${provider.users.toLocaleString("en-GB")} users = ${money(provider.monthlyPerUserBill)}/month, plus ${money(provider.monthlyCost)}/month`,
+      );
+    }
   }
 
   const managed = sim.managed(state);
@@ -603,7 +607,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
     const verb = state.model === "saas" ? "addon" : "build";
     lines.push(
       `  ${verb} <${notStarted.map((f) => f.id).join("|")}>   ${notStarted
-        .map((f) => (state.model === "saas" ? `${f.id} ${money(f.addonSetupFee)} + ${money(f.addonPricePerUser)}/user/month` : `${f.id} ${f.devDays} dev-days`))
+        .map((f) => (state.model === "saas" ? `${f.id} ${money(f.addonSetupFee)} + ${price(f.addonPricePerUser)}/user/month` : `${f.id} ${f.devDays} dev-days`))
         .join(", ")}`,
     );
   }

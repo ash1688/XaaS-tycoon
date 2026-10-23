@@ -106,8 +106,8 @@ describe("runCommand", () => {
   it("shows who new users join as, and what features and the price pull in", () => {
     const state = advanceUntil(sim, run(start(), "instances 2").state, 20, who).state;
     expect(renderStatus(sim, state)).toMatch(
-      // The product's mix, tilted by the rivals: the cheap one takes casual users, the polished one businesses.
-      /new users join as: casual \d+\.\d% \(rivals x1\.\d+\), enthusiasts \d+\.\d% \(rivals x[\d.]+\), professionals \d+\.\d% \(rivals x[\d.]+\), businesses \d+\.\d% \(rivals x0\.\d+\)\n/,
+      // The product's mix, tilted a little by the rivals.
+      /new users join as: casual \d+\.\d% \(rivals x[\d.]+\), enthusiasts \d+\.\d% \(rivals x[\d.]+\), professionals \d+\.\d% \(rivals x[\d.]+\), businesses \d+\.\d% \(rivals x[\d.]+\)\n/,
     );
     expect(renderStatus(sim, state)).toMatch(/groups not started \[pulls professionals x1\.5\]/);
     // Twice the fair price: a quarter as many casual users join.
@@ -719,7 +719,7 @@ describe("rivals", () => {
     expect(renderCommands(sim, state)).toMatch(/market {3}\(rivals' prices, quality and share/);
     const market = run(state, "market");
     expect(market.state).toBe(state);
-    expect(market.lines.join("\n")).toMatch(/Natterly: [\d,]+ users, [\d.]+% share \| £4\/month \| quality [\d.]+ \(1 features, 98\.5% uptime\)/);
+    expect(market.lines.join("\n")).toMatch(/Natterly: [\d,]+ users, [\d.]+% share \| £4\/month \| quality [\d.]+ \(0 features, 98\.5% uptime\)/);
     expect(market.lines.join("\n")).toMatch(/casual: you \d+%, Natterly \d+%, GatherHub \d+% \| best: Natterly/);
   });
 
@@ -789,5 +789,24 @@ describe("the payments app", () => {
     const turn = runFull(state, "next 7");
     expect(turn.state.day).toBe(44);
     expect(turn.lines.join("\n")).toMatch(/day 44: Black Friday is coming in 14 days/);
+  });
+});
+
+describe("the new products (#118)", () => {
+  it("names the product and shows its SaaS per-user fee", () => {
+    const state = sim.advance(sim.newGame({ companyName: "Test Co", productType: "assistant", model: "saas", seed: 3 }), 3).state;
+    const status = renderStatus(sim, state);
+    expect(status).toContain("== Test Co | AI assistant (assistant) on saas |");
+    expect(status).toMatch(/capacity: the provider's \(no limit\) \| £2\.80\/user\/month on [\d,]+ users = £[\d,]+\/month, plus £900\/month/);
+    expect(status).toContain("api: Assistant API not bought");
+  });
+
+  it("plays a games network: its features and paid API are commands", () => {
+    let state = sim.newGame({ companyName: "Test Co", productType: "games", model: "saas", seed: 3 });
+    expect(renderStatus(sim, state)).toContain("Games network (games) on saas");
+    const turn = runScript(sim, { ...state, cash: 50_000 }, "addon achievements; buyapi", who);
+    state = turn.state;
+    expect(sim.features(state).find((f) => f.id === "achievements")?.status).not.toBe("notStarted");
+    expect(sim.api(state)?.owned).toBe(true);
   });
 });

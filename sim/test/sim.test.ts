@@ -72,7 +72,7 @@ const support = { ticketsPerPaidUser: 0, ticketsPerFreeUser: 0 };
 
 // Units 10 a CU and DBU at 1,000 users, so a massive server serves 1,000,000: the starter setup never runs out unless a
 // test makes it. Video needs five times the compute, like its load.
-const demand = { cuPerUser: 0.01, dbuPerUser: 0.01 };
+const demand = { cuPerUser: 0.01, dbuPerUser: 0.01, perUserFeeMultiplier: 1 };
 const sizes = (small: number, medium: number, large: number, massive: number) => ({ small, medium, large, massive });
 // Rent a month: £30 small, £60 medium, £90 large (£1, £2 and £3 a day). Massive is free, so the starter setup costs
 // nothing and IaaS bills only its flat monthly cost unless a test rents more.
@@ -164,7 +164,7 @@ const config: GameConfig = {
       name: "Video",
       profile: "",
       growth: { ...growth, dailyGrowth: 0.02, loadPerUser: 5 },
-      demand: { cuPerUser: 0.05, dbuPerUser: 0.01 },
+      demand: { cuPerUser: 0.05, dbuPerUser: 0.01, perUserFeeMultiplier: 1 },
       pricing,
       support,
       features,
@@ -182,6 +182,8 @@ const config: GameConfig = {
       features,
       transactions: { fairRate: 0.01, maxRate: 0.2, volumePerPaidUser: 1_000, payday: { firstDay: 28, every: 30, length: 0, multiplier: 1 }, saasFeeRate: 0 },
     },
+    assistant: { name: "Assistant", profile: "", growth, demand, pricing, support, features, rivals: [] },
+    games: { name: "Games", profile: "", growth, demand, pricing, support, features, rivals: [] },
   },
   customerTypes: {
     ...defaultConfig.customerTypes,
@@ -317,7 +319,9 @@ const FIRST_SETUP: Record<ModelId, Action[]> = {
   ],
   saas: [],
 };
-const VIDEO_SETUP: Partial<Record<ModelId, Action[]>> = {
+// Video and the AI assistant need far more compute per user: a bigger app server.
+const COMPUTE_HEAVY = ["video", "assistant"];
+const HEAVY_SETUP: Partial<Record<ModelId, Action[]>> = {
   onprem: [
     { type: "buyServer", server: "app", size: "massive" },
     { type: "buyServer", server: "database", size: "large" },
@@ -332,7 +336,7 @@ const VIDEO_SETUP: Partial<Record<ModelId, Action[]>> = {
   ],
 };
 const setUp = (s: Sim, state: GameState) =>
-  ((state.productType === "video" && VIDEO_SETUP[state.model]) || FIRST_SETUP[state.model]).reduce(
+  ((COMPUTE_HEAVY.includes(state.productType) && HEAVY_SETUP[state.model]) || FIRST_SETUP[state.model]).reduce(
     (st, a) => s.applyAction(st, a),
     state,
   );
@@ -389,7 +393,7 @@ describe("launch", () => {
   const fresh = (s: Sim, model: ModelId, productType = "social", takeLoan = false) =>
     s.newGame({ companyName: "Acme", productType, model, seed: 7, takeLoan });
   // Round two's launch users, fixed per product, so the ramp's sums are exact: the default draws each game's from a range.
-  const fixed = { ecommerce: 3_000, social: 4_000, video: 1_600, payments: 1_200 };
+  const fixed = { ecommerce: 3_000, social: 4_000, video: 1_600, payments: 1_200, assistant: 1_000, games: 800 };
   const fixedTotals: GameConfig = {
     ...roomyDefaults,
     productTypes: Object.fromEntries(
@@ -1977,9 +1981,9 @@ describe("servers on-prem", () => {
       expect(own.cash).toBe(defaultConfig.startingCash - 3_050);
       expect(own.servers).toEqual([]);
       expect(own.racks).toEqual([{ id: 1, size: "medium", paid: 500 }]);
-      // A large app server and database, £2,200 on day 1 (video's massive app server, £2,600), and £50 cabling each:
-      // starting cash covers them, leaving little to buy more with.
-      expect(setUp(s, own).cash).toBe(defaultConfig.startingCash - (p === "video" ? 5_750 : 5_350));
+      // A large app server and database, £2,200 on day 1 (video's and the assistant's massive app server, £2,600), and
+      // £50 cabling each: starting cash covers them, leaving little to buy more with.
+      expect(setUp(s, own).cash).toBe(defaultConfig.startingCash - (COMPUTE_HEAVY.includes(p) ? 5_750 : 5_350));
       const loaned = s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1, takeLoan: true });
       expect(loaned.cash).toBe(defaultConfig.startingCash + defaultConfig.loan.amount - 3_050);
       // The kit arrives on day 5, and the users with it.
@@ -3576,7 +3580,11 @@ describe("default config", () => {
       const daysOn = (id: string) =>
         state.schedule.filter((e) => e.event === id).length * defaultConfig.events.find((e) => e.id === id)!.days;
       const unavoidable = ["providerOutage", "dataCentreFire", "trafficSpike", "viralGrowth"];
-      expect(state.outageDays).toBeLessThanOrEqual(unavoidable.reduce((sum, id) => sum + daysOn(id), 0));
+      // So can a holiday busier than the twice-demand it rents ahead for (Black Friday's 2.2x).
+      const holidayDays = Array.from({ length: state.day }, (_, i) => i + 1).filter((day) =>
+        sim180.calendar({ ...state, day }).on.some((h) => (h.effect?.loadMultiplier ?? 1) > 2),
+      ).length;
+      expect(state.outageDays).toBeLessThanOrEqual(unavoidable.reduce((sum, id) => sum + daysOn(id), 0) + holidayDays);
       expect(state.users).toBeGreaterThan(defaultConfig.productTypes[p as "social"].growth.launchUsersMin * 5);
     }
   });
@@ -4312,7 +4320,7 @@ describe("migration with servers", () => {
     },
     productTypes: {
       ...defaultConfig.productTypes,
-      social: { ...defaultConfig.productTypes.social, demand: { cuPerUser: 0.003, dbuPerUser: 0.004 } },
+      social: { ...defaultConfig.productTypes.social, demand: { cuPerUser: 0.003, dbuPerUser: 0.004, perUserFeeMultiplier: 1 } },
     },
     servers: {
       ...defaultConfig.servers,
@@ -4879,7 +4887,7 @@ describe("provider events and the SaaS feature gap", () => {
     days: 1,
     effects: {
       saas: {
-        featureGap: { growthMultiplier: 0.5, features: { ecommerce: "Own couriers", social: "Custom feeds", video: "Own player", payments: "Own bank" } },
+        featureGap: { growthMultiplier: 0.5, features: { ecommerce: "Own couriers", social: "Custom feeds", video: "Own player", payments: "Own bank", assistant: "Own model", games: "Own matchmaking" } },
         detail: "Not yours to change.",
       },
     },
@@ -5555,6 +5563,8 @@ describe("pricing and income", () => {
         social: { ...config.productTypes.social, pricing: { fairPrice: 6, freeShare: freeShares.social, conversionRate: 0, customerMix: allCasual } },
         video: { ...config.productTypes.video, pricing: { fairPrice: 9, freeShare: freeShares.video, conversionRate: 0, customerMix: allCasual } },
         payments: { ...config.productTypes.payments, pricing: { fairPrice: 5, freeShare: freeShares.payments, conversionRate: 0, customerMix: allCasual } },
+        assistant: config.productTypes.assistant,
+        games: config.productTypes.games,
       },
     });
   const s = priced();

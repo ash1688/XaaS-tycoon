@@ -108,20 +108,30 @@ describe("holidays", () => {
   it("shows the next holidays ahead of time, and announces one that hits the product before it starts", () => {
     const state = begin("ecommerce", "2026-10-01");
     const { upcoming } = sim.calendar(state);
-    expect(upcoming.map((h) => h.id)).toEqual(["blackFriday", "christmas", "januaryBlues", "easter", "summer"]);
-    expect(upcoming[0]).toMatchObject({ daysUntil: dayOfDate(state, "2026-11-27") - 1, startDay: 58, days: 4 });
+    // The games network's launches are on everyone's calendar, though only it feels them.
+    expect(upcoming.map((h) => h.id)).toEqual([
+      "autumnLaunch",
+      "blackFriday",
+      "christmas",
+      "januaryBlues",
+      "springLaunch",
+      "easter",
+      "summerShowcase",
+      "summer",
+    ]);
+    expect(upcoming.find((h) => h.id === "blackFriday")).toMatchObject({ daysUntil: dayOfDate(state, "2026-11-27") - 1, startDay: 58, days: 4 });
     const notice = dayOfDate(state, "2026-11-27") - defaultConfig.calendar.noticeDays;
     const { log } = sim.advance(state, notice - 1);
     const announced = log.at(-1)!.entries.find((e) => e.kind === "calendar");
     expect(announced?.text).toMatch(/^Black Friday is coming in 14 days, on Friday 27 November 2026/);
     // A holiday the product doesn't notice isn't announced.
     const all = log.flatMap((d) => d.entries).filter((e) => e.kind === "calendar");
-    expect(all.every((e) => !e.text.includes("Summer") && !e.text.includes("Easter"))).toBe(true);
+    expect(all.every((e) => !e.text.includes("Summer") && !e.text.includes("Easter") && !e.text.includes("game launch"))).toBe(true);
   });
 
   it("only shows holidays that fall before the game ends", () => {
     const short = begin("social", "2026-01-05", "180-days");
-    expect(sim.calendar(short).upcoming.map((h) => h.id)).toEqual(["easter"]);
+    expect(sim.calendar(short).upcoming.map((h) => h.id)).toEqual(["springLaunch", "easter", "summerShowcase"]);
     expect(sim.calendar(short).on.map((h) => h.id)).toEqual(["januaryBlues"]);
   });
 
