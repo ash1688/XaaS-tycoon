@@ -52,6 +52,32 @@ describe("runCommand", () => {
     expect(later.rows.at(-1)).toMatchObject({ support: 4 });
   });
 
+  it("hires agency staff for the next day, shows them apart, and lets them go with no severance", () => {
+    expect(parseCommand("hire support agency junior 2")).toMatchObject({
+      action: { type: "hire", pool: "support", agency: true, grade: "junior", count: 2 },
+    });
+    expect(parseCommand("letgo ops agency")).toMatchObject({ action: { type: "letGo", pool: "ops", agency: true, count: 1 } });
+    const hired = run(start(), "hire support agency 2");
+    expect(renderStatus(sim, hired.state)).toMatch(/hired, not started: 2 agency mid on day 2 \(1d\)/);
+    expect(renderStatus(sim, hired.state)).toMatch(/agency staff: 1\.25x the pay and 0\.5x the work .*start 1d after hiring/);
+    const started = run(hired.state, "next 1");
+    expect(started.lines).toContain("  day 2: 2 agency mid support staff started work.");
+    // One permanent mid's work, and two agency mids' at half each.
+    expect(renderStatus(sim, started.state)).toMatch(/support 1 \(0 junior, 1 mid, 0 senior\) \+ agency 2 \(2 mid\) work 2 /);
+    const gone = run(started.state, "letgo support agency 2");
+    expect(gone.lines).toEqual(["letGo: done"]);
+    expect(gone.state.cash).toBe(started.state.cash);
+  });
+
+  it("shows severance for each grade, and pays it when permanent staff go", () => {
+    // Support are £100 a day for a mid by default: 14 days' pay is £1,400.
+    const state = start();
+    expect(renderStatus(sim, state)).toMatch(/support 1 .*\| severance £1,050\/£1,400\/£1,820 each/);
+    const gone = run(state, "letgo support");
+    expect(gone.lines).toEqual(["letGo: done, paid £1,400 severance"]);
+    expect(gone.state.cash).toBe(state.cash - 1_400);
+  });
+
   it("reports a refused action and logs it with its error code, without throwing", () => {
     const turn = run(start(), "instances 999");
     expect(turn.lines[0]).toMatch(/refused/);
@@ -89,7 +115,7 @@ describe("runScript", () => {
       "> dance",
       expect.stringMatching(/^refused: Unknown command "dance"/),
       "> letgo support",
-      "letGo: done",
+      "letGo: done, paid £1,400 severance",
     ]);
     expect(turn.rows.map((r) => r.ok)).toEqual([false, false, true]);
     expect(turn.state.staff.support).toEqual({ junior: 0, mid: 0, senior: 0 });

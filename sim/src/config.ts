@@ -252,6 +252,25 @@ export interface StaffGradeConfig {
   leadDays: number;
 }
 
+/**
+ * Agency staff: temporary staff of any grade, in any pool, hired through an agency. Dearer and half as useful as
+ * permanent staff of the same grade, but they start the next day and can be let go with no severance.
+ */
+export interface AgencyConfig {
+  /** Pay as a multiple of a permanent member of the same grade's. */
+  payMultiplier: number;
+  /** Work a day as a multiple of a permanent member of the same grade's. */
+  output: number;
+  /** Days from hiring to starting work, whatever the grade: 1 is the next day. */
+  leadDays: number;
+}
+
+/** What letting go permanent staff costs. Agency staff go with none. */
+export interface SeveranceConfig {
+  /** Days of each person's pay, paid at once when they're let go. */
+  days: number;
+}
+
 /** A run of busy days that repeats, like a sale season. */
 export interface SeasonalSpike {
   /** First day of the first spike. */
@@ -924,6 +943,8 @@ export interface GameConfig {
   customerTypes: Record<CustomerTypeId, CustomerTypeConfig>;
   staff: Record<StaffPool, StaffPoolConfig>;
   staffGrades: Record<StaffGrade, StaffGradeConfig>;
+  agency: AgencyConfig;
+  severance: SeveranceConfig;
   capacity: CapacityConfig;
   servers: ServersConfig;
   outage: OutageConfig;
@@ -1289,6 +1310,10 @@ export const defaultConfig: GameConfig = {
     mid: { name: "Mid", payMultiplier: 1, output: 1, leadDays: 7 },
     senior: { name: "Senior", payMultiplier: 1.3, output: 1.35, leadDays: 14 },
   },
+  // The expensive way to cover a short gap: 1.25× the pay for half the work, from tomorrow. From the beta design.
+  agency: { payMultiplier: 1.25, output: 0.5, leadDays: 1 },
+  // Two weeks' pay each: cutting staff has a cost, but it's still worth it for a cut you'll keep. A placeholder.
+  severance: { days: 14 },
   capacity: { unstaffedShare: 0.4 },
   // Each size gives a set number of units. A CU serves the same users whatever the size, so the sizes are 6/10/20/30 to
   // match the design notes' users per server: at a shop's 0.002 CU each, a small app server serves 3,000 shoppers, a

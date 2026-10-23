@@ -27,7 +27,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 30;
+export const GAME_STATE_VERSION = 31;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -37,7 +37,9 @@ export interface Hire {
   pool: StaffPool;
   grade: StaffGrade;
   count: number;
-  /** The first day they work and are paid: the day hired plus their grade's lead time. */
+  /** Agency staff, rather than permanent. */
+  agency: boolean;
+  /** The first day they work and are paid: the day hired plus their grade's lead time, or the agency's. */
   arrivesOn: number;
 }
 
@@ -337,6 +339,8 @@ export interface GameState {
    * customers' tickets on every model. Hires still to start aren't here.
    */
   staff: Record<StaffPool, GradeCounts>;
+  /** Agency staff on the team, by pool and grade: apart from the permanent staff above, and doing half their work. */
+  agency: Record<StaffPool, GradeCounts>;
   /** Hires waiting to start, in the order they were made. */
   hiring: Hire[];
   /**
@@ -454,10 +458,11 @@ export interface GameState {
 export type Action =
   /**
    * Hires or lets go people of one grade in one pool: `count` of them, one if it's left out, mids if the grade is.
-   * Hires start after their grade's lead time; letting go is at once, and only of those on the team.
+   * Permanent staff unless `agency`. Hires start after their grade's lead time, or agency staff the next day; letting
+   * go is at once, and only of those on the team. Letting go permanent staff pays their severance at once.
    */
-  | { type: "hire"; pool: StaffPool; grade?: StaffGrade; count?: number }
-  | { type: "letGo"; pool: StaffPool; grade?: StaffGrade; count?: number }
+  | { type: "hire"; pool: StaffPool; grade?: StaffGrade; count?: number; agency?: boolean }
+  | { type: "letGo"; pool: StaffPool; grade?: StaffGrade; count?: number; agency?: boolean }
   /** Starts building one of the product's features. One build at a time; not on SaaS. */
   | { type: "buildFeature"; feature: string }
   /** Buys one of the product's features as an add-on, active at once. SaaS only, with a configuration team. */

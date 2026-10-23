@@ -563,6 +563,35 @@ describe("staff actions", () => {
     expect((await act({ type: "hire", pool: "support", grade: "intern" })).statusCode).toBe(400);
   });
 
+  it("hires agency staff for the next day, shown apart, and charges severance only for permanent staff", async () => {
+    const { url, act } = await setup();
+    // An agency mid in support is £3 × 1.25 = £3.75, rounded to £4, and does half a mid's work.
+    const hired = (await act({ type: "hire", pool: "support", agency: true, count: 2 })).json<CompanyView>();
+    expect(hired.staff.find((p) => p.pool === "support")).toMatchObject({
+      headcount: 0,
+      agencyCount: 0,
+      hiring: [{ grade: "mid", count: 2, agency: true, arrivesOn: 2, daysLeft: 1 }],
+    });
+    const played = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    expect(played.company).toMatchObject({ support: 0, dailyStaffCost: 8, dailyClearance: 30 });
+    expect(played.company.staff.find((p) => p.pool === "support")).toMatchObject({
+      agencyCount: 2,
+      output: 1,
+      agency: [{ grade: "junior", count: 0 }, { grade: "mid", count: 2, dayRate: 4, output: 0.5, severance: 0 }, { grade: "senior", count: 0 }],
+    });
+    expect(played.log[0]!.entries).toContainEqual({ text: "Agency support staff pay (2 mids)", cashDelta: -8, category: "staff" });
+
+    const cash = played.company.cash;
+    const agencyGone = (await act({ type: "letGo", pool: "support", agency: true, count: 2 })).json<CompanyView>();
+    expect(agencyGone).toMatchObject({ cash, dailyStaffCost: 0 });
+
+    // A permanent mid in support is £3 a day: severance is 14 days' pay, £42, shown before they go and paid at once.
+    const permanent = (await act({ type: "hire", pool: "support" })).json<CompanyView>();
+    const mid = permanent.staff.find((p) => p.pool === "support")!.grades.find((g) => g.grade === "mid")!;
+    expect(mid.severance).toBe(42);
+    expect((await act({ type: "letGo", pool: "support" })).json<CompanyView>()).toMatchObject({ support: 0, cash: cash - 42 });
+  });
+
   it("lists the grades in the game's meta", async () => {
     const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
     expect(meta.grades).toEqual([

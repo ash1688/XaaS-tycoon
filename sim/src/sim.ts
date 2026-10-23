@@ -316,7 +316,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   const racks = createRacks(config, finance);
   const servers = createServers(config, finance, racks);
   const infra = createInfrastructure(config, customers, events, servers);
-  const staff = createStaff(config);
+  const staff = createStaff(config, finance);
   const migration = createMigration(config, infra, features, events, servers);
   const summary = createSummary(config, infra);
   const loan = createLoan(config, finance);
@@ -450,7 +450,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     switch (action.type) {
       case "hire":
       case "letGo":
-        return staff.changeStaff(state, action.type, action.pool, action.grade, action.count);
+        return staff.changeStaff(state, action.type, action.pool, action.grade, action.count, action.agency);
       case "buildFeature":
         return features.startBuild(state, action.feature);
       case "buyAddon":

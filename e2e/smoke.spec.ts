@@ -283,7 +283,10 @@ test("a SaaS company buys an add-on and pays for it per user", async ({ browser,
   // Add-ons need a configuration team of 2 developers: with 1, they can't be bought.
   await expect(student.getByTestId("config-team")).toContainText("at least 2 developers");
   await goTo(student, "People");
+  // Permanent staff are paid severance when let go, shown before confirming: 14 days of a mid developer's £120.
   await student.getByRole("button", { name: "Let go one mid developer" }).click();
+  await expect(student.getByTestId("severance-cost")).toHaveText("£1,680");
+  await student.getByTestId("severance-confirm").click();
   await expect(student.getByTestId("developers-count")).toHaveText("1");
   await goTo(student, "Product");
   await expect(student.getByTestId("config-team")).toContainText("Hire 1 more to buy add-ons");

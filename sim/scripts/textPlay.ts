@@ -289,22 +289,33 @@ function fundingStatus(sim: Sim, state: GameState): string {
 }
 
 /**
- * Staff by pool: headcount by grade, their work a day in mids (what's measured against ops needed, build days and
- * tickets), each grade's pay, and hires still to start.
+ * Staff by pool: permanent headcount by grade, any agency staff apart, everyone's work a day in mids (what's measured
+ * against ops needed, build days and tickets), each grade's pay and severance, agency pay, and hires still to start.
  */
 function staffLines(sim: Sim, state: GameState): string[] {
   const g = sim.config.staffGrades;
+  const a = sim.config.agency;
   const lines = [
     `staff: cost ${money(sim.dailyStaffCost(state))}/day | grades: ${STAFF_GRADES.map((grade) => `${grade} work ${g[grade].output}, starts ${g[grade].leadDays}d after hiring`).join("; ")}`,
+    `  agency staff: ${a.payMultiplier}x the pay and ${a.output}x the work of the same grade, start ${a.leadDays}d after hiring, ` +
+      `no severance | letting go permanent staff pays ${sim.config.severance.days} days' pay each in severance, at once`,
   ];
   for (const p of sim.staff(state)) {
     const grades = p.grades.map((x) => `${x.count} ${x.grade}`).join(", ");
+    const agency = p.agencyCount
+      ? ` + agency ${p.agencyCount} (${p.agency.filter((x) => x.count).map((x) => `${x.count} ${x.grade}`).join(", ")})`
+      : "";
     const pay = p.grades.map((x) => money(x.dayRate)).join("/");
+    const agencyPay = p.agency.map((x) => money(x.dayRate)).join("/");
+    const severance = p.grades.map((x) => money(x.severance)).join("/");
     const need = p.pool === "ops" ? `, need ${sim.opsNeededNow(state)}` : "";
     const hiring = p.hiring.length
-      ? ` | hired, not started: ${p.hiring.map((h) => `${h.count} ${h.grade} on day ${h.arrivesOn} (${h.daysLeft}d)`).join(", ")}`
+      ? ` | hired, not started: ${p.hiring.map((h) => `${h.count} ${h.agency ? "agency " : ""}${h.grade} on day ${h.arrivesOn} (${h.daysLeft}d)`).join(", ")}`
       : "";
-    lines.push(`  ${p.pool} ${p.headcount} (${grades}) work ${p.output}${need} | pay junior/mid/senior ${pay}/day${hiring}`);
+    lines.push(
+      `  ${p.pool} ${p.headcount} (${grades})${agency} work ${p.output}${need} | pay junior/mid/senior ${pay}/day, ` +
+        `agency ${agencyPay}/day | severance ${severance} each${hiring}`,
+    );
   }
   return lines;
 }
@@ -314,7 +325,10 @@ export function renderCommands(sim: Sim, state: GameState): string {
   const lines = ["commands (join several with ';'):"];
   const pools = STAFF_POOLS.join("|");
   const grades = STAFF_GRADES.join("|");
-  lines.push(`  hire <${pools}> [${grades}] [n] | letgo <${pools}> [${grades}] [n] | move <to> [from] [${grades}]   (grade defaults to mid)`);
+  lines.push(
+    `  hire <${pools}> [agency] [${grades}] [n] | letgo <${pools}> [agency] [${grades}] [n] | move <to> [from] [${grades}]   ` +
+      `(grade defaults to mid; permanent staff unless "agency"; move is permanent staff only)`,
+  );
   if (sim.priceLockDaysLeft(state) === 0) lines.push(`  price <0.01–${sim.config.pricing.maxPrice}>`);
   lines.push(`  preview <price>   (what a price would do; changes nothing)`);
   const notStarted = sim.features(state).filter((f) => f.status === "notStarted");
@@ -438,10 +452,13 @@ export function parseCommand(text: string): Command {
   };
   const service = (w: string | undefined) => oneOf<ManagedService>(w, MANAGED_SERVICES, "a managed service");
   const pool = (w: string | undefined) => oneOf<StaffPool>(w, STAFF_POOLS, "a staff pool");
-  // An optional grade before the count: "hire support junior 5", "hire support 5" (mids).
-  const staffArgs = (rest: string[]): { grade?: StaffGrade; count: number } => {
+  // Optional "agency", then an optional grade, before the count: "hire support junior 5", "hire support 5" (mids),
+  // "hire support agency 2", "letgo ops agency senior".
+  const staffArgs = (words: string[]): { grade?: StaffGrade; count: number; agency?: true } => {
+    const agency = words[0] === "agency";
+    const rest = agency ? words.slice(1) : words;
     const grade = rest[0] !== undefined && /^[a-z]/.test(rest[0]) ? oneOf<StaffGrade>(rest[0], STAFF_GRADES, "a grade") : undefined;
-    return { ...(grade ? { grade } : {}), count: count(grade ? rest[1] : rest[0]) };
+    return { ...(agency ? { agency } : {}), ...(grade ? { grade } : {}), count: count(grade ? rest[1] : rest[0]) };
   };
   const one = (action: Action): Command => ({ kind: "action", action, times: 1 });
   const funder = (w: string | undefined): FunderId => {
@@ -587,7 +604,10 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
       return { state: current, rows, lines: [what + err.message + teamNow(sim, current, command.action, err)] };
     }
   }
-  return { state: current, rows, lines: [`${command.action.type}${command.times > 1 ? ` ×${done}` : ""}: done`] };
+  // Letting go permanent staff pays their severance at once.
+  const severance = current.spend.staff - state.spend.staff;
+  const paid = severance > 0 ? `, paid ${money(severance)} severance` : "";
+  return { state: current, rows, lines: [`${command.action.type}${command.times > 1 ? ` ×${done}` : ""}: done${paid}`] };
 }
 
 /** After a refused letgo or move for want of staff, who the team has now, so the player can pick a grade they have. */
@@ -595,7 +615,9 @@ function teamNow(sim: Sim, state: GameState, action: Action, err: SimError): str
   if (err.code !== "no_staff" || (action.type !== "letGo" && action.type !== "moveStaff")) return "";
   const pool = action.type === "letGo" ? action.pool : (action.from ?? (action.to === "developers" ? "ops" : "developers"));
   const team = sim.staff(state).find((p) => p.pool === pool);
-  return team ? ` (${pool} now: ${team.grades.map((x) => `${x.count} ${x.grade}`).join(", ")})` : "";
+  if (!team) return "";
+  const agency = action.type === "letGo" && action.agency;
+  return ` (${pool} now: ${(agency ? team.agency : team.grades).map((x) => `${x.count} ${agency ? "agency " : ""}${x.grade}`).join(", ")})`;
 }
 
 /**

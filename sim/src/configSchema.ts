@@ -363,6 +363,10 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add(`staffGrades.${grade}.output`, "People", `${g} staff`, "Output", "Work a day as a multiple of a mid's: developer-days, tickets cleared, or cover towards ops needed.", MULTIPLIER);
     add(`staffGrades.${grade}.leadDays`, "People", `${g} staff`, "Lead time (days)", "Days from hiring to starting work (0 = at once). They're paid only once they start.", range(0, 60, 1));
   }
+  add("agency.payMultiplier", "People", "Agency staff", "Pay multiplier", "Agency staff's pay as a multiple of a permanent member of the same grade's.", MULTIPLIER);
+  add("agency.output", "People", "Agency staff", "Output", "Agency staff's work a day as a multiple of a permanent member of the same grade's.", MULTIPLIER);
+  add("agency.leadDays", "People", "Agency staff", "Lead time (days)", "Days from hiring agency staff to their starting work, whatever the grade (0 = at once, 1 = the next day).", range(0, 60, 1));
+  add("severance.days", "People", "", "Severance (days of pay)", "Letting go permanent staff pays each this many days of their pay at once. Agency staff get none.", range(0, 365, 1));
   for (const m of MODEL_IDS) {
     add(`models.${m}.opsNeeded`, "People", MODEL_LABELS[m], "Ops needed", "Ops staff this model needs to keep the service running, however big it gets. Too few cuts capacity on a model with servers.", HEADCOUNT);
     for (const t of SERVER_TYPES) {

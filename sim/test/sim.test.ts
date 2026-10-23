@@ -185,6 +185,10 @@ const config: GameConfig = {
     mid: { name: "Mid", payMultiplier: 1, output: 1, leadDays: 0 },
     senior: { name: "Senior", payMultiplier: 2, output: 2, leadDays: 0 },
   },
+  // Agency staff at double a permanent member's pay for half the work, from the next day. No severance unless a test
+  // sets it, so letting go is free.
+  agency: { payMultiplier: 2, output: 0.5, leadDays: 1 },
+  severance: { days: 0 },
   capacity: { unstaffedShare: 0.4 },
   servers: {
     types: {
@@ -791,7 +795,7 @@ describe("staff grades and lead times", () => {
         { grade: "mid", count: 1, arrivesOn: 8, daysLeft: 7 },
       ],
     });
-    expect(pool(state, "developers").hiring).toEqual([{ grade: "senior", count: 1, arrivesOn: 15, daysLeft: 14 }]);
+    expect(pool(state, "developers").hiring).toEqual([{ grade: "senior", count: 1, agency: false, arrivesOn: 15, daysLeft: 14 }]);
     expect(graded.dailyStaffCost(state)).toBe(0);
 
     const day3 = graded.advance(state, 2);
@@ -817,13 +821,13 @@ describe("staff grades and lead times", () => {
   it("puts hires of a grade on the same day together, and keeps another day's apart", () => {
     const state = apply(begin(), hire("ops", "junior"), hire("ops", "junior", 2), hire("ops", "mid"));
     expect(pool(state, "ops").hiring).toEqual([
-      { grade: "junior", count: 3, arrivesOn: 4, daysLeft: 3 },
-      { grade: "mid", count: 1, arrivesOn: 8, daysLeft: 7 },
+      { grade: "junior", count: 3, agency: false, arrivesOn: 4, daysLeft: 3 },
+      { grade: "mid", count: 1, agency: false, arrivesOn: 8, daysLeft: 7 },
     ]);
     const nextDay = apply(graded.advance(state).state, hire("ops", "junior"));
     expect(pool(nextDay, "ops").hiring.filter((h) => h.grade === "junior")).toEqual([
-      { grade: "junior", count: 3, arrivesOn: 4, daysLeft: 2 },
-      { grade: "junior", count: 1, arrivesOn: 5, daysLeft: 3 },
+      { grade: "junior", count: 3, agency: false, arrivesOn: 4, daysLeft: 2 },
+      { grade: "junior", count: 1, agency: false, arrivesOn: 5, daysLeft: 3 },
     ]);
   });
 
@@ -832,9 +836,9 @@ describe("staff grades and lead times", () => {
     const state = team({ developers: { junior: 1, mid: 1, senior: 1 } });
     expect(graded.dailyStaffCost(state)).toBe(4 + 7 + 14);
     expect(pool(state, "developers").grades).toEqual([
-      { grade: "junior", name: "Junior", count: 1, dayRate: 4, output: 0.5, leadDays: 3 },
-      { grade: "mid", name: "Mid", count: 1, dayRate: 7, output: 1, leadDays: 7 },
-      { grade: "senior", name: "Senior", count: 1, dayRate: 14, output: 2, leadDays: 14 },
+      { grade: "junior", name: "Junior", count: 1, dayRate: 4, output: 0.5, leadDays: 3, severance: 0 },
+      { grade: "mid", name: "Mid", count: 1, dayRate: 7, output: 1, leadDays: 7, severance: 0 },
+      { grade: "senior", name: "Senior", count: 1, dayRate: 14, output: 2, leadDays: 14, severance: 0 },
     ]);
     expect(graded.advance(state).log[0]!.entries.filter((e) => e.category === "staff")).toEqual([
       { text: "Developers pay (1 junior)", cashDelta: -4, category: "staff" },
@@ -894,6 +898,93 @@ describe("staff grades and lead times", () => {
     expect(senior.payMultiplier / senior.output).toBeLessThan(mid.payMultiplier / mid.output);
     expect(mid.payMultiplier / mid.output).toBeLessThan(junior.payMultiplier / junior.output);
     expect([junior.leadDays, mid.leadDays, senior.leadDays]).toEqual([3, 7, 14]);
+  });
+});
+
+describe("agency staff and severance", () => {
+  // Agency staff at 2× the pay and ½ the work of permanent staff, from the next day; severance of 10 days' pay.
+  const s = createSim({ ...config, severance: { days: 10 } });
+  const begin = () => s.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 });
+  const pool = (state: GameState, p: StaffPool) => s.staff(state).find((v) => v.pool === p)!;
+  const none = { junior: 0, mid: 0, senior: 0 };
+  const agencyHire = (pool: StaffPool, count = 1): Action => ({ type: "hire", pool, grade: "mid", count, agency: true });
+
+  it("starts agency staff the next day, apart from permanent staff, at their pay for half their work", () => {
+    const hired = s.applyAction(begin(), agencyHire("support", 2));
+    expect(pool(hired, "support")).toMatchObject({
+      headcount: 0,
+      agencyCount: 0,
+      hiring: [{ grade: "mid", count: 2, agency: true, arrivesOn: 2, daysLeft: 1 }],
+    });
+    expect(s.dailyStaffCost(hired)).toBe(0);
+
+    const day2 = s.advance(hired);
+    expect(day2.state.staff.support).toEqual(none);
+    expect(day2.state.agency.support).toEqual({ ...none, mid: 2 });
+    const view = pool(day2.state, "support");
+    expect(view).toMatchObject({ headcount: 0, agencyCount: 2, output: 1, hiring: [] });
+    // Support is £2 a day for a permanent mid: an agency mid is £4, does half the work, and goes with no severance.
+    expect(view.agency.find((g) => g.grade === "mid")).toEqual({
+      grade: "mid", name: "Mid", count: 2, dayRate: 4, output: 0.5, leadDays: 1, severance: 0,
+    });
+    expect(view.grades.find((g) => g.grade === "mid")).toMatchObject({ count: 0, dayRate: 2, output: 1, severance: 20 });
+    expect(day2.log[0]!.entries).toContainEqual({ text: "2 agency mid support started work.", cashDelta: 0, kind: "staff" });
+    expect(day2.log[0]!.entries).toContainEqual({ text: "Agency support pay (2 mids)", cashDelta: -8, category: "staff" });
+
+    // Two agency mids clear what one permanent mid does.
+    const permanent = s.applyAction(begin(), { type: "hire", pool: "support" });
+    expect(s.dailyClearance(day2.state)).toBe(s.dailyClearance(permanent));
+  });
+
+  it("counts agency staff's work towards builds and ops cover", () => {
+    const team = { ...begin(), agency: { ...begin().agency, developers: { ...none, senior: 1 }, ops: { ...none, mid: 4 } } };
+    const withOps = { ...begin(), staff: { ...begin().staff, ops: { ...none, mid: 2 } } };
+    expect(s.capacity(team)).toBe(s.capacity(withOps));
+    const building = s.applyAction(team, { type: "buildFeature", feature: "checkout" });
+    expect(s.features(s.advance(building).state).find((f) => f.id === "checkout")!.progress).toBe(1);
+  });
+
+  it("charges permanent staff's severance at once when they're let go, and none for agency staff", () => {
+    const state = {
+      ...begin(),
+      cash: 1_000,
+      staff: { ...begin().staff, developers: { ...none, mid: 3 } },
+      agency: { ...begin().agency, developers: { ...none, mid: 3 } },
+    };
+    // Developers are £7 a day for a mid: 10 days' pay each.
+    expect(pool(state, "developers").grades.find((g) => g.grade === "mid")!.severance).toBe(70);
+    const cut = s.applyAction(state, { type: "letGo", pool: "developers", count: 2 });
+    expect(cut.staff.developers).toEqual({ ...none, mid: 1 });
+    expect(cut.agency.developers).toEqual({ ...none, mid: 3 });
+    expect(cut.cash).toBe(1_000 - 140);
+    expect(cut.spend.staff).toBe(state.spend.staff + 140);
+
+    const agencyCut = s.applyAction(state, { type: "letGo", pool: "developers", count: 3, agency: true });
+    expect(agencyCut.agency.developers).toEqual(none);
+    expect(agencyCut.staff.developers).toEqual({ ...none, mid: 3 });
+    expect(agencyCut.cash).toBe(1_000);
+  });
+
+  it("refuses to let go permanent staff without the cash for their severance, or agency staff who aren't there", () => {
+    const state = { ...begin(), cash: 100, staff: { ...begin().staff, developers: { ...none, mid: 2 } } };
+    expect(() => s.applyAction(state, { type: "letGo", pool: "developers", count: 2 })).toThrow(
+      expect.objectContaining({ code: "cant_afford", message: "Letting go 2 mid developers costs £140 in severance, and you have £100." }),
+    );
+    expect(() => s.applyAction(state, { type: "letGo", pool: "developers", agency: true })).toThrow(
+      expect.objectContaining({ code: "no_staff", message: "You have no agency mid developers to let go." }),
+    );
+  });
+
+  it("keeps agency staff in their pool: only permanent staff move", () => {
+    const state = { ...begin(), agency: { ...begin().agency, developers: { ...none, mid: 1 } } };
+    expect(() => s.applyAction(state, { type: "moveStaff", from: "developers", to: "ops" })).toThrow(
+      expect.objectContaining({ code: "no_staff" }),
+    );
+  });
+
+  it("makes agency staff 1.25× the pay for half the work from the next day by default, and severance a cost", () => {
+    expect(defaultConfig.agency).toEqual({ payMultiplier: 1.25, output: 0.5, leadDays: 1 });
+    expect(defaultConfig.severance.days).toBeGreaterThan(0);
   });
 });
 

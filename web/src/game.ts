@@ -78,9 +78,12 @@ export function createGame(code: string, id: string) {
   const staffPool = (pool: StaffPool) => company.value?.staff.find((p) => p.pool === pool);
   const grade = (id: StaffGrade) => meta.value?.grades.find((g) => g.id === id);
   const work = (pool: StaffPool) => staffPool(pool)?.output ?? 0;
-  // Work hired but not started yet: it counts once they start.
+  // Work hired but not started yet: it counts once they start. Agency staff do a share of their grade's.
   const workComing = (pool: StaffPool) =>
-    staffPool(pool)?.hiring.reduce((sum, h) => sum + h.count * (grade(h.grade)?.output ?? 1), 0) ?? 0;
+    staffPool(pool)?.hiring.reduce(
+      (sum, h) => sum + h.count * (grade(h.grade)?.output ?? 1) * (h.agency ? (meta.value?.agency.output ?? 1) : 1),
+      0,
+    ) ?? 0;
   // Mids it takes to make up a shortfall in work: 0.35 short is one more.
   const midsShort = (needed: number, have: number) => Math.max(0, Math.ceil(Math.round((needed - have) * 100) / 100));
   const opsWork = computed(() => work("ops"));

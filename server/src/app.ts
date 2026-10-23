@@ -440,6 +440,8 @@ export async function buildApp(opts: AppOptions) {
         return { id, name, personName, dayRate };
       }),
       grades: STAFF_GRADES.map((id) => ({ id, ...config.staffGrades[id] })),
+      agency: config.agency,
+      severanceDays: config.severance.days,
       minConfigDevelopers: config.addons.minConfigDevelopers,
       ticketsPerPerson: config.support.ticketsPerPerson,
       goodSatisfaction: config.support.goodSatisfaction,
@@ -645,6 +647,8 @@ export async function buildApp(opts: AppOptions) {
             pool: { enum: [...STAFF_POOLS] },
             // hire, letGo and moveStaff: the grade, mid if left out.
             grade: { enum: [...STAFF_GRADES] },
+            // hire and letGo: agency staff rather than permanent, false if left out.
+            agency: { type: "boolean" },
             // Checked against the product's list by the sim.
             feature: { type: "string", maxLength: 64 },
             // moveStaff: the pool one person moves into, and optionally the one they leave.

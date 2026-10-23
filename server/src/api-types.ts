@@ -106,6 +106,10 @@ export interface MetaView {
   staff: { id: StaffPool; name: string; personName: string; dayRate: number }[];
   /** Junior, mid and senior: pay and work a day against a mid's, and days from hiring to starting work. */
   grades: { id: StaffGrade; name: string; payMultiplier: number; output: number; leadDays: number }[];
+  /** Agency staff: pay and work against a permanent member of the same grade's, and days from hiring to starting work. */
+  agency: { payMultiplier: number; output: number; leadDays: number };
+  /** Days of pay each permanent member of staff is paid in severance when let go. */
+  severanceDays: number;
   /** Developers a SaaS company needs to configure add-ons before it can buy one. */
   minConfigDevelopers: number;
   /** Tickets one support person clears a day. */
