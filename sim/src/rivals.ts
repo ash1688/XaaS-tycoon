@@ -107,6 +107,12 @@ export function createRivals(config: GameConfig, features: Features) {
     return hoursPlayed === 0 ? 100 : (100 * (hoursPlayed - state.downtimeHours)) / hoursPlayed;
   }
 
+  /** The uptime quality counts: over at least uptimeDays, the days not yet played as up. */
+  function qualityUptime(state: GameState): number {
+    const hours = Math.max((state.day - 1) * 24, config.rivals.uptimeDays * 24);
+    return hours === 0 ? 100 : (100 * Math.max(0, hours - state.downtimeHours)) / hours;
+  }
+
   /** A rival's features on a day: those it started with, plus one every featureEveryDays, up to the product's list. */
   function rivalFeatures(productType: ProductTypeId, r: RivalConfig, day: number): number {
     const total = config.productTypes[productType].features.length;
@@ -114,7 +120,7 @@ export function createRivals(config: GameConfig, features: Features) {
   }
 
   const studentQuality = (state: GameState) =>
-    quality(state.productType, features.activeCount(state), studentUptime(state));
+    quality(state.productType, features.activeCount(state), qualityUptime(state));
 
   function rivalQuality(state: GameState, r: RivalConfig, rival: RivalState): number {
     return quality(state.productType, rivalFeatures(state.productType, r, state.day), r.uptime, rival.staffQuality);

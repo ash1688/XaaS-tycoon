@@ -36,8 +36,8 @@ const slices = computed(() => {
 
 const growthNote = computed(() => {
   const g = market.value?.growth ?? 1;
-  if (g > 1.005) return `Rivals are speeding your growth: you win more than your share of new users (×${g.toFixed(2)}).`;
-  if (g < 0.995) return `Rivals are slowing your growth: they win more of the new users than you (×${g.toFixed(2)}).`;
+  if (g > 1.005) return `Rivals are speeding your growth: you win more than your share of new users (growth ${Math.round(100 * g)}% of what it would be).`;
+  if (g < 0.995) return `Rivals are slowing your growth: they win more of the new users than you (growth ${Math.round(100 * g)}% of what it would be).`;
   return "You win about as many new users as the rivals.";
 });
 </script>

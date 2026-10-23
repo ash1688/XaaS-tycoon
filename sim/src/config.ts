@@ -418,6 +418,11 @@ export interface RivalsConfig {
   qualityFromUptime: number;
   /** Uptime, as a percentage, that earns no quality points. */
   worstUptime: number;
+  /**
+   * The student's uptime for quality counts at least this many days, those not yet played as up, so one early outage
+   * doesn't wipe out their quality.
+   */
+  uptimeDays: number;
   /** Chance each permanent member of staff the student lets go joins a rival. */
   joinChance: number;
   /** Quality points one mid joining a rival brings; other grades by their output. */
@@ -1373,7 +1378,8 @@ export const defaultConfig: GameConfig = {
     maxPriceMultiple: 2,
     qualityFromFeatures: 60,
     qualityFromUptime: 40,
-    worstUptime: 95,
+    worstUptime: 90,
+    uptimeDays: 30,
     joinChance: 0.5,
     qualityPerStaff: 2,
     maxStaffQuality: 20,

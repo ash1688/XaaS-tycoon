@@ -155,8 +155,12 @@ export function renderMarket(sim: Sim, state: GameState): string | null {
   if (m.companies.length < 2) return null;
   const companies = m.companies.map((c) => `${c.you ? "you" : c.name} ${pct(100 * c.share)} at ${price(c.price)} q${Math.round(c.quality)}`).join(", ");
   const answer = m.nextReaction ? ` | rivals answer your ${price(m.nextReaction.price)} on day ${m.nextReaction.day}` : "";
-  return `market share: ${companies} | rivals ×${m.growth.toFixed(2)} growth${answer}`;
+  return `market share: ${companies} | ${growthWords(m.growth)}${answer}`;
 }
+
+/** What rivals do to growth, in words: "rivals slow your growth to 84%". */
+const growthWords = (growth: number) =>
+  `rivals ${growth < 0.995 ? "slow" : growth > 1.005 ? "speed up" : "leave"} your growth ${growth < 0.995 || growth > 1.005 ? "to" : "at"} ${pct(100 * growth)}`;
 
 /** The market in full: each company, and how each customer type's new users split today. */
 function marketLines(sim: Sim, state: GameState): string[] {
@@ -171,7 +175,7 @@ function marketLines(sim: Sim, state: GameState): string[] {
     ),
     `new users by customer type (best value wins most):`,
     ...m.byType.map((t) => `  ${t.id}: ${t.shares.map((sh, i) => `${names[i]} ${pct(100 * sh)}`).join(", ")} | best: ${t.bestId === "you" ? "you" : t.bestName}`),
-    `rivals multiply your growth by ${m.growth.toFixed(2)} (1 = as good a deal as theirs)` +
+    `${growthWords(m.growth)} (100% when you're as good a deal as them)` +
       (m.nextReaction ? `; they answer your ${price(m.nextReaction.price)} on day ${m.nextReaction.day}` : ""),
   ];
 }

@@ -352,7 +352,7 @@ describe("rivals", () => {
   it("shows market share in the status and the market in full, changing nothing", () => {
     const state = start();
     expect(parseCommand("market")).toEqual({ kind: "market" });
-    expect(renderStatus(sim, state)).toMatch(/market share: you \d+% at £5 q\d+, Natterly \d+% at £4 q\d+, GatherHub \d+% at £6\.25 q\d+ \| rivals ×[\d.]+ growth/);
+    expect(renderStatus(sim, state)).toMatch(/market share: you \d+% at £5 q\d+, Natterly \d+% at £4 q\d+, GatherHub \d+% at £6\.25 q\d+ \| rivals (slow|speed up|leave) your growth (to|at) \d+%/);
     expect(renderCommands(sim, state)).toMatch(/market {3}\(rivals' prices, quality and share/);
     const market = run(state, "market");
     expect(market.state).toBe(state);

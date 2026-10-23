@@ -262,6 +262,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("rivals.qualityFromFeatures", "Customers", R, "Quality from features", "Quality points (out of 100) for having every feature: a share for each one.", range(0, 100, 1));
   add("rivals.qualityFromUptime", "Customers", R, "Quality from uptime", "Quality points (out of 100) for 100% uptime, fewer the closer uptime is to the worst uptime.", range(0, 100, 1));
   add("rivals.worstUptime", "Customers", R, "Worst uptime %", "Uptime that earns no quality points.", range(0, 99.9, 0.5));
+  add("rivals.uptimeDays", "Customers", R, "Uptime counted over at least (days)", "The student's uptime for quality counts at least this many days, those not yet played as up, so one early outage doesn't wipe out their quality.", range(0, 365, 1));
   add("rivals.joinChance", "Customers", R, "Chance staff let go join a rival", "Each permanent member of staff the student lets go joins a rival with this chance.", SHARE);
   add("rivals.qualityPerStaff", "Customers", R, "Quality per member of staff joining", "Quality points a mid who joins a rival brings it; juniors and seniors by their output.", range(0, 20, 0.5));
   add("rivals.maxStaffQuality", "Customers", R, "Most quality from staff joining", "The most quality points a rival can get from staff who joined it.", range(0, 100, 1));
