@@ -7,6 +7,7 @@ import {
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
   SimError,
+  SPEND_CATEGORIES,
   type Action,
   type DayLog,
   type GameConfig,
@@ -16,6 +17,9 @@ import {
   type ServerSize,
   type ServerType,
   type Sim,
+  type StaffGrade,
+  type StaffPool,
+  type Spend,
   type UnitsView,
 } from "../src/index.ts";
 
@@ -150,11 +154,44 @@ function tryAction(sim: Sim, state: GameState, action: Action): GameState {
   }
 }
 
-/** Hires or lets go one at a time until a pool has `target` people. */
-function staffTo(sim: Sim, state: GameState, pool: "ops" | "support", target: number): GameState {
+/**
+ * Adds a server. On-prem, when no rack has room for it, first buys the biggest rack it can afford (bigger racks cost
+ * less per U), as a student would on being told to.
+ */
+function addServer(sim: Sim, state: GameState, action: Action): GameState {
+  if (action.type !== "buyServer") return tryAction(sim, state, action);
+  const racks = sim.racks(state);
+  if (racks && racks.mostFree < racks.serverUnits[action.size]) {
+    const withRack = [...racks.options]
+      .reverse()
+      .map((o) => tryAction(sim, state, { type: "buyRack", size: o.size }))
+      .find((s) => s !== state);
+    return withRack ? tryAction(sim, withRack, action) : state;
+  }
+  return tryAction(sim, state, action);
+}
+
+/**
+ * Brings a pool's work a day (in mids) up to what it needs now and in a week, counting hires still to start. Short now,
+ * it hires juniors, the quickest to arrive; short of next week's need, mids, who arrive in time for it. Over by more than
+ * a person's work, it lets go juniors first, then mids, then seniors.
+ */
+function staffTo(sim: Sim, state: GameState, pool: "ops" | "support", now: number, nextWeek = now): GameState {
   let s = state;
-  while (s[pool] < target) s = sim.applyAction(s, { type: "hire", pool });
-  while (s[pool] > target) s = sim.applyAction(s, { type: "letGo", pool });
+  const view = () => sim.staff(s).find((p) => p.pool === pool)!;
+  const output = (g: StaffGrade) => sim.config.staffGrades[g].output;
+  const planned = () => view().output + view().hiring.reduce((sum, h) => sum + h.count * output(h.grade), 0);
+  const hire = (grade: StaffGrade, short: number) => {
+    if (short > 0) s = sim.applyAction(s, { type: "hire", pool, grade, count: Math.ceil(short / output(grade)) });
+  };
+  hire("junior", now - planned());
+  hire("mid", nextWeek - planned());
+  const target = Math.max(now, nextWeek);
+  for (const grade of ["junior", "mid", "senior"] as const) {
+    while (view().grades.find((g) => g.grade === grade)!.count > 0 && planned() - output(grade) >= target) {
+      s = sim.applyAction(s, { type: "letGo", pool, grade });
+    }
+  }
   return s;
 }
 
@@ -166,13 +203,17 @@ function staffTo(sim: Sim, state: GameState, pool: "ops" | "support", target: nu
  */
 function ahead(sim: Sim, state: GameState): number {
   const lead = sim.config.models[state.model].servers?.readyDays ?? 0;
-  const { growth } = sim.config.productTypes[state.productType];
+  const margin = 1.05 + sim.config.productTypes[state.productType].growth.loadNoise;
+  return dailyGrowth(sim, state) ** (lead + 1) * margin;
+}
+
+/** Users' growth a day over the last week since the launch ramp, or before any, the product's daily growth. At least 1. */
+function dailyGrowth(sim: Sim, state: GameState): number {
   const launch = sim.launch(state);
   const rampOver = state.launchDay === null ? Infinity : state.launchDay + launch.rampDays - 1;
   const week = state.spendByDay.filter((d) => d.day >= rampOver && d.users > 0).slice(-8);
-  const daily = week.length > 1 ? (state.users / week[0]!.users) ** (1 / (week.length - 1)) : 1 + growth.dailyGrowth;
-  const margin = 1.05 + growth.loadNoise;
-  return Math.max(1, daily) ** (lead + 1) * margin;
+  const daily = week.length > 1 ? (state.users / week[0]!.users) ** (1 / (week.length - 1)) : 1 + sim.config.productTypes[state.productType].growth.dailyGrowth;
+  return Math.max(1, daily);
 }
 
 /** Whether the product's seasonal peak is on any day from tomorrow until servers added today would be ready. */
@@ -237,7 +278,7 @@ function scaleServers(sim: Sim, state: GameState, strategy: Strategy): GameState
   let s = state;
 
   const cuGap = units.cu.demand - units.cu.capacity;
-  if (cuGap > 0 && !pending("app")) s = tryAction(sim, s, { type: add, server: "app", size: sizeFor(sim, s, "app", cuGap, units.cu.capacity) });
+  if (cuGap > 0 && !pending("app")) s = addServer(sim, s, { type: add, server: "app", size: sizeFor(sim, s, "app", cuGap, units.cu.capacity) });
 
   const dbuGap = units.dbu.demand - units.dbu.capacity;
   if (dbuGap > 0 && !pending("database") && !pending("cache")) {
@@ -246,8 +287,8 @@ function scaleServers(sim: Sim, state: GameState, strategy: Strategy): GameState
     const cacheRoom = units.ch.demand - units.ch.capacity;
     s =
       cacheRoom > 0 && ofType("database").length > 0
-        ? tryAction(sim, s, { type: add, server: "cache", size: sizeFor(sim, s, "cache", Math.min(dbuGap, cacheRoom), units.ch.capacity) })
-        : tryAction(sim, s, { type: add, server: "database", size: sizeFor(sim, s, "database", dbuGap, units.dbu.capacity) });
+        ? addServer(sim, s, { type: add, server: "cache", size: sizeFor(sim, s, "cache", Math.min(dbuGap, cacheRoom), units.ch.capacity) })
+        : addServer(sim, s, { type: add, server: "database", size: sizeFor(sim, s, "database", dbuGap, units.dbu.capacity) });
   }
 
   // Load balancers for every app server, ready or not: one that covers them all.
@@ -255,7 +296,7 @@ function scaleServers(sim: Sim, state: GameState, strategy: Strategy): GameState
   const apps = after.filter((v) => v.type === "app").length;
   const coverage = after.filter((v) => v.type === "loadBalancer").reduce((sum, v) => sum + v.units, 0);
   if (apps >= sim.config.servers.loadBalancerFrom && coverage < apps && !pending("loadBalancer")) {
-    s = tryAction(sim, s, { type: add, server: "loadBalancer", size: sizeFor(sim, s, "loadBalancer", apps) });
+    s = addServer(sim, s, { type: add, server: "loadBalancer", size: sizeFor(sim, s, "loadBalancer", apps) });
   }
 
   // On IaaS, rentals are cancelled pro rata, so on a quiet day drop the smallest server there's plenty of room without:
@@ -266,6 +307,8 @@ function scaleServers(sim: Sim, state: GameState, strategy: Strategy): GameState
       database: (n) => units.dbu.capacity - n >= units.dbu.demand * 1.5,
       cache: (n) => units.ch.capacity - n >= units.ch.demand && units.dbu.capacity >= (units.dbu.demand + n) * 1.5,
       loadBalancer: (n) => coverage - n >= apps,
+      // The harness never buys an API, so has no API servers to drop.
+      api: () => false,
     };
     for (const type of ["app", "database", "cache", "loadBalancer"] as const) {
       const ready = ofType(type).filter((v) => v.status === "ready");
@@ -336,11 +379,15 @@ export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameSta
   }
   // The ops its servers need, and enough for any event on its model that costs money without them (a security patch).
   const eventOps = Math.max(0, ...sim.config.events.map((e) => (e.effects[s.model]?.shortOfOps?.cost ? (e.effects[s.model]?.opsNeeded ?? 0) : 0)));
-  s = staffTo(sim, s, "ops", Math.max(sim.opsNeededNow(s), eventOps));
+  // Ops for kit on order too, so they've started by the time it arrives.
+  s = staffTo(sim, s, "ops", Math.max(sim.opsNeededNow(s), eventOps), Math.max(sim.opsNeededOnceReady(s), eventOps));
   if (strategy.support) {
-    // Enough to clear today's tickets with a little to spare, and a fifth of the backlog.
-    const needed = Math.max(1, Math.ceil((sim.usualTickets(s) * 1.1 + s.backlog / 5) / sim.config.support.ticketsPerPerson));
-    s = staffTo(sim, s, "support", needed);
+    // Enough to clear today's tickets with a little to spare, and a fifth of the backlog; and next week's at this growth.
+    const perPerson = sim.config.support.ticketsPerPerson;
+    const needed = Math.max(1, (sim.usualTickets(s) * 1.1 + s.backlog / 5) / perPerson);
+    const weekGrowth = dailyGrowth(sim, s) ** sim.config.staffGrades.mid.leadDays;
+    const nextWeek = Math.max(1, (sim.usualTickets(s) * 1.1 * weekGrowth) / perPerson);
+    s = staffTo(sim, s, "support", needed, nextWeek);
   }
   return buildFeatures(sim, s);
 }
@@ -416,18 +463,20 @@ export function playGame(sim: Sim, { model, productType, strategy, seed }: GameS
     endModel: summary.model,
     migrationDay,
     spend: { ...summary.spend },
-    staff: { developers: state.developers, ops: state.ops, support: state.support },
+    staff: Object.fromEntries(sim.staff(state).map((p) => [p.pool, p.headcount])) as Record<StaffPool, number>,
   };
 }
 
 /** The first day profit so far reached zero, counting only the interest in loan repayments, as the summary does. */
 function breakEven(state: GameState): number | null {
-  const spend = { staff: 0, infrastructure: 0, addons: 0, debt: 0 };
+  const spend = Object.fromEntries(SPEND_CATEGORIES.map((c) => [c, 0])) as Spend;
   let income = 0;
+  let interest = 0;
   for (const d of state.spendByDay) {
-    for (const c of ["staff", "infrastructure", "addons", "debt"] as const) spend[c] += d[c];
+    for (const c of SPEND_CATEGORIES) spend[c] += d[c];
     income += d.income;
-    if (income > 0 && income >= profitCosts(spend, state.loan)) return d.day;
+    interest += d.interest;
+    if (income > 0 && income >= profitCosts(spend, interest)) return d.day;
   }
   return null;
 }

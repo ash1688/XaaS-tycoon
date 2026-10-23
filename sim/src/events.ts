@@ -1,6 +1,7 @@
 import type { EventConfig, EventEffect, EventOutcome, GameConfig, ModelId, ProductTypeId } from "./config.ts";
 import { layerOwner, layerResponsibility, type LayerId, type Owner } from "./responsibility.ts";
 import { nextRandom } from "./rng.ts";
+import { staffOutput } from "./staff.ts";
 import type { EventRecord, FeatureGap, GameState, LogEntry, ScheduledEvent } from "./state.ts";
 
 /** A scripted event that was on during the day just played, explained for the student. */
@@ -97,7 +98,7 @@ export function createEvents(config: GameConfig) {
   function eventsToday(state: GameState, day: number): EventToday[] {
     return eventsOn(state, day, state.model).map((event) => {
       const needed = event.effects[state.model]?.opsNeeded;
-      const shortOfOps = needed !== undefined && state.ops < needed;
+      const shortOfOps = needed !== undefined && staffOutput(config, state, "ops") < needed;
       const outcome = outcomeFor(event, state.model, shortOfOps);
       return { event, shortOfOps, outcome, scales: scales(state, event, outcome, state.model, day) };
     });

@@ -114,6 +114,29 @@ describe("validateOverrides", () => {
     expect(validateOverrides({ "events.trafficSpike.schedule.toDay": 10 })).toHaveProperty([
       "events.trafficSpike.schedule.toDay",
     ]);
+    // Every server has to fit in the biggest rack.
+    expect(validateOverrides({ "models.onprem.servers.racks.serverUnits.massive": 50 })).toHaveProperty([
+      "models.onprem.servers.racks.serverUnits.massive",
+    ]);
+    expect(validateOverrides({ "models.onprem.servers.racks.sizes.large.units": 6 })).toHaveProperty([
+      "models.onprem.servers.racks.sizes.large.units",
+    ]);
+    expect(validateOverrides({ "models.onprem.servers.racks.serverUnits.massive": 42 })).toEqual({});
+  });
+
+  it("has a toggle for each game length, and needs at least one allowed", () => {
+    const toggles = fields.filter((f) => f.kind === "toggle");
+    expect(toggles.map((f) => [f.path, f.default])).toEqual([
+      ["allowedGameLengths.180-days", 1],
+      ["allowedGameLengths.1-year", 0],
+      ["allowedGameLengths.career", 0],
+    ]);
+    expect(validateOverrides({ "allowedGameLengths.career": 1, "allowedGameLengths.1-year": 1 })).toEqual({});
+    expect(validateOverrides({ "allowedGameLengths.career": 0.5 })).toHaveProperty(["allowedGameLengths.career"]);
+    expect(validateOverrides({ "allowedGameLengths.180-days": 0 })).toEqual({
+      "allowedGameLengths.180-days": "At least one game length must be allowed.",
+    });
+    expect(validateOverrides({ "allowedGameLengths.180-days": 0, "allowedGameLengths.career": 1 })).toEqual({});
   });
 });
 

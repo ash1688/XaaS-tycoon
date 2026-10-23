@@ -12,26 +12,35 @@ Run every command from the `sim` folder. `<game>` is the path to your game file,
 ```bash
 npm run -s play -- new <game> --product social --model paas --loan --shares 10000 --seed 1 --player "AI 1" --playstyle min-maxer
 npm run -s play -- look <game>
-npm run -s play -- do <game> "hire support 3; price 6; next 7"
+npm run -s play -- do <game> "hire support junior 3; price 6; next 7"
 npm run -s play -- summary <game>
 ```
 
 - `new` starts a game and shows the company and the commands. Leave out `--loan` to start without the bank loan.
   `--shares` is how many shares your company has (10,000 to 100,000, 10,000 if left out): you own all of them.
+  `--length` picks the game length: `180-days` (the default), `1-year` (ends on day 365) or `career` (47 years,
+  ends on day 17,155). Play 180 days unless your brief says otherwise.
 - `look` shows the company and every command that works right now, with prices and allowed values.
 - `do` runs game commands separated by `;`. Every game command goes inside `do`, including `preview` and `quote`:
   `npm run -s play -- do <game> "preview 8; quote iaas"`.
 - `next [days]` (inside `do`) moves time on, 7 days by default, and **stops early** when something needs a
-  decision: an event that hurts, an outage, a built feature, a server arriving, capacity running out, satisfaction
-  falling, cash about to run out, or the price lock ending. Any commands after a stop are skipped. Events that need
+  decision: an event that hurts, an outage, a built feature, a server arriving, staff starting, capacity running out, satisfaction
+  falling, cash about to run out, the price lock ending, or paid API calls starting to be dropped. Any commands after a stop are skipped. Events that need
   nothing from you are shown but don't stop time.
+- Staff come in junior, mid and senior grades, each with its own pay and work a day, and each takes days to start
+  after hiring (shown under staff until they do). `hire <pool> [grade] [n]` and `letgo <pool> [grade] [n]` take a
+  grade; without one it's mids. Time also stops when hires start.
 - `preview <price>` and `quote <model>` show what a price change or migration would do without doing it.
 - `valuation` shows what your company is worth, what's pushing it up or down, and who owns it. `funding` shows the
   friends and family and grant offers in full; `accept ff`, `accept grant`, `decline ff` and `decline grant` answer
   them, once each.
+- `loan` takes a bank loan, repaid daily over a fixed term; `repayloan` pays it off early to save interest. One loan
+  at a time: once it's repaid, `loan` is offered again.
 - `summary` shows the final figures once the game is over.
+- `end` (inside `do`) ends the game as the teacher would from the staff panel, scored as it stands. Only use it if
+  your brief asks you to test it.
 
-Run `look` whenever you're unsure what you can do. Keep going until the game ends: day 180, or bankruptcy.
+Run `look` whenever you're unsure what you can do. Keep going until the game ends: its final day (day 180 by default), or bankruptcy.
 
 ## Your playstyle
 

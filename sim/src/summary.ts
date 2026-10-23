@@ -1,5 +1,6 @@
-import { SPEND_CATEGORIES, type GameConfig, type ModelId, type ProductTypeId } from "./config.ts";
-import { interestIn, profitCosts } from "./finance.ts";
+import { SPEND_CATEGORIES, type GameConfig, type GameLengthId, type ModelId, type ProductTypeId } from "./config.ts";
+import { profitCosts } from "./finance.ts";
+import { isOpen } from "./loan.ts";
 import type { Infrastructure } from "./infrastructure.ts";
 import type { DaySpend, GameEnding, GameState, Spend } from "./state.ts";
 
@@ -29,19 +30,26 @@ export interface PeakUsers {
   paidUsers: number;
 }
 
-/** The bank loan, for the summary: null there if it was never taken. */
+/** Every bank loan taken, added up, for the summary: null there if none was. */
 export interface LoanSummary {
-  /** The day it was taken: 1 if at the start. */
+  /** Loans taken. */
+  loans: number;
+  /** The day the first was taken: 1 if at the start. */
   day: number;
+  /** Borrowed in all. */
   amount: number;
-  /** Everything to repay: the amount plus interest. */
+  /** Everything repaid or still to repay: each loan's amount plus interest, or what one paid off early came to. */
   total: number;
   repaid: number;
   /** Of the repaid, the interest: the part that counts against profit. */
   interestPaid: number;
   /** Of the repaid, the amount borrowed being paid back: not a cost, as borrowing it wasn't income. */
   principalRepaid: number;
-  /** Repaid in full. False on a game that went bankrupt before the final day. */
+  /** Interest saved by paying loans off early. */
+  interestSaved: number;
+  /** Still to repay on the latest loan: 0 once repaid. A loan's term can run past the final day. */
+  remaining: number;
+  /** Every loan repaid in full. False on a game that ended while one was still being repaid. */
   fullyRepaid: boolean;
 }
 
@@ -58,6 +66,8 @@ export interface GameSummary {
   ending: GameEnding | null;
   /** The last day played. */
   day: number;
+  gameLength: GameLengthId;
+  /** The game length's last day. */
   finalDay: number;
   cash: number;
   users: number;
@@ -107,15 +117,10 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
       days.unshift({ ...d, cash });
       cash += total(d) - d.income - d.borrowed - d.raised;
     }
-    const { loan } = state;
     let totalIncome = 0;
     let totalCosts = 0;
-    let repaid = 0;
     const incomeVsCosts = state.spendByDay.map((d): IncomeCostDay => {
-      // The day's interest is what the repayments so far hold less what they held yesterday, so the days add up.
-      const interest = interestIn(loan, repaid + d.debt) - interestIn(loan, repaid);
-      repaid += d.debt;
-      const costs = total(d) - d.debt + interest;
+      const costs = total(d) - d.debt + d.interest;
       totalIncome += d.income;
       totalCosts += costs;
       return { day: d.day, income: d.income, costs, totalIncome, totalCosts };
@@ -129,15 +134,20 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
     const satisfaction = played.length
       ? played.reduce((sum, d) => sum + d.satisfaction, 0) / played.length
       : state.satisfaction;
-    const costs = profitCosts(state.spend, loan);
-    const ending = state.status === "playing" ? null : state.status === "bankrupt" ? "bankrupt" : "completed";
+    const costs = profitCosts(state.spend, state.interestPaid);
+    const ending =
+      state.status === "playing" ? null
+      : state.status === "bankrupt" ? "bankrupt"
+      : state.endedByTeacher ? "ended"
+      : "completed";
     return {
       companyName: state.companyName,
       productType: state.productType,
       model: state.model,
       ending,
       day: state.day,
-      finalDay: config.finalDay,
+      gameLength: state.gameLength,
+      finalDay: state.finalDay,
       cash: state.cash,
       users: state.users,
       paidUsers: state.paidUsers,
@@ -152,17 +162,29 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
       totalSpend: total(state.spend),
       migrations: state.migrations,
       priceChanges: state.priceChanges.length,
-      loan: loan && {
-        day: loan.day,
-        amount: loan.amount,
-        total: loan.total,
-        repaid: loan.repaid,
-        interestPaid: interestIn(loan, loan.repaid),
-        principalRepaid: loan.repaid - interestIn(loan, loan.repaid),
-        fullyRepaid: loan.repaid >= loan.total,
-      },
+      loan: loanSummary(state),
       days,
       incomeVsCosts,
+    };
+  }
+
+  function loanSummary({ loan, pastLoans, interestPaid }: GameState): LoanSummary | null {
+    if (!loan) return null;
+    const loans = [...pastLoans, loan];
+    const sum = (f: (l: (typeof loans)[number]) => number) => loans.reduce((s, l) => s + f(l), 0);
+    const repaid = sum((l) => l.repaid);
+    const total = sum((l) => (l.paidOffDay === null ? l.total : l.repaid));
+    return {
+      loans: loans.length,
+      day: loans[0]!.day,
+      amount: sum((l) => l.amount),
+      total,
+      repaid,
+      interestPaid,
+      principalRepaid: repaid - interestPaid,
+      interestSaved: sum((l) => (l.paidOffDay === null ? 0 : l.total - l.repaid)),
+      remaining: total - repaid,
+      fullyRepaid: !isOpen(loan),
     };
   }
 

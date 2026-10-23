@@ -32,7 +32,8 @@ test("play to the end, then see profit or loss and income against costs, and the
     await sql.end();
   }
   const act = (data: object) => request.post(`/api/codes/${code}/companies/${id}/actions`, { data });
-  expect((await act({ type: "hire", pool: "ops" })).status()).toBe(200);
+  // A developer moves into ops at once (a hire would take days to start).
+  expect((await act({ type: "moveStaff", to: "ops" })).status()).toBe(200);
   expect((await act({ type: "setPrice", price: fairPrice + 5 })).status()).toBe(200);
 
   const student = await (await browser.newContext()).newPage();
@@ -44,7 +45,13 @@ test("play to the end, then see profit or loss and income against costs, and the
   await expect(student.getByTestId("finished-screen")).toContainText(`You made it to day ${E2E_FINAL_DAY}`);
 
   const api = await (await request.get(`/api/codes/${code}/companies/${id}/summary`)).json();
-  expect(api).toMatchObject({ ending: "completed", priceChanges: 1, loan: { day: 1, fullyRepaid: true } });
+  // The loan's 120-day term runs past this short game's final day: 29 repayments of £321 are made, and the rest is
+  // still owed.
+  expect(api).toMatchObject({
+    ending: "completed",
+    priceChanges: 1,
+    loan: { loans: 1, day: 1, repaid: 29 * 321, remaining: 38_520 - 29 * 321, fullyRepaid: false },
+  });
   expect(api.income).toBeGreaterThan(0);
 
   // The headline: profit or loss, said in words and by its sign as well as its colour, from income less costs.
@@ -56,7 +63,7 @@ test("play to the end, then see profit or loss and income against costs, and the
   // Of the loan repayments only the interest is a cost, so costs are less than everything spent by the principal.
   await expect(headline.getByTestId("summary-costs")).toHaveText(money(api.costs));
   expect(api.costs).toBeCloseTo(api.totalSpend - api.loan.principalRepaid, 6);
-  expect(api.loan.principalRepaid).toBe(35_000);
+  expect(api.loan.principalRepaid).toBe(29 * 321 - api.loan.interestPaid);
   await expect(headline).toHaveClass(loss ? /loss/ : /profit/);
 
   // Peak users with the split, satisfaction and uptime on average, the price change and the loan.
@@ -68,7 +75,9 @@ test("play to the end, then see profit or loss and income against costs, and the
   await expect(student.getByTestId("summary-uptime")).toHaveText(/%$/);
   await expect(student.getByTestId("summary-price-changes")).toHaveText("1");
   await expect(student.getByTestId("summary-loan")).toHaveText("£35,000");
-  await expect(student.getByTestId("summary-loan-status")).toContainText("taken at the start · repaid in full");
+  await expect(student.getByTestId("summary-loan-status")).toContainText(
+    `first taken at the start · ${money(api.loan.remaining)} still owed`,
+  );
   await expect(student.getByTestId("summary-loan-interest")).toHaveText(`${money(api.loan.interestPaid)} interest`);
 
   // The income-against-costs chart: two lines, with a key and axis titles.
@@ -91,7 +100,7 @@ test("play to the end, then see profit or loss and income against costs, and the
   await expect(row.getByTestId("live-paid-free")).toHaveText(
     `${company.paidUsers.toLocaleString("en-GB")} paid · ${company.freeUsers.toLocaleString("en-GB")} free`,
   );
-  await expect(row.getByTestId("live-loan")).toHaveText("Repaid");
+  await expect(row.getByTestId("live-loan")).toHaveText(`${money(api.loan.remaining)} left`);
   await expect(teacher.getByRole("columnheader", { name: "Income a day" }).first()).toBeVisible();
   await expect(teacher.getByRole("columnheader", { name: "Satisfaction" }).first()).toBeVisible();
 

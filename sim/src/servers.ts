@@ -10,6 +10,7 @@ import {
   type ServerType,
 } from "./config.ts";
 import { count, pounds, risen, type Finance } from "./finance.ts";
+import type { Racks } from "./racks.ts";
 import {
   isManagedService,
   isServerSize,
@@ -17,6 +18,7 @@ import {
   SimError,
   type GameState,
   type LogEntry,
+  type Rack,
   type Server,
   type UnitDemand,
 } from "./state.ts";
@@ -36,14 +38,18 @@ export interface ServerView {
   readyDay: number;
   /** Days until it's ready or, bought, arrives: 0 once it has. */
   daysLeft: number;
-  /** CU, DBU or CH; for a load balancer, the app servers it can serve. */
+  /** CU, DBU, CH or APIU; for a load balancer, the app servers it can serve. */
   units: number;
+  /** An app server switched to give APIU instead of CU, for the paid API's calls. False for any other. */
+  apiu: boolean;
   /** Its monthly price today, after any provider price rises: rent, or for a bought one, power and upkeep. */
   monthlyCost: number;
   /** What it was bought for, or null for a rented one. */
   paid: number | null;
   /** What selling it back would refund now, or null for a rented one. */
   sellBack: number | null;
+  /** The rack it's installed in, by id, on a model with racks (on-prem); null on any other. */
+  rack: number | null;
 }
 
 /**
@@ -83,6 +89,10 @@ export interface ServerOption {
   readyDays: number;
   /** Ops staff it needs: a share of a person, added up over every server. */
   ops: number;
+  /** The rack units (U) it takes, on a model with racks (on-prem); null on any other. */
+  rackUnits: number | null;
+  /** Cabling charged on top of the price, on a model that buys its servers; 0 where they're rented. */
+  cabling: number;
 }
 
 /** Demand against capacity on one tier. Capacity 0 with demand above it is over capacity however small the demand. */
@@ -159,6 +169,12 @@ export interface ManagedView {
   instanceUnits: number;
   /** One instance a month, after any provider price rises. */
   instanceMonthlyCost: number;
+  /** API instances, for the paid API's calls: 0 without any. They're instanceSize too, and run up to maxInstances. */
+  apiInstances: number;
+  /** APIU each API instance gives. */
+  apiInstanceUnits: number;
+  /** One API instance a month, after any provider price rises. */
+  apiInstanceMonthlyCost: number;
   /**
    * Null with no database: a new company has none until it picks a size, and can't launch without one. Options are
    * on databaseOptions then.
@@ -177,6 +193,8 @@ export interface UnitCapacity {
   cu: number;
   dbu: number;
   ch: number;
+  /** For the paid API's calls: API servers, and app servers switched to APIU. */
+  apiu: number;
   loadBalancer: LoadBalancerView;
 }
 
@@ -207,7 +225,7 @@ export interface UnitServe {
  * of each managed service. They're rented in all but name, so billed the same way, but ready at once, needing no ops,
  * and with the load balancer built in.
  */
-export function createServers(config: GameConfig, finance: Finance) {
+export function createServers(config: GameConfig, finance: Finance, racks: Racks) {
   const modelServers = (model: ModelId) => config.models[model].servers;
   const hasServers = (model: ModelId) => !!modelServers(model);
   const purchaseOf = (model: ModelId) => modelServers(model)?.purchase;
@@ -222,8 +240,9 @@ export function createServers(config: GameConfig, finance: Finance) {
   };
   const readyDaysOf = (model: ModelId) => modelServers(model)?.readyDays ?? 0;
   const nameOf = (type: ServerType) => config.servers.types[type].name;
+  // "API" keeps its capitals mid-sentence.
   const plural = (n: number, size: ServerSize, type: ServerType) =>
-    `${count.format(n)} ${size} ${nameOf(type).toLowerCase()}${n === 1 ? "" : "s"}`;
+    `${count.format(n)} ${size} ${type === "api" ? nameOf(type) : nameOf(type).toLowerCase()}${n === 1 ? "" : "s"}`;
 
   /**
    * Whether a server is in service at the end of `day`: billed, and needing ops. A rented VM is from the moment it's
@@ -260,9 +279,15 @@ export function createServers(config: GameConfig, finance: Finance) {
     return { servers, nextServerId: id };
   }
 
-  /** A model's starter setup as servers, for a new company: bought ones at their purchase prices (see starterPurchases). */
-  const starter = (model: ModelId, readyDay: number, nextId = 1) =>
-    build(model, modelServers(model)?.starter ?? [], readyDay, nextId, (type, size) => purchaseOf(model)?.price[type][size] ?? 0);
+  /**
+   * A model's starter setup as servers, for a new company: bought ones at their purchase prices (see starterPurchases),
+   * installed in the racks the server room comes with, on a model with racks.
+   */
+  function starter(model: ModelId, readyDay: number, nextId = 1, nextRackId = 1) {
+    const price = (type: ServerType, size: ServerSize) => purchaseOf(model)?.price[type][size] ?? 0;
+    const built = build(model, modelServers(model)?.starter ?? [], readyDay, nextId, price);
+    return { ...racks.installAtBase(model, built.servers, nextRackId), nextServerId: built.nextServerId };
+  }
 
   /** The cheapest of some choices, by cost then by fewest servers; the first of any that tie. */
   const cheapest = <T extends { cost: number; servers: number }>(choices: T[]) =>
@@ -277,6 +302,8 @@ export function createServers(config: GameConfig, finance: Finance) {
    * - PaaS: ceil(CU ÷ instance CU) instances, up to the most allowed, and the smallest managed database that covers
    *   the DBU; past the biggest, the smallest managed cache that takes the rest.
    * - SaaS (no servers): nothing.
+   * With APIU demand (a paid API), API servers of whichever single size meets it most cheaply, or on PaaS, API
+   * instances.
    */
   function sizeSetupFor(model: ModelId, demand: UnitDemand): ServerCount[] {
     const servers = modelServers(model);
@@ -284,6 +311,7 @@ export function createServers(config: GameConfig, finance: Finance) {
     const room = 1 + config.migration.setupHeadroom;
     const cu = demand.cu * room;
     const dbu = demand.dbu * room;
+    const apiu = (demand.apiu ?? 0) * room;
     const managed = servers.managed;
     if (managed) {
       const instanceUnits = unitsOn(model, { type: "app", size: managed.instanceSize });
@@ -297,6 +325,11 @@ export function createServers(config: GameConfig, finance: Finance) {
       ];
       const rest = dbu - managed.units.database[database];
       if (rest > 0) setup.push({ type: "cache", size: smallest("cache", rest), count: 1 });
+      const apiUnits = unitsOn(model, { type: "api", size: managed.instanceSize });
+      if (apiu > 0 && apiUnits > 0) {
+        const count = Math.min(managed.maxInstances, Math.ceil(apiu / apiUnits));
+        setup.push({ type: "api", size: managed.instanceSize, count });
+      }
       return setup;
     }
     const price = (type: ServerType, size: ServerSize) =>
@@ -319,6 +352,10 @@ export function createServers(config: GameConfig, finance: Finance) {
     const setup: ServerCount[] = [{ type: "app", size: app.size, count: app.n }];
     if (app.lb.n > 0) setup.push({ type: "loadBalancer", size: app.lb.size, count: app.lb.n });
     setup.push({ type: "database", size: database.size, count: database.n });
+    if (apiu > 0) {
+      const api = cheapest(options("api", apiu));
+      setup.push({ type: "api", size: api.size, count: api.n });
+    }
     return setup;
   }
 
@@ -330,14 +367,15 @@ export function createServers(config: GameConfig, finance: Finance) {
   function setupFor(state: GameState, model: ModelId, demand: UnitDemand) {
     const readyDay = state.day + readyDaysOf(model);
     const price = (type: ServerType, size: ServerSize) => purchasePrice(state, model, type, size);
-    return build(model, sizeSetupFor(model, demand), readyDay, state.nextServerId, price);
+    const built = build(model, sizeSetupFor(model, demand), readyDay, state.nextServerId, price);
+    return { ...racks.installToday(state, model, built.servers, state.nextRackId), nextServerId: built.nextServerId };
   }
 
   /**
-   * Buying kit, on a model that buys its servers: one line per type, size and price, each labelled ("Starter kit").
-   * None where servers are rented: those are billed as rent.
+   * Buying kit, on a model that buys its servers: one line per type, size and price, each labelled ("Starter kit"),
+   * then the racks it goes in and the cabling for all of it. None where servers are rented: those are billed as rent.
    */
-  function kitEntries(model: ModelId, list: Server[], label: string): LogEntry[] {
+  function kitEntries(model: ModelId, list: Server[], label: string, rackList: Rack[] = []): LogEntry[] {
     if (!buys(model)) return [];
     const groups = new Map<string, { s: Server; n: number }>();
     for (const s of list) {
@@ -346,20 +384,24 @@ export function createServers(config: GameConfig, finance: Finance) {
       if (group) group.n++;
       else groups.set(key, { s, n: 1 });
     }
-    return [...groups.values()]
+    const servers = [...groups.values()]
       .filter(({ s }) => (s.paid ?? 0) > 0)
       .map(({ s, n }) => ({
         text: `${label}: bought ${plural(n, s.size, s.type)} at ${pounds(s.paid ?? 0)} each`,
         cashDelta: -n * (s.paid ?? 0),
         category: "infrastructure" as const,
       }));
+    return [...servers, ...racks.rackEntries(rackList, label), ...racks.cablingEntries(model, list.length + rackList.length, label)];
   }
 
   /**
    * Buying a model's starter kit, on a model that buys its servers: charged with the model's upfront cost (the server
    * room), one line per type and size.
    */
-  const starterPurchases = (model: ModelId) => kitEntries(model, starter(model, 0).servers, "Starter kit");
+  const starterPurchases = (model: ModelId) => {
+    const kit = starter(model, 0);
+    return kitEntries(model, kit.servers, "Starter kit", kit.racks);
+  };
 
   /**
    * The servers a model has: the company's on its current model, and on the model a migration is moving to, the
@@ -444,7 +486,7 @@ export function createServers(config: GameConfig, finance: Finance) {
     const perServer = modelServers(model)?.opsPerServer;
     if (!perServer) return fixed;
     // Shares like 0.1 don't add up exactly, so the total is rounded to a millionth before rounding up.
-    return fixed + Math.ceil(Math.round(servers.reduce((sum, s) => sum + perServer[s.type], 0) * 1e6) / 1e6);
+    return fixed + Math.ceil(Math.round(servers.reduce((sum, s) => sum + (perServer[s.type] ?? 0), 0) * 1e6) / 1e6);
   }
 
   /**
@@ -479,8 +521,39 @@ export function createServers(config: GameConfig, finance: Finance) {
     if (!isServerType(type) || !isServerSize(size)) {
       throw new SimError("unknown_server", "Pick a server type and size from the list.");
     }
+    refuseWithoutApi(state, type);
     const server: Server = { id: state.nextServerId, type, size, readyDay: state.day + readyDaysOf(state.model) };
     return { ...state, servers: [...state.servers, server], nextServerId: state.nextServerId + 1 };
+  }
+
+  /** Refuses API capacity to a company without a paid API: it would serve nothing. */
+  function refuseWithoutApi(state: GameState, type: ServerType) {
+    if (type !== "api" || state.api) return;
+    const api = config.productTypes[state.productType].api;
+    throw new SimError(
+      "no_api",
+      api ? `Buy your ${api.name} first: API servers only serve its calls.` : "Your product has no paid API, so API servers would serve nothing.",
+    );
+  }
+
+  /**
+   * Switches one of the company's app servers between giving CU and giving APIU, on a model where servers are added one
+   * at a time. It changes at once, so a ready one serves the other way from the next day played. Not on a managed
+   * platform, which runs API instances instead.
+   */
+  function switchServer(state: GameState, id: number, gives: string): GameState {
+    refuseManaged(state);
+    if (gives !== "cu" && gives !== "apiu") throw new SimError("bad_switch", "Switch an app server to CU or to APIU.");
+    const server = ownServer(state, id);
+    if (server.type !== "app") throw new SimError("not_app_server", "Only app servers can switch between CU and APIU.");
+    if (gives === "apiu") refuseWithoutApi(state, "api");
+    if (!!server.apiu === (gives === "apiu")) {
+      throw new SimError("already_switched", `That app server already gives ${gives === "apiu" ? "APIU" : "CU"}.`);
+    }
+    const switched: Server = { ...server };
+    if (gives === "apiu") switched.apiu = true;
+    else delete switched.apiu;
+    return { ...state, servers: state.servers.map((s) => (s.id === id ? switched : s)) };
   }
 
   /** Finds one of the company's servers, or refuses. */
@@ -498,7 +571,7 @@ export function createServers(config: GameConfig, finance: Finance) {
   }
 
   /** Buys a server: charged at once, and on order until it arrives after the model's readyDays. */
-  function buyServer(state: GameState, type: string, size: string): GameState {
+  function buyServer(state: GameState, type: string, size: string, wanted?: number): GameState {
     const servers = modelServers(state.model);
     const { name } = config.models[state.model];
     if (!servers?.purchase) {
@@ -512,15 +585,31 @@ export function createServers(config: GameConfig, finance: Finance) {
     if (!isServerType(type) || !isServerSize(size)) {
       throw new SimError("unknown_server", "Pick a server type and size from the list.");
     }
+    refuseWithoutApi(state, type);
+    // On a model with racks it needs room in one first, from the day it's ordered.
+    const rack = racks.hasRacks(state.model) ? racks.rackFor(state, size, wanted) : undefined;
     const price = purchasePrice(state, state.model, type, size);
-    if (price > state.cash) {
-      throw new SimError("cant_afford", `That costs ${pounds(price)} up front and you have ${pounds(state.cash)}.`);
+    const cabling = racks.cablingOf(state.model);
+    if (price + cabling > state.cash) {
+      const what = cabling > 0 ? `${pounds(price + cabling)} up front with its cabling` : `${pounds(price)} up front`;
+      throw new SimError("cant_afford", `That costs ${what} and you have ${pounds(state.cash)}.`);
     }
     const days = readyDaysOf(state.model);
-    const server: Server = { id: state.nextServerId, type, size, readyDay: state.day + days, paid: price };
+    const server: Server = {
+      id: state.nextServerId,
+      type,
+      size,
+      readyDay: state.day + days,
+      paid: price,
+      ...(rack !== undefined && { rack }),
+    };
     const bought = { ...state, servers: [...state.servers, server], nextServerId: state.nextServerId + 1 };
-    const text = `Bought ${plural(1, size, type)}, arriving in ${days} days`;
-    return finance.chargeNow(bought, [{ text, cashDelta: -price, category: "infrastructure" }]);
+    const where = rack !== undefined ? ` (rack #${rack}, ${racks.serverUnits(state.model, size)}U)` : "";
+    const text = `Bought ${plural(1, size, type)}${where}, arriving in ${days} days`;
+    return finance.chargeNow(bought, [
+      { text, cashDelta: -price, category: "infrastructure" },
+      ...racks.cablingEntries(state.model, 1, "New server"),
+    ]);
   }
 
   /**
@@ -548,7 +637,7 @@ export function createServers(config: GameConfig, finance: Finance) {
 
   /** The name of a server on a managed platform: "App instance", "Managed database". */
   const managedName = (type: ServerType) =>
-    type === "app" ? "App instance" : `Managed ${nameOf(type).toLowerCase()}`;
+    type === "app" ? "App instance" : type === "api" ? "API instance" : `Managed ${nameOf(type).toLowerCase()}`;
 
   /** The company's servers of a type, on its model. */
   const ofType = (state: GameState, type: ServerType) => state.servers.filter((s) => s.type === type);
@@ -581,6 +670,31 @@ export function createServers(config: GameConfig, finance: Finance) {
     const added: Server[] = Array.from({ length: n - apps.length }, () => ({
       id: id++,
       type: "app" as const,
+      size: managed.instanceSize,
+      readyDay: state.day,
+    }));
+    return { ...state, servers: [...state.servers, ...added], nextServerId: id };
+  }
+
+  /**
+   * Sets how many API instances run on a managed platform, from none to the platform's most, like the app instances:
+   * ready at once, billed a day's share at a time, and the newest dropped first.
+   */
+  function setApiInstances(state: GameState, n: number): GameState {
+    const managed = managedConfig(state);
+    if (!Number.isInteger(n) || n < 0 || n > managed.maxInstances) {
+      throw new SimError("bad_instances", `Run between 0 and ${managed.maxInstances} API instances.`);
+    }
+    if (n > 0) refuseWithoutApi(state, "api");
+    const apis = ofType(state, "api");
+    if (n <= apis.length) {
+      const dropped = new Set(apis.slice(n).map((s) => s.id));
+      return { ...state, servers: state.servers.filter((s) => !dropped.has(s.id)) };
+    }
+    let id = state.nextServerId;
+    const added: Server[] = Array.from({ length: n - apis.length }, () => ({
+      id: id++,
+      type: "api" as const,
       size: managed.instanceSize,
       readyDay: state.day,
     }));
@@ -626,6 +740,9 @@ export function createServers(config: GameConfig, finance: Finance) {
       instanceSize: platform.instanceSize,
       instanceUnits: unitsOn(state.model, { type: "app", size: platform.instanceSize }),
       instanceMonthlyCost: monthlyCost(state, state.model, "app", platform.instanceSize),
+      apiInstances: ofType(state, "api").length,
+      apiInstanceUnits: unitsOn(state.model, { type: "api", size: platform.instanceSize }),
+      apiInstanceMonthlyCost: monthlyCost(state, state.model, "api", platform.instanceSize),
       database: view("database"),
       databaseOptions: options("database"),
       cache: view("cache"),
@@ -634,9 +751,12 @@ export function createServers(config: GameConfig, finance: Finance) {
     };
   }
 
-  /** What selling back all the company's bought kit would refund, on order or not: 0 where servers are rented. */
+  /**
+   * What selling back all the company's bought kit would refund, on order or not, racks included: 0 where servers are
+   * rented.
+   */
   const sellBackTotal = (state: GameState) =>
-    buys(state.model) ? state.servers.reduce((sum, s) => sum + sellBackValue(state.model, s), 0) : 0;
+    buys(state.model) ? state.servers.reduce((sum, s) => sum + sellBackValue(state.model, s), 0) + racks.sellBackTotal(state) : 0;
 
   /**
    * What happens to the old setup when a migration off its model completes: rented VMs, and a platform's instances
@@ -645,7 +765,7 @@ export function createServers(config: GameConfig, finance: Finance) {
    */
   function leaveEntries(state: GameState): LogEntry[] {
     const n = state.servers.length;
-    if (n === 0) return [];
+    if (n === 0 && state.racks.length === 0) return [];
     if (managedOf(state.model)) {
       const text = `Your app instances and managed services were cancelled: you paid for them only for the days you had them.`;
       return [{ text, cashDelta: 0, kind: "migration" }];
@@ -655,20 +775,24 @@ export function createServers(config: GameConfig, finance: Finance) {
       return [{ text, cashDelta: 0, kind: "migration" }];
     }
     const refund = sellBackTotal(state);
-    const paid = state.servers.reduce((sum, s) => sum + (s.paid ?? 0), 0);
+    const paid = state.servers.reduce((sum, s) => sum + (s.paid ?? 0), 0) + state.racks.reduce((sum, r) => sum + r.paid, 0);
     const share = Math.round(100 * (purchaseOf(state.model)?.sellBackShare ?? 0));
-    const text = `Your ${n} server${n === 1 ? " was" : "s were"} sold back for ${pounds(refund)}: ${share}% of the ${pounds(paid)} you paid.`;
+    const r = state.racks.length;
+    const kit = `${n} server${n === 1 ? "" : "s"}${r ? ` and ${r} rack${r === 1 ? "" : "s"}` : ""}`;
+    const text = `Your ${kit} ${n + r === 1 ? "was" : "were"} sold back for ${pounds(refund)}: ${share}% of the ${pounds(paid)} you paid.`;
     return [{ text, cashDelta: refund, category: "infrastructure" }];
   }
 
   /**
    * Units the servers serving a day give, each tier scaled by `factor` (the cut for missing ops). Only servers ready
    * before the day count, and of the app servers only those the load balancers cover, biggest first. A platform's
-   * built-in load balancer covers every instance.
+   * built-in load balancer covers every instance. App servers switched to APIU give APIU instead of CU, and aren't
+   * counted as app servers for the load balancers: API calls don't go through them.
    */
   function capacityOn(state: GameState, day: number, factor: number): UnitCapacity {
     const ready = state.servers.filter((s) => s.readyDay < day);
-    const of = (type: ServerType) => ready.filter((s) => s.type === type).map((s) => unitsOn(state.model, s));
+    const of = (type: ServerType, apiu = false) =>
+      ready.filter((s) => s.type === type && !!s.apiu === apiu).map((s) => unitsOn(state.model, s));
     const sum = (units: number[]) => units.reduce((a, b) => a + b, 0);
     const apps = of("app").sort((a, b) => b - a);
     const balancers = of("loadBalancer");
@@ -681,6 +805,7 @@ export function createServers(config: GameConfig, finance: Finance) {
       cu: sum(apps.slice(0, counted)) * factor,
       dbu: sum(of("database")) * factor,
       ch: sum(of("cache")) * factor,
+      apiu: (sum(of("api")) + sum(of("app", true))) * factor,
       loadBalancer: {
         builtIn,
         appServers: apps.length,
@@ -732,20 +857,24 @@ export function createServers(config: GameConfig, finance: Finance) {
       readyDay: s.readyDay,
       daysLeft: Math.max(0, s.readyDay - state.day),
       units: unitsOn(state.model, s),
+      apiu: !!s.apiu,
       monthlyCost: monthlyCost(state, state.model, s.type, s.size),
       paid: bought ? (s.paid ?? 0) : null,
       sellBack: bought ? sellBackValue(state.model, s) : null,
+      rack: s.rack ?? null,
     }));
   }
 
   /**
-   * Every type and size the company can add one at a time on its model, in config order. None on a model without
-   * servers, or on a managed platform, where it sets instances and service sizes instead (see managed).
+   * Every type and size the company can add one at a time on its model, in config order: API servers once it has a
+   * paid API. None on a model without servers, or on a managed platform, where it sets instances and service sizes
+   * instead (see managed).
    */
   function serverOptions(state: GameState): ServerOption[] {
     const servers = modelServers(state.model);
     if (!servers || servers.managed) return [];
-    return SERVER_TYPES.flatMap((type) =>
+    const types = SERVER_TYPES.filter((type) => type !== "api" || state.api);
+    return types.flatMap((type) =>
       SERVER_SIZES.map((size) => ({
         type,
         size,
@@ -757,6 +886,8 @@ export function createServers(config: GameConfig, finance: Finance) {
         sellBackShare: servers.purchase?.sellBackShare ?? null,
         readyDays: readyDaysOf(state.model),
         ops: servers.opsPerServer?.[type] ?? 0,
+        rackUnits: racks.hasRacks(state.model) ? racks.serverUnits(state.model, size) : null,
+        cabling: racks.cablingOf(state.model),
       })),
     );
   }
@@ -785,6 +916,8 @@ export function createServers(config: GameConfig, finance: Finance) {
     sellServer,
     leaveEntries,
     setInstances,
+    setApiInstances,
+    switchServer,
     setManagedService,
     managed,
     capacityOn,

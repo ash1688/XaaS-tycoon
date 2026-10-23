@@ -24,8 +24,13 @@ const hours = ref<number>();
 const error = ref("");
 const updatedAt = ref<Date>();
 const showArchived = ref(false);
-// A game or code waiting on the teacher to confirm its deletion, shown under its code's table.
-const confirming = ref<{ kind: "game"; id: string } | { kind: "code"; code: string }>();
+// A game or code waiting on the teacher to confirm its deletion or ending, shown under its code's table.
+const confirming = ref<
+  | { kind: "game"; id: string }
+  | { kind: "code"; code: string }
+  | { kind: "endGame"; id: string }
+  | { kind: "endCode"; code: string }
+>();
 const busy = ref(false);
 let timer: ReturnType<typeof setInterval> | undefined;
 
@@ -40,7 +45,8 @@ function modelName(id: string) {
 }
 const productName = (id: string) => meta.value?.productTypes.find((p) => p.id === id)?.name ?? id;
 const migrating = (g: TeacherGameView) => g.status === "active" && g.migratingTo;
-const statusLabel = (s: CompanyStatus) => STATUS_LABELS[s];
+const statusLabel = (g: TeacherGameView) => (g.endedByTeacher ? "Ended" : STATUS_LABELS[g.status as CompanyStatus]);
+const activeCount = (companies: TeacherGameView[]) => companies.filter((g) => g.status === "active").length;
 // Below good satisfaction, growth slows and users leave: shown as a problem, like low uptime.
 const lowSatisfaction = (g: TeacherGameView) => g.satisfaction < (meta.value?.goodSatisfaction ?? 70);
 // Signed, so profit or loss doesn't rest on colour alone.
@@ -109,13 +115,18 @@ const unarchiveGame = (id: string) => act(() => api.unarchiveGame(id));
 const deleteGame = (id: string) => act(() => api.deleteGame(id));
 const unarchiveCode = (code: string) => act(() => api.unarchiveCode(code), true);
 const deleteCode = (code: string) => act(() => api.deleteCode(code), true);
+const endGame = (id: string) => act(() => api.endGame(id));
+const endCodeGames = (code: string) => act(() => api.endCodeGames(code));
 
-const confirmingGame = (code: string) => {
+const confirmingGame = (code: string, kind: "game" | "endGame" = "game") => {
   const c = confirming.value;
-  if (c?.kind !== "game") return undefined;
+  if (c?.kind !== kind) return undefined;
   return games.value?.codes.find((g) => g.code === code)?.companies.find((g) => g.id === c.id);
 };
-const confirmingCode = (code: string) => confirming.value?.kind === "code" && confirming.value.code === code;
+const confirmingCode = (code: string, kind: "code" | "endCode" = "code") => {
+  const c = confirming.value;
+  return c?.kind === kind && c.code === code;
+};
 
 function start() {
   stop();
@@ -204,6 +215,15 @@ const formatTime = (d: Date) => d.toLocaleTimeString("en-GB", { timeStyle: "shor
           <div class="live-code-actions">
             <span v-if="group.archived" class="badge retired-badge">Code archived</span>
             <span class="muted">{{ companiesLabel(group.companies.length) }}</span>
+            <button
+              v-if="!group.archived && activeCount(group.companies)"
+              class="ghost small"
+              :disabled="busy"
+              :aria-label="`End every game under code ${formatCode(group.code)}`"
+              @click="confirming = { kind: 'endCode', code: group.code }"
+            >
+              End all games
+            </button>
             <template v-if="group.archived">
               <button
                 class="ghost small"
@@ -280,13 +300,22 @@ const formatTime = (d: Date) => d.toLocaleTimeString("en-GB", { timeStyle: "shor
                 <td class="col-wide" data-testid="live-loan">{{ loanLabel(g.loanRemaining) }}</td>
                 <td :class="['num', 'col-mid', { neg: g.uptime < LOW_UPTIME }]">{{ formatUptime(g.uptime) }}</td>
                 <td>
-                  <span v-if="g.status !== 'active'" :class="['badge', STATUS_BADGES[g.status]]">
-                    {{ statusLabel(g.status) }}
+                  <span v-if="g.status !== 'active'" :class="['badge', STATUS_BADGES[g.status]]" data-testid="live-status">
+                    {{ statusLabel(g) }}
                   </span>
-                  <span v-else>{{ statusLabel(g.status) }}</span>
+                  <span v-else data-testid="live-status">{{ statusLabel(g) }}</span>
                   <small class="muted">{{ playedAgo(g.updatedAt) }}</small>
                 </td>
                 <td class="row-actions">
+                  <button
+                    v-if="g.status === 'active' && !group.archived"
+                    class="ghost small"
+                    :disabled="busy"
+                    :aria-label="`End ${g.name}`"
+                    @click="confirming = { kind: 'endGame', id: g.id }"
+                  >
+                    End game
+                  </button>
                   <button
                     v-if="!showArchived"
                     class="ghost small"
@@ -319,6 +348,39 @@ const formatTime = (d: Date) => d.toLocaleTimeString("en-GB", { timeStyle: "shor
           </table>
         </div>
 
+        <div
+          v-if="confirmingGame(group.code, 'endGame')"
+          class="retire-confirm"
+          role="group"
+          :aria-label="`End ${confirmingGame(group.code, 'endGame')!.name}?`"
+        >
+          <p>
+            End <strong>{{ confirmingGame(group.code, 'endGame')!.name }}</strong> now? It's scored as it stands, and the
+            student sees its summary. It can't be played again.
+          </p>
+          <div class="retire-actions">
+            <button class="danger-fill" :disabled="busy" @click="endGame(confirmingGame(group.code, 'endGame')!.id)">
+              Yes, end it
+            </button>
+            <button class="ghost" :disabled="busy" @click="confirming = undefined">Cancel</button>
+          </div>
+        </div>
+        <div
+          v-if="confirmingCode(group.code, 'endCode')"
+          class="retire-confirm"
+          role="group"
+          :aria-label="`End every game under code ${formatCode(group.code)}?`"
+        >
+          <p>
+            End the {{ companiesLabel(activeCount(group.companies)) }} still being played under code
+            <strong class="mono">{{ formatCode(group.code) }}</strong>? Each is scored as it stands, and students see their
+            summaries. They can't be played again.
+          </p>
+          <div class="retire-actions">
+            <button class="danger-fill" :disabled="busy" @click="endCodeGames(group.code)">Yes, end them</button>
+            <button class="ghost" :disabled="busy" @click="confirming = undefined">Cancel</button>
+          </div>
+        </div>
         <div
           v-if="confirmingGame(group.code)"
           class="retire-confirm"

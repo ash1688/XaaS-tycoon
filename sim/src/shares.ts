@@ -162,8 +162,9 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
   }
 
   /**
-   * Income actually earned a day, averaged over the last revenueDays days played since launch: not today's price, so
-   * a price change only moves the valuation as the income it brings comes in. 0 before any.
+   * Income actually earned a day, from paying users and any paid API, averaged over the last revenueDays days played
+   * since launch: not today's price, so a price change only moves the valuation as the income it brings comes in. 0
+   * before any.
    */
   function averageIncome(state: GameState): number {
     if (state.launchDay === null) return 0;
@@ -193,7 +194,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
         id: "revenue",
         label: "Revenue",
         amount: part(v.revenueMultiple),
-        detail: `${pounds(annualRevenue)} a year, from the income earned over the last ${v.revenueDays} days, × ${v.revenueMultiple}`,
+        detail: `${pounds(annualRevenue)} a year, from income earned by users and any API over the last ${v.revenueDays} days, × ${v.revenueMultiple}`,
       },
       {
         id: "growth",
