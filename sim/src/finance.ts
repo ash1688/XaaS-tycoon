@@ -1,7 +1,7 @@
 import { SPEND_CATEGORIES, type GameConfig } from "./config.ts";
 import type { GameState, Loan, LogEntry, Spend } from "./state.ts";
 
-export const noSpend = (): Spend => ({ staff: 0, infrastructure: 0, addons: 0, debt: 0 });
+export const noSpend = (): Spend => ({ staff: 0, infrastructure: 0, cabling: 0, power: 0, addons: 0, debt: 0 });
 
 export const count = new Intl.NumberFormat("en-GB");
 
@@ -25,16 +25,22 @@ export const interestIn = (loan: Pick<Loan, "amount" | "total"> | null, repaid: 
   loan?.total ? Math.round((repaid * (loan.total - loan.amount)) / loan.total) : 0;
 
 /**
- * The costs that count against profit: every charge, but only the interest in the loan repayments (debt). Paying back
- * the principal returns borrowed money, so it isn't a cost, as the money borrowed isn't income. Cash still falls by
- * the whole repayment.
+ * The costs that count against profit: every charge, but only the interest in the loan repayments (debt), as
+ * GameState.interestPaid. Paying back the principal returns borrowed money, so it isn't a cost, as the money borrowed
+ * isn't income. Cash still falls by the whole repayment.
  */
-export const profitCosts = (spend: Spend, loan: Pick<Loan, "amount" | "total"> | null) =>
-  SPEND_CATEGORIES.reduce((sum, c) => sum + spend[c], 0) - spend.debt + interestIn(loan, spend.debt);
+export const profitCosts = (spend: Spend, interestPaid: number) =>
+  SPEND_CATEGORIES.reduce((sum, c) => sum + spend[c], 0) - spend.debt + interestPaid;
 
 /** Money borrowed in some entries: the bank loan coming in. Cash, but neither income nor a charge. */
 const borrowedIn = (entries: LogEntry[]) =>
   entries.reduce((sum, e) => sum + (e.kind === "loan" && !e.category ? e.cashDelta : 0), 0);
+
+/** Money from funders in some entries, less a grant paid back. Cash, but neither income nor a charge. */
+const raisedIn = (entries: LogEntry[]) =>
+  entries.reduce((sum, e) => sum + (e.kind === "funding" && !e.category ? e.cashDelta : 0), 0);
+/** The interest in some entries' loan repayments. */
+const interestOf = (entries: LogEntry[]) => entries.reduce((sum, e) => sum + (e.interest ?? 0), 0);
 
 /** Where the customers stood at the end of a day, kept with its spend for the summary. */
 const customersAt = ({ users, paidUsers, satisfaction }: GameState) => ({ users, paidUsers, satisfaction });
@@ -43,8 +49,8 @@ const customersAt = ({ users, paidUsers, satisfaction }: GameState) => ({ users,
 export function createFinance(config: GameConfig) {
   /**
    * The ledger. Applies a day's entries to cash, adds each charge to its category's running total and the day's
-   * spend, and income to its own total, apart from the costs, so profit is income − profitCosts. Money borrowed is
-   * cash but neither, kept on the day so the cash chart adds up. Then ends the game if cash has gone below zero or this
+   * spend, and income to its own total, apart from the costs, so profit is income − profitCosts. Money borrowed or
+   * raised from funders is cash but neither, kept on the day so the cash chart adds up. Then ends the game if cash has gone below zero or this
    * was the final day. Returns the entries with any notice of the end added. Going bankrupt on the final day counts as
    * bankrupt.
    */
@@ -63,9 +69,18 @@ export function createFinance(config: GameConfig) {
       cash,
       spend,
       income: state.income + dayIncome,
+      interestPaid: state.interestPaid + interestOf(entries),
       spendByDay: [
         ...state.spendByDay,
-        { day, ...daySpend, income: dayIncome, borrowed: borrowedIn(entries), ...customersAt(state) },
+        {
+          day,
+          ...daySpend,
+          income: dayIncome,
+          borrowed: borrowedIn(entries),
+          raised: raisedIn(entries),
+          interest: interestOf(entries),
+          ...customersAt(state),
+        },
       ],
     };
     if (cash < 0) {
@@ -77,7 +92,7 @@ export function createFinance(config: GameConfig) {
         ],
       };
     }
-    if (day >= config.finalDay) {
+    if (day >= state.finalDay) {
       const text = `Day ${day} was the last: ${state.companyName} made it to the end. See how you did in the summary.`;
       return { state: { ...settled, status: "finished" }, entries: [...entries, { text, cashDelta: 0, kind: "finished" }] };
     }
@@ -85,7 +100,7 @@ export function createFinance(config: GameConfig) {
   }
 
   /**
-   * Charges (or refunds) made between days, such as buying a server, and money borrowed then: applied to cash and
+   * Charges (or refunds) made between days, such as buying a server, and money borrowed or raised then: applied to cash and
    * spend at once, and counted in the day just played, so the cost and cash charts still add up. Never ends the game:
    * an action that would leave cash below zero is refused before it gets here.
    */
@@ -95,6 +110,8 @@ export function createFinance(config: GameConfig) {
     const spend = noSpend();
     for (const c of SPEND_CATEGORIES) spend[c] = state.spend[c] + daySpend[c];
     const borrowed = borrowedIn(entries);
+    const raised = raisedIn(entries);
+    const interest = interestOf(entries);
     const last = state.spendByDay.at(-1);
     const spendByDay =
       last?.day === state.day
@@ -104,10 +121,13 @@ export function createFinance(config: GameConfig) {
               ...last,
               ...Object.fromEntries(SPEND_CATEGORIES.map((c) => [c, last[c] + daySpend[c]])),
               borrowed: last.borrowed + borrowed,
+              raised: last.raised + raised,
+              interest: last.interest + interest,
             },
           ]
-        : [...state.spendByDay, { day: state.day, ...daySpend, income: 0, borrowed, ...customersAt(state) }];
-    return { ...state, cash: state.cash + entries.reduce((sum, e) => sum + e.cashDelta, 0), spend, spendByDay };
+        : [...state.spendByDay, { day: state.day, ...daySpend, income: 0, borrowed, raised, interest, ...customersAt(state) }];
+    const cash = state.cash + entries.reduce((sum, e) => sum + e.cashDelta, 0);
+    return { ...state, cash, spend, spendByDay, interestPaid: state.interestPaid + interest };
   }
 
   return { settle, chargeNow };

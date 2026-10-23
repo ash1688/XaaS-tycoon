@@ -28,6 +28,8 @@ const activeFeatures = computed(
   () => game.company?.features.filter((f) => f.status === "built" || f.status === "addon").length ?? 0,
 );
 const phaseName = (id: string) => game.meta?.migrationPhases.find((p) => p.id === id)?.name ?? id;
+// The danger meter: shown as how far it has risen towards the top of its scale, never the hidden thresholds.
+const danger = computed(() => game.company?.danger);
 // Earlier days played this session, newest first, under the latest one in the full log.
 const earlierDays = computed(() => game.dayLogs.slice(0, -1).toReversed());
 
@@ -130,7 +132,7 @@ const alerts = computed(() => {
   if (game.understaffed)
     list.push({
       id: "understaffed",
-      text: `Understaffed: ${c.opsNeeded - c.ops} ops short`,
+      text: `Understaffed: ${game.opsShort} ops short`,
       detail: game.provider
         ? `${game.modelName(c.model)} needs ${c.opsNeeded} ops staff to keep the service running.`
         : `${game.modelName(c.model)} needs ${c.opsNeeded} ops staff. Until you have them, capacity is cut.`,
@@ -233,6 +235,14 @@ const alerts = computed(() => {
         <RouterLink :to="`/play/${game.code}`">start a new company</RouterLink> and try a different plan.
       </p>
     </div>
+    <div v-else-if="game.finished && game.company.endedByTeacher" class="game-end" role="status" data-testid="ended-screen">
+      <span class="badge">Ended</span>
+      <h2>Your teacher ended the game on day {{ game.company.day }}</h2>
+      <p>
+        {{ game.company.name }} is scored as it stood on day {{ game.company.day }} of {{ game.company.finalDay }}. Look
+        at how you did below, then <RouterLink :to="`/play/${game.code}`">go back to your companies</RouterLink>.
+      </p>
+    </div>
     <div v-else-if="game.finished" class="game-end" role="status" data-testid="finished-screen">
       <span class="badge">Finished</span>
       <h2>You made it to day {{ game.company.finalDay }}</h2>
@@ -332,7 +342,7 @@ const alerts = computed(() => {
           <template v-if="game.company.loan?.remaining">
             Includes a {{ formatCash(game.company.loan.amount) }} bank loan:
             <strong>{{ formatCash(game.company.loan.dailyRepayment) }}</strong> a day to repay until day
-            {{ game.company.finalDay }}, {{ formatCash(game.company.loan.remaining) }} left.
+            {{ game.company.loan.lastDay }}, {{ formatCash(game.company.loan.remaining) }} left.
           </template>
           <template v-else-if="game.company.loan">Bank loan repaid in full.</template>
           <template v-else-if="game.bankrupt">No bank loan: banks don't lend once you've gone under.</template>
@@ -573,6 +583,45 @@ const alerts = computed(() => {
         </template>
       </OverviewCard>
 
+      <OverviewCard v-if="!game.over" title="Danger meter" :tone="danger?.risks.length ? 'warn' : undefined">
+        <div v-if="danger" data-testid="danger-card">
+          <p class="overview-value" data-testid="danger-rise">
+            +{{ danger.rise }} <small>on day {{ game.company.day }}</small>
+          </p>
+          <div class="meter" aria-hidden="true">
+            <div
+              :class="['meter-fill', danger.risks.length ? 'over' : 'ok']"
+              :style="{ width: `${Math.min(100, (100 * danger.meter) / danger.max)}%` }"
+            ></div>
+          </div>
+          <p class="muted" data-testid="danger-text">
+            <template v-if="danger.risks.length">
+              Climbing fast: {{ danger.risks.map((r) => r.label.toLowerCase()).join(", ") }}.
+            </template>
+            <template v-else-if="danger.rise">Creeping: a well-run day.</template>
+            <template v-else>Still until launch: nothing can go wrong yet.</template>
+          </p>
+        </div>
+        <template #detail>
+          <p>
+            Trouble builds up. The danger meter rises every day after launch, and when it reaches a hidden threshold a
+            random event happens: a traffic spike, an OS patch, a provider outage or price rise, or a feature your
+            platform can't provide. Then it drops back to 0 and starts again. You won't know which event is next, or
+            when, but how you run the company decides how fast it comes, and makes some events more likely.
+          </p>
+          <p v-if="danger" data-testid="danger-detail">
+            A well-run day adds {{ danger.dailyRise }}.<template v-if="danger.risks.length">
+              On day {{ game.company.day }} it rose {{ danger.rise }}, because:</template
+            >
+          </p>
+          <ul v-if="danger?.risks.length" class="danger-risks">
+            <li v-for="r in danger.risks" :key="r.id" :data-risk="r.id">
+              <strong>{{ r.label }} (+{{ r.rise }}).</strong> {{ r.detail }}
+            </li>
+          </ul>
+        </template>
+      </OverviewCard>
+
       <OverviewCard title="Staff" :tone="game.understaffed || game.opsShortSoon ? 'warn' : undefined">
         <p class="overview-value" data-testid="home-staff">
           {{ game.company.developers }} <small>dev</small> · {{ game.company.ops }} <small>ops</small> ·
@@ -581,7 +630,7 @@ const alerts = computed(() => {
         <p class="muted">
           {{ formatCash(game.company.dailyStaffCost) }} a day.
           <span v-if="game.understaffed" class="warn-text">
-            {{ game.company.opsNeeded - game.company.ops }} ops short.
+            {{ game.opsShort }} ops short.
           </span>
           <span v-else-if="game.opsShortSoon" class="warn-text">
             {{ game.opsShortSoon }} more ops needed once your kit arrives.

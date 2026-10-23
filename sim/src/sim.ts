@@ -1,6 +1,16 @@
-import { defaultConfig, type GameConfig, type ModelId, type ServerCount } from "./config.ts";
+import { createApi, type ApiView } from "./api.ts";
+import {
+  allowedGameLengths,
+  defaultConfig,
+  gameLengthDays,
+  gameLengthName,
+  type GameConfig,
+  type ModelId,
+  type ServerCount,
+} from "./config.ts";
 import { createConversion, type ConversionView } from "./conversion.ts";
 import { createCustomers } from "./customers.ts";
+import { createEncounters, type DangerView } from "./encounters.ts";
 import { createEvents, type EventView, type FeatureGapView } from "./events.ts";
 import { createFeatures, type FeatureView } from "./features.ts";
 import { createFinance, noSpend, pounds } from "./finance.ts";
@@ -10,12 +20,15 @@ import { createLoan, type LoanQuote, type LoanView } from "./loan.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
 import { isNameAllowed } from "./nameFilter.ts";
 import { createPricing, type CustomerMixView, type PricePreview, type PriceWaveView } from "./pricing.ts";
+import { createRacks, type RacksView } from "./racks.ts";
 import { seedRng } from "./rng.ts";
+import { createShares, type CapTableView, type FundingView, type ValuationView } from "./shares.ts";
 import { createServers, type ManagedView, type ServerOption, type ServerView, type UnitsView } from "./servers.ts";
-import { createStaff } from "./staff.ts";
+import { createStaff, type StaffPoolView } from "./staff.ts";
 import {
   GAME_STATE_VERSION,
   isCurrentState,
+  isGameLengthId,
   isModelId,
   isProductTypeId,
   SimError,
@@ -32,13 +45,16 @@ import { createSupport } from "./support.ts";
 
 // The sim's one public interface is createSim. Its modules are internal; only the types and helpers the server and
 // web client need are re-exported here.
+export type { ApiView } from "./api.ts";
 export type { ConversionDriver, ConversionDriverId, ConversionView } from "./conversion.ts";
+export type { DangerRiskView, DangerView } from "./encounters.ts";
 export type { EventView, FeatureGapView } from "./events.ts";
 export type { FeatureStatus, FeatureView } from "./features.ts";
 export type { ProviderView } from "./infrastructure.ts";
 export type { LaunchView } from "./launch.ts";
 export type { LoanQuote, LoanView } from "./loan.ts";
-export type { LostAddon, MigrationQuote, MigrationView } from "./migration.ts";
+export type { LostAddon, MigrationQuote, MigrationView, SetupRack } from "./migration.ts";
+export type { RackOption, RackView, RacksView } from "./racks.ts";
 export type { CustomerMixView, CustomerTypeView, PricePreview, PriceWaveView, TypeReaction } from "./pricing.ts";
 export { weightedReaction } from "./pricing.ts";
 export type {
@@ -52,43 +68,67 @@ export type {
   TierView,
   UnitsView,
 } from "./servers.ts";
+export type {
+  CapTableRow,
+  CapTableView,
+  FriendsAndFamilyOffer,
+  FundingView,
+  GrantOffer,
+  GrantView,
+  ValuationDriver,
+  ValuationDriverId,
+  ValuationView,
+} from "./shares.ts";
+export type { GradeView, HireView, StaffPoolView } from "./staff.ts";
 export type { GameSummary, IncomeCostDay, LoanSummary, PeakUsers, SummaryDay } from "./summary.ts";
 export { interestIn, profitCosts } from "./finance.ts";
 export {
+  FUNDER_IDS,
   GAME_STATE_VERSION,
   isCurrentState,
+  isFunderId,
+  isGameLengthId,
   isManagedService,
   isModelId,
   isProductTypeId,
+  isRackSize,
   isServerSize,
   isServerType,
   isStaffPool,
   SimError,
   type Action,
   type AdvanceResult,
+  type ApiState,
   type DayLog,
   type DaySpend,
+  type Encounter,
   type EventRecord,
   type FeatureGap,
   type FeatureProgress,
+  type FriendsAndFamilyFunding,
+  type Funding,
+  type FunderId,
   type GameEnding,
   type GameState,
   type GameStatus,
+  type GrantFunding,
   type Loan,
   type LogEntry,
   type Migration,
   type NewGameParams,
   type PriceChange,
   type PriceWave,
+  type Rack,
   type ScheduledEvent,
   type Server,
+  type Shareholder,
   type Spend,
   type UnitDemand,
   type WaveEffect,
 } from "./state.ts";
 
 /**
- * What a usual day does to cash at today's users, price, staff, servers and loan, leaving out one-offs such as events
+ * What a usual day does to cash at today's users, price, API calls, staff, servers and loan, leaving out one-offs such as events
  * and a migration's first-day charges: income, running costs and the difference. days is how many more days cash lasts
  * at that rate before going below £0, or null when the company isn't losing money.
  */
@@ -113,6 +153,11 @@ export interface Sim {
   /** The only way time moves. Continue calls it with 1. */
   advance(state: GameState, days?: number): AdvanceResult;
   /**
+   * The teacher ends a game still being played: it finishes where it stands, before its final day, and its summary
+   * is how it did. A game that has already ended is returned as it is.
+   */
+  endGame(state: GameState): GameState;
+  /**
    * Ops staff a new company on a model needs: its fixed number (the few on PaaS and SaaS), plus the shares of any
    * servers a config starts it with. The servers a company sets up for itself need theirs on top.
    */
@@ -135,8 +180,13 @@ export interface Sim {
   opsNeededNow(state: GameState): number;
   /** Ops staff the company will need once every server it has is in service: on-prem, kit on order included. */
   opsNeededOnceReady(state: GameState): number;
-  /** What the current headcount costs per day. */
+  /** What the staff on the team cost per day. Hires still to start cost nothing. */
   dailyStaffCost(state: GameState): number;
+  /**
+   * Each pool in config order: its grades with what each costs, does and takes to arrive, the headcount and work
+   * a day of everyone on the team, and the hires still to start.
+   */
+  staff(state: GameState): StaffPoolView[];
   /** What the current model costs per month at today's users. */
   monthlyInfrastructureCost(state: GameState): number;
   /** What the active add-ons cost per month at today's users. */
@@ -179,9 +229,16 @@ export interface Sim {
    * Null on any other model.
    */
   managed(state: GameState): ManagedView | null;
+  /**
+   * On-prem: the company's racks, the U each holds and its servers take, and the racks it can buy. Null on IaaS, PaaS
+   * and SaaS, which have no racks.
+   */
+  racks(state: GameState): RacksView | null;
+  /** What a model charges a day for power and cooling, whatever the company runs: highest on-prem. */
+  powerAndCooling(model: ModelId): number;
   /** On SaaS: capacity is the provider's, so what you pay for it is the per-user bill. Null on any other model. */
   provider(state: GameState): ProviderView | null;
-  /** Tickets the support staff can clear in a day: support staff × tickets each. */
+  /** Tickets the support staff can clear in a day: their output in mids × tickets each. */
   dailyClearance(state: GameState): number;
   /** Tickets today's users would raise in a day before any burst: paid and free users × their rates. */
   usualTickets(state: GameState): number;
@@ -194,17 +251,32 @@ export interface Sim {
   uptime(state: GameState): number;
   /** The product's features, in config order, with each one's progress. */
   features(state: GameState): FeatureView[];
-  /** The bank loan once taken, with what's left to repay and the repayments left, or null. */
+  /**
+   * The latest bank loan, kept once repaid, with what's left to repay, the repayments left, and what paying it off
+   * now would cost and save. Null if none has been taken.
+   */
   loan(state: GameState): LoanView | null;
   /**
-   * What taking the bank loan now would cost: amount, rate, interest, total repaid, the daily repayment and the days
-   * to repay it. Null when it can't be taken: one has been, or there are too few days left.
+   * What taking a bank loan now would cost: amount, rate, interest, total repaid, the daily repayment and the days
+   * of its fixed term. Null when one can't be taken: one is being repaid, or the game is in its last days.
    */
   loanQuote(state: GameState): LoanQuote | null;
   /** The terms a new game gets if it takes the loan at the start: the best there are. */
   startLoanQuote(): LoanQuote;
   /** What a usual day does to cash at today's figures, and how many days of cash that leaves. */
   runway(state: GameState): RunwayView;
+  /**
+   * What the company is worth today by the formula (see ValuationConfig): the valuation, shares in issue, share price,
+   * and the drivers pushing it up or down, in pounds, which add up to it.
+   */
+  valuation(state: GameState): ValuationView;
+  /** Who owns the company: each shareholder's shares, share and what they're worth, the student first. */
+  capTable(state: GameState): CapTableView;
+  /**
+   * Friends and family and the grant: each one's open offer, with what accepting it now would do (new shares and
+   * dilution; the grant's condition), or how it was answered and, for the grant, how its condition stands.
+   */
+  funding(state: GameState): FundingView;
   /**
    * Where the company is with its launch: waiting for capacity, its first users due, arriving over the ramp, or
    * launched; the day they started (or will start) arriving, and the launch total.
@@ -219,10 +291,18 @@ export interface Sim {
   migrationQuote(state: GameState, target: string): MigrationQuote;
   /** Scripted events that were on during the day just played, each explained, in config order. */
   events(state: GameState): EventView[];
+  /** The danger meter: how fast trouble is building, and why. The encounter list itself stays hidden. */
+  danger(state: GameState): DangerView;
   /** Feature gaps still slowing growth, oldest first. Shown every day, not just the day the event fired. */
   featureGaps(state: GameState): FeatureGapView[];
   /** How the company did: final figures, spend by category, migrations and spend over time. */
   summarise(state: GameState): GameSummary;
+  /**
+   * The product's paid API: its price before it's bought; once bought, its calls, what they earn, the APIU they need
+   * against what the servers give (or on SaaS, the provider's fee per call), and any slowdown after an outage. Null on
+   * a product without one.
+   */
+  api(state: GameState): ApiView | null;
 }
 
 export function createSim(config: GameConfig = defaultConfig): Sim {
@@ -233,15 +313,27 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   const support = createSupport(config);
   const customers = createCustomers(config, features, events, pricing, support);
   const conversion = createConversion(config, features, pricing);
-  const servers = createServers(config, finance);
+  const racks = createRacks(config, finance);
+  const servers = createServers(config, finance, racks);
   const infra = createInfrastructure(config, customers, events, servers);
   const staff = createStaff(config);
   const migration = createMigration(config, infra, features, events, servers);
   const summary = createSummary(config, infra);
   const loan = createLoan(config, finance);
   const launch = createLaunch(config, servers, pricing);
+  const shares = createShares(config, finance, conversion);
+  const api = createApi(config, features, finance, infra.apiuOn);
+  const encounters = createEncounters(config, servers);
 
-  function newGame({ companyName, productType, model, seed, takeLoan = false }: NewGameParams): GameState {
+  function newGame({
+    companyName,
+    productType,
+    model,
+    seed,
+    takeLoan = false,
+    gameLength,
+    shares: shareCount,
+  }: NewGameParams): GameState {
     const name = companyName.trim();
     if (!name) throw new SimError("name_required", "Enter a company name.");
     if (name.length > config.maxCompanyNameLength) {
@@ -252,7 +344,16 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     }
     if (!isProductTypeId(productType)) throw new SimError("unknown_product_type", "Pick a product type from the list.");
     if (!isModelId(model)) throw new SimError("unknown_model", "Pick a deployment model from the list.");
-    const [schedule, rng] = events.rollSchedule(seedRng(seed), 1);
+    const owned = shares.startingShares(shareCount);
+    const allowed = allowedGameLengths(config);
+    const length = gameLength ?? allowed[0];
+    if (!length || !isGameLengthId(length) || !allowed.includes(length)) {
+      const names = allowed.map((l) => gameLengthName(config, l)).join(", ");
+      throw new SimError("game_length_not_allowed", `Pick a game length your teacher allows: ${names}.`);
+    }
+    const schedule = events.fixedSchedule(1);
+    // Encounters have their own random sequence, seeded apart from the game's.
+    const starting = encounters.startingEncounters({ model, schedule, featureGaps: [], dangerRisks: [] }, seedRng(seed ^ 0x5eed));
     // A new company has no servers, unless a config starts it with some, ready for the first day played.
     const setup = servers.starter(model, 1);
     const state: GameState = {
@@ -261,12 +362,13 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       companyName: name,
       productType,
       model,
+      gameLength: length,
+      finalDay: gameLengthDays(config, length),
+      endedByTeacher: false,
       day: 1,
       cash: config.startingCash,
-      rng,
-      developers: config.staff.developers.startingCount,
-      ops: config.staff.ops.startingCount,
-      support: config.staff.support.startingCount,
+      rng: seedRng(seed),
+      ...staff.startingStaff(),
       ...customers.startingCustomers(productType, seed),
       ...support.startingSupport(),
       ...conversion.startingConversion(),
@@ -274,15 +376,22 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       spendByDay: [],
       servers: setup.servers,
       nextServerId: setup.nextServerId,
+      racks: setup.racks,
+      nextRackId: setup.nextRackId,
       features: {},
       migration: null,
       migrations: 0,
       loan: null,
+      ...owned,
+      pastLoans: [],
+      interestPaid: 0,
       schedule,
+      ...starting,
       events: [],
       priceRises: {},
       addonPriceRise: 1,
       featureGaps: [],
+      api: null,
     };
     // The loan arrives with the upfront bill. A model that costs more up front than the company has would bankrupt it
     // on day 1, so it's refused instead: on-prem needs the loan.
@@ -310,7 +419,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return finance.settle(started, 1, [...borrowed.entries, ...upfront, ...launched.entries]).state;
   }
 
-  /** Refuses a game from an older version, then ends one played under a config with more days than this one has. */
+  /** Refuses a game from an older version, then ends one that has played its final day. */
   function load(saved: unknown): GameState {
     if (!isCurrentState(saved)) {
       throw new SimError(
@@ -318,7 +427,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         "This game is from an older version of XaaS Tycoon, so it can't be played any more. Start a new company to play again.",
       );
     }
-    return saved.status === "playing" && saved.day >= config.finalDay ? { ...saved, status: "finished" } : saved;
+    return saved.status === "playing" && saved.day >= saved.finalDay ? { ...saved, status: "finished" } : saved;
   }
 
   /** Loads saved state and checks the game is still going. */
@@ -328,10 +437,10 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       throw new SimError("bankrupt", `${state.companyName} is bankrupt, so this game is over. Start a new company to play again.`);
     }
     if (state.status === "finished") {
-      throw new SimError(
-        "finished",
-        `${state.companyName} has played all ${config.finalDay} days, so this game is over. Start a new company to play again.`,
-      );
+      const why = state.endedByTeacher
+        ? `Your teacher ended ${state.companyName} early`
+        : `${state.companyName} has played all ${state.finalDay} days`;
+      throw new SimError("finished", `${why}, so this game is over. Start a new company to play again.`);
     }
     return state;
   }
@@ -341,13 +450,13 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     switch (action.type) {
       case "hire":
       case "letGo":
-        return staff.changeStaff(state, action.type, action.pool, action.count);
+        return staff.changeStaff(state, action.type, action.pool, action.grade, action.count);
       case "buildFeature":
         return features.startBuild(state, action.feature);
       case "buyAddon":
         return features.buyAddon(state, action.feature);
       case "moveStaff":
-        return staff.moveStaff(state, action.to, action.from);
+        return staff.moveStaff(state, action.to, action.from, action.grade);
       case "startMigration":
         return migration.startMigration(state, action.model);
       case "setPrice":
@@ -357,29 +466,51 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       case "cancelServer":
         return servers.cancelServer(state, action.id);
       case "buyServer":
-        return servers.buyServer(state, action.server, action.size);
+        return servers.buyServer(state, action.server, action.size, action.rack);
       case "sellServer":
         return servers.sellServer(state, action.id);
+      case "buyRack":
+        return racks.buyRack(state, action.size);
+      case "sellRack":
+        return racks.sellRack(state, action.id);
       case "setInstances":
         return servers.setInstances(state, action.count);
       case "setManagedService":
         return servers.setManagedService(state, action.service, action.size);
       case "takeLoan":
         return loan.takeLoan(state);
+      case "acceptFunding":
+        return shares.acceptFunding(state, action.funder);
+      case "declineFunding":
+        return shares.declineFunding(state, action.funder);
+      case "buyApi":
+        return api.buyApi(state);
+      case "switchServer":
+        return servers.switchServer(state, action.id, action.gives);
+      case "setApiInstances":
+        return servers.setApiInstances(state, action.count);
+      case "repayLoan":
+        return loan.repayLoan(state);
       default:
         throw new SimError("unknown_action", "That action isn't recognised.");
     }
   }
 
-  function advanceOneDay(start: GameState): AdvanceResult {
-    const day = start.day + 1;
+  function advanceOneDay(yesterday: GameState): AdvanceResult {
+    const day = yesterday.day + 1;
+    // Hires due today start first, so they work and are paid today.
+    const arrivals = staff.arrive(yesterday, day);
+    const start = arrivals.state;
 
-    // Scripted events on today. A price rise or feature gap from today counts from today's bill and growth. Before the
-    // first users arrive there's nothing running for one to hit.
+    // Events on today: a random one fires if the danger meter has reached the next threshold on the encounter list.
+    // A price rise or feature gap from today counts from today's bill and growth. Before the first users arrive
+    // there's nothing running for one to hit.
     const ramping = launch.rampDayOn(start, day) > 0;
     const live = start.launchDay !== null || ramping;
-    const today = live ? events.eventsToday(start, day) : [];
-    const state: GameState = { ...start, ...events.lastingEffects(start, day, today) };
+    const check = live ? encounters.checkDay(start, day) : { state: {}, entries: [] };
+    const checked: GameState = { ...start, ...check.state };
+    const today = live ? events.eventsToday(checked, day) : [];
+    const state: GameState = { ...checked, ...events.lastingEffects(checked, day, today) };
 
     // Today's load against capacity, then growth, which slows on an outage day.
     const served = infra.serveLoad(state, day, today);
@@ -395,6 +526,9 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const { users, paidUsers, launchDay } = launched.state;
     const rng = grown.rng;
 
+    // The paid API's calls, served as far as the APIU go. Its traffic for tomorrow follows the users paying tonight.
+    const calls = api.apiDay(state, day, served.hoursDown, paidUsers, live);
+
     // Support answers what it can of today's tickets: the users' usual ones plus every burst, from downtime and from
     // a price rise's backlash. Satisfaction moves after, and sets tomorrow's growth and churn.
     const bursts = [...support.outageBursts(state, served.hoursDown), ...wave.bursts];
@@ -409,9 +543,13 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     const recorded = events.record(state, today, served.overloaded);
     // The loan is repaid every day, whatever else happens.
     const repayment = loan.repaymentDay(state, day);
+    // A grant's uptime condition counts today's hours down, and may withdraw it.
+    const grant = shares.grantDay(state, day, served.hoursDown);
     // Income comes from the users paying at the start of the day, at today's price, like the per-user fees, less any
     // who stopped paying today over the price: they won't pay it.
     const entries: LogEntry[] = [
+      ...check.entries,
+      ...arrivals.entries,
       ...launched.entries,
       ...recorded.entries,
       ...(ramping ? [] : organic.entries),
@@ -421,6 +559,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       ...care.entries,
       ...build.entries,
       ...pricing.incomeEntries(state, wave.refused + (ramping ? 0 : organic.pricedOut)),
+      ...calls.entries,
       ...infra.infrastructureEntries(state, state.model, state.users),
       ...migration.migrationCharges(state),
       ...features.addonEntries(state),
@@ -428,6 +567,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       ...served.charges,
       ...events.costEntries(today),
       ...repayment.entries,
+      ...grant.entries,
     ];
     const played: GameState = {
       ...state,
@@ -455,9 +595,13 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       conversionsToday: converted.conversionsToday,
       conversions: state.conversions + converted.conversionsToday,
       loan: repayment.loan,
+      funding: grant.funding,
+      api: calls.api,
     };
+    // The danger meter rises with the day's risks, on the model the day was played on.
+    const risen: GameState = { ...played, ...encounters.riseDay(played, live, served.overloaded) };
     // The migration moves on after the day is played and billed, so a model switch takes effect from tomorrow.
-    const migrated = migration.migrationDay(played);
+    const migrated = migration.migrationDay(risen);
     entries.push(...migrated.entries);
     const settled = finance.settle(migrated.state, day, entries);
     return { state: settled.state, log: [{ day, entries: settled.entries }] };
@@ -471,9 +615,10 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       ...features.addonEntries(state),
       ...staff.staffEntries(state),
     ];
-    const repayment = state.loan ? Math.min(state.loan.dailyRepayment, state.loan.total - state.loan.repaid) : 0;
-    const dailyCosts = repayment - charges.reduce((sum, e) => sum + e.cashDelta, 0);
-    const dailyIncome = pricing.dailyIncome(state);
+    const repayment = loan.dailyRepayment(state);
+    const calls = api.usualDay(state);
+    const dailyCosts = repayment + calls.fee - charges.reduce((sum, e) => sum + e.cashDelta, 0);
+    const dailyIncome = pricing.dailyIncome(state) + calls.income;
     const dailyNet = dailyIncome - dailyCosts;
     const days = dailyNet < 0 ? Math.max(0, Math.floor(state.cash / -dailyNet)) : null;
     return { dailyIncome, dailyCosts, dailyNet, days };
@@ -494,18 +639,25 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     return { state: current, log };
   }
 
+  function endGame(saved: GameState): GameState {
+    const state = load(saved);
+    return state.status === "playing" ? { ...state, status: "finished", endedByTeacher: true } : state;
+  }
+
   return {
     config,
     newGame,
     load,
     applyAction,
     advance,
+    endGame,
     opsNeeded: infra.opsNeeded,
     upfrontCost: (model) => infra.upfrontCost(model),
     sizeSetupFor: infra.sizeSetupFor,
     opsNeededNow: (s) => infra.opsNeededNow(load(s)),
     opsNeededOnceReady: (s) => servers.opsNeededOnceReady(load(s)),
     dailyStaffCost: (s) => staff.dailyStaffCost(load(s)),
+    staff: (s) => staff.staffView(load(s)),
     monthlyInfrastructureCost: (s) => infra.monthlyInfrastructureCost(load(s)),
     monthlyAddonCost: (s) => features.monthlyAddonCost(load(s)),
     dailyIncome: (s) => pricing.dailyIncome(load(s)),
@@ -519,6 +671,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     servers: (s) => servers.servers(load(s)),
     serverOptions: (s) => servers.serverOptions(load(s)),
     managed: (s) => servers.managed(load(s)),
+    racks: (s) => racks.racks(load(s)),
+    powerAndCooling: (model) => config.models[model].powerAndCooling,
     provider: (s) => infra.provider(load(s)),
     dailyClearance: (s) => support.dailyClearance(load(s)),
     usualTickets: (s) => support.usualTickets(load(s)),
@@ -529,11 +683,16 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     loanQuote: (s) => loan.loanQuote(load(s)),
     startLoanQuote: () => loan.termsOn(1),
     runway: (s) => runway(load(s)),
+    valuation: (s) => shares.valuation(load(s)),
+    capTable: (s) => shares.capTable(load(s)),
+    funding: (s) => shares.funding(load(s)),
     launch: (s) => launch.launchView(load(s)),
     migration: (s) => migration.migration(load(s)),
     migrationQuote: (s, target) => migration.migrationQuote(load(s), target),
     events: (s) => events.events(load(s)),
+    danger: (s) => encounters.danger(load(s)),
     featureGaps: (s) => events.featureGaps(load(s)),
     summarise: (s) => summary.summarise(load(s)),
+    api: (s) => api.apiView(load(s)),
   };
 }

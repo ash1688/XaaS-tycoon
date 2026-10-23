@@ -16,6 +16,9 @@ const name = ref("");
 const productType = ref("");
 const model = ref("");
 const takeLoan = ref(false);
+// Shares in issue at the start, all the student's. Set to the game's default once meta has loaded.
+const shares = ref<number>();
+const gameLength = ref("");
 const formError = ref("");
 const nameError = ref("");
 const busy = ref(false);
@@ -41,15 +44,22 @@ const startCash = computed(() => {
 });
 const chosenModel = computed(() => meta.value?.models.find((m) => m.id === model.value));
 const cantAfford = computed(() => !!chosenModel.value && chosenModel.value.upfrontCost > startCash.value);
+const sharesOk = computed(() => {
+  const m = meta.value;
+  const n = shares.value;
+  return !!m && typeof n === "number" && Number.isInteger(n) && n >= m.shares.min && n <= m.shares.max;
+});
 const canStart = computed(
-  () => name.value.trim() && productType.value && model.value && !cantAfford.value && !busy.value,
+  () => name.value.trim() && productType.value && model.value && sharesOk.value && !cantAfford.value && !busy.value,
 );
 
 onMounted(async () => {
   try {
     const [m, c] = await Promise.all([api.meta(), api.code(props.code)]);
     meta.value = m;
+    shares.value = m.shares.default;
     companies.value = c.companies;
+    gameLength.value = m.gameLengths[0]?.id ?? "";
   } catch (e) {
     loadError.value = (e as Error).message;
   }
@@ -88,6 +98,8 @@ async function start() {
       productType: productType.value,
       model: model.value,
       takeLoan: takeLoan.value,
+      shares: shares.value,
+      gameLength: gameLength.value,
     });
     await router.push(`/play/${props.code}/${company.id}`);
   } catch (e) {
@@ -225,11 +237,50 @@ async function start() {
           </div>
         </fieldset>
 
+        <fieldset data-testid="game-lengths">
+          <legend>How long will you play?</legend>
+          <p class="muted">The game ends on its last day, or sooner if your teacher ends it.</p>
+          <div class="choices">
+            <label v-for="l in meta.gameLengths" :key="l.id" class="choice" :class="{ on: gameLength === l.id }">
+              <input type="radio" name="gameLength" :value="l.id" v-model="gameLength" />
+              <strong>{{ l.name }}</strong>
+              <span class="muted">Ends on day {{ l.finalDay.toLocaleString("en-GB") }}</span>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Shares</legend>
+          <p class="muted">
+            How many shares your company has. You own all of them to start with. Friends and family and investors buy new
+            shares, so you own less of the company: a share of what it's worth is your score.
+          </p>
+          <label for="shares">Shares in issue</label>
+          <input
+            id="shares"
+            v-model.number="shares"
+            type="number"
+            :min="meta.shares.min"
+            :max="meta.shares.max"
+            step="1000"
+            inputmode="numeric"
+            data-testid="shares"
+          />
+          <small v-if="!sharesOk" class="error" role="alert" data-testid="shares-error">
+            Pick a whole number from {{ meta.shares.min.toLocaleString("en-GB") }} to
+            {{ meta.shares.max.toLocaleString("en-GB") }}.
+          </small>
+          <small v-else class="muted">
+            From {{ meta.shares.min.toLocaleString("en-GB") }} to {{ meta.shares.max.toLocaleString("en-GB") }}.
+          </small>
+        </fieldset>
+
         <fieldset>
           <legend>Bank loan</legend>
           <p class="muted">
             You start with {{ formatCash(meta.startingCash) }} of your own. You can borrow more from the bank now, on its
-            best terms, or later at a higher rate. Each company can have one loan.
+            best terms, or later at a higher rate over a shorter term. One loan at a time: pay it off, early if you like, and
+            you can take another.
           </p>
           <label :class="['loan-option', { on: takeLoan }]">
             <input v-model="takeLoan" type="checkbox" data-testid="take-loan" />
@@ -266,7 +317,9 @@ async function start() {
             <strong>{{ c.name }}</strong>
             <span class="muted">{{ productName(c.productType) }} · {{ modelName(c.model) }}</span>
             <span>Day {{ c.day }} of {{ c.finalDay }} · {{ formatCash(c.cash) }}</span>
-            <span :class="['badge', STATUS_BADGES[c.status]]">{{ STATUS_LABELS[c.status] }}</span>
+            <span :class="['badge', STATUS_BADGES[c.status]]">{{
+              c.endedByTeacher ? "Ended by teacher" : STATUS_LABELS[c.status]
+            }}</span>
           </RouterLink>
         </li>
       </ul>

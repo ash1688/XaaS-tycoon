@@ -57,11 +57,14 @@ describe("config schema completeness", () => {
   it("generates fields for repeated structures, keyed by id", () => {
     expect(paths).toContain("models.iaas.monthlyCost");
     expect(paths).toContain("productTypes.video.features.hd.devDays");
-    expect(paths).toContain("events.osPatch.schedule.days.1");
+    expect(paths).toContain("events.osPatch.encounter.chance");
+    expect(paths).toContain("events.osPatch.encounter.risks.unpatched");
+    expect(paths).toContain("encounters.riskRise.lowSatisfaction");
     expect(paths).toContain("events.osPatch.effects.onprem.shortOfOps.cost.amount");
     expect(paths).toContain("migration.phases.moving.days");
-    // Only for numbers the event sets on that model.
+    // Only for numbers the event sets on that model, and odds it sets.
     expect(paths).not.toContain("events.osPatch.effects.paas.downtimeHours");
+    expect(paths).not.toContain("events.osPatch.encounter.maxTimes");
   });
 
   it("takes defaults from the base config it's given", () => {
@@ -111,9 +114,31 @@ describe("validateOverrides", () => {
   it("rejects pairs that don't fit together, on the field that changed", () => {
     expect(validateOverrides({ "migration.overrun.maxDays": 1 })).toHaveProperty(["migration.overrun.maxDays"]);
     expect(validateOverrides({ "migration.overrun.minDays": 9 })).toHaveProperty(["migration.overrun.minDays"]);
-    expect(validateOverrides({ "events.trafficSpike.schedule.toDay": 10 })).toHaveProperty([
-      "events.trafficSpike.schedule.toDay",
+    expect(validateOverrides({ "encounters.thresholdMax": 10 })).toHaveProperty(["encounters.thresholdMax"]);
+    expect(validateOverrides({ "encounters.thresholdMin": 90 })).toHaveProperty(["encounters.thresholdMin"]);
+    // Every server has to fit in the biggest rack.
+    expect(validateOverrides({ "models.onprem.servers.racks.serverUnits.massive": 50 })).toHaveProperty([
+      "models.onprem.servers.racks.serverUnits.massive",
     ]);
+    expect(validateOverrides({ "models.onprem.servers.racks.sizes.large.units": 6 })).toHaveProperty([
+      "models.onprem.servers.racks.sizes.large.units",
+    ]);
+    expect(validateOverrides({ "models.onprem.servers.racks.serverUnits.massive": 42 })).toEqual({});
+  });
+
+  it("has a toggle for each game length, and needs at least one allowed", () => {
+    const toggles = fields.filter((f) => f.kind === "toggle");
+    expect(toggles.map((f) => [f.path, f.default])).toEqual([
+      ["allowedGameLengths.180-days", 1],
+      ["allowedGameLengths.1-year", 0],
+      ["allowedGameLengths.career", 0],
+    ]);
+    expect(validateOverrides({ "allowedGameLengths.career": 1, "allowedGameLengths.1-year": 1 })).toEqual({});
+    expect(validateOverrides({ "allowedGameLengths.career": 0.5 })).toHaveProperty(["allowedGameLengths.career"]);
+    expect(validateOverrides({ "allowedGameLengths.180-days": 0 })).toEqual({
+      "allowedGameLengths.180-days": "At least one game length must be allowed.",
+    });
+    expect(validateOverrides({ "allowedGameLengths.180-days": 0, "allowedGameLengths.career": 1 })).toEqual({});
   });
 });
 
@@ -123,7 +148,7 @@ describe("applyOverrides and diffFromDefaults", () => {
     "models.iaas.monthlyCost": 7_000,
     "staff.developers.dayRate": 200,
     "productTypes.video.features.hd.devDays": 5,
-    "events.osPatch.schedule.days.0": 4,
+    "events.osPatch.encounter.chance": 0.9,
     "events.providerPriceRise.effects.saas.priceRise.percent": 50,
     "events.osPatch.effects.iaas.shortOfOps.downtimeHours": 12,
   };
@@ -135,7 +160,7 @@ describe("applyOverrides and diffFromDefaults", () => {
     expect(config.models.iaas.upfrontCost).toBe(defaultConfig.models.iaas.upfrontCost);
     expect(config.staff.developers.dayRate).toBe(200);
     expect(config.productTypes.video.features.find((f) => f.id === "hd")?.devDays).toBe(5);
-    expect(config.events.find((e) => e.id === "osPatch")?.schedule).toEqual({ type: "fixed", days: [4, 75, 140] });
+    expect(config.events.find((e) => e.id === "osPatch")?.encounter).toEqual({ chance: 0.9, risks: { unpatched: 1.6 } });
     expect(config.events.find((e) => e.id === "providerPriceRise")?.effects.saas?.priceRise).toEqual({
       percent: 50,
       addons: true,
@@ -143,7 +168,7 @@ describe("applyOverrides and diffFromDefaults", () => {
     expect(config.events.find((e) => e.id === "osPatch")?.effects.iaas?.shortOfOps?.downtimeHours).toBe(12);
     // The defaults are untouched.
     expect(defaultConfig.startingCash).toBe(15_000);
-    expect(defaultConfig.events.find((e) => e.id === "osPatch")?.schedule).toEqual({ type: "fixed", days: [3, 75, 140] });
+    expect(defaultConfig.events.find((e) => e.id === "osPatch")?.encounter?.chance).toBe(0.5);
   });
 
   it("round-trips: the diff of the merged config is the overrides", () => {
