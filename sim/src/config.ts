@@ -349,6 +349,11 @@ export interface HolidayConfig {
   days: number;
   /** A product left out doesn't notice it. */
   effects: Partial<Record<ProductTypeId, HolidayEffect>>;
+  /**
+   * An industry's own event (a big game launch) rather than a public holiday: only the products it affects see it on
+   * their calendar. Left out, everyone sees it.
+   */
+  industryEvent?: boolean;
 }
 
 /** The real calendar each game runs on. Day 1 is a random date in the year the game starts. */
@@ -2217,6 +2222,7 @@ export const defaultConfig: GameConfig = {
         description: "A big new game comes out, and everyone wants to play it on day one.",
         start: { anchor: "date", month: 3, day: 13 },
         days: 3,
+        industryEvent: true,
         effects: {
           games: { loadMultiplier: 2, growthMultiplier: 2.5, detail: "Everyone downloads the new game and plays online at once: twice the load, and a rush of new players." },
         },
@@ -2239,6 +2245,7 @@ export const defaultConfig: GameConfig = {
         description: "The summer showcase: new games are revealed, and some come out the same day.",
         start: { anchor: "date", month: 6, day: 10 },
         days: 3,
+        industryEvent: true,
         effects: {
           games: { loadMultiplier: 2, growthMultiplier: 2.5, detail: "Surprise releases bring everyone online at once: twice the load, and a rush of new players." },
         },
@@ -2260,8 +2267,9 @@ export const defaultConfig: GameConfig = {
         id: "autumnLaunch",
         name: "Autumn game launches",
         description: "The year's biggest games come out in time for Christmas.",
-        start: { anchor: "date", month: 10, day: 23 },
+        start: { anchor: "date", month: 11, day: 6 },
         days: 4,
+        industryEvent: true,
         effects: {
           games: { loadMultiplier: 2, growthMultiplier: 2.5, detail: "The year's biggest releases bring everyone online at once: twice the load, and a rush of new players." },
         },

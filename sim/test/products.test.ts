@@ -99,10 +99,10 @@ describe("games network", () => {
       productTypes: { ...defaultConfig.productTypes, games: { ...games, growth: { ...games.growth, loadNoise: 0 } } },
     };
     const s = createSim(steady);
-    // Day 1 is 1 October 2026, so the autumn launch (23 October, 4 days) is days 23–26.
+    // Day 1 is 1 October 2026, so the autumn launch (6 November, 4 days) is days 37–40.
     let state: GameState = s.newGame({ companyName: "Product Co", productType: "games", model: "saas", seed: 4, startDate: "2026-10-01" });
     const autumn = s.calendar(state).upcoming.find((h) => h.id === "autumnLaunch")!;
-    expect([autumn.startDay, autumn.endDay]).toEqual([23, 26]);
+    expect([autumn.startDay, autumn.endDay]).toEqual([37, 40]);
     const ratio: Record<number, number> = {};
     // Load is the users at the start of the day × load per user: keyed by the day played, the one after state.day.
     while (state.day <= autumn.endDay + 1) {
@@ -114,6 +114,14 @@ describe("games network", () => {
     expect(ratio[autumn.startDay - 1]).toBeCloseTo(usual, 5);
     for (let d = autumn.startDay; d <= autumn.endDay; d++) expect(ratio[d], `day ${d}`).toBeCloseTo(usual * autumn.effect!.loadMultiplier, 5);
     expect(ratio[autumn.endDay + 1]).toBeCloseTo(usual, 5);
+  });
+
+  it("puts the game launches on a games network's calendar only", () => {
+    const on = (productType: ProductTypeId) =>
+      sim.calendar(sim.newGame({ companyName: "Product Co", productType, model: "saas", seed: 4, startDate: "2026-10-01" })).upcoming.map((h) => h.id);
+    expect(on("games")).toContain("autumnLaunch");
+    expect(on("ecommerce")).not.toContain("autumnLaunch");
+    expect(on("ecommerce")).toContain("blackFriday");
   });
 
   it("sells a subscription for online play: about half its users pay", () => {

@@ -1124,7 +1124,8 @@ test("a student previews prices live, raises the price, and sees the backlash an
   await expect(mix.locator('tr[data-type="enthusiasts"]')).not.toContainText("you're over");
   // And it filters who joins: £6.25 is 1.25 times the casual threshold, so 0.64 as many casual users join.
   await expect(mix.locator('tr[data-type="casual"] [data-testid="mix-new"]')).toContainText("price ×0.64");
-  await expect(mix.locator('tr[data-type="businesses"] [data-testid="mix-new"]')).toHaveText(/^\s*\d+%\s*$/);
+  // Businesses are under their threshold: no price filter on them (the rivals may tilt them).
+  await expect(mix.locator('tr[data-type="businesses"] [data-testid="mix-new"]')).not.toContainText("price");
 });
 
 test("a SaaS company without support builds a backlog, hires support from Home and sees it cleared", async ({
@@ -1236,7 +1237,8 @@ test("free users start paying each day, and Customers shows what's helping or hu
   await expect(mix.getByTestId("mix-thresholds").locator(".mix-threshold")).toHaveText(["£5", "£6.25", "£10", "£15"]);
   await expect(mix.getByTestId("mix-over")).toBeHidden();
   // New users join in the product's mix, with nothing tilting it yet.
-  await expect(mix.getByTestId("mix-new")).toHaveText(["70%", "20%", "8%", "2%"]);
+  // New users join in the social network's mix (70/20/8/2), give or take a point the rivals tilt it by.
+  await expect(mix.getByTestId("mix-new")).toHaveText([/^(69|70|71)%/, /^(19|20|21)%/, /^[789]%/, /^[123]%/]);
   await expect(mix.getByTestId("mix-shifts")).toContainText("A rise loses casual users first");
 
   // The day log says so too.

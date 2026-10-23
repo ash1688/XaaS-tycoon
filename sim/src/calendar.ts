@@ -183,10 +183,14 @@ export function createCalendar(config: GameConfig) {
     };
   }
 
+  /** The holidays on a product's calendar: every public holiday, and the industry events that hit it. */
+  const shownTo = (state: Pick<GameState, "productType">) =>
+    holidays.filter((h) => !h.industryEvent || !!h.effects[state.productType]);
+
   /** Each holiday's next run to start after a day, within the game, soonest first. */
   function nextAfter(state: GameState, day: number): HolidayView[] {
     const { year } = gameDate(state, day);
-    return holidays
+    return shownTo(state)
       .flatMap((h) => {
         const next = [year, year + 1].map((y) => view(state, h, y)).find((v) => v.startDay > day);
         return next && next.startDay <= (state.finalDay ?? Infinity) ? [next] : [];
@@ -196,7 +200,7 @@ export function createCalendar(config: GameConfig) {
 
   function calendar(state: GameState): CalendarView {
     const { year } = gameDate(state, state.day);
-    const on = holidays.flatMap((h) =>
+    const on = shownTo(state).flatMap((h) =>
       [year - 1, year].map((y) => view(state, h, y)).filter((v) => state.day >= v.startDay && state.day <= v.endDay),
     );
     return { today: gameDate(state, state.day), startYear: gameDate(state, 1).year, on, upcoming: nextAfter(state, state.day) };

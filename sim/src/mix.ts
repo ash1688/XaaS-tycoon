@@ -92,12 +92,14 @@ export function createCustomerMix(config: GameConfig, features: Features, pricin
     return byType((t) => (average > 0 ? Math.round((1e9 * appeal[t]) / average) / 1e9 : 1));
   }
 
-  /** Rivals' pull on each type against the product's mix as a whole, as relativeAppeal does for features. */
+  /** Rivals' pull on each type against the product's mix as a whole, as relativeAppeal does for features: for show. */
   function relativeRivalPull(state: GameState): Record<CustomerTypeId, number> {
     const pull = rivals.newUserWeights(state);
     const base = pricing.baseMix(state.productType);
     const average = CUSTOMER_TYPE_IDS.reduce((sum, t) => sum + base[t] * pull[t], 0);
-    return byType((t) => (average > 0 ? Math.round((100 * pull[t]) / average) / 100 : 1));
+    // A tilt under 5% either way shows as none: it's noise next to the features and the price.
+    const relative = (t: CustomerTypeId) => (average > 0 ? Math.round((100 * pull[t]) / average) / 100 : 1);
+    return byType((t) => (Math.abs(relative(t) - 1) < 0.05 ? 1 : relative(t)));
   }
 
   /** The customer mix for the screens, with each type's share of new users and what tilts it. */

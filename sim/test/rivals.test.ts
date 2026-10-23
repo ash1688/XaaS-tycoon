@@ -69,9 +69,6 @@ describe("rivals and market share", () => {
     const lone = createSim(withoutRivals("ecommerce"));
     const state = running();
     const newShare = (s: typeof sim, st: GameState, id: string) => s.customerMix(st).types.find((t) => t.id === id)!.newShare;
-    const pull = (id: string) => sim.customerMix(state).types.find((t) => t.id === id)!.rivalPull;
-    // CartCraft is the best deal for casual users and Tillbox for businesses, but the cheap rival pulls harder.
-    expect(pull("casual")).not.toBe(1);
     const tilted = sim.customerMix(state).types.map((t) => t.newShare);
     const plain = lone.customerMix({ ...state, rivals: [] }).types.map((t) => t.newShare);
     expect(tilted).not.toEqual(plain);

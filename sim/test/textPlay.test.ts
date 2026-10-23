@@ -107,14 +107,14 @@ describe("runCommand", () => {
     const state = advanceUntil(sim, run(start(), "instances 2").state, 20, who).state;
     expect(renderStatus(sim, state)).toMatch(
       // The product's mix, tilted a little by the rivals.
-      /new users join as: casual \d+\.\d% \(rivals x[\d.]+\), enthusiasts \d+\.\d% \(rivals x[\d.]+\), professionals \d+\.\d% \(rivals x[\d.]+\), businesses \d+\.\d% \(rivals x[\d.]+\)\n/,
+      /new users join as: casual \d+\.\d%( \(rivals x[\d.]+\))?, enthusiasts \d+\.\d%( \(rivals x[\d.]+\))?, professionals \d+\.\d%( \(rivals x[\d.]+\))?, businesses \d+\.\d%( \(rivals x[\d.]+\))?\n/,
     );
     expect(renderStatus(sim, state)).toMatch(/groups not started \[pulls professionals x1\.5\]/);
     // Twice the fair price: a quarter as many casual users join.
     const dear = run(state, "price 10").state;
-    expect(renderStatus(sim, dear)).toMatch(/new users join as: casual \d+\.\d% \(price x0\.25, rivals x[\d.]+\), enthusiasts \d+\.\d% \(price x0\.39, rivals x[\d.]+\), professionals/);
+    expect(renderStatus(sim, dear)).toMatch(/new users join as: casual \d+\.\d% \(price x0\.25(, rivals x[\d.]+)?\), enthusiasts \d+\.\d% \(price x0\.39(, rivals x[\d.]+)?\), professionals/);
     const grouped: GameState = { ...state, features: { groups: { status: "built", progress: 0 } } };
-    expect(renderStatus(sim, grouped)).toMatch(/professionals \d+\.\d% \(features x1\.44, rivals x[\d.]+\)/);
+    expect(renderStatus(sim, grouped)).toMatch(/professionals \d+\.\d% \(features x1\.44(, rivals x[\d.]+)?\)/);
   });
 });
 

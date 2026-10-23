@@ -20,7 +20,7 @@ test("a student picks the AI assistant or games network, and SaaS prices its use
   await student.goto(`/play/${code}`);
   // Five products to pick from, each with its profile.
   const products = student.locator("label.choice").filter({ has: student.locator('input[name="productType"]') });
-  await expect(products).toHaveCount(5);
+  await expect(products).toHaveCount(6);
   await expect(products.filter({ hasText: "AI assistant" })).toContainText("Very heavy GPU compute per user");
   await expect(products.filter({ hasText: "Games network" })).toContainText("Huge launch-day and holiday spikes");
 
