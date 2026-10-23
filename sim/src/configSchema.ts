@@ -413,6 +413,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
       }
       add(`${at}.encounter.maxTimes`, "Events", s, "Most times per game", "After firing this many times it no longer goes on the encounter list.", range(0, 20, 1));
       add(`${at}.encounter.fromDay`, "Events", s, "Earliest day", "It can't go on an encounter list rolled before this day.", GAME_DAY);
+      add(`${at}.encounter.followsWithinDays`, "Events", s, "Only within days of what it follows", `It can only fire within this many days of the event it follows (${event.encounter.follows?.join(", ")}).`, GAME_DAY);
     }
     event.schedule?.days.forEach((_, i) => {
       add(`${at}.schedule.days.${i}`, "Events", s, `Fires on day (${i + 1})`, "A day it fires on in every game, outside the danger meter.", GAME_DAY);

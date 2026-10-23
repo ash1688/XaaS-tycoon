@@ -691,6 +691,8 @@ export interface EncounterOdds {
    * Left out, it needs nothing first.
    */
   follows?: string[];
+  /** With `follows`: only within this many days of the last time one of them fired. Left out, any time after. */
+  followsWithinDays?: number;
 }
 
 /**
@@ -1738,11 +1740,11 @@ export const defaultConfig: GameConfig = {
     {
       id: "lawsuit",
       name: "Lawsuit",
-      description: "Customers whose data was stolen in a breach are suing you.",
+      description: "Customers whose data was stolen in your recent security breach are suing you.",
       layer: "data",
       // Only after a breach (a deal's badly broken SLA can lead to one too, once there are deals). Unhappy customers
       // are likelier to sue.
-      encounter: { chance: 0.5, risks: { lowSatisfaction: 1.6 }, follows: ["breach"] },
+      encounter: { chance: 0.5, risks: { lowSatisfaction: 1.6 }, follows: ["breach"], followsWithinDays: 60 },
       days: 1,
       effects: {
         onprem: {

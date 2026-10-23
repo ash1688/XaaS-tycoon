@@ -4858,6 +4858,10 @@ describe("encounters", () => {
     // A breach every time the lawsuit has nothing new to follow, so they take turns.
     const { state } = s.advance(start, 30);
     expect(state.schedule.map((e) => e.event).slice(0, 5)).toEqual(["breach", "lawsuit", "breach", "lawsuit", "breach"]);
+    // Only soon after: the meter takes at least 2 days to reach a threshold of 5, too late for a 1-day window.
+    const soon = withEncounters({ thresholdMin: 5, thresholdMax: 5 }, { ...lawsuit, encounter: { chance: 1, follows: ["breach"], followsWithinDays: 1 } }, breach);
+    const late = soon.advance(begin(soon, "paas"), 30).state;
+    expect(late.schedule.map((e) => e.event)).not.toContain("lawsuit");
   });
 
   it("leaves the meter to top out on an empty list, then resets it quietly with a new roll", () => {
@@ -5106,7 +5110,7 @@ describe("the beta's new events", () => {
   });
 
   it("only let a lawsuit follow a breach", () => {
-    expect(event("lawsuit").encounter!.follows).toEqual(["breach"]);
+    expect(event("lawsuit").encounter).toMatchObject({ follows: ["breach"], followsWithinDays: 60 });
   });
 
   it("make a breach worse with patches overdue, only where the OS is yours", () => {
@@ -5148,7 +5152,7 @@ describe("the beta's new events", () => {
     }
   });
 
-  it("each fire in some games, with a lawsuit only ever after a breach", () => {
+  it("each fire in some games, with a lawsuit only ever soon after a breach", () => {
     const s = createSim(roomyDefaults);
     const fired = new Set<string>();
     for (let seed = 1; seed <= 30; seed++) {
@@ -5157,7 +5161,9 @@ describe("the beta's new events", () => {
         fired.add(e.event);
         if (e.event !== "lawsuit") return;
         const since = schedule.slice(0, i).map((x) => x.event);
-        expect(since.lastIndexOf("breach")).toBeGreaterThan(since.lastIndexOf("lawsuit"));
+        const breach = since.lastIndexOf("breach");
+        expect(breach).toBeGreaterThan(since.lastIndexOf("lawsuit"));
+        expect(e.day - schedule[breach]!.day).toBeLessThanOrEqual(60);
       });
     }
     for (const id of NEW) expect(fired).toContain(id);
