@@ -21,11 +21,12 @@ const scaleTop = computed(() => {
 const along = (price: number) => `${Math.min(100, (100 * price) / scaleTop.value)}%`;
 const over = computed(() => mix.value?.types.filter((t) => t.overThreshold && t.share > 0) ?? []);
 
-/** What tilts a type's share of new users from the product's mix: "features ×1.5", "price ×0.25". */
-const tilt = (t: { featureAppeal: number; priceFilter: number }) =>
+/** What tilts a type's share of new users from the product's mix: "features ×1.5", "price ×0.25", "rivals ×0.8". */
+const tilt = (t: { featureAppeal: number; priceFilter: number; rivalPull: number }) =>
   [
     t.featureAppeal !== 1 ? `features ×${+t.featureAppeal.toFixed(2)}` : "",
     t.priceFilter !== 1 ? `price ×${+t.priceFilter.toFixed(2)}` : "",
+    t.rivalPull !== 1 ? `rivals ×${+t.rivalPull.toFixed(2)}` : "",
   ]
     .filter(Boolean)
     .join(", ");
@@ -35,7 +36,9 @@ const tilt = (t: { featureAppeal: number; priceFilter: number }) =>
   <section v-if="game.company && mix" class="card customer-mix" aria-labelledby="mix-heading" data-testid="customer-mix">
     <div class="row-between panel-head">
       <h2 id="mix-heading">Customer mix</h2>
-      <span class="muted">Your price {{ formatPrice(mix.price) }} a month</span>
+      <span class="muted">
+        {{ mix.includesRate ? "A usual month costs a business" : "Your price" }} {{ formatPrice(mix.price) }}{{ mix.includesRate ? "" : " a month" }}
+      </span>
     </div>
     <p class="mix-caption muted">Share of users</p>
     <div class="mix-bar" role="img" :aria-label="mix.types.map((t) => `${t.name} ${percent(t.share)}`).join(', ')">
@@ -100,6 +103,10 @@ const tilt = (t: { featureAppeal: number; priceFilter: number }) =>
       pulls in a customer type) and your price: above a type's threshold, fewer of them join. A rise loses casual users
       first, and downtime drives businesses and professionals away. A pricier company ends up more professional, so
       its next rise hurts less.
+    </p>
+    <p v-if="mix.includesRate" class="muted" data-testid="mix-includes-rate">
+      On a payments app the thresholds are what a usual month costs a business: your monthly fee plus your transaction
+      fee on its payments.
     </p>
     <p v-if="over.length" class="wave-note" data-testid="mix-over">
       <span class="badge">Over threshold</span>

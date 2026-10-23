@@ -1,7 +1,7 @@
 # AI playtest brief
 
-You're playtesting **XaaS Tycoon**, a classroom business game. You run a company with one product (social network,
-video platform or e-commerce shop) on one deployment model (on-prem, IaaS, PaaS or SaaS), and try to reach day 180
+You're playtesting **XaaS Tycoon**, a classroom business game. You run a company with one product (e-commerce shop,
+social network, video platform, payments app, AI assistant or games network) on one deployment model (on-prem, IaaS, PaaS or SaaS), and try to reach day 180
 without going into liquidation. Play it as a player would: through the commands below only. Don't read the game's source
 code or config. Everything a student can see is in the game's own output.
 
@@ -16,7 +16,8 @@ npm run -s play -- do <game> "hire support junior 3; price 6; next 7"
 npm run -s play -- summary <game>
 ```
 
-- `new` starts a game and shows the company and the commands. Leave out `--loan` to start without the bank loan.
+- `new` starts a game and shows the company and the commands. `--product` is `ecommerce`, `social`, `video`,
+  `assistant` (AI assistant) or `games` (games network). Leave out `--loan` to start without the bank loan.
   `--shares` is how many shares your company has (10,000 to 100,000, 10,000 if left out): you own all of them.
   `--length` picks the game length: `180-days` (the default), `until-ipo` (no last day: it ends only when you float),
   `1-year` (ends on day 365) or `career` (47 years, ends on day 17,155). Play 180 days unless your brief says
@@ -68,6 +69,15 @@ npm run -s play -- summary <game>
   (each pulls a customer type, shown in `features` as `[pulls ...]`) and your price (above a type's threshold, fewer
   of that type join). A rise loses casual users first, and downtime drives businesses and professionals out. A
   pricier company ends up more professional, so its next rise hurts less.
+- One or two **rivals** share your market. The status shows each company's market share, price and quality (0–100,
+  from features and uptime). New users of each customer type go mostly to the best value for them: casual users chase
+  price, businesses quality. Rivals answer a price change 14 days later, sometimes undercutting you, and staff you
+  let go may join one and raise its quality. `market` shows it all in full, with who wins each customer type.
+- The **payments app** (`--product payments`) earns two ways: a monthly fee from each paying business, and a
+  transaction fee, a share of every payment they take. `price <fee> <rate%>` sets both in one change, with one lock
+  (`price 12 2.5%`; the fee alone keeps today's rate), and `preview <fee> <rate%>` shows what they'd do. Customers judge
+  them together, as what a usual month costs a business. The status shows both streams, the next payday and Black
+  Friday (on the calendar), when payments (and load) rise. Outages hurt it most: no payments are taken, and no fee charged, for the hours you're down.
 - `valuation` shows what your company is worth, what's pushing it up or down, and who owns it. `funding` shows the
   friends and family and grant offers in full; `accept ff`, `accept grant`, `decline ff` and `decline grant` answer
   them, once each. Either can be negotiated first: `counter ff amount 18000 share 18` asks friends and family for more

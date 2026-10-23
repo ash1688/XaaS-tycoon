@@ -66,7 +66,7 @@ export function createConversion(config: GameConfig, features: Features, pricing
   function drivers(state: GameState): ConversionDriver[] {
     const active = features.activeCount(state);
     const uptime = recentUptime(state);
-    const ratio = state.price / pricing.fairPrice(state.productType);
+    const ratio = pricing.monthlyNow(state) / pricing.fairMonthly(state.productType);
     return [
       driver("features", 1 + c.perFeature * active, active),
       driver("uptime", around(uptime, c.neutralUptime, c.uptimeEffect), uptime),

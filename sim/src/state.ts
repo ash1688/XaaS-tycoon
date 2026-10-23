@@ -30,7 +30,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 36;
+export const GAME_STATE_VERSION = 37;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -54,6 +54,12 @@ export interface DaySpend extends Spend {
   day: number;
   /** Income on the day: what paying users paid. */
   income: number;
+  /**
+   * Of it on the payments app, the monthly fee paying users paid, and the share of their payments taken (see
+   * ProductTransactionsConfig). Both 0 on other products, whose income is all the monthly price and API calls.
+   */
+  feeIncome: number;
+  transactionIncome: number;
   /** Money borrowed on the day: a bank loan, if one was taken then. Not income: it's paid back as debt. */
   borrowed: number;
   /**
@@ -288,6 +294,9 @@ export interface PriceWave {
   direction: "rise" | "cut";
   from: number;
   to: number;
+  /** On a product with a transaction rate, the rate before and after: the change is to both together. */
+  fromRate?: number;
+  toRate?: number;
   /** The first day played at the new price: the wave's day 1. */
   firstDay: number;
   /** The plan: what each day of the wave does, day 1 first. */
@@ -355,12 +364,35 @@ export interface UnitDemand {
   apiu?: number;
 }
 
+/** A rival in the market: its price and users now, and what it has gained from the student. See RivalsConfig. */
+export interface RivalState {
+  /** The rival's id in its product's config. */
+  id: string;
+  /** Its monthly price. */
+  price: number;
+  users: number;
+  /** Quality points from staff the student let go who joined it. */
+  staffQuality: number;
+  /** The student's price it last answered: it reacts again once the price it sees differs. */
+  reactedTo: number;
+}
+
+/** Someone the student let go who joined a rival, logged with the next day played. */
+export interface RivalJoin {
+  rivalId: string;
+  pool: StaffPool;
+  grade: StaffGrade;
+}
+
 /** A price change, for the summary. */
 export interface PriceChange {
   /** The first day played at the new price. */
   day: number;
   from: number;
   to: number;
+  /** On a product with a transaction rate, the rate before and after: one change sets both. */
+  fromRate?: number;
+  toRate?: number;
 }
 
 /**
@@ -479,6 +511,11 @@ export interface GameState {
   customerMix: Record<CustomerTypeId, number>;
   /** The monthly price each paying user pays, a day's share at a time. A change applies from the next day played. */
   price: number;
+  /**
+   * On a product that takes a share of its users' payments (the payments app), that share (0.02 = 2%), set with the
+   * price as one change. Null on other products.
+   */
+  transactionRate: number | null;
   /** The wave from the last price change, kept after it ends; null before any change. */
   priceWave: PriceWave | null;
   /** The price can't be changed again until this day has been played. 0 before any change. */
@@ -487,6 +524,9 @@ export interface GameState {
   priceChanges: PriceChange[];
   /** Everything paying users have paid so far. Not part of spend: profit is income − spend. */
   income: number;
+  /** Of it on the payments app, the monthly fee they paid and the rate's share of their payments. 0 on other products. */
+  feeIncome: number;
+  transactionIncome: number;
   /** Load on the day just played. Over the launch ramp, the usual load of the users there now: what tomorrow brings. */
   load: number;
   /**
@@ -582,6 +622,12 @@ export interface GameState {
   conversions: number;
   /** The paid API, once bought: null until then, and on a product without one. */
   api: ApiState | null;
+  /** The product's rivals, in config order. */
+  rivals: RivalState[];
+  /** The rivals' own seeded RNG, so their choices don't change the game's other random draws. */
+  rivalRng: number;
+  /** Staff let go since the last day played who joined a rival. */
+  rivalJoins: RivalJoin[];
 }
 
 /** Something the player does between days. */
@@ -605,8 +651,12 @@ export type Action =
   | { type: "moveStaff"; to: StaffPool; from?: StaffPool; grade?: StaffGrade }
   /** Starts a migration to another model. One at a time; it runs in the background. */
   | { type: "startMigration"; model: ModelId }
-  /** Sets the monthly price paying users pay, from the next day played. Above 0 and at most the configured maximum. */
-  | { type: "setPrice"; price: number }
+  /**
+   * Sets the monthly price paying users pay, from the next day played. Above 0 and at most the configured maximum. On
+   * the payments app, `rate` sets the share of each payment taken in the same change (today's if left out), and the
+   * price can be 0 when the rate isn't.
+   */
+  | { type: "setPrice"; price: number; rate?: number }
   /** Rents a VM of a type and size, on IaaS. Billed monthly from the next day played, and ready the next day. */
   | { type: "rentServer"; server: ServerType; size: ServerSize }
   /** Cancels a rented VM, ready or not. Its rent stops: you pay only for the days you had it. */
@@ -704,10 +754,16 @@ export interface LogEntry {
   /** Of a loan repayment (debt), the interest in it. */
   interest?: number;
   /**
+   * On the payments app's income, which stream it is, kept apart on Finance: "fees" the monthly fee, "transactions"
+   * the share of its users' payments. Other income (other products' price, API calls) has none.
+   */
+  stream?: "fees" | "transactions";
+  /**
    * Set on entries that need to stand out, such as an outage, a rescue buyout, liquidation or the launch. "income" marks money coming in, which the
    * ledger counts as income rather than spend. "loan" marks the bank loan: money coming in with it is borrowed, which
    * is cash but not income. "funding" marks money from friends and family or a grant, and a withdrawn grant paid
-   * back or a buy-back; "rescue", the rescue buyout. Either is cash, but neither income nor a charge.
+   * back or a buy-back; "rescue", the rescue buyout. Either is cash, but neither income nor a charge. "rival" marks
+   * what a rival did: answered the price, or took on staff.
    */
   kind?:
     | "outage"
@@ -728,7 +784,8 @@ export interface LogEntry {
     | "api"
     | "danger"
     | "calendar"
-    | "ipo";
+    | "ipo"
+    | "rival";
 }
 
 export interface DayLog {

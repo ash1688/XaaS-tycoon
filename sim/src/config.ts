@@ -4,7 +4,7 @@ import type { LayerId } from "./responsibility.ts";
 export const MODEL_IDS = ["onprem", "iaas", "paas", "saas"] as const;
 export type ModelId = (typeof MODEL_IDS)[number];
 
-export const PRODUCT_TYPE_IDS = ["ecommerce", "social", "video"] as const;
+export const PRODUCT_TYPE_IDS = ["ecommerce", "social", "video", "payments", "assistant", "games"] as const;
 export type ProductTypeId = (typeof PRODUCT_TYPE_IDS)[number];
 
 /** Customer types, from the least willing to pay to the most. Saved in game state, so don't rename. */
@@ -349,6 +349,11 @@ export interface HolidayConfig {
   days: number;
   /** A product left out doesn't notice it. */
   effects: Partial<Record<ProductTypeId, HolidayEffect>>;
+  /**
+   * An industry's own event (a big game launch) rather than a public holiday: only the products it affects see it on
+   * their calendar. Left out, everyone sees it.
+   */
+  industryEvent?: boolean;
 }
 
 /** The real calendar each game runs on. Day 1 is a random date in the year the game starts. */
@@ -451,6 +456,11 @@ export interface ProductDemand {
   cuPerUser: number;
   /** Database units (DBU) each user needs before any cache: databases. */
   dbuPerUser: number;
+  /**
+   * On a model that bills per user (SaaS), the provider's per-user fee is multiplied by this: a user who needs a lot of
+   * compute costs the provider more, and it passes that on. 1 for the model's own fee.
+   */
+  perUserFeeMultiplier: number;
 }
 
 export interface ProductTypeConfig {
@@ -467,6 +477,125 @@ export interface ProductTypeConfig {
   api?: ProductApiConfig;
   /** Reports on user content, for a product where users post it (social, video). Left out, it has no moderators. */
   moderation?: ProductModeration;
+  /** The one or two rivals in the product's market (see RivalsConfig). Empty for none. */
+  rivals: RivalConfig[];
+  /**
+   * A share of every payment its paying users take, on top of the monthly price: the payments app. Left out, the
+   * product earns only the monthly price.
+   */
+  transactions?: ProductTransactionsConfig;
+  /**
+   * Paying users lost to each hour down are multiplied by this (2 = twice as many as other products). Left out, 1. A
+   * payments app's businesses can't take money while it's down, so they leave fastest.
+   */
+  outageChurnMultiple?: number;
+  /** Users post their own content (posts, videos, chat), so it needs moderating: moderators are for these products. */
+  userContent?: boolean;
+}
+
+/**
+ * A rival: a computer-run company in the same market, described only by its price, quality and users. It never runs
+ * out of money or floats on the stock market.
+ */
+export interface RivalConfig {
+  /** Unique within its product type. Saved in game state, so don't rename. */
+  id: string;
+  name: string;
+  /** One line on what it's like. */
+  blurb: string;
+  /**
+   * Its price as a multiple of the student's (0.85 = 15% under): at the start, against the fair price, and each time
+   * it reacts to the student's price.
+   */
+  priceStance: number;
+  /** Its users on day 1. */
+  startingUsers: number;
+  /** Users it can reach. Its growth slows as it nears them. */
+  maxUsers: number;
+  /** Share of its users added each day while it has room, before value (see RivalsConfig.growthEffect). */
+  dailyGrowth: number;
+  /** Features it has on day 1, out of the product's list. */
+  features: number;
+  /** It builds one more feature every this many days, up to the product's list. */
+  featureEveryDays: number;
+  /** Its uptime, as a percentage. */
+  uptime: number;
+}
+
+/**
+ * How rivals compete. Each company's quality, 0–100, is qualityFromFeatures × its share of the product's features plus
+ * qualityFromUptime × its uptime's place between worstUptime (none) and 100% (all), plus anything staff who joined it
+ * from the student brought. Each customer type values a company at qualityWeight × quality ÷ 100 − priceWeight × ln(price
+ * ÷ fair price), and its new users split between the companies in proportion to e^value: the best value wins most.
+ *
+ * The student's daily growth is multiplied by the mix-weighted sum of (their share of each type's new users ÷ an even
+ * share)^growthEffect, kept between minGrowth and maxGrowth: 1 when they're as good a deal as the rivals. Rivals grow
+ * the same way from their own users.
+ */
+export interface RivalsConfig {
+  /** Days a rival takes to answer the student's price: it reacts to the price they charged this many days ago. */
+  reactionDays: number;
+  /** Chance a rival undercuts the student when it reacts, rather than taking its usual stance. */
+  undercutChance: number;
+  /** An undercut prices this share below the student (0.1 = 10% under). */
+  undercutShare: number;
+  /** A rival's price stays between these multiples of the fair price, whatever the student charges. */
+  minPriceMultiple: number;
+  maxPriceMultiple: number;
+  /** Quality points for having every feature. */
+  qualityFromFeatures: number;
+  /** Quality points for 100% uptime. */
+  qualityFromUptime: number;
+  /** Uptime, as a percentage, that earns no quality points. */
+  worstUptime: number;
+  /**
+   * The student's uptime for quality counts at least this many days, those not yet played as up, so one early outage
+   * doesn't wipe out their quality.
+   */
+  uptimeDays: number;
+  /** Chance each permanent member of staff the student lets go joins a rival. */
+  joinChance: number;
+  /** Quality points one mid joining a rival brings; other grades by their output. */
+  qualityPerStaff: number;
+  /** The most quality points a rival can get from staff who joined it. */
+  maxStaffQuality: number;
+  /** How strongly winning or losing new users changes growth: 0 for no effect, 1 in proportion. */
+  growthEffect: number;
+  minGrowth: number;
+  maxGrowth: number;
+  /** How much each customer type cares about price, and about quality (see RivalsConfig). */
+  priceWeight: Record<CustomerTypeId, number>;
+  qualityWeight: Record<CustomerTypeId, number>;
+}
+
+/**
+ * A product that earns a share of each payment its users take, as well as a monthly fee. The student sets the fee
+ * and the rate together, as one price change. Customers judge the two together, as what a usual month costs them:
+ * fee + rate × volumePerPaidUser, the product's monthly price for every price reaction, threshold and the fair
+ * price (fairPrice + fairRate × volumePerPaidUser). So a rise in either is a rise, and moving money from one to the
+ * other changes nothing for them.
+ *
+ * The rate's income follows each day's payments: a usual day's share of the month, more on paydays and on Black
+ * Friday (the product's seasonal spike), and none for the hours the product is down. Paydays only move money within
+ * the month, so a payday cycle earns what the same days at a steady volume would.
+ */
+export interface ProductTransactionsConfig {
+  /** The share of each payment a new company takes (0.02 = 2%): with the fair price, what users think it's worth. */
+  fairRate: number;
+  /** The highest rate a student can set. */
+  maxRate: number;
+  /** What each paying user takes in payments in a usual month, in pounds. */
+  volumePerPaidUser: number;
+  /**
+   * Payday: a few busy days each month when people have just been paid. Payments, and the load they bring, are
+   * multiplied by `multiplier` on those days and lowered on the others so a cycle averages out.
+   */
+  payday: { firstDay: number; every: number; length: number; multiplier: number };
+  /**
+   * On SaaS the platform takes the payments for you, and charges this share of every payment (0.009 = 0.9%) as
+   * infrastructure, whatever fee and rate you charge.
+   */
+  saasFeeRate: number;
 }
 
 /**
@@ -1185,6 +1314,7 @@ export interface GameConfig {
   models: Record<ModelId, ModelConfig>;
   productTypes: Record<ProductTypeId, ProductTypeConfig>;
   customerTypes: Record<CustomerTypeId, CustomerTypeConfig>;
+  rivals: RivalsConfig;
   staff: Record<StaffPool, StaffPoolConfig>;
   staffGrades: Record<StaffGrade, StaffGradeConfig>;
   agency: AgencyConfig;
@@ -1372,7 +1502,7 @@ export const defaultConfig: GameConfig = {
       },
       // Baskets and orders: as much database as compute, 500 shoppers to a CU and a DBU. Server sizes are set by it: a
       // small app server serves 3,000 shoppers, a medium 5,000, a large 10,000 and a massive 15,000.
-      demand: { cuPerUser: 0.002, dbuPerUser: 0.002 },
+      demand: { cuPerUser: 0.002, dbuPerUser: 0.002, perUserFeeMultiplier: 1 },
       // Shoppers mostly pay: a shop's free tier is browsing without an account.
       // Shops sell to businesses as well as shoppers, so it's the most upmarket mix.
       pricing: {
@@ -1428,6 +1558,11 @@ export const defaultConfig: GameConfig = {
         price: 4_000,
         callsPerPaidUser: 3,
       },
+      // A cheap shop builder that pulls casual sellers, and a dearer, polished one that pulls businesses.
+      rivals: [
+        { id: "cartcraft", name: "CartCraft", blurb: "Cheap and cheerful shop builder.", priceStance: 0.85, startingUsers: 5_000, maxUsers: 15_000, dailyGrowth: 0.012, features: 0, featureEveryDays: 70, uptime: 99 },
+        { id: "tillbox", name: "Tillbox", blurb: "Polished and dear, built for serious sellers.", priceStance: 1.3, startingUsers: 3_000, maxUsers: 10_000, dailyGrowth: 0.01, features: 1, featureEveryDays: 80, uptime: 99.8 },
+      ],
     },
     social: {
       name: "Social network",
@@ -1442,7 +1577,7 @@ export const defaultConfig: GameConfig = {
         loadNoise: 0.05,
       },
       // Feeds and friends lists: light on both, but there are a lot of users.
-      demand: { cuPerUser: 0.0015, dbuPerUser: 0.0015 },
+      demand: { cuPerUser: 0.0015, dbuPerUser: 0.0015, perUserFeeMultiplier: 1 },
       // Mostly free, like most social networks: a few pay for extras. A third pay at the start, so the slow ramp to the
       // market pays its way on any model, own kit included.
       // Mostly casual users, as in the design's worked example.
@@ -1494,6 +1629,12 @@ export const defaultConfig: GameConfig = {
           appeal: { businesses: 1.5 },
         },
       ],
+      // A free-and-easy network that pulls casual users, and a slicker one for creators and brands.
+      rivals: [
+        { id: "natterly", name: "Natterly", blurb: "Cheap, cheerful and a bit flaky.", priceStance: 0.8, startingUsers: 10_000, maxUsers: 30_000, dailyGrowth: 0.012, features: 0, featureEveryDays: 70, uptime: 98.5 },
+        { id: "gatherhub", name: "GatherHub", blurb: "Slick and dear, where creators and brands hang out.", priceStance: 1.25, startingUsers: 5_000, maxUsers: 18_000, dailyGrowth: 0.01, features: 1, featureEveryDays: 80, uptime: 99.8 },
+      ],
+      userContent: true,
     },
     video: {
       name: "Video sharing platform",
@@ -1508,7 +1649,7 @@ export const defaultConfig: GameConfig = {
         loadNoise: 0.15,
       },
       // Encoding and streaming: compute-heavy, with a light database. Its big, steady server bill is where owning kit pays.
-      demand: { cuPerUser: 0.004, dbuPerUser: 0.002 },
+      demand: { cuPerUser: 0.004, dbuPerUser: 0.002, perUserFeeMultiplier: 1 },
       // Viewers, a good share of keen fans and some creators who earn from it.
       pricing: {
         fairPrice: 9,
@@ -1557,6 +1698,241 @@ export const defaultConfig: GameConfig = {
           appeal: { professionals: 1.5, businesses: 1.5 },
         },
       ],
+      // One big, established rival, a little cheaper than fair.
+      rivals: [
+        { id: "reelhaus", name: "Reelhaus", blurb: "The big established video site.", priceStance: 0.95, startingUsers: 8_000, maxUsers: 20_000, dailyGrowth: 0.01, features: 1, featureEveryDays: 75, uptime: 99.5 },
+      ],
+      userContent: true,
+    },
+    payments: {
+      name: "Payments app",
+      profile: "Businesses pay a fee plus a cut of every payment",
+      // Few users, each worth a lot: a business pays about six times what a shopper does. A small start that grows
+      // quickly to a small market, so like the social network it pays its way from about day 45–65 on every model.
+      growth: {
+        launchUsersMin: 380,
+        launchUsersMax: 950,
+        marketSize: 4_000,
+        dailyGrowth: 0.045,
+        growthNoise: 0.3,
+        loadPerUser: 6,
+        loadNoise: 0.1,
+        // Black Friday (on the calendar) is shoppers' busiest weekend, so the businesses' payments and load jump.
+      },
+      // Every payment is checked and written to a ledger: heavy on the database. On SaaS the platform's fee on each
+      // payment is its real price, so the per-user fee is the usual one.
+      demand: { cuPerUser: 0.012, dbuPerUser: 0.015, perUserFeeMultiplier: 1 },
+      // Free users are businesses still in test mode: set up, but not yet taking real payments. Mostly businesses
+      // and professionals, who put up with a dear price but leave rather than go free.
+      pricing: {
+        fairPrice: 10,
+        freeShare: 0.5,
+        conversionRate: 0.0012,
+        customerMix: { casual: 0.05, enthusiasts: 0.1, professionals: 0.25, businesses: 0.6 },
+      },
+      // Money going missing is urgent: businesses raise a lot of tickets.
+      support: { ticketsPerPaidUser: 0.02, ticketsPerFreeUser: 0.006 },
+      features: [
+        {
+          id: "invoices",
+          name: "Invoices and payment links",
+          blurb: "Businesses send a link and get paid.",
+          devDays: 12,
+          growthMultiplier: 1.08,
+          addonPricePerUser: 0.15,
+        },
+        {
+          id: "fraud",
+          name: "Fraud checks",
+          blurb: "Stops stolen cards before the money moves.",
+          devDays: 24,
+          growthMultiplier: 1.15,
+          addonPricePerUser: 0.3,
+        },
+        {
+          id: "payouts",
+          name: "Instant payouts",
+          blurb: "Businesses get their money the same day.",
+          devDays: 20,
+          growthMultiplier: 1.12,
+          addonPricePerUser: 0.25,
+        },
+        {
+          id: "subscriptions",
+          name: "Subscription billing",
+          blurb: "Charges customers every month without them lifting a finger.",
+          devDays: 30,
+          growthMultiplier: 1.2,
+          addonPricePerUser: 0.35,
+        },
+      ],
+      // Shops, booking sites and accounting software take payments and check refunds through it.
+      api: {
+        name: "Payments API",
+        blurb: "Other businesses' apps and websites take payments and issue refunds through yours.",
+        price: 4_000,
+        callsPerPaidUser: 10,
+      },
+      // A fee of £10 a month plus 2% of £1,000 of payments: £30 a month to a usual business.
+      transactions: {
+        fairRate: 0.02,
+        maxRate: 0.2,
+        volumePerPaidUser: 1_000,
+        payday: { firstDay: 28, every: 30, length: 3, multiplier: 1.3 },
+        // The SaaS platform's per-user fee is tiny next to what a business pays, so its fee on each payment is the price
+        // of SaaS here: nearly half of what the fair rate takes.
+        saasFeeRate: 0.009,
+      },
+      outageChurnMultiple: 2,
+      // Prices compared as a usual month (fee + transaction fee, £30 at fair): a cheap one for small sellers, and an
+      // established one businesses trust.
+      rivals: [
+        { id: "paypebble", name: "PayPebble", blurb: "Cheap and simple, for small sellers.", priceStance: 0.85, startingUsers: 900, maxUsers: 3_000, dailyGrowth: 0.012, features: 0, featureEveryDays: 70, uptime: 99 },
+        { id: "ledgerline", name: "Ledgerline", blurb: "Established and dear; businesses trust it.", priceStance: 1.2, startingUsers: 700, maxUsers: 2_500, dailyGrowth: 0.01, features: 1, featureEveryDays: 80, uptime: 99.9 },
+      ],
+    },
+    assistant: {
+      name: "AI assistant",
+      profile: "Very heavy GPU compute per user; users who pay well",
+      growth: {
+        launchUsersMin: 600,
+        launchUsersMax: 1_200,
+        marketSize: 8_000,
+        dailyGrowth: 0.07,
+        growthNoise: 0.2,
+        loadPerUser: 6,
+        loadNoise: 0.1,
+      },
+      // Every question runs a big model on GPUs: by far the most compute per user, so a small app server serves only 300
+      // users, and a SaaS platform charges eight times its usual fee for each. Conversations are small to store.
+      demand: { cuPerUser: 0.02, dbuPerUser: 0.001, perUserFeeMultiplier: 8 },
+      // Plenty try it free, but those who rely on it for work pay well: the most professional mix.
+      pricing: {
+        fairPrice: 18,
+        freeShare: 0.6,
+        conversionRate: 0.0015,
+        customerMix: { casual: 0.3, enthusiasts: 0.25, professionals: 0.3, businesses: 0.15 },
+      },
+      support: { ticketsPerPaidUser: 0.008, ticketsPerFreeUser: 0.002 },
+      features: [
+        {
+          id: "memory",
+          name: "Long memory",
+          blurb: "Remembers past conversations, so users needn't repeat themselves.",
+          devDays: 16,
+          growthMultiplier: 1.1,
+          addonPricePerUser: 0.2,
+        },
+        {
+          id: "documents",
+          name: "Document reader",
+          blurb: "Users upload files and ask questions about them.",
+          devDays: 20,
+          growthMultiplier: 1.12,
+          addonPricePerUser: 0.25,
+        },
+        {
+          id: "voice",
+          name: "Voice chat",
+          blurb: "Users talk to the assistant out loud.",
+          devDays: 24,
+          growthMultiplier: 1.12,
+          addonPricePerUser: 0.3,
+        },
+        {
+          id: "images",
+          name: "Image maker",
+          blurb: "Draws pictures from a description.",
+          devDays: 30,
+          growthMultiplier: 1.2,
+          addonPricePerUser: 0.4,
+        },
+      ],
+      // Other apps build the assistant into their own products: chatbots, writing tools, help desks.
+      api: {
+        name: "Assistant API",
+        blurb: "Other businesses build your assistant into their own apps and help desks.",
+        price: 4_000,
+        callsPerPaidUser: 5,
+      },
+      // Prices against the fair £18: a cheap one for casual users, and a big, polished one professionals trust.
+      rivals: [
+        { id: "chatterbot", name: "ChatterBot", blurb: "Cheap and chatty, if a little forgetful.", priceStance: 0.8, startingUsers: 2_000, maxUsers: 6_000, dailyGrowth: 0.015, features: 0, featureEveryDays: 70, uptime: 99 },
+        { id: "brainwave", name: "Brainwave", blurb: "Big, polished and dear: professionals' pick.", priceStance: 1.3, startingUsers: 1_500, maxUsers: 5_000, dailyGrowth: 0.012, features: 1, featureEveryDays: 75, uptime: 99.8 },
+      ],
+    },
+    games: {
+      name: "Games network",
+      profile: "Huge launch-day and holiday spikes; a subscription for online play",
+      growth: {
+        launchUsersMin: 500,
+        launchUsersMax: 1_000,
+        marketSize: 25_000,
+        dailyGrowth: 0.085,
+        growthNoise: 0.2,
+        loadPerUser: 3,
+        loadNoise: 0.1,
+        // Big game launches and holidays (on the calendar) bring everyone online at once: short and sharp spikes.
+      },
+      // Downloads and multiplayer matches: compute-heavy, with libraries and friends lists in the database. A SaaS
+      // platform charges more for each player than for a shopper.
+      demand: { cuPerUser: 0.0025, dbuPerUser: 0.001, perUserFeeMultiplier: 2.5 },
+      // Free to browse the store and play offline; the subscription is for online play. Mostly gamers, keen ones included.
+      pricing: {
+        fairPrice: 7.5,
+        freeShare: 0.5,
+        conversionRate: 0.001,
+        customerMix: { casual: 0.45, enthusiasts: 0.42, professionals: 0.1, businesses: 0.03 },
+      },
+      support: { ticketsPerPaidUser: 0.01, ticketsPerFreeUser: 0.003 },
+      features: [
+        {
+          id: "achievements",
+          name: "Achievements",
+          blurb: "Players earn badges for what they do in games.",
+          devDays: 10,
+          growthMultiplier: 1.05,
+          addonPricePerUser: 0.05,
+        },
+        {
+          id: "party",
+          name: "Party chat",
+          blurb: "Friends talk to each other while they play.",
+          devDays: 18,
+          growthMultiplier: 1.12,
+          addonPricePerUser: 0.1,
+        },
+        {
+          id: "saves",
+          name: "Cloud saves",
+          blurb: "Players pick up their game on any device.",
+          devDays: 14,
+          growthMultiplier: 1.08,
+          addonPricePerUser: 0.08,
+        },
+        {
+          id: "streaming",
+          name: "Game streaming",
+          blurb: "Play big games on a phone or an old laptop: your servers run them.",
+          devDays: 34,
+          growthMultiplier: 1.2,
+          addonPricePerUser: 0.25,
+        },
+      ],
+      // Game studios use the network's sign-in, matchmaking, leaderboards and store.
+      api: {
+        name: "Games API",
+        blurb: "Game studios use your sign-in, matchmaking, leaderboards and store in their games.",
+        price: 4_000,
+        callsPerPaidUser: 3,
+      },
+      userContent: true,
+      // Players post clips, chat and name themselves: about as many reports as a social network.
+      moderation: { reportsPerUser: 0.0015 },
+      // One big established network, a little cheaper than fair.
+      rivals: [
+        { id: "playlink", name: "PlayLink", blurb: "The big established network: everyone's friends are on it.", priceStance: 0.9, startingUsers: 8_000, maxUsers: 22_000, dailyGrowth: 0.012, features: 1, featureEveryDays: 75, uptime: 99.5 },
+      ],
     },
   },
   // Casual users react at the fair price, as everyone did in the alpha; the others put up with more, and go free less.
@@ -1565,6 +1941,27 @@ export const defaultConfig: GameConfig = {
     enthusiasts: { name: "Enthusiasts", blurb: "Keen regular users. Will pay a bit more; sometimes go free.", thresholdMultiple: 1.25, toFreeShare: 0.4, outageLeavePerHour: 0 },
     professionals: { name: "Professionals", blurb: "Use it for work. Pay well; rarely go free.", thresholdMultiple: 2, toFreeShare: 0.2, outageLeavePerHour: 0.002 },
     businesses: { name: "Businesses", blurb: "Run on it. Pay the most; rarely go free, they leave, and fast when it's down.", thresholdMultiple: 3, toFreeShare: 0.1, outageLeavePerHour: 0.01 },
+  },
+  // Placeholders from the beta design: rivals answer a price two weeks on, and undercut about a third of the time.
+  // Casual users chase price and businesses quality, so a cheap rival pulls casual users and a polished one the rest.
+  rivals: {
+    reactionDays: 14,
+    undercutChance: 0.35,
+    undercutShare: 0.1,
+    minPriceMultiple: 0.5,
+    maxPriceMultiple: 2,
+    qualityFromFeatures: 60,
+    qualityFromUptime: 40,
+    worstUptime: 90,
+    uptimeDays: 30,
+    joinChance: 0.5,
+    qualityPerStaff: 2,
+    maxStaffQuality: 20,
+    growthEffect: 0.5,
+    minGrowth: 0.6,
+    maxGrowth: 1.4,
+    priceWeight: { casual: 3, enthusiasts: 2, professionals: 1, businesses: 0.5 },
+    qualityWeight: { casual: 1, enthusiasts: 2, professionals: 3, businesses: 4 },
   },
   staff: {
     developers: { name: "Developers", personName: "developer", dayRate: 120, startingCount: 2 },
@@ -1664,6 +2061,11 @@ export const defaultConfig: GameConfig = {
       ecommerce: { users: 18_000, annualRevenue: 1_000_000, payingUsers: 16_000 },
       social: { users: 36_000, annualRevenue: 1_250_000, payingUsers: 21_000 },
       video: { users: 18_000, annualRevenue: 1_250_000, payingUsers: 12_000 },
+      // A small market of businesses, each worth about £30 a month: revenue comes from few payers.
+      payments: { users: 3_600, annualRevenue: 900_000, payingUsers: 2_400 },
+      // Few users who pay well, and a big market of gamers at a small price.
+      assistant: { users: 7_200, annualRevenue: 700_000, payingUsers: 3_000 },
+      games: { users: 22_500, annualRevenue: 1_000_000, payingUsers: 11_000 },
     },
     recordDays: 30,
     minUptime: 99,
@@ -1815,6 +2217,17 @@ export const defaultConfig: GameConfig = {
         },
       },
       {
+        id: "springLaunch",
+        name: "Spring game launch",
+        description: "A big new game comes out, and everyone wants to play it on day one.",
+        start: { anchor: "date", month: 3, day: 13 },
+        days: 3,
+        industryEvent: true,
+        effects: {
+          games: { loadMultiplier: 2, growthMultiplier: 2.5, detail: "Everyone downloads the new game and plays online at once: twice the load, and a rush of new players." },
+        },
+      },
+      {
         id: "easter",
         name: "Easter holidays",
         description: "Schools are off for Easter, so students and families are online more.",
@@ -1823,6 +2236,18 @@ export const defaultConfig: GameConfig = {
         effects: {
           social: { loadMultiplier: 1.3, growthMultiplier: 1.25, detail: "Students off school post and chat all day." },
           video: { loadMultiplier: 1.35, growthMultiplier: 1.2, detail: "Families off school watch far more." },
+          games: { loadMultiplier: 1.4, growthMultiplier: 1.3, detail: "Students off school play online all day." },
+        },
+      },
+      {
+        id: "summerShowcase",
+        name: "Summer game showcase",
+        description: "The summer showcase: new games are revealed, and some come out the same day.",
+        start: { anchor: "date", month: 6, day: 10 },
+        days: 3,
+        industryEvent: true,
+        effects: {
+          games: { loadMultiplier: 2, growthMultiplier: 2.5, detail: "Surprise releases bring everyone online at once: twice the load, and a rush of new players." },
         },
       },
       {
@@ -1835,6 +2260,18 @@ export const defaultConfig: GameConfig = {
           // Six weeks long, so growth gets a gentler lift than Easter's: it compounds.
           social: { loadMultiplier: 1.25, growthMultiplier: 1.1, detail: "Students off school post and chat all summer." },
           video: { loadMultiplier: 1.3, growthMultiplier: 1.1, detail: "Long summer days mean far more watching." },
+          games: { loadMultiplier: 1.3, growthMultiplier: 1.15, detail: "Students off school play online all summer." },
+        },
+      },
+      {
+        id: "autumnLaunch",
+        name: "Autumn game launches",
+        description: "The year's biggest games come out in time for Christmas.",
+        start: { anchor: "date", month: 11, day: 6 },
+        days: 4,
+        industryEvent: true,
+        effects: {
+          games: { loadMultiplier: 2, growthMultiplier: 2.5, detail: "The year's biggest releases bring everyone online at once: twice the load, and a rush of new players." },
         },
       },
       {
@@ -1844,11 +2281,17 @@ export const defaultConfig: GameConfig = {
         start: { anchor: "blackFriday", offset: 0 },
         days: 4,
         effects: {
+          payments: {
+            loadMultiplier: 2.2,
+            growthMultiplier: 1.5,
+            detail: "Shoppers' busiest weekend: your businesses take more than twice their usual payments, and the load with them.",
+          },
           ecommerce: {
             loadMultiplier: 2.2,
             growthMultiplier: 2.5,
             detail: "A huge shopping spike: more than twice the usual load, and a rush of new shoppers.",
           },
+          games: { loadMultiplier: 1.3, growthMultiplier: 1.5, detail: "Game sales and cheap subscriptions bring new players in." },
         },
       },
       {
@@ -1861,6 +2304,7 @@ export const defaultConfig: GameConfig = {
           ecommerce: { loadMultiplier: 1.5, growthMultiplier: 1.4, detail: "Last-minute gifts, then the Boxing Day sales." },
           social: { loadMultiplier: 1.15, growthMultiplier: 1.1, detail: "New phones, and time off to use them." },
           video: { loadMultiplier: 1.4, growthMultiplier: 1.3, detail: "Time off and new devices: far more watching." },
+          games: { loadMultiplier: 2, growthMultiplier: 2, detail: "New consoles and games under the tree, and time off to play them online." },
         },
       },
     ],
@@ -2000,6 +2444,9 @@ export const defaultConfig: GameConfig = {
               ecommerce: "delivery options built around your own couriers",
               social: "a feed that ranks posts your way",
               video: "your own video player",
+              payments: "payouts through your own bank partner",
+              assistant: "a model trained on your own data",
+              games: "your own matchmaking servers",
             },
           },
           detail:

@@ -1124,7 +1124,8 @@ test("a student previews prices live, raises the price, and sees the backlash an
   await expect(mix.locator('tr[data-type="enthusiasts"]')).not.toContainText("you're over");
   // And it filters who joins: £6.25 is 1.25 times the casual threshold, so 0.64 as many casual users join.
   await expect(mix.locator('tr[data-type="casual"] [data-testid="mix-new"]')).toContainText("price ×0.64");
-  await expect(mix.locator('tr[data-type="businesses"] [data-testid="mix-new"]')).toHaveText(/^\s*\d+%\s*$/);
+  // Businesses are under their threshold: no price filter on them (the rivals may tilt them).
+  await expect(mix.locator('tr[data-type="businesses"] [data-testid="mix-new"]')).not.toContainText("price");
 });
 
 test("a SaaS company without support builds a backlog, hires support from Home and sees it cleared", async ({
@@ -1236,9 +1237,45 @@ test("free users start paying each day, and Customers shows what's helping or hu
   await expect(mix.getByTestId("mix-thresholds").locator(".mix-threshold")).toHaveText(["£5", "£6.25", "£10", "£15"]);
   await expect(mix.getByTestId("mix-over")).toBeHidden();
   // New users join in the product's mix, with nothing tilting it yet.
-  await expect(mix.getByTestId("mix-new")).toHaveText(["70%", "20%", "8%", "2%"]);
+  // New users join in the social network's mix (70/20/8/2), give or take a point the rivals tilt it by.
+  await expect(mix.getByTestId("mix-new")).toHaveText([/^(69|70|71)%/, /^(19|20|21)%/, /^[789]%/, /^[123]%/]);
   await expect(mix.getByTestId("mix-shifts")).toContainText("A rise loses casual users first");
 
   // The day log says so too.
   await expect((await openDayLog(student)).locator('[data-kind="conversion"]')).toContainText("Free to paid:");
+});
+
+test("Customers shows market share against the rivals as a pie, and when they'll answer a price change", async ({ browser, request }) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  const code = await createCode(teacher);
+
+  const created = await request.post(`/api/codes/${code}/companies`, {
+    data: { name: "Share Ltd", productType: "social", model: "iaas" },
+  });
+  const { id } = await created.json();
+  await launch(request, code, id, "iaas");
+
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${id}`);
+  await goTo(student, "Customers");
+  const panel = student.getByTestId("market-share");
+  // A slice each for the student and the social network's two rivals, adding up to the whole market.
+  const pie = panel.getByTestId("market-pie");
+  await expect(pie.locator("path")).toHaveCount(3);
+  await expect(pie).toHaveAttribute("aria-label", /^You \d+%, Natterly \d+%, GatherHub \d+%$/);
+  const shares = (await pie.getAttribute("aria-label"))!.match(/\d+(?=%)/g)!.map(Number);
+  expect(shares.reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(99);
+  await expect(panel.locator("tbody tr")).toHaveCount(3);
+  await expect(panel.locator('tr[data-company="natterly"]')).toContainText("£4");
+  // The cheap rival wins casual users.
+  await expect(panel.locator('li[data-type="casual"] strong')).toHaveText("Natterly");
+  await expect(panel.getByTestId("rival-reaction")).toBeHidden();
+
+  // A price change: the rivals answer it two weeks on.
+  await request.post(`/api/codes/${code}/companies/${id}/actions`, { data: { type: "setPrice", price: 6 } });
+  await student.reload();
+  await expect(student.getByTestId("market-share").getByTestId("rival-reaction")).toContainText(/answer your £6 on day \d+/);
 });

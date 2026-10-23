@@ -12,8 +12,14 @@ import {
   type Sim,
 } from "../src/index.ts";
 
-// No random events, so only what a test sets up shifts the mix.
-const quiet: GameConfig = { ...defaultConfig, events: [] };
+// No random events and no rivals, so only what a test sets up shifts the mix. Rivals' tilt is tested in rivals.test.ts.
+const quiet: GameConfig = {
+  ...defaultConfig,
+  events: [],
+  productTypes: Object.fromEntries(
+    Object.entries(defaultConfig.productTypes).map(([id, p]) => [id, { ...p, rivals: [] }]),
+  ) as unknown as GameConfig["productTypes"],
+};
 
 /** A SaaS company 20 days in: launched, with users in the product's mix. */
 const running = (s: Sim, productType: ProductTypeId = "social"): GameState =>

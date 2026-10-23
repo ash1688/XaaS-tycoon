@@ -1,6 +1,7 @@
 import { CUSTOMER_TYPE_IDS, type CustomerTypeId, type GameConfig } from "./config.ts";
 import type { Features } from "./features.ts";
 import type { CustomerMixView, Pricing } from "./pricing.ts";
+import type { Rivals } from "./rivals.ts";
 import type { GameState } from "./state.ts";
 
 /** Users who left or joined, and how they split by customer type: each type's weight, scaled to add up to them. */
@@ -11,7 +12,7 @@ export interface UsersLost {
 
 /** One reason new users split as they do: each customer type's weight from it, multiplied together over the reasons. */
 export interface NewUserFactor {
-  why: "product" | "features" | "price";
+  why: "product" | "features" | "price" | "rivals";
   weights: Record<CustomerTypeId, number>;
 }
 
@@ -26,19 +27,20 @@ function normalise(weights: Record<CustomerTypeId, number>, fallback: Record<Cus
 
 /**
  * What shifts the customer mix. New users arrive in the product's mix, tilted by the features (each appeals to a
- * customer type) and the price (above a type's threshold, fewer of that type join). Users who leave go by their own
+ * customer type), the price (above a type's threshold, fewer of that type join) and the rivals (each takes most of the
+ * types it's the best deal for). Users who leave go by their own
  * reasons: churn takes every type alike, the price takes casual users first and downtime businesses first.
  *
  * How new users split by type lives here, in newUserFactors, so anything else that steers who joins (rivals) adds a
  * factor there rather than its own split.
  */
-export function createCustomerMix(config: GameConfig, features: Features, pricing: Pricing) {
+export function createCustomerMix(config: GameConfig, features: Features, pricing: Pricing, rivals: Rivals) {
   /**
    * The price's filter on who joins: 1 for a type whose threshold the price isn't over, and (price ÷ threshold) ^ −newUserFilter for
    * one it's over. Twice the casual users' threshold brings a quarter as many of them.
    */
   const priceFilter = (state: GameState) =>
-    byType((t) => Math.min(1, (state.price / pricing.threshold(state.productType, t)) ** -config.pricing.newUserFilter));
+    byType((t) => Math.min(1, (pricing.monthlyNow(state) / pricing.threshold(state.productType, t)) ** -config.pricing.newUserFilter));
 
   /** Each reason new users split as they do. Multiplied together and scaled, they're the mix new users arrive in. */
   function newUserFactors(state: GameState): NewUserFactor[] {
@@ -46,6 +48,8 @@ export function createCustomerMix(config: GameConfig, features: Features, pricin
       { why: "product", weights: pricing.baseMix(state.productType) },
       { why: "features", weights: features.appeal(state) },
       { why: "price", weights: priceFilter(state) },
+      // Fewer of a type join where a rival is the better deal for it.
+      { why: "rivals", weights: rivals.newUserWeights(state) },
     ];
   }
 
@@ -88,15 +92,26 @@ export function createCustomerMix(config: GameConfig, features: Features, pricin
     return byType((t) => (average > 0 ? Math.round((1e9 * appeal[t]) / average) / 1e9 : 1));
   }
 
+  /** Rivals' pull on each type against the product's mix as a whole, as relativeAppeal does for features: for show. */
+  function relativeRivalPull(state: GameState): Record<CustomerTypeId, number> {
+    const pull = rivals.newUserWeights(state);
+    const base = pricing.baseMix(state.productType);
+    const average = CUSTOMER_TYPE_IDS.reduce((sum, t) => sum + base[t] * pull[t], 0);
+    // A tilt under 5% either way shows as none: it's noise next to the features and the price.
+    const relative = (t: CustomerTypeId) => (average > 0 ? Math.round((100 * pull[t]) / average) / 100 : 1);
+    return byType((t) => (Math.abs(relative(t) - 1) < 0.05 ? 1 : relative(t)));
+  }
+
   /** The customer mix for the screens, with each type's share of new users and what tilts it. */
   function customerMix(state: GameState): CustomerMixView {
     const view = pricing.customerMix(state);
     const newMix = newUserMix(state);
     const appeal = relativeAppeal(state);
     const filter = priceFilter(state);
+    const pull = relativeRivalPull(state);
     return {
       ...view,
-      types: view.types.map((t) => ({ ...t, newShare: newMix[t.id], featureAppeal: appeal[t.id], priceFilter: filter[t.id] })),
+      types: view.types.map((t) => ({ ...t, newShare: newMix[t.id], featureAppeal: appeal[t.id], priceFilter: filter[t.id], rivalPull: pull[t.id] })),
     };
   }
 

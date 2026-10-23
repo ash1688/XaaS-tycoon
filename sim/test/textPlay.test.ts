@@ -106,14 +106,15 @@ describe("runCommand", () => {
   it("shows who new users join as, and what features and the price pull in", () => {
     const state = advanceUntil(sim, run(start(), "instances 2").state, 20, who).state;
     expect(renderStatus(sim, state)).toMatch(
-      /new users join as: casual 70\.0%, enthusiasts 20\.0%, professionals 8\.0%, businesses 2\.0%\n/,
+      // The product's mix, tilted a little by the rivals.
+      /new users join as: casual \d+\.\d%( \(rivals x[\d.]+\))?, enthusiasts \d+\.\d%( \(rivals x[\d.]+\))?, professionals \d+\.\d%( \(rivals x[\d.]+\))?, businesses \d+\.\d%( \(rivals x[\d.]+\))?\n/,
     );
     expect(renderStatus(sim, state)).toMatch(/groups not started \[pulls professionals x1\.5\]/);
     // Twice the fair price: a quarter as many casual users join.
     const dear = run(state, "price 10").state;
-    expect(renderStatus(sim, dear)).toMatch(/new users join as: casual \d+\.\d% \(price x0\.25\), enthusiasts \d+\.\d% \(price x0\.39\), professionals/);
+    expect(renderStatus(sim, dear)).toMatch(/new users join as: casual \d+\.\d% \(price x0\.25(, rivals x[\d.]+)?\), enthusiasts \d+\.\d% \(price x0\.39(, rivals x[\d.]+)?\), professionals/);
     const grouped: GameState = { ...state, features: { groups: { status: "built", progress: 0 } } };
-    expect(renderStatus(sim, grouped)).toMatch(/professionals 11\.5% \(features x1\.44\)/);
+    expect(renderStatus(sim, grouped)).toMatch(/professionals \d+\.\d% \(features x1\.44(, rivals x[\d.]+)?\)/);
   });
 });
 
@@ -707,5 +708,105 @@ describe("moderators", () => {
     expect(turn.lines.some((l) => /reports on user content are waiting for a moderator/.test(l))).toBe(true);
     const staffed = run(turn.state, "move moderators developers");
     expect(staffed.rows[0]).toMatchObject({ ok: true, moderators: 1 });
+  });
+});
+
+describe("rivals", () => {
+  it("shows market share in the status and the market in full, changing nothing", () => {
+    const state = start();
+    expect(parseCommand("market")).toEqual({ kind: "market" });
+    expect(renderStatus(sim, state)).toMatch(/market share: you \d+% at £5 q\d+, Natterly \d+% at £4 q\d+, GatherHub \d+% at £6\.25 q\d+ \| rivals (slow|speed up|leave) your growth (to|at) \d+%/);
+    expect(renderCommands(sim, state)).toMatch(/market {3}\(rivals' prices, quality and share/);
+    const market = run(state, "market");
+    expect(market.state).toBe(state);
+    expect(market.lines.join("\n")).toMatch(/Natterly: [\d,]+ users, [\d.]+% share \| £4\/month \| quality [\d.]+ \(0 features, 98\.5% uptime\)/);
+    expect(market.lines.join("\n")).toMatch(/casual: you \d+%, Natterly \d+%, GatherHub \d+% \| best: Natterly/);
+  });
+
+  it("drives the rivals with a price change: they answer it two weeks on, and the log says so", () => {
+    const priced = run(run(start(), "next 10").state, "price 6").state;
+    expect(renderStatus(sim, priced)).toMatch(new RegExp(`rivals answer your £6 on day ${priced.day + 15}`));
+    // Advances stop early when something needs the player, so keep going past the day the rivals answer.
+    let state = priced;
+    const all: string[] = [];
+    while (state.day < priced.day + 15 && state.status === "playing") {
+      const turn = run(state, "next 15");
+      state = turn.state;
+      all.push(...turn.lines);
+    }
+    const lines = all.join("\n");
+    expect(lines).toMatch(/day \d+: (Natterly|GatherHub) (answered your £6 price|undercut you)/);
+  });
+});
+
+describe("the payments app", () => {
+  const full = createSim();
+  const pay = (): GameState =>
+    full.advance(full.newGame({ companyName: "Pay Co", productType: "payments", model: "saas", seed: 3 }), 20).state;
+  const runFull = (state: GameState, text: string) => {
+    const command = parseCommand(text);
+    return command.kind === "next" ? advanceUntil(full, state, command.days, who) : runCommand(full, state, command, who);
+  };
+
+  it("reads a fee with an optional transaction fee in %", () => {
+    expect(parseCommand("price 12 2.5%")).toEqual({ kind: "action", action: { type: "setPrice", price: 12, rate: 0.025 }, times: 1 });
+    expect(parseCommand("price 0 3")).toMatchObject({ action: { type: "setPrice", price: 0, rate: 0.03 } });
+    expect(parseCommand("price 12")).toEqual({ kind: "action", action: { type: "setPrice", price: 12 }, times: 1 });
+    expect(parseCommand("preview 12 2.5%")).toEqual({ kind: "preview", price: 12, rate: 0.025 });
+    expect(() => parseCommand("price 12 lots")).toThrow(/transaction fee/);
+  });
+
+  it("shows both prices, both income streams and the busy days, and the commands that set them", () => {
+    const state = pay();
+    const status = renderStatus(full, state);
+    expect(status).toMatch(/price £10\/month \+ 2% of payments = £30 a usual month per business \(fair £10 \+ 2% = £30/);
+    expect(status).toMatch(/payments: £[\d,]+ on a usual day -> fees £[\d,]+ \+ transaction fees £[\d,]+\/day \| SaaS platform's fee £[\d,]+\/day/);
+    expect(status).toMatch(/next payday day 28, Black Friday (day \d+|none) \| so far fees £[\d,]+, transaction fees £[\d,]+/);
+    expect(status).toMatch(/thresholds are a usual month's cost: yours £30/);
+    expect(renderCommands(full, state)).toMatch(/price <fee 0–1000> \[transaction fee 0–20%, e\.g\. 2\.5%\]/);
+    // Other products show one price, as before.
+    expect(renderStatus(sim, start())).toMatch(/price £5\/month \(fair £5\)/);
+    expect(renderStatus(sim, start())).not.toMatch(/payments:/);
+  });
+
+  it("previews and sets both in one change, with one lock", () => {
+    const state = pay();
+    const preview = runFull(state, "preview 12 2.5%");
+    expect(preview.state).toBe(state);
+    expect(preview.lines[0]).toMatch(/^preview £10 \+ 2% \(£30 a usual month\)→£12 \+ 2\.5% \(£37 a usual month\) \(rise\)/);
+    const changed = runFull(state, "price 12 2.5%").state;
+    expect(changed).toMatchObject({ price: 12, transactionRate: 0.025 });
+    expect(renderStatus(full, changed)).toMatch(/price £12\/month \+ 2\.5% of payments = £37 .* locked 14 more days/);
+    expect(renderStatus(full, changed)).toMatch(/price wave: rise £10 \+ 2%→£12 \+ 2\.5%/);
+    expect(renderCommands(full, changed)).not.toMatch(/^ {2}price </m);
+  });
+
+  it("announces Black Friday on the calendar, and stops time for it", () => {
+    // Day 1 is 1 October 2026: Black Friday (day 58) is announced 14 days before, on day 44.
+    const started = full.newGame({ companyName: "Pay Co", productType: "payments", model: "saas", seed: 3, startDate: "2026-10-01" });
+    const state = full.advance(started, 40).state;
+    expect(renderStatus(full, state)).toMatch(/Black Friday day 58/);
+    const turn = runFull(state, "next 7");
+    expect(turn.state.day).toBe(44);
+    expect(turn.lines.join("\n")).toMatch(/day 44: Black Friday is coming in 14 days/);
+  });
+});
+
+describe("the new products (#118)", () => {
+  it("names the product and shows its SaaS per-user fee", () => {
+    const state = sim.advance(sim.newGame({ companyName: "Test Co", productType: "assistant", model: "saas", seed: 3 }), 3).state;
+    const status = renderStatus(sim, state);
+    expect(status).toContain("== Test Co | AI assistant (assistant) on saas |");
+    expect(status).toMatch(/capacity: the provider's \(no limit\) \| £2\.80\/user\/month on [\d,]+ users = £[\d,]+\/month, plus £900\/month/);
+    expect(status).toContain("api: Assistant API not bought");
+  });
+
+  it("plays a games network: its features and paid API are commands", () => {
+    let state = sim.newGame({ companyName: "Test Co", productType: "games", model: "saas", seed: 3 });
+    expect(renderStatus(sim, state)).toContain("Games network (games) on saas");
+    const turn = runScript(sim, { ...state, cash: 50_000 }, "addon achievements; buyapi", who);
+    state = turn.state;
+    expect(sim.features(state).find((f) => f.id === "achievements")?.status).not.toBe("notStarted");
+    expect(sim.api(state)?.owned).toBe(true);
   });
 });

@@ -23,6 +23,7 @@ import type {
   LoanQuote,
   LoanView,
   ManagedView,
+  MarketView,
   RacksView,
   RescueView,
   MigrationPhase,
@@ -33,6 +34,7 @@ import type {
   ModelComparison,
   PauseReason,
   PricePreview,
+  PaymentsView,
   PriceWaveView,
   ModelId,
   ProductTypeId,
@@ -114,6 +116,8 @@ export interface MetaView {
     id: ProductTypeId;
     name: string;
     profile: string;
+    /** A model's per-user fee (SaaS) is multiplied by this for the product: dearer for one heavy on compute. */
+    perUserFeeMultiplier: number;
     /** On SaaS, each feature is an add-on at this price per user per month. */
     features: { id: string; name: string; addonPricePerUser: number }[];
   }[];
@@ -265,6 +269,17 @@ export interface CompanyView {
    * mark on the bar and whether the price is over it.
    */
   customerMix: CustomerMixView;
+  /**
+   * The market: the company and its rivals with each one's price, quality and market share (for the pie), who wins each
+   * customer type's new users, what rivals do to growth, and a price change they haven't answered yet.
+   */
+  market: MarketView;
+  /**
+   * The payments app's monthly fee and transaction fee (set together as one price change), what a usual month costs a
+   * business, the two income streams on a usual day and so far, and the next payday and Black Friday. Null on other
+   * products.
+   */
+  payments: PaymentsView | null;
   /**
    * Free-to-paid conversion: free users who started paying on the day just played and in all (a price wave's upgrades
    * aren't counted here), the base and current daily rates (from the next day played), recent uptime, and each

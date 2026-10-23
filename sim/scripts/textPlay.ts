@@ -7,6 +7,7 @@ import {
   gameLengthName,
   MANAGED_SERVICES,
   MODEL_IDS,
+  percent,
   RACK_SIZES,
   SERVER_SIZES,
   SERVER_TYPES,
@@ -117,7 +118,10 @@ export function dailyCosts(sim: Sim, state: GameState): number {
   const loan = sim.loan(state);
   const repayment = loan && loan.remaining > 0 ? loan.dailyRepayment : 0;
   const apiFee = sim.api(state)?.dailyFee ?? 0;
-  return sim.dailyStaffCost(state) + (sim.monthlyInfrastructureCost(state) + sim.monthlyAddonCost(state)) / perMonth + repayment + apiFee;
+  const paymentsFee = sim.payments(state)?.usualDaySaasFee ?? 0;
+  return (
+    sim.dailyStaffCost(state) + (sim.monthlyInfrastructureCost(state) + sim.monthlyAddonCost(state)) / perMonth + repayment + apiFee + paymentsFee
+  );
 }
 
 /** What comes in a day at today's numbers: paying users, and the paid API's calls the APIU can serve. */
@@ -164,15 +168,44 @@ export function logRow(sim: Sim, state: GameState, who: Player, type: string, pa
   };
 }
 
-/** Each customer type's share of users, to a tenth of a percent so a shift shows, and price threshold, "!" where today's price is over it. */
+/**
+ * Each customer type's share of users, to a tenth of a percent so a shift shows, and price threshold, "!" where today's
+ * price is over it. On the payments app the thresholds are what a usual month costs a business, fee and transaction
+ * fee together.
+ */
 export function renderMix(sim: Sim, state: GameState): string {
-  return sim
-    .customerMix(state)
-    .types.map((t) => `${t.id} ${share(t.share)} (threshold ${price(t.threshold)}${t.overThreshold ? "!" : ""})`)
-    .join(", ");
+  const mix = sim.customerMix(state);
+  const types = mix.types.map((t) => `${t.id} ${share(t.share)} (threshold ${price(t.threshold)}${t.overThreshold ? "!" : ""})`);
+  return types.join(", ") + (mix.includesRate ? ` | thresholds are a usual month's cost: yours ${price(mix.price)}` : "");
 }
 
-/** Each customer type's share of today's new users, with what tilts it from the product's mix: features and the price. */
+/** The price line: "price £5/month (fair £5)", or on the payments app the fee and transaction fee together. */
+function renderPrice(sim: Sim, state: GameState): string {
+  const pay = sim.payments(state);
+  if (!pay) return `price ${price(state.price)}/month (fair ${price(sim.fairPrice(state))})`;
+  return (
+    `price ${price(pay.fee)}/month + ${percent(pay.rate)} of payments = ${price(pay.monthly)} a usual month per business ` +
+    `(fair ${price(pay.fairFee)} + ${percent(pay.fairRate)} = ${price(pay.fairMonthly)}; a business takes ${money(pay.volumePerPaidUser)} a month)`
+  );
+}
+
+/** The payments app's two income streams and busy days. */
+function renderPayments(sim: Sim, state: GameState): string | null {
+  const pay = sim.payments(state);
+  if (!pay) return null;
+  const { busy, multiplier } = pay.nextDay;
+  const tomorrow = busy ? `tomorrow is ${busy === "payday" ? "payday" : "Black Friday"}: payments x${multiplier}` : "tomorrow is a usual day";
+  const when = (d: number | null) => (d === null ? "none" : d === pay.nextDay.day ? "tomorrow" : `day ${d}`);
+  const saas = pay.usualDaySaasFee
+    ? ` | SaaS platform's fee ${money(pay.usualDaySaasFee)}/day`
+    : ` | on SaaS the platform would take ${percent(pay.saasFeeRate)} of every payment`;
+  return (
+    `payments: ${money(pay.usualDayPayments)} on a usual day -> fees ${money(pay.usualDayFees)} + transaction fees ${money(pay.usualDayTransactionFees)}/day${saas} | ` +
+    `${tomorrow}; next payday ${when(pay.nextPayday)}, Black Friday ${when(pay.nextBlackFriday)} | so far fees ${money(pay.feeIncome)}, transaction fees ${money(pay.transactionIncome)}`
+  );
+}
+
+/** Each customer type's share of today's new users, with what tilts it from the product's mix: features, price, rivals. */
 export function renderNewUsers(sim: Sim, state: GameState): string {
   return sim
     .customerMix(state)
@@ -180,6 +213,7 @@ export function renderNewUsers(sim: Sim, state: GameState): string {
       const why = [
         t.featureAppeal !== 1 ? `features x${+t.featureAppeal.toFixed(2)}` : "",
         t.priceFilter !== 1 ? `price x${+t.priceFilter.toFixed(2)}` : "",
+        t.rivalPull !== 1 ? `rivals x${+t.rivalPull.toFixed(2)}` : "",
       ].filter(Boolean);
       return `${t.id} ${share(t.newShare)}${why.length ? ` (${why.join(", ")})` : ""}`;
     })
@@ -192,10 +226,43 @@ const appeal = (a: FeatureView["appeal"]) => {
   return parts.length ? ` [pulls ${parts.join(", ")}]` : "";
 };
 
+/**
+ * The market in a line: each company's share of users, price and quality, what rivals do to growth, and when they'll
+ * answer a price change. Null with no rivals.
+ */
+export function renderMarket(sim: Sim, state: GameState): string | null {
+  const m = sim.market(state);
+  if (m.companies.length < 2) return null;
+  const companies = m.companies.map((c) => `${c.you ? "you" : c.name} ${pct(100 * c.share)} at ${price(c.price)} q${Math.round(c.quality)}`).join(", ");
+  const answer = m.nextReaction ? ` | rivals answer your ${price(m.nextReaction.price)} on day ${m.nextReaction.day}` : "";
+  return `market share: ${companies} | ${growthWords(m.growth)}${answer}`;
+}
+
+/** What rivals do to growth, in words: "rivals slow your growth to 84%". */
+const growthWords = (growth: number) =>
+  `rivals ${growth < 0.995 ? "slow" : growth > 1.005 ? "speed up" : "leave"} your growth ${growth < 0.995 || growth > 1.005 ? "to" : "at"} ${pct(100 * growth)}`;
+
+/** The market in full: each company, and how each customer type's new users split today. */
+function marketLines(sim: Sim, state: GameState): string[] {
+  const m = sim.market(state);
+  if (m.companies.length < 2) return ["no rivals in this market"];
+  const names = m.companies.map((c) => (c.you ? "you" : c.name));
+  return [
+    `market (rivals answer a price change ${m.reactionDays} days later, sometimes undercutting it; quality is 0–100 from features and uptime):`,
+    ...m.companies.map(
+      (c) =>
+        `  ${c.you ? `you (${c.name})` : c.name}: ${c.users.toLocaleString("en-GB")} users, ${stake(c.share)} share | ${price(c.price)}/month | quality ${c.quality} (${c.features} features, ${c.uptime}% uptime)${c.blurb ? ` | ${c.blurb}` : ""}`,
+    ),
+    `new users by customer type (best value wins most):`,
+    ...m.byType.map((t) => `  ${t.id}: ${t.shares.map((sh, i) => `${names[i]} ${pct(100 * sh)}`).join(", ")} | best: ${t.bestId === "you" ? "you" : t.bestName}`),
+    `${growthWords(m.growth)} (100% when you're as good a deal as them)` +
+      (m.nextReaction ? `; they answer your ${price(m.nextReaction.price)} on day ${m.nextReaction.day}` : ""),
+  ];
+}
+
 /** The company at a glance: everything a player sees on the dashboard, as short lines. */
 export function renderStatus(sim: Sim, state: GameState): string {
   const lines: string[] = [];
-  const fair = sim.fairPrice(state);
   const lock = sim.priceLockDaysLeft(state);
   const left = runway(sim, state);
   const daysToPlay = state.finalDay === null ? Infinity : state.finalDay - state.day;
@@ -203,21 +270,26 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const status = state.ipo.result ? "FLOATED" : state.endedByTeacher ? "ENDED BY TEACHER" : state.status.toUpperCase();
   const calendar = sim.calendar(state);
   lines.push(
-    `== ${state.companyName} | ${state.productType} on ${state.model} | day ${state.day}${state.finalDay === null ? "" : `/${state.finalDay}`} ` +
+    `== ${state.companyName} | ${sim.config.productTypes[state.productType].name} (${state.productType}) on ${state.model} | day ${state.day}${state.finalDay === null ? "" : `/${state.finalDay}`} ` +
       `(${gameLengthName(sim.config, state.gameLength)}, ${DIFFICULTIES[state.difficulty].name}${sim.tickDays(state) === 7 ? ", a week a tick" : ""}) | ${calendar.today.text} | ${status}`,
   );
   lines.push(
     `cash ${money(state.cash)} | income ${money(dailyIncome(sim, state))}/day | costs ${money(dailyCosts(sim, state))}/day | runway ${lasts}`,
   );
-  lines.push(`price ${price(state.price)}/month (fair ${price(fair)}) | ${lock > 0 ? `locked ${lock} more days` : "can change"}`);
+  lines.push(`${renderPrice(sim, state)} | ${lock > 0 ? `locked ${lock} more days` : "can change"}`);
+  const payments = renderPayments(sim, state);
+  if (payments) lines.push(payments);
   const wave = sim.priceWave(state);
   if (wave) {
+    const withRate = (p: number, r?: number) => (r === undefined ? price(p) : `${price(p)} + ${percent(r)}`);
     lines.push(
-      `price wave: ${wave.direction} ${price(wave.from)}→${price(wave.to)}, ${wave.remaining} days left; so far ${wave.done.left} left, ${wave.done.toFree} to free, ${wave.done.joined} joined`,
+      `price wave: ${wave.direction} ${withRate(wave.from, wave.fromRate)}→${withRate(wave.to, wave.toRate)}, ${wave.remaining} days left; so far ${wave.done.left} left, ${wave.done.toFree} to free, ${wave.done.joined} joined`,
     );
   }
   lines.push(`customer mix: ${renderMix(sim, state)}`);
   lines.push(`new users join as: ${renderNewUsers(sim, state)}`);
+  const market = renderMarket(sim, state);
+  if (market) lines.push(market);
   const conversion = sim.conversion(state);
   lines.push(
     `users ${state.users.toLocaleString("en-GB")} (paid ${state.paidUsers.toLocaleString("en-GB")}, free ${(state.users - state.paidUsers).toLocaleString("en-GB")}) | converting ${(conversion.rate * 100).toFixed(2)}%/day`,
@@ -252,7 +324,11 @@ export function renderStatus(sim: Sim, state: GameState): string {
     }
   } else if (state.model === "saas") {
     const provider = sim.provider(state);
-    if (provider) lines.push(`capacity: the provider's (no limit) | per-user bill ${money(provider.monthlyCost)}/month`);
+    if (provider) {
+      lines.push(
+        `capacity: the provider's (no limit) | ${price(provider.perUserFee)}/user/month on ${provider.users.toLocaleString("en-GB")} users = ${money(provider.monthlyPerUserBill)}/month, plus ${money(provider.monthlyCost)}/month`,
+      );
+    }
   }
 
   const managed = sim.managed(state);
@@ -517,14 +593,21 @@ export function renderCommands(sim: Sim, state: GameState): string {
     `  hire <${pools}> [agency] [${grades}] [n] | letgo <${pools}> [agency] [${grades}] [n] | move <to> [from] [${grades}]   ` +
       `(grade defaults to mid; permanent staff unless "agency"; move is permanent staff only)`,
   );
-  if (sim.priceLockDaysLeft(state) === 0) lines.push(`  price <0.01–${sim.config.pricing.maxPrice}>`);
-  lines.push(`  preview <price>   (what a price would do; changes nothing)`);
+  const pay = sim.payments(state);
+  if (pay) {
+    const both = `<fee 0–${sim.config.pricing.maxPrice}> [transaction fee 0–${percent(pay.maxRate)}, e.g. 2.5%]`;
+    if (sim.priceLockDaysLeft(state) === 0) lines.push(`  price ${both}   (one change sets both; the fee alone keeps today's rate)`);
+    lines.push(`  preview ${both}   (what they would do; changes nothing)`);
+  } else {
+    if (sim.priceLockDaysLeft(state) === 0) lines.push(`  price <0.01–${sim.config.pricing.maxPrice}>`);
+    lines.push(`  preview <price>   (what a price would do; changes nothing)`);
+  }
   const notStarted = sim.features(state).filter((f) => f.status === "notStarted");
   if (notStarted.length) {
     const verb = state.model === "saas" ? "addon" : "build";
     lines.push(
       `  ${verb} <${notStarted.map((f) => f.id).join("|")}>   ${notStarted
-        .map((f) => (state.model === "saas" ? `${f.id} ${money(f.addonSetupFee)} + ${money(f.addonPricePerUser)}/user/month` : `${f.id} ${f.devDays} dev-days`))
+        .map((f) => (state.model === "saas" ? `${f.id} ${money(f.addonSetupFee)} + ${price(f.addonPricePerUser)}/user/month` : `${f.id} ${f.devDays} dev-days`))
         .join(", ")}`,
     );
   }
@@ -585,6 +668,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
       `  loan   (${money(loanQuote.amount)} now at ${Math.round(loanQuote.rate * 1000) / 10}%, ${money(loanQuote.dailyRepayment)}/day for ${loanQuote.days} days, to day ${loanQuote.lastDay}: ${money(loanQuote.interest)} interest)`,
     );
   }
+  lines.push(`  market   (rivals' prices, quality and share, and who wins each customer type; changes nothing)`);
   lines.push(`  valuation   (what's pushing the valuation up or down, and who owns what; changes nothing)`);
   const funding = sim.funding(state);
   const open = [funding.friendsAndFamilyOffer && "ff", funding.grantOffer && "grant"].filter(Boolean).join("|");
@@ -626,9 +710,10 @@ export function renderCommands(sim: Sim, state: GameState): string {
 /** A command the player typed, read into a sim action, a read-only request, or an advance. */
 export type Command =
   | { kind: "action"; action: Action; times: number }
-  | { kind: "preview"; price: number }
+  | { kind: "preview"; price: number; rate?: number }
   | { kind: "quote"; model: string }
   | { kind: "valuation" }
+  | { kind: "market" }
   | { kind: "funding" }
   | { kind: "ipo" }
   | { kind: "odds"; funder: FunderId; terms: Partial<Terms> }
@@ -647,6 +732,12 @@ function number(word: string | undefined, what: string): number {
   const n = Number(word);
   if (word === undefined || !Number.isFinite(n)) throw new SimError("bad_command", `Expected ${what} as a number.`);
   return n;
+}
+
+/** An optional transaction fee as a percentage, "2.5%" or "2.5", as a share (0.025). */
+function rateArg(word: string | undefined): { rate?: number } {
+  if (word === undefined) return {};
+  return { rate: number(word.replace(/%$/, ""), "a transaction fee in %") / 100 };
 }
 
 function count(word: string | undefined): number {
@@ -703,9 +794,9 @@ export function parseCommand(text: string): Command {
       return one({ type: "moveStaff", to: pool(args[0]), ...(args[1] ? { from: pool(args[1]) } : {}), ...grade });
     }
     case "price":
-      return one({ type: "setPrice", price: number(args[0], "a price") });
+      return one({ type: "setPrice", price: number(args[0], "a price"), ...rateArg(args[1]) });
     case "preview":
-      return { kind: "preview", price: number(args[0], "a price") };
+      return { kind: "preview", price: number(args[0], "a price"), ...rateArg(args[1]) };
     case "build":
       return one({ type: "buildFeature", feature: args[0] ?? "" });
     case "addon":
@@ -739,6 +830,8 @@ export function parseCommand(text: string): Command {
       return one({ type: "takeLoan" });
     case "valuation":
       return { kind: "valuation" };
+    case "market":
+      return { kind: "market" };
     case "funding":
       return { kind: "funding" };
     case "calendar":
@@ -794,12 +887,13 @@ export interface Turn {
 /** Runs one parsed command that isn't an advance. A refused action is reported and logged, not thrown. */
 export function runCommand(sim: Sim, state: GameState, command: Command, who: Player): Turn {
   if (command.kind === "preview") {
-    const p = sim.pricePreview(state, command.price);
+    const p = sim.pricePreview(state, command.price, command.rate);
+    const label = (fee: number, r: number | null, m: number) => (r === null ? price(fee) : `${price(fee)} + ${percent(r)} (${price(m)} a usual month)`);
     return {
       state,
       rows: [],
       lines: [
-        `preview ${price(p.currentPrice)}→${price(p.price)} (${p.direction}): income ${money(p.currentDailyIncome)}→${money(p.dailyIncome)}/day once settled; ` +
+        `preview ${label(p.currentPrice, p.currentRate, p.currentMonthly)}→${label(p.price, p.rate, p.monthly)} (${p.direction}): income ${money(p.currentDailyIncome)}→${money(p.dailyIncome)}/day once settled; ` +
           `${p.total.left} paying users leave, ${p.total.toFree} drop to free, ${p.total.joined} join (${p.total.joinedPaid} paying)` +
           (p.direction === "rise"
             ? `; reaction ${(100 * p.reaction).toFixed(1)}% of payers = ` +
@@ -823,6 +917,7 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
     };
   }
   if (command.kind === "valuation") return { state, rows: [], lines: valuationLines(sim, state) };
+  if (command.kind === "market") return { state, rows: [], lines: marketLines(sim, state) };
   if (command.kind === "funding") return { state, rows: [], lines: fundingLines(sim, state) };
   if (command.kind === "ipo") return { state, rows: [], lines: ipoLines(sim, state) };
   if (command.kind === "odds") return { state, rows: [], lines: oddsLines(command.funder, sim.counterOdds(state, command.funder, command.terms)) };
@@ -923,8 +1018,9 @@ export function runScript(sim: Sim, state: GameState, script: string, who: Playe
     }
     try {
       const command = parseCommand(text);
-      // Once the game is over, only what changes nothing still works: the valuation, who owns the company, the IPO.
-      if (current.status !== "playing" && !["valuation", "funding", "rescue", "ipo"].includes(command.kind)) {
+      // Once the game is over, only what changes nothing still works: the valuation, who owns the company, the IPO, the
+      // market.
+      if (current.status !== "playing" && !["valuation", "funding", "rescue", "ipo", "market"].includes(command.kind)) {
         skipped = "the game is over";
         lines.push(`> ${text}`, `not run: ${skipped}`);
         continue;
@@ -1000,7 +1096,7 @@ function fundingLines(sim: Sim, state: GameState): string[] {
  * Log entry kinds worth showing every day they appear. Feature, migration and API entries show only on days they stop
  * time.
  */
-const SHOWN_KINDS = new Set(["outage", "event", "rescue", "liquidation", "finished", "support", "price", "launch", "staff", "funding", "danger", "calendar"]);
+const SHOWN_KINDS = new Set(["outage", "event", "rescue", "liquidation", "finished", "support", "price", "launch", "staff", "funding", "danger", "calendar", "rival"]);
 const STOPPING_KINDS = new Set(["feature", "migration", "api"]);
 
 /**

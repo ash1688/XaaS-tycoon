@@ -4,6 +4,7 @@ import type { Events } from "./events.ts";
 import type { Features } from "./features.ts";
 import { count } from "./finance.ts";
 import type { Pricing } from "./pricing.ts";
+import type { Rivals } from "./rivals.ts";
 import { nextRandom, seedRng, vary } from "./rng.ts";
 import type { GameState, LogEntry, UnitDemand } from "./state.ts";
 import type { UsersLost } from "./mix.ts";
@@ -20,6 +21,7 @@ export function createCustomers(
   pricing: Pricing,
   support: Support,
   calendar: Calendar,
+  rivals: Rivals,
 ) {
   /**
    * A new company: no users until it launches (see Launch), so no load. Its launch total is drawn evenly from the
@@ -33,6 +35,7 @@ export function createCustomers(
       launchUsers: Math.round(min + (Math.max(min, max) - min) * r),
       users: 0,
       ...pricing.startingPricing(productType, 0),
+      ...rivals.startingRivals(productType, seed),
       load: 0,
       demand: { cu: 0, dbu: 0 },
       outageDays: 0,
@@ -40,15 +43,22 @@ export function createCustomers(
     };
   }
 
+  /**
+   * What the calendar multiplies load and demand by on a day: its holidays, and on the payments app its paydays too, as
+   * load follows the day's payments (see Pricing.paymentsMultiplier). 1 on an ordinary day.
+   */
+  const busyMultiplier = (state: Pick<GameState, "productType" | "startDate">, day: number) =>
+    calendar.loadMultiplier(state, day) * pricing.paydayMultiplier(state.productType, day);
+
   /** Load from a product's users on a given day, before random variation: any holidays on it move it. */
   function baseLoad(state: Pick<GameState, "productType" | "startDate">, users: number, day: number): number {
-    return users * config.productTypes[state.productType].growth.loadPerUser * calendar.loadMultiplier(state, day);
+    return users * config.productTypes[state.productType].growth.loadPerUser * busyMultiplier(state, day);
   }
 
   /** CU and DBU demand from a product's users on a given day, before random variation. Holidays move it like load. */
   function baseDemand(state: Pick<GameState, "productType" | "startDate">, users: number, day: number): UnitDemand {
     const { cuPerUser, dbuPerUser } = config.productTypes[state.productType].demand;
-    const busy = calendar.loadMultiplier(state, day);
+    const busy = busyMultiplier(state, day);
     return { cu: users * cuPerUser * busy, dbu: users * dbuPerUser * busy };
   }
 
@@ -66,6 +76,8 @@ export function createCustomers(
       pricing.priceGrowth(state),
       // Customer satisfaction, from yesterday: low satisfaction slows growth.
       support.satisfactionGrowth(state),
+      // Rivals: winning or losing each customer type's new users to them.
+      rivals.rivalGrowth(state),
     ];
   }
 
@@ -91,7 +103,7 @@ export function createCustomers(
 
   /** Each share of paying users who stop paying in a day, on top of churn, the price's first. Added together. */
   function paidChurnShares(state: GameState, hoursDown: number): number[] {
-    return [pricing.priceChurn(state), support.satisfactionPaidChurn(state), config.outage.paidChurnPerHour * hoursDown];
+    return [pricing.priceChurn(state), support.satisfactionPaidChurn(state), config.outage.paidChurnPerHour * hoursDown * (config.productTypes[state.productType].outageChurnMultiple ?? 1)];
   }
 
   /**

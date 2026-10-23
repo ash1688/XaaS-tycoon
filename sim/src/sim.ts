@@ -30,9 +30,10 @@ import { createCustomerMix } from "./mix.ts";
 import { isNameAllowed } from "./nameFilter.ts";
 import type { CounterOdds, Terms } from "./negotiation.ts";
 import { createPauses, type TickResult } from "./pauses.ts";
-import { createPricing, type CustomerMixView, type PricePreview, type PriceWaveView } from "./pricing.ts";
+import { createPricing, type CustomerMixView, type PaymentsView, type PricePreview, type PriceWaveView } from "./pricing.ts";
 import { createRacks, type RacksView } from "./racks.ts";
 import { createRescue, type RescueView } from "./rescue.ts";
+import { createRivals, type MarketView } from "./rivals.ts";
 import { seedRng } from "./rng.ts";
 import { createShares, type CapTableView, type FundingView, type ValuationView } from "./shares.ts";
 import { createServers, type ManagedView, type ServerOption, type ServerView, type UnitsView } from "./servers.ts";
@@ -77,7 +78,9 @@ export type { RackOption, RackView, RacksView } from "./racks.ts";
 export type { CounterOdds, NegotiationRound, RollResult, TermSpec, Terms } from "./negotiation.ts";
 export { MAX_OFFERS, ROLL_RESULTS } from "./negotiation.ts";
 export type { RescueView } from "./rescue.ts";
-export type { CustomerMixView, CustomerTypeView, PricePreview, PriceWaveView, TypeReaction } from "./pricing.ts";
+export type { MarketCompanyView, MarketView, TypeContestView } from "./rivals.ts";
+export type { CustomerMixView, CustomerTypeView, PaymentsView, PricePreview, PriceWaveView, TypeReaction } from "./pricing.ts";
+export { percent } from "./pricing.ts";
 export { weightedReaction } from "./pricing.ts";
 export type {
   LoadBalancerView,
@@ -149,6 +152,8 @@ export {
   type PriceWave,
   type Rack,
   type Rescue,
+  type RivalJoin,
+  type RivalState,
   type ScheduledEvent,
   type Server,
   type Shareholder,
@@ -230,16 +235,22 @@ export interface Sim {
   monthlyInfrastructureCost(state: GameState): number;
   /** What the active add-ons cost per month at today's users. */
   monthlyAddonCost(state: GameState): number;
-  /** What paying users pay per day at today's paid users and price: paid users × price ÷ daysPerMonth. */
+  /**
+   * What paying users pay on a usual day at today's paid users and price: paid users × price ÷ daysPerMonth. On the
+   * payments app, the price is what a usual month costs them: the fee plus the rate's share of their payments.
+   */
   dailyIncome(state: GameState): number;
-  /** The monthly price users think the product is worth. Pricing above it slows growth and means fewer new payers. */
+  /**
+   * The monthly price users think the product is worth. Pricing above it slows growth and means fewer new payers. On
+   * the payments app, the fair monthly fee: see payments for the fair rate.
+   */
   fairPrice(state: GameState): number;
   /**
    * What changing the price would do if nothing else changed: income a day once the wave settles, paying users
    * leaving and dropping to free, new users and upgrades on a cut, and the wave day by day. Changes nothing, and works
    * while the price is locked (saying so). Rejects the prices setPrice does.
    */
-  pricePreview(state: GameState, price: number): PricePreview;
+  pricePreview(state: GameState, price: number, rate?: number): PricePreview;
   /** The price wave under way, or null. */
   priceWave(state: GameState): PriceWaveView | null;
   /** Days until the price can be changed again: 0 when it can. */
@@ -249,6 +260,16 @@ export interface Sim {
    * what tilts it (features and the price). Least willing to pay first.
    */
   customerMix(state: GameState): CustomerMixView;
+  /**
+   * The market: the student's company and each rival with its price, quality and market share; who wins each customer
+   * type's new users; what that does to the student's growth; and a price change the rivals haven't answered yet.
+   */
+  market(state: GameState): MarketView;
+  /**
+   * The payments app's monthly fee and transaction rate, set together as one price change, and the two income
+   * streams they bring: payments follow paydays and Black Friday. Null on other products.
+   */
+  payments(state: GameState): PaymentsView | null;
   /**
    * Load the company can serve in a day with its current model and staff. On a model with servers, the load its ready
    * servers carry at the product's usual demand. Null on SaaS, which has no capacity limit.
@@ -414,11 +435,12 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const calendar = createCalendar(config);
   const finance = createFinance(config);
   const features = createFeatures(config, finance);
-  const pricing = createPricing(config);
+  const pricing = createPricing(config, calendar);
   const support = createSupport(config);
   const moderation = createModeration(config);
-  const customers = createCustomers(config, features, events, pricing, support, calendar);
-  const mix = createCustomerMix(config, features, pricing);
+  const rivals = createRivals(config, features, pricing);
+  const customers = createCustomers(config, features, events, pricing, support, calendar, rivals);
+  const mix = createCustomerMix(config, features, pricing, rivals);
   const conversion = createConversion(config, features, pricing);
   const racks = createRacks(config, finance);
   const servers = createServers(config, finance, racks);
@@ -592,8 +614,12 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const state = loadPlaying(saved);
     switch (action.type) {
       case "hire":
-      case "letGo":
         return staff.changeStaff(state, action.type, action.pool, action.grade, action.count, action.agency);
+      case "letGo": {
+        const left = staff.changeStaff(state, action.type, action.pool, action.grade, action.count, action.agency);
+        // Some permanent staff let go may join a rival. Agency staff go back to their agency.
+        return action.agency ? left : rivals.staffLeft(left, action.pool, action.grade ?? "mid", action.count ?? 1);
+      }
       case "buildFeature":
         return features.startBuild(state, action.feature);
       case "buyAddon":
@@ -603,7 +629,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       case "startMigration":
         return migration.startMigration(state, action.model);
       case "setPrice":
-        return pricing.setPrice(state, action.price);
+        return pricing.setPrice(state, action.price, action.rate);
       case "rentServer":
         return servers.rentServer(state, action.server, action.size);
       case "cancelServer":
@@ -701,6 +727,9 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const bursts = [...support.outageBursts(state, served.hoursDown), ...wave.bursts];
     const care = support.supportDay(state, bursts, moderated.satisfactionFactor);
 
+    // Rivals answer the student's price from reactionDays ago and win their share of the market's new users.
+    const market = rivals.rivalsDay(state, day);
+
     // Developers work on the current build. A feature finished today helps growth from tomorrow.
     const build = features.buildDay(state);
 
@@ -724,12 +753,13 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       // The outage first, then who it drove away.
       ...(served.outage ? [served.outage] : []),
       ...(ramping ? [] : organic.entries),
+      ...market.entries,
       ...wave.entries,
       ...converted.entries,
       ...moderated.entries,
       ...care.entries,
       ...build.entries,
-      ...pricing.incomeEntries(state, wave.refused + (ramping ? 0 : organic.pricedOut)),
+      ...pricing.incomeEntries(state, wave.refused + (ramping ? 0 : organic.pricedOut), day, served.hoursDown),
       ...calls.entries,
       ...infra.infrastructureEntries(state, state.model, state.users),
       ...migration.migrationCharges(state),
@@ -772,6 +802,9 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       loan: repayment.loan,
       funding: grant.funding,
       api: calls.api,
+      rivals: market.rivals,
+      rivalRng: market.rivalRng,
+      rivalJoins: market.rivalJoins,
     };
     // The danger meter rises with the day's risks, on the model the day was played on.
     const risen: GameState = { ...played, ...encounters.riseDay(played, live, served.overloaded) };
@@ -793,7 +826,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     ];
     const repayment = loan.dailyRepayment(state);
     const calls = api.usualDay(state);
-    const dailyCosts = repayment + calls.fee - charges.reduce((sum, e) => sum + e.cashDelta, 0);
+    const dailyCosts = repayment + calls.fee + pricing.usualSaasFee(state) - charges.reduce((sum, e) => sum + e.cashDelta, 0);
     const dailyIncome = pricing.dailyIncome(state) + calls.income;
     const dailyNet = dailyIncome - dailyCosts;
     const days = dailyNet < 0 ? Math.max(0, Math.floor(state.cash / -dailyNet)) : null;
@@ -853,10 +886,12 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     monthlyAddonCost: (s) => features.monthlyAddonCost(load(s)),
     dailyIncome: (s) => pricing.dailyIncome(load(s)),
     fairPrice: (s) => pricing.fairPrice(load(s).productType),
-    pricePreview: (s, price) => pricing.pricePreview(load(s), price),
+    pricePreview: (s, price, rate) => pricing.pricePreview(load(s), price, rate),
     priceWave: (s) => pricing.priceWave(load(s)),
     priceLockDaysLeft: (s) => pricing.lockDaysLeft(load(s)),
     customerMix: (s) => mix.customerMix(load(s)),
+    market: (s) => rivals.market(load(s)),
+    payments: (s) => pricing.paymentsView(load(s)),
     capacity: (s) => infra.capacity(load(s)),
     units: (s) => infra.units(load(s)),
     servers: (s) => servers.servers(load(s)),
