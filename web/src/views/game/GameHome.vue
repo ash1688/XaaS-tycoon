@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { formatCash, formatCount, formatPrice, formatUptime } from "../../api";
-import { days, useGame } from "../../game";
+import { dayOf, days, useGame } from "../../game";
+import { formatShare } from "../../shares";
 import OverviewCard from "../../components/OverviewCard.vue";
 import SummaryPanel from "../../components/SummaryPanel.vue";
 import CapacityPanel from "../../panels/CapacityPanel.vue";
@@ -235,11 +236,23 @@ const alerts = computed(() => {
         <RouterLink :to="`/play/${game.code}`">start a new company</RouterLink> and try a different plan.
       </p>
     </div>
+    <div v-else-if="game.floated && game.company.ipo.result" class="game-end ipo-end" role="status" data-testid="floated-screen">
+      <span class="badge">Floated</span>
+      <h2>{{ game.company.name }} floated on day {{ game.company.ipo.result.day }}</h2>
+      <p>
+        You rang the opening bell: the IPO ends the game. {{ game.company.name }} closed its first day of trading worth
+        <strong>{{ formatCash(game.company.ipo.result.marketValue) }}</strong>, and your
+        {{ formatShare(game.company.ipo.result.studentShare) }} is worth
+        <strong>{{ formatCash(game.company.ipo.result.studentValue) }}</strong>.
+        <RouterLink :to="`${game.base}/ipo`">Watch the first day again</RouterLink>, look at how you did below, then
+        <RouterLink :to="`/play/${game.code}`">start a new company</RouterLink>.
+      </p>
+    </div>
     <div v-else-if="game.finished && game.company.endedByTeacher" class="game-end" role="status" data-testid="ended-screen">
       <span class="badge">Ended</span>
       <h2>Your teacher ended the game on day {{ game.company.day }}</h2>
       <p>
-        {{ game.company.name }} is scored as it stood on day {{ game.company.day }} of {{ game.company.finalDay }}. Look
+        {{ game.company.name }} is scored as it stood on {{ dayOf(game.company.day, game.company.finalDay) }}. Look
         at how you did below, then <RouterLink :to="`/play/${game.code}`">go back to your companies</RouterLink>.
       </p>
     </div>

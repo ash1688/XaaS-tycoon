@@ -286,7 +286,7 @@ const formatTime = (d: Date) => d.toLocaleTimeString("en-GB", { timeStyle: "shor
                   </span>
                 </td>
                 <td class="live-preset col-wide" :title="g.preset" data-testid="live-preset">{{ g.preset }}</td>
-                <td class="num" data-testid="live-day">{{ g.day }}<span class="muted">/{{ g.finalDay }}</span></td>
+                <td class="num" data-testid="live-day">{{ g.day }}<span v-if="g.finalDay !== null" class="muted">/{{ g.finalDay }}</span></td>
                 <td :class="['num', 'col-mid', { neg: g.cash < 0 }]">{{ formatCash(g.cash) }}</td>
                 <td class="num" data-testid="live-users">
                   {{ formatCount(g.users) }}

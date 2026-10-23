@@ -2,7 +2,7 @@ import { SPEND_CATEGORIES, type GameConfig, type GameLengthId, type ModelId, typ
 import { profitCosts } from "./finance.ts";
 import { isOpen } from "./loan.ts";
 import type { Infrastructure } from "./infrastructure.ts";
-import type { DaySpend, GameEnding, GameState, Spend } from "./state.ts";
+import type { DaySpend, GameEnding, GameState, IpoResult, Spend } from "./state.ts";
 
 /** What was spent and earned on one day, and the cash left at the end of it. */
 export interface SummaryDay extends DaySpend {
@@ -67,8 +67,10 @@ export interface GameSummary {
   /** The last day played. */
   day: number;
   gameLength: GameLengthId;
-  /** The game length's last day. */
-  finalDay: number;
+  /** The game length's last day: null until IPO, which has none. */
+  finalDay: number | null;
+  /** The float and the first day of trading, if the game ended in an IPO. */
+  ipo: IpoResult | null;
   cash: number;
   users: number;
   /** Of the users, those paying. The rest are free. */
@@ -138,6 +140,7 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
     const ending =
       state.status === "playing" ? null
       : state.status === "bankrupt" ? "bankrupt"
+      : state.ipo.result ? "ipo"
       : state.endedByTeacher ? "ended"
       : "completed";
     return {
@@ -148,6 +151,7 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
       day: state.day,
       gameLength: state.gameLength,
       finalDay: state.finalDay,
+      ipo: state.ipo.result,
       cash: state.cash,
       users: state.users,
       paidUsers: state.paidUsers,

@@ -130,6 +130,30 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   for (const m of MODEL_IDS) {
     add(`funding.grant.minUptime.${m}`, "Money", "Grant", `Uptime needed (${MODEL_LABELS[m]})`, "Uptime % a company on this model must keep over those days, or the grant is withdrawn and paid back.", range(0, 100, 0.1));
   }
+  for (const p of PRODUCT_TYPE_IDS) {
+    const name = base.productTypes[p].name;
+    add(`ipo.products.${p}.users`, "Money", "IPO", `Users needed (${name})`, "Users, paying or free, a company needs to float.", range(0, 1_000_000, 100));
+    add(`ipo.products.${p}.annualRevenue`, "Money", "IPO", `Annual revenue needed (${name})`, "Annual revenue, as the valuation measures it, a company needs to float.", range(0, 100_000_000, 10_000));
+    add(`ipo.products.${p}.payingUsers`, "Money", "IPO", `Paying users needed (${name})`, "The minimum paying customer base to float, so a few customers paying a lot can't.", range(0, 1_000_000, 100));
+  }
+  add("ipo.recordDays", "Money", "IPO", "Records over", "Days the uptime, satisfaction, costs and profit records are measured over.", GAME_DAY);
+  add("ipo.minUptime", "Money", "IPO", "Uptime record needed", "Uptime % over the record's days a company needs to float.", range(0, 100, 0.1));
+  add("ipo.minSatisfaction", "Money", "IPO", "Satisfaction record needed", "Average satisfaction % over the record's days a company needs to float.", range(0, 100, 1));
+  add("ipo.maxCostSwing", "Money", "IPO", "Most costs may vary", "Daily running costs over the record's days may vary by at most this (their standard deviation ÷ their mean; 0.25 = 25%). Big one-off purchases count against it.", range(0, 5, 0.01));
+  add("ipo.comfortMargin", "Money", "IPO", "Comfortably ready at", "How far over a condition counts as comfortably ready (0.25 = 25% over), cutting the cold-market chance and helping the first day of trading.", range(0.01, 5, 0.01));
+  add("ipo.coldChance.max", "Money", "IPO", "Cold-market chance, only just ready", "The chance applying meets a cold market when the company only just meets every condition.", SHARE);
+  add("ipo.coldChance.min", "Money", "IPO", "Cold-market chance, comfortably ready", "The chance applying meets a cold market when the company is comfortably over every condition.", SHARE);
+  add("ipo.coldDelayDays", "Money", "IPO", "Cold market postpones by", "Days a cold market postpones the IPO before the company can apply again.", GAME_DAY);
+  add("ipo.coldSatisfactionLoss", "Money", "IPO", "Satisfaction lost to a cold market", "Points of satisfaction lost when a cold market postpones the IPO.", range(0, 100, 1));
+  add("ipo.minFloat", "Money", "IPO", "Smallest float", "The least of the company (after the IPO) the float can be, in new shares (0.15 = 15%). Less would make the IPO fail.", range(0.01, 0.95, 0.01));
+  add("ipo.maxFloat", "Money", "IPO", "Largest float", "The most of the company (after the IPO) the float can be, in new shares.", range(0.01, 0.95, 0.01));
+  add("ipo.ticks", "Money", "IPO", "First-day price moves", "How many times the share price moves on the first day of trading, from the open to the close.", range(1, 100, 1));
+  add("ipo.minDrift", "Money", "IPO", "First-day drift, only just ready", "How far the share price drifts over the first day when the company only just met every condition (−0.1 = down 10%).", range(-1, 1, 0.01));
+  add("ipo.maxDrift", "Money", "IPO", "First-day drift, comfortably ready", "How far the share price drifts over the first day when the company is comfortably over every condition.", range(-1, 1, 0.01));
+  add("ipo.growthDrift", "Money", "IPO", "First-day drift per 100% growth", "Added to the drift for each 100% growth in paying users, as the valuation measures it.", range(-1, 1, 0.01));
+  add("ipo.swingAtMinFloat", "Money", "IPO", "First-day swing, smallest float", "How far luck can move the first day at the smallest float, about (0.2 = 20% either way): scarce shares swing further.", SHARE);
+  add("ipo.swingAtMaxFloat", "Money", "IPO", "First-day swing, largest float", "The same at the largest float: plenty of shares make a steadier day.", SHARE);
+  add("ipo.lowestClose", "Money", "IPO", "Lowest close", "The close is never below this share of the offer price.", SHARE);
   add("billing.daysPerMonth", "Money", "", "Days in a billing month", "Monthly costs are charged a day at a time: the monthly cost ÷ this.", range(28, 31, 1));
   for (const m of MODEL_IDS) {
     const s = MODEL_LABELS[m];
@@ -483,6 +507,8 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
     ["support.poorSatisfaction", "support.goodSatisfaction", "Good satisfaction can't be below poor satisfaction."],
     ["loan.minDays", "finalDay", "The days with no loans can't be more than the game's length."],
     ["loan.minTermDays", "loan.termDays", "The term at the start can't be shorter than the shortest term."],
+    ["ipo.minFloat", "ipo.maxFloat", "The largest float can't be smaller than the smallest."],
+    ["ipo.coldChance.min", "ipo.coldChance.max", "The cold-market chance when only just ready can't be below the chance when comfortably ready."],
     // A new company starts at the fair price, so it has to be one the student could set.
     ...PRODUCT_TYPE_IDS.filter((p) => base.productTypes[p]).map((p): [string, string, string] => [
       `productTypes.${p}.pricing.fairPrice`,

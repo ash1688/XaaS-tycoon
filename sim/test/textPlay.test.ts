@@ -224,7 +224,7 @@ describe("racks, cabling, power and cooling", () => {
 
 describe("rendering", () => {
   it("shows a longer game's length and final day", () => {
-    const yearly = createSim({ ...defaultConfig, allowedGameLengths: { "180-days": 0, "1-year": 1, career: 1 } });
+    const yearly = createSim({ ...defaultConfig, allowedGameLengths: { "180-days": 0, "until-ipo": 0, "1-year": 1, career: 1 } });
     const career = yearly.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3, gameLength: "career" });
     expect(renderStatus(yearly, career)).toMatch(/day 1\/17155 \(Career \(47 years, age 18 to 65\)\)/);
   });
@@ -345,5 +345,92 @@ describe("shares and funding", () => {
     expect(turn.state.day).toBe(8);
     expect(turn.lines.at(-1)).toMatch(/^stopped on day 8: .*grant (met|withdrawn)/);
     expect(turn.lines.join("\n")).toMatch(/day 8: Grant (condition met|withdrawn)/);
+  });
+});
+
+describe("the IPO", () => {
+  const ipoSim = (cold: number) =>
+    createSim({
+      ...defaultConfig,
+      events: [],
+      allowedGameLengths: { "180-days": 1, "until-ipo": 1, "1-year": 0, career: 0 },
+      ipo: {
+        ...defaultConfig.ipo,
+        coldChance: { min: cold, max: cold },
+        products: { ...defaultConfig.ipo.products, social: { users: 1_000, annualRevenue: 100_000, payingUsers: 500 } },
+      },
+    });
+  /** A SaaS company 40 days in, made comfortably over every condition. */
+  const ready = (s: ReturnType<typeof createSim>): GameState => {
+    const played = s.advance(s.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 }), 40).state;
+    return {
+      ...played,
+      users: 2_000,
+      paidUsers: 1_000,
+      price: 60,
+      satisfaction: 90,
+      spendByDay: played.spendByDay.map((d) => ({
+        ...d,
+        ...{ staff: 100, infrastructure: 50, cabling: 0, power: 10, addons: 0, debt: 0, interest: 0 },
+        ...{ income: 1_000, users: 2_000, paidUsers: 1_000, satisfaction: 90, hoursDown: 0 },
+      })),
+    };
+  };
+  const play = (s: ReturnType<typeof createSim>, state: GameState, script: string) => runScript(s, state, script, who);
+
+  it("reads the IPO commands", () => {
+    expect(parseCommand("ipo")).toEqual({ kind: "ipo" });
+    expect(parseCommand("apply")).toEqual({ kind: "action", action: { type: "applyForIpo" }, times: 1 });
+    expect(parseCommand("ring 25")).toEqual({ kind: "action", action: { type: "ringBell", float: 0.25 }, times: 1 });
+    expect(() => parseCommand("ring")).toThrow(/float percentage/);
+  });
+
+  it("shows the checklist, and offers apply only once every condition is met", () => {
+    const s = ipoSim(0);
+    const state = start();
+    expect(renderStatus(sim, state)).toMatch(/ipo: 1\/7 readiness conditions met; still to meet: users and revenue, uptime record, predictable costs, profitability, satisfaction record, paying customer base$/m);
+    expect(renderCommands(sim, state)).toMatch(/ipo {3}\(the IPO readiness checklist/);
+    expect(renderCommands(sim, state)).not.toMatch(/apply/);
+    expect(run(state, "ipo").lines.join("\n")).toMatch(/\[ \] Users and revenue: .*\n.*\[ \] Uptime record: /);
+    const r = ready(s);
+    expect(renderStatus(s, r)).toMatch(/ipo: READY: all 7 conditions met, comfort \d+% \("apply" to float\)/);
+    expect(renderCommands(s, r)).toMatch(/apply {3}\(apply to float/);
+    expect(play(s, r, "ipo").lines.join("\n")).toMatch(/\[x\] Paying customer base: 1,000\. Needs 500 paying users\. Comfort 100%\./);
+  });
+
+  it("says when a cold market postpones the IPO", () => {
+    const s = ipoSim(1);
+    const turn = play(s, ready(s), "apply; apply");
+    expect(turn.lines.join("\n")).toMatch(/COLD MARKET\. The IPO is postponed: apply again from day 71\. Satisfaction fell to 80%/);
+    expect(turn.lines.at(-1)).toMatch(/refused: The markets are cold .* day 71, in 30 days/);
+    expect(renderStatus(s, turn.state)).toMatch(/ipo: cold market: can apply again on day 71/);
+  });
+
+  it("applies, shows the offer, rings the bell and ends the game", () => {
+    const s = ipoSim(0);
+    const approved = play(s, ready(s), "apply");
+    expect(approved.lines.join("\n")).toMatch(/APPROVED\. Pick a float.*\noffer: valuation £[\d,]+, 10,000 shares at £[\d.]+; you own 100%/);
+    expect(approved.lines.join("\n")).toMatch(/ {2}15%: 1,765 new shares, raises £[\d,]+, you'd own 85%, first day swings about ±20%/);
+    expect(renderCommands(s, approved.state)).toMatch(/ring <15-40> {3}\(float that % .*ENDS THE GAME/);
+    expect(play(s, approved.state, "ring 50").lines.at(-1)).toMatch(/refused: Float from 15% to 40%/);
+    expect(play(s, approved.state, "next").lines.at(-1)).toMatch(/refused: Your IPO is approved: choose your float and ring/);
+
+    const rung = play(s, approved.state, "ring 25; next");
+    const text = rung.lines.join("\n");
+    expect(text).toMatch(/opening bell! floated 25%: 3,333 new shares at £[\d.]+ raised £[\d,]+/);
+    expect(text).toMatch(/first day: 09:30 £[\d.]+, 10:00 £[\d.]+, .* 16:00 £[\d.]+/);
+    expect(text).toMatch(/close £[\d.]+ \([+−][\d.]+% on the offer\) \| market value £[\d,]+ \(cash raised included\) \| you own 75%, worth £[\d,]+/);
+    expect(text).toMatch(/GAME OVER: floated on day 41\n> next\nnot run: the game is over/);
+    expect(rung.rows.map((r) => r.type)).toEqual(["ringBell", "end"]);
+    expect(rung.rows.at(-1)).toMatchObject({ params: { status: "finished", ending: "ipo" } });
+    expect(renderStatus(s, rung.state)).toMatch(/\| FLOATED\n[^]*ipo: floated 25% on day 41: raised £[\d,]+/);
+    expect(play(s, rung.state, "ipo").lines.join("\n")).toMatch(/opening bell!/);
+    expect(JSON.parse(renderSummary(s, rung.state))).toMatchObject({ ending: "ipo", ipo: { float: 0.25 } });
+  });
+
+  it("shows an until-IPO game with no last day", () => {
+    const s = ipoSim(0);
+    const state = s.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3, gameLength: "until-ipo" });
+    expect(renderStatus(s, state)).toMatch(/\| day 1 \(Until IPO\) \| PLAYING/);
   });
 });

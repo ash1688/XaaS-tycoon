@@ -16,6 +16,7 @@ import type {
   FundingView,
   GameLengthId,
   GameSummary,
+  IpoView,
   LaunchView,
   LoanQuote,
   LoanView,
@@ -59,10 +60,10 @@ export interface TimedFlowView {
 /** A game length a student can pick when starting a company. */
 export interface GameLengthView {
   id: GameLengthId;
-  /** "180 days", "1 year" or the career's name. */
+  /** "180 days", "Until IPO", "1 year" or the career's name. */
   name: string;
-  /** The last day played. */
-  finalDay: number;
+  /** The last day played: null until IPO, which has none. */
+  finalDay: number | null;
 }
 
 export interface MetaView {
@@ -153,8 +154,8 @@ export interface CompanyView {
   gameLength: GameLengthId;
   gameLengthName: string;
   day: number;
-  /** The game length's last day. */
-  finalDay: number;
+  /** The game length's last day: null until IPO, which has none. */
+  finalDay: number | null;
   /** True once the teacher has ended the game early (its status is then "finished"). */
   endedByTeacher: boolean;
   cash: number;
@@ -318,6 +319,12 @@ export interface CompanyView {
    * answered and, for an accepted grant, how its uptime condition stands.
    */
   funding: FundingView;
+  /**
+   * The IPO: the readiness checklist condition by condition, whether the company can apply to float and why not, a
+   * cold market's wait, once approved the offer with what each float would do, and once floated the first day of
+   * trading.
+   */
+  ipo: IpoView;
   /** The product's features, with each one's status (built, building or a SaaS add-on) and build progress. */
   features: FeatureView[];
   /**
@@ -419,7 +426,8 @@ export interface TeacherGameView {
   /** The model a migration under way is moving to, or null. */
   migratingTo: ModelId | null;
   day: number;
-  finalDay: number;
+  /** Null until IPO, which has no last day. */
+  finalDay: number | null;
   /** True once the teacher has ended the game early (its status is then "finished"). */
   endedByTeacher: boolean;
   cash: number;

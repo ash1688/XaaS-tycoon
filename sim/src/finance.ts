@@ -42,8 +42,16 @@ const raisedIn = (entries: LogEntry[]) =>
 /** The interest in some entries' loan repayments. */
 const interestOf = (entries: LogEntry[]) => entries.reduce((sum, e) => sum + (e.interest ?? 0), 0);
 
-/** Where the customers stood at the end of a day, kept with its spend for the summary. */
-const customersAt = ({ users, paidUsers, satisfaction }: GameState) => ({ users, paidUsers, satisfaction });
+/**
+ * Where the customers stood at the end of a day, kept with its spend for the summary, and its hours down (the last of
+ * recent uptime's) for the IPO's uptime record.
+ */
+const customersAt = ({ users, paidUsers, satisfaction, recentHoursDown }: GameState) => ({
+  users,
+  paidUsers,
+  satisfaction,
+  hoursDown: recentHoursDown.at(-1) ?? 0,
+});
 
 /** Finance and the ledger: where every day's entries land in cash and spend, and where a game ends. */
 export function createFinance(config: GameConfig) {
@@ -92,7 +100,7 @@ export function createFinance(config: GameConfig) {
         ],
       };
     }
-    if (day >= state.finalDay) {
+    if (state.finalDay !== null && day >= state.finalDay) {
       const text = `Day ${day} was the last: ${state.companyName} made it to the end. See how you did in the summary.`;
       return { state: { ...settled, status: "finished" }, entries: [...entries, { text, cashDelta: 0, kind: "finished" }] };
     }

@@ -129,7 +129,7 @@ function noWaves() {
 const config: GameConfig = {
   startingCash: 1000,
   finalDay: 180,
-  allowedGameLengths: { "180-days": 1, "1-year": 0, career: 0 },
+  allowedGameLengths: { "180-days": 1, "until-ipo": 0, "1-year": 0, career: 0 },
   maxCompanyNameLength: 20,
   // Launches in full on day 1, as the game starts, with the starter setups below in place: the launch tests set their own.
   launch: { rampShares: [1] },
@@ -205,6 +205,7 @@ const config: GameConfig = {
   shares: { min: 10_000, max: 100_000, default: 10_000 },
   valuation: defaultConfig.valuation,
   funding: defaultConfig.funding,
+  ipo: defaultConfig.ipo,
   // No price waves unless a test says otherwise, so a price change only has its ongoing effect on growth and payers.
   pricing: {
     maxPrice: 1_000,
@@ -2470,6 +2471,7 @@ describe("bank loan", () => {
         users: 1000,
         paidUsers: 0,
         satisfaction: 100,
+        hoursDown: 0,
       },
     ]);
     expect(state.income).toBe(0);
@@ -2660,7 +2662,7 @@ describe("bank loan", () => {
       const year = createSim({
         ...config,
         startingCash: 100_000,
-        allowedGameLengths: { "180-days": 0, "1-year": 1, career: 0 },
+        allowedGameLengths: { "180-days": 0, "until-ipo": 0, "1-year": 1, career: 0 },
         loan: { ...config.loan, termDays: 120, termPerDay: 0.5, minTermDays: 60 },
       });
       const begun = year.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 });
@@ -2751,15 +2753,15 @@ describe("bank loan", () => {
 
 describe("game lengths", () => {
   const allowing = (lengths: Partial<GameConfig["allowedGameLengths"]>) =>
-    createSim({ ...config, allowedGameLengths: { "180-days": 0, "1-year": 0, career: 0, ...lengths } });
+    createSim({ ...config, allowedGameLengths: { "180-days": 0, "until-ipo": 0, "1-year": 0, career: 0, ...lengths } });
   const newGame = (s: Sim, gameLength?: string) =>
     s.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1, gameLength });
   const rich = (lengths: Partial<GameConfig["allowedGameLengths"]>) =>
-    createSim({ ...config, startingCash: 10_000_000, allowedGameLengths: { "180-days": 0, "1-year": 0, career: 0, ...lengths } });
+    createSim({ ...config, startingCash: 10_000_000, allowedGameLengths: { "180-days": 0, "until-ipo": 0, "1-year": 0, career: 0, ...lengths } });
 
   it("allows only 180 days by default", () => {
     const s = createSim();
-    expect(s.config.allowedGameLengths).toEqual({ "180-days": 1, "1-year": 0, career: 0 });
+    expect(s.config.allowedGameLengths).toEqual({ "180-days": 1, "until-ipo": 0, "1-year": 0, career: 0 });
     expect(newGame(s)).toMatchObject({ gameLength: "180-days", finalDay: 180, endedByTeacher: false });
     for (const length of ["1-year", "career"]) {
       expect(() => newGame(s, length)).toThrow(expect.objectContaining({ code: "game_length_not_allowed" }));
@@ -2935,6 +2937,7 @@ describe("game end and summary", () => {
       users: 1000,
       paidUsers: 0,
       satisfaction: 100,
+      hoursDown: 0,
       cash: 99_900,
     });
     expect(days.at(-1)!.cash).toBe(cash);

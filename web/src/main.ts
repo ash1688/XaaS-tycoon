@@ -10,6 +10,7 @@ import InfrastructurePage from "./views/game/InfrastructurePage.vue";
 import PeoplePage from "./views/game/PeoplePage.vue";
 import CustomersPage from "./views/game/CustomersPage.vue";
 import FinancePage from "./views/game/FinancePage.vue";
+import OpeningBellPage from "./views/game/OpeningBellPage.vue";
 import "./styles.css";
 
 // The staff pages load on demand: students never open them, so they stay out of the bundle every student downloads.
@@ -36,6 +37,8 @@ const router = createRouter({
         { path: "people", name: "game-people", component: PeoplePage },
         { path: "customers", name: "game-customers", component: CustomersPage },
         { path: "finance", name: "game-finance", component: FinancePage },
+        // The opening bell, reached from the IPO readiness checklist on Finance once the IPO is approved.
+        { path: "ipo", name: "game-ipo", component: OpeningBellPage },
       ],
     },
     // Wide, so the live dashboard's columns fit on a projector.

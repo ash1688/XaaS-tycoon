@@ -16,6 +16,7 @@ import {
   type DayLog,
   type FunderId,
   type GameState,
+  type IpoResult,
   type ManagedService,
   type ModelId,
   type RackSize,
@@ -152,11 +153,11 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const fair = sim.fairPrice(state);
   const lock = sim.priceLockDaysLeft(state);
   const left = runway(sim, state);
-  const daysToPlay = state.finalDay - state.day;
+  const daysToPlay = state.finalDay === null ? Infinity : state.finalDay - state.day;
   const lasts = left === null ? "not losing money" : left > daysToPlay ? `lasts past day ${state.finalDay}` : `${left} days`;
-  const status = state.endedByTeacher ? "ENDED BY TEACHER" : state.status.toUpperCase();
+  const status = state.ipo.result ? "FLOATED" : state.endedByTeacher ? "ENDED BY TEACHER" : state.status.toUpperCase();
   lines.push(
-    `== ${state.companyName} | ${state.productType} on ${state.model} | day ${state.day}/${state.finalDay} ` +
+    `== ${state.companyName} | ${state.productType} on ${state.model} | day ${state.day}${state.finalDay === null ? "" : `/${state.finalDay}`} ` +
       `(${gameLengthName(sim.config, state.gameLength)}) | ${status}`,
   );
   lines.push(
@@ -258,6 +259,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
     `valuation ${money(valuation.valuation)} | share price ${perShare(valuation.sharePrice)} | ${table.rows.map((r) => `${r.name.toLowerCase()} ${stake(r.share)}`).join(", ")} of ${table.sharesInIssue.toLocaleString("en-GB")} shares`,
   );
   lines.push(`funding: ${fundingStatus(sim, state)}`);
+  lines.push(`ipo: ${ipoStatus(sim, state)}`);
   const migration = sim.migration(state);
   if (migration) lines.push(`migration: ${migration.from}→${migration.to}, ${migration.phase}, ${migration.daysLeft} days left`);
   const danger = sim.danger(state);
@@ -269,6 +271,74 @@ export function renderStatus(sim: Sim, state: GameState): string {
   for (const e of sim.events(state)) lines.push(`event today: ${e.name}. ${e.outcome}`);
   for (const g of sim.featureGaps(state)) lines.push(`feature gap: ${g.name}. ${g.detail}`);
   return lines.join("\n");
+}
+
+/** The IPO in a line: how many readiness conditions are met and what's next. */
+function ipoStatus(sim: Sim, state: GameState): string {
+  const ipo = sim.ipo(state);
+  const met = ipo.conditions.filter((x) => x.met).length;
+  const todo = ipo.conditions.filter((x) => !x.met).map((x) => x.label.toLowerCase());
+  switch (ipo.status) {
+    case "floated": {
+      const r = ipo.result!;
+      return `floated ${stake(r.float)} on day ${r.day}: raised ${money(r.cashRaised)}, closed at ${perShare(r.closePrice)} (offer ${perShare(r.offerPrice)}), market value ${money(r.marketValue)}; you own ${stake(r.studentShare)}, worth ${money(r.studentValue)}`;
+    }
+    case "approved":
+      return `APPROVED on day ${ipo.approvedDay}: pick a float and ring the bell ("ipo" for the offer)`;
+    case "cold":
+      return `cold market: can apply again on day ${ipo.retryDay} | ${met}/${ipo.conditions.length} conditions met`;
+    case "ready":
+      return `READY: all ${met} conditions met, comfort ${Math.round(ipo.comfort * 100)}% ("apply" to float)`;
+    default:
+      return `${met}/${ipo.conditions.length} readiness conditions met; still to meet: ${todo.join(", ")}`;
+  }
+}
+
+/** Once approved, the offer and what a float every 5% would do. */
+function offerLines(sim: Sim, state: GameState): string[] {
+  const o = sim.ipo(state).offer;
+  if (!o) return [];
+  return [
+    `offer: valuation ${money(o.valuation)}, ${o.sharesInIssue.toLocaleString("en-GB")} shares at ${perShare(o.offerPrice)}; you own ${stake(o.studentShare)}. Float ${stake(o.minFloat)}–${stake(o.maxFloat)} ("ring <percent>"):`,
+    ...o.floats
+      .filter((_, i) => i % 5 === 0 || i === o.floats.length - 1)
+      .map(
+        (f) =>
+          `  ${stake(f.float)}: ${f.newShares.toLocaleString("en-GB")} new shares, raises ${money(f.cashRaised)}, you'd own ${stake(f.studentShareAfter)}, first day swings about ±${Math.round(f.swing * 100)}%`,
+      ),
+  ];
+}
+
+/** The readiness checklist in full, the offer once approved, and the first day of trading once floated. */
+function ipoLines(sim: Sim, state: GameState): string[] {
+  const ipo = sim.ipo(state);
+  const lines = [
+    `ipo: ${ipoStatus(sim, state)}`,
+    `readiness (comfort ${Math.round(ipo.comfort * 100)}%: the more comfortably ready, the less chance of a cold market):`,
+  ];
+  for (const x of ipo.conditions) {
+    lines.push(`  [${x.met ? "x" : " "}] ${x.label}: ${x.now}. Needs ${x.needed}.${x.met ? ` Comfort ${Math.round(x.comfort * 100)}%.` : ""}`);
+  }
+  if (ipo.refusal && ipo.status !== "approved" && ipo.status !== "floated") lines.push(`apply: ${ipo.refusal}`);
+  for (const a of ipo.applications) lines.push(`  applied day ${a.day}: ${a.cold ? "cold market, postponed" : "approved"}`);
+  lines.push(...offerLines(sim, state));
+  if (ipo.result) lines.push(...bellLines(ipo.result));
+  return lines;
+}
+
+/** The opening bell: the first day of trading, half-hour by half-hour, and how it ended. */
+function bellLines(r: IpoResult): string[] {
+  const time = (i: number) => {
+    const minutes = 9 * 60 + 30 + i * 30;
+    return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+  };
+  const change = r.closePrice / r.offerPrice - 1;
+  return [
+    `opening bell! floated ${stake(r.float)}: ${r.newShares.toLocaleString("en-GB")} new shares at ${perShare(r.offerPrice)} raised ${money(r.cashRaised)}`,
+    `first day: ${r.prices.map((p, i) => `${time(i)} ${perShare(p)}`).join(", ")}`,
+    `close ${perShare(r.closePrice)} (${change >= 0 ? "+" : "−"}${pct(Math.abs(change) * 100)} on the offer) | market value ${money(r.marketValue)} (cash raised included) | you own ${stake(r.studentShare)}, worth ${money(r.studentValue)}`,
+    ...r.reasons.map((x) => `  ${x}`),
+  ];
 }
 
 /** Friends and family and the grant in a line: each one's offer, or how it stands. */
@@ -390,6 +460,13 @@ export function renderCommands(sim: Sim, state: GameState): string {
     lines.push(`  funding   (each open offer in full: what friends and family get, the grant's condition; changes nothing)`);
     lines.push(`  accept <${open}> | decline <${open}>   (each can be answered once; ff = friends and family)`);
   }
+  const ipo = sim.ipo(state);
+  lines.push(`  ipo   (the IPO readiness checklist in full, and once approved the offer; changes nothing)`);
+  if (ipo.canApply) lines.push(`  apply   (apply to float: a small hidden chance of a cold market, less the more comfortably ready you are)`);
+  if (ipo.offer) {
+    const range = `${Math.round(ipo.offer.minFloat * 100)}-${Math.round(ipo.offer.maxFloat * 100)}`;
+    lines.push(`  ring <${range}>   (float that % of the company in new shares and ring the opening bell: ENDS THE GAME)`);
+  }
   const loan = sim.loan(state);
   if (loan?.remaining) lines.push(`  repayloan   (pay off the loan now: ${money(loan.payoff)}, saving ${money(loan.interestSaved)} interest)`);
   lines.push(`  next [days]   (advance up to that many days, default 7; stops early when something needs you)`);
@@ -404,6 +481,7 @@ export type Command =
   | { kind: "quote"; model: string }
   | { kind: "valuation" }
   | { kind: "funding" }
+  | { kind: "ipo" }
   | { kind: "next"; days: number }
   /** The teacher ends the game, as from the staff panel. */
   | { kind: "end" };
@@ -502,6 +580,12 @@ export function parseCommand(text: string): Command {
       return one({ type: "acceptFunding", funder: funder(args[0]) });
     case "decline":
       return one({ type: "declineFunding", funder: funder(args[0]) });
+    case "ipo":
+      return { kind: "ipo" };
+    case "apply":
+      return one({ type: "applyForIpo" });
+    case "ring":
+      return one({ type: "ringBell", float: number(args[0], "a float percentage, 15 to 40") / 100 });
     case "buyapi":
       return one({ type: "buyApi" });
     case "switch":
@@ -565,6 +649,7 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
   }
   if (command.kind === "valuation") return { state, rows: [], lines: valuationLines(sim, state) };
   if (command.kind === "funding") return { state, rows: [], lines: fundingLines(sim, state) };
+  if (command.kind === "ipo") return { state, rows: [], lines: ipoLines(sim, state) };
   if (command.kind === "end") {
     const ended = sim.endGame(state);
     // Logged as the classroom server logs a game the teacher ends.
@@ -586,6 +671,19 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
       const what = command.times > 1 ? `${command.action.type}: ${done} of ${command.times} done, then refused: ` : `${command.action.type} refused: `;
       return { state: current, rows, lines: [what + err.message + teamNow(sim, current, command.action, err)] };
     }
+  }
+  if (command.action.type === "applyForIpo") {
+    const ipo = sim.ipo(current);
+    const lines =
+      ipo.status === "approved"
+        ? ["applyForIpo: APPROVED. Pick a float and ring the opening bell.", ...offerLines(sim, current)]
+        : [`applyForIpo: COLD MARKET. The IPO is postponed: apply again from day ${ipo.retryDay}. Satisfaction fell to ${pct(current.satisfaction)}.`];
+    return { state: current, rows, lines };
+  }
+  if (command.action.type === "ringBell") {
+    // Logged as the classroom server logs a game that ends.
+    rows.push(logRow(sim, current, who, "end", { status: current.status, ending: "ipo" }));
+    return { state: current, rows, lines: [...bellLines(current.ipo.result!), `GAME OVER: floated on day ${current.day}`] };
   }
   return { state: current, rows, lines: [`${command.action.type}${command.times > 1 ? ` ×${done}` : ""}: done`] };
 }
@@ -614,8 +712,8 @@ export function runScript(sim: Sim, state: GameState, script: string, who: Playe
     }
     try {
       const command = parseCommand(text);
-      // Once the game is over, only what changes nothing still works: the valuation and who owns the company.
-      if (current.status !== "playing" && command.kind !== "valuation" && command.kind !== "funding") {
+      // Once the game is over, only what changes nothing still works: the valuation, who owns the company, the IPO.
+      if (current.status !== "playing" && command.kind !== "valuation" && command.kind !== "funding" && command.kind !== "ipo") {
         skipped = "the game is over";
         lines.push(`> ${text}`, `not run: ${skipped}`);
         continue;
@@ -726,6 +824,7 @@ function stopReasons(sim: Sim, before: GameState, after: GameState): string[] {
   const grantBefore = before.funding.grant?.status;
   const grantAfter = after.funding.grant?.status;
   if (grantBefore === "accepted" && grantAfter !== "accepted") reasons.push(`grant ${grantAfter}`);
+  if (sim.ipo(after).status === "ready" && sim.ipo(before).status !== "ready") reasons.push("IPO: ready to apply");
   const dropped = (st: GameState) => st.api?.dropped ?? 0;
   if (dropped(after) > 0 && dropped(before) === 0) reasons.push(`API calls dropped (${dropped(after).toLocaleString("en-GB")})`);
   return reasons;

@@ -2,7 +2,7 @@
 // a JSON file between calls, and every game writes a playtest log beside it (<game>.log.json) in the classroom
 // export's format. See textPlay.ts.
 //
-//   npm run play -- new <game.json> --product social --model paas [--loan] [--length 1-year] [--shares 10000] [--seed 1] [--player "AI 1"] [--playstyle min-maxer]
+//   npm run play -- new <game.json> --product social --model paas [--loan] [--length until-ipo] [--shares 10000] [--seed 1] [--player "AI 1"] [--playstyle min-maxer]
 //   npm run play -- look <game.json>
 //   npm run play -- do <game.json> "hire support 3; price 6; next 7"
 //   npm run play -- summary <game.json>

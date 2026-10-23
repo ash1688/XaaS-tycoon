@@ -15,6 +15,7 @@ import { createEvents, type EventView, type FeatureGapView } from "./events.ts";
 import { createFeatures, type FeatureView } from "./features.ts";
 import { createFinance, noSpend, pounds } from "./finance.ts";
 import { createInfrastructure, type ProviderView } from "./infrastructure.ts";
+import { createIpo, type IpoView } from "./ipo.ts";
 import { createLaunch, type LaunchView } from "./launch.ts";
 import { createLoan, type LoanQuote, type LoanView } from "./loan.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
@@ -51,6 +52,7 @@ export type { DangerRiskView, DangerView } from "./encounters.ts";
 export type { EventView, FeatureGapView } from "./events.ts";
 export type { FeatureStatus, FeatureView } from "./features.ts";
 export type { ProviderView } from "./infrastructure.ts";
+export type { FloatPreview, IpoCondition, IpoConditionId, IpoOffer, IpoStatus, IpoView } from "./ipo.ts";
 export type { LaunchView } from "./launch.ts";
 export type { LoanQuote, LoanView } from "./loan.ts";
 export type { LostAddon, MigrationQuote, MigrationView, SetupRack } from "./migration.ts";
@@ -112,6 +114,9 @@ export {
   type GameState,
   type GameStatus,
   type GrantFunding,
+  type IpoApplication,
+  type IpoResult,
+  type IpoState,
   type Loan,
   type LogEntry,
   type Migration,
@@ -278,6 +283,12 @@ export interface Sim {
    */
   funding(state: GameState): FundingView;
   /**
+   * The IPO: the readiness checklist, condition by condition, whether the company can apply to float and why not, a
+   * cold market's wait, once approved the offer with what each float would do, and once floated the first day of
+   * trading.
+   */
+  ipo(state: GameState): IpoView;
+  /**
    * Where the company is with its launch: waiting for capacity, its first users due, arriving over the ramp, or
    * launched; the day they started (or will start) arriving, and the launch total.
    */
@@ -324,6 +335,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
   const shares = createShares(config, finance, conversion);
   const api = createApi(config, features, finance, infra.apiuOn);
   const encounters = createEncounters(config, servers);
+  const ipo = createIpo(config, finance, shares, servers, (s) => runway(s).dailyNet);
 
   function newGame({
     companyName,
@@ -383,6 +395,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       migrations: 0,
       loan: null,
       ...owned,
+      ...ipo.startingIpo(),
       pastLoans: [],
       interestPaid: 0,
       schedule,
@@ -427,7 +440,8 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         "This game is from an older version of XaaS Tycoon, so it can't be played any more. Start a new company to play again.",
       );
     }
-    return saved.status === "playing" && saved.day >= saved.finalDay ? { ...saved, status: "finished" } : saved;
+    const over = saved.finalDay !== null && saved.day >= saved.finalDay;
+    return saved.status === "playing" && over ? { ...saved, status: "finished" } : saved;
   }
 
   /** Loads saved state and checks the game is still going. */
@@ -437,9 +451,11 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       throw new SimError("bankrupt", `${state.companyName} is bankrupt, so this game is over. Start a new company to play again.`);
     }
     if (state.status === "finished") {
-      const why = state.endedByTeacher
-        ? `Your teacher ended ${state.companyName} early`
-        : `${state.companyName} has played all ${state.finalDay} days`;
+      const why = state.ipo.result
+        ? `${state.companyName} floated on day ${state.ipo.result.day}`
+        : state.endedByTeacher
+          ? `Your teacher ended ${state.companyName} early`
+          : `${state.companyName} has played all ${state.finalDay} days`;
       throw new SimError("finished", `${why}, so this game is over. Start a new company to play again.`);
     }
     return state;
@@ -483,6 +499,10 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
         return shares.acceptFunding(state, action.funder);
       case "declineFunding":
         return shares.declineFunding(state, action.funder);
+      case "applyForIpo":
+        return ipo.applyForIpo(state);
+      case "ringBell":
+        return ipo.ringBell(state, action.float);
       case "buyApi":
         return api.buyApi(state);
       case "switchServer":
@@ -629,6 +649,10 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
       throw new SimError("bad_days", "Days to advance must be a whole number of at least 1.");
     }
     let current = loadPlaying(saved);
+    // An approved IPO holds the game until the bell is rung: the offer is today's.
+    if (current.ipo.approvedDay !== null) {
+      throw new SimError("ring_the_bell", "Your IPO is approved: choose your float and ring the opening bell to go on.");
+    }
     const log: DayLog[] = [];
     // Stops early if the game ends part-way through: bankrupt, or the final day played.
     for (let i = 0; i < days && current.status === "playing"; i++) {
@@ -686,6 +710,7 @@ export function createSim(config: GameConfig = defaultConfig): Sim {
     valuation: (s) => shares.valuation(load(s)),
     capTable: (s) => shares.capTable(load(s)),
     funding: (s) => shares.funding(load(s)),
+    ipo: (s) => ipo.ipoView(load(s)),
     launch: (s) => launch.launchView(load(s)),
     migration: (s) => migration.migration(load(s)),
     migrationQuote: (s, target) => migration.migrationQuote(load(s), target),

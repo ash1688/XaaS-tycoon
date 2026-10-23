@@ -22,9 +22,10 @@ export type MigrationPhase = (typeof MIGRATION_PHASES)[number];
 
 /**
  * How long a game runs before it ends, if the company doesn't go bankrupt first. The student picks one of the lengths
- * the preset allows when starting a company. Saved in game state, so don't rename. (Until IPO comes with the IPO.)
+ * the preset allows when starting a company. Saved in game state, so don't rename. The IPO ends every length; until IPO
+ * has no last day at all.
  */
-export const GAME_LENGTH_IDS = ["180-days", "1-year", "career"] as const;
+export const GAME_LENGTH_IDS = ["180-days", "until-ipo", "1-year", "career"] as const;
 export type GameLengthId = (typeof GAME_LENGTH_IDS)[number];
 
 /** A career runs from founding the company at 18 to retiring at 65. */
@@ -873,6 +874,59 @@ export interface FundingConfig {
   grant: { amount: number; days: number; minUptime: Record<ModelId, number> };
 }
 
+/** What a product must reach to pass the IPO readiness check: see IpoConfig. */
+export interface IpoProductConfig {
+  /** Users, paying or free. */
+  users: number;
+  /** Annual revenue, as the valuation measures it. */
+  annualRevenue: number;
+  /** The minimum paying customer base: so 300 payers at £1,000 each can't float. */
+  payingUsers: number;
+}
+
+/**
+ * The IPO. The company can apply to float once it passes every condition of the readiness check: users and revenue,
+ * an uptime record, predictable costs, a security audit, profitability, a satisfaction record and a minimum paying
+ * customer base. No investor is needed. Records are measured over the last recordDays days played.
+ *
+ * Each condition also has a comfort, 0–1: how far over it the company is, reaching 1 at comfortMargin over (0.25 = 25%
+ * over a "more than" threshold, or a quarter of the way from it to perfect). The comfort is their average.
+ *
+ * Applying rolls a hidden cold market: coldChance.max at a comfort of 0, falling to coldChance.min at 1. A cold market
+ * postpones the IPO for coldDelayDays and costs coldSatisfactionLoss points of satisfaction. Otherwise it's approved,
+ * and the student floats minFloat to maxFloat (shares after the IPO) in new shares at the offer price, valuation ÷
+ * shares in issue, diluting everyone, and rings the opening bell.
+ *
+ * The first day of trading is `ticks` moves of the share price from the offer price to the close: it drifts by
+ * minDrift at a comfort of 0 up to maxDrift at 1, plus growthDrift × the valuation's growth, with random swings scaled
+ * from swingAtMinFloat at the smallest float to swingAtMaxFloat at the largest. The close is never below
+ * lowestClose × the offer price. Market value at the close: close price × shares in issue, the cash raised included.
+ */
+export interface IpoConfig {
+  products: Record<ProductTypeId, IpoProductConfig>;
+  recordDays: number;
+  /** Uptime % over recordDays. */
+  minUptime: number;
+  /** Average satisfaction % over recordDays. */
+  minSatisfaction: number;
+  /** The most daily running costs over recordDays may vary: their standard deviation ÷ their mean. */
+  maxCostSwing: number;
+  comfortMargin: number;
+  coldChance: { min: number; max: number };
+  coldDelayDays: number;
+  coldSatisfactionLoss: number;
+  /** Shares of the company after the IPO, 0–1. */
+  minFloat: number;
+  maxFloat: number;
+  ticks: number;
+  minDrift: number;
+  maxDrift: number;
+  growthDrift: number;
+  swingAtMinFloat: number;
+  swingAtMaxFloat: number;
+  lowestClose: number;
+}
+
 /**
  * Paid APIs, for a product that has one (see ProductApiConfig). Each call served earns pricePerCall. Calls need APIU,
  * from API servers or app servers switched from CU to APIU (on PaaS, API instances): calls beyond the APIU are
@@ -932,6 +986,7 @@ export interface GameConfig {
   shares: SharesConfig;
   valuation: ValuationConfig;
   funding: FundingConfig;
+  ipo: IpoConfig;
   pricing: PricingConfig;
   support: SupportConfig;
   conversion: ConversionConfig;
@@ -951,7 +1006,7 @@ export const defaultConfig: GameConfig = {
   finalDay: 180,
   // A normal lesson plays 180 days. The longer lengths could take hours, so the teacher turns them on for clubs,
   // homework or extension work.
-  allowedGameLengths: { "180-days": 1, "1-year": 0, career: 0 },
+  allowedGameLengths: { "180-days": 1, "until-ipo": 0, "1-year": 0, career: 0 },
   maxCompanyNameLength: 40,
   // Users trickle in over 3 days, building up. SaaS starts on day 1; a platform set up or VMs rented on day 1 start on
   // day 2; on-prem kit bought on day 1 arrives on day 5, so it starts a few days after the cloud models.
@@ -1361,6 +1416,33 @@ export const defaultConfig: GameConfig = {
     friendsAndFamily: { amount: 15_000 },
     grant: { amount: 10_000, days: 60, minUptime: { onprem: 98, iaas: 98.5, paas: 98.5, saas: 99 } },
   },
+  // Set from the harness's sensible bot, which reaches these on PaaS and SaaS around days 180-270 and on-prem and IaaS
+  // later: in a 180-day game a float is rare. Users sit near each market's size; revenue and payers are what take time.
+  ipo: {
+    products: {
+      ecommerce: { users: 18_000, annualRevenue: 1_000_000, payingUsers: 16_000 },
+      social: { users: 36_000, annualRevenue: 1_250_000, payingUsers: 21_000 },
+      video: { users: 18_000, annualRevenue: 1_250_000, payingUsers: 12_000 },
+    },
+    recordDays: 30,
+    minUptime: 99,
+    minSatisfaction: 70,
+    maxCostSwing: 0.25,
+    comfortMargin: 0.25,
+    coldChance: { min: 0.05, max: 0.3 },
+    coldDelayDays: 30,
+    coldSatisfactionLoss: 10,
+    minFloat: 0.15,
+    maxFloat: 0.4,
+    // Half-hourly from 09:30 to the 16:00 close.
+    ticks: 13,
+    minDrift: -0.1,
+    maxDrift: 0.15,
+    growthDrift: 0.1,
+    swingAtMinFloat: 0.2,
+    swingAtMaxFloat: 0.07,
+    lowestClose: 0.3,
+  },
   pricing: {
     maxPrice: 1_000,
     growthSensitivity: 1,
@@ -1592,20 +1674,25 @@ export const defaultConfig: GameConfig = {
   ],
 };
 
-/** The last day played in a game of a length: day finalDay, 365 or a career's 47 years of 365 days. */
-export function gameLengthDays(config: GameConfig, length: GameLengthId): number {
+/**
+ * The last day played in a game of a length: day finalDay, 365 or a career's 47 years of 365 days. Null until IPO,
+ * which has no last day.
+ */
+export function gameLengthDays(config: GameConfig, length: GameLengthId): number | null {
+  if (length === "until-ipo") return null;
   if (length === "1-year") return 365;
   if (length === "career") return CAREER_YEARS * 365;
   return config.finalDay;
 }
 
-/** The game lengths a config lets students pick, shortest first. */
+/** The game lengths a config lets students pick, in GAME_LENGTH_IDS order. */
 export function allowedGameLengths(config: GameConfig): GameLengthId[] {
   return GAME_LENGTH_IDS.filter((id) => config.allowedGameLengths[id] === 1);
 }
 
 /** A game length's name for the screens: "180 days" (or however many the config's shortest game has). */
 export function gameLengthName(config: GameConfig, length: GameLengthId): string {
+  if (length === "until-ipo") return "Until IPO";
   if (length === "1-year") return "1 year";
   if (length === "career") return `Career (${CAREER_YEARS} years, age 18 to 65)`;
   return `${config.finalDay} days`;

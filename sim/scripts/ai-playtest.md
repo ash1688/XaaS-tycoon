@@ -18,8 +18,9 @@ npm run -s play -- summary <game>
 
 - `new` starts a game and shows the company and the commands. Leave out `--loan` to start without the bank loan.
   `--shares` is how many shares your company has (10,000 to 100,000, 10,000 if left out): you own all of them.
-  `--length` picks the game length: `180-days` (the default), `1-year` (ends on day 365) or `career` (47 years,
-  ends on day 17,155). Play 180 days unless your brief says otherwise.
+  `--length` picks the game length: `180-days` (the default), `until-ipo` (no last day: it ends only when you float),
+  `1-year` (ends on day 365) or `career` (47 years, ends on day 17,155). Play 180 days unless your brief says
+  otherwise. The IPO ends every length.
 - `look` shows the company and every command that works right now, with prices and allowed values.
 - `do` runs game commands separated by `;`. Every game command goes inside `do`, including `preview` and `quote`:
   `npm run -s play -- do <game> "preview 8; quote iaas"`.
@@ -44,13 +45,21 @@ npm run -s play -- summary <game>
 - `valuation` shows what your company is worth, what's pushing it up or down, and who owns it. `funding` shows the
   friends and family and grant offers in full; `accept ff`, `accept grant`, `decline ff` and `decline grant` answer
   them, once each.
+- `ipo` shows the IPO readiness checklist: seven conditions (users and revenue, an uptime record, predictable costs,
+  a security audit, profitability, a satisfaction record and a paying customer base), each with where you stand and
+  what's needed. The records need 30 days of trading since launch. Once every condition is met, `apply` applies to
+  float: there's a small hidden chance of a cold market (postponed 30 days, satisfaction lost), less the more
+  comfortably you're over every condition. Once approved, time holds (no `next`) until you ring the bell: `ipo`
+  shows the offer and `ring <15-40>` floats that % of
+  the company in new shares (diluting everyone) and rings the opening bell: the first day of trading is played and
+  **the game ends**. A small float swings further on the day. Time stops when every condition is first met.
 - `loan` takes a bank loan, repaid daily over a fixed term; `repayloan` pays it off early to save interest. One loan
   at a time: once it's repaid, `loan` is offered again.
 - `summary` shows the final figures once the game is over.
 - `end` (inside `do`) ends the game as the teacher would from the staff panel, scored as it stands. Only use it if
   your brief asks you to test it.
 
-Run `look` whenever you're unsure what you can do. Keep going until the game ends: its final day (day 180 by default), or bankruptcy.
+Run `look` whenever you're unsure what you can do. Keep going until the game ends: its final day (day 180 by default), bankruptcy, or the IPO.
 
 ## Your playstyle
 
@@ -73,7 +82,8 @@ When the game is over, reply with a **game summary** of no more than about 300 w
 
 1. **Setup:** playstyle, product, model, loan or not, seed.
 2. **Ending:** finished or bankrupt, on which day, final cash, paying and free users, satisfaction and uptime (from `summary`),
-   and your valuation and the share of the company you still own (from `valuation`).
+   and your valuation and the share of the company you still own (from `valuation`). After an IPO: the float, cash
+   raised, the close and market value, and your stake (from `ipo`).
 3. **Key moments:** first profit, price changes, migrations, funding taken or declined, events and how you handled
    them (and what the danger meter was doing), any crisis.
 4. **What you tried** and whether it worked.

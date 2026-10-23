@@ -3752,3 +3752,140 @@ select:disabled {
   border-radius: 3px;
   background: var(--type);
 }
+
+/* The IPO readiness checklist on Finance, and the opening-bell page */
+.ipo-checklist {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 0.6rem;
+  margin: 0.75rem 0;
+  padding: 0;
+  list-style: none;
+}
+.ipo-checklist li {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.ipo-checklist li.met {
+  border-color: var(--pos);
+  background: color-mix(in srgb, var(--pos) 8%, transparent);
+}
+.ipo-checklist p {
+  margin: 0.15rem 0 0;
+  font-size: 0.9rem;
+}
+.ipo-tick {
+  flex: none;
+  width: 1.4rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+.ipo-checklist li.met .ipo-tick {
+  color: var(--pos);
+}
+.ipo-now {
+  overflow-wrap: anywhere;
+}
+.ipo-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+.ipo-footer p {
+  margin: 0;
+  flex: 1 1 20rem;
+}
+.ipo-cold {
+  padding: 0.6rem 0.8rem;
+  border-left: 4px solid var(--warn);
+  background: var(--warn-soft);
+}
+.badge.ipo-ready,
+.badge.ipo-approved,
+.badge.ipo-floated {
+  color: var(--pos);
+}
+.badge.ipo-cold {
+  color: var(--warn);
+}
+.ipo-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.6rem;
+  margin: 0 0 1.25rem;
+  padding: 0.7rem 1rem;
+  border: 2px solid var(--pos);
+  border-radius: 10px;
+}
+.bell-float {
+  display: block;
+  margin-top: 1rem;
+}
+.bell-page input[type="range"] {
+  width: 100%;
+}
+.bell-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+}
+.bell-preview {
+  margin: 0.75rem 0;
+}
+.bell-ring {
+  font-size: 1.1rem;
+  padding: 0.7rem 1.4rem;
+}
+.bell-price {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.75rem;
+  margin: 0.25rem 0 0.5rem;
+}
+.bell-price strong {
+  font-size: 1.8rem;
+}
+.bell-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.bell-offer {
+  stroke: var(--muted);
+  stroke-dasharray: 5 5;
+}
+.bell-axis {
+  fill: var(--muted);
+  font-size: 12px;
+}
+.bell-line {
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linejoin: round;
+}
+.bell-line.up,
+.bell-dot.up {
+  stroke: var(--pos);
+  fill: none;
+}
+.bell-dot.up {
+  fill: var(--pos);
+}
+.bell-line.down {
+  stroke: var(--neg);
+}
+.bell-dot.down {
+  fill: var(--neg);
+  stroke: var(--neg);
+}
+.bell-reasons {
+  margin: 0.25rem 0 1rem;
+  padding-left: 1.2rem;
+}

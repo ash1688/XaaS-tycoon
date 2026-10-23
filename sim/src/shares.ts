@@ -133,7 +133,11 @@ export interface FundingView {
 
 const DAYS_PER_YEAR = 365;
 const HOURS_PER_DAY = 24;
-const NAMES: Record<Shareholder["id"], string> = { student: "You", friendsAndFamily: "Friends and family" };
+const NAMES: Record<Shareholder["id"], string> = {
+  student: "You",
+  friendsAndFamily: "Friends and family",
+  public: "Public shareholders",
+};
 const FUNDER_NAMES: Record<FunderId, string> = { friendsAndFamily: "Friends and family", grant: "The grant" };
 const percent = (share: number) => `${Math.round(share * 1000) / 10}%`;
 const round1 = (n: number) => Math.round(n * 10) / 10;
