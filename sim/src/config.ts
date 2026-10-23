@@ -11,7 +11,8 @@ export type ProductTypeId = (typeof PRODUCT_TYPE_IDS)[number];
 export const CUSTOMER_TYPE_IDS = ["casual", "enthusiasts", "professionals", "businesses"] as const;
 export type CustomerTypeId = (typeof CUSTOMER_TYPE_IDS)[number];
 
-export const STAFF_POOLS = ["developers", "ops", "support"] as const;
+/** Moderators are only hired on a product with user content (see ProductModeration). */
+export const STAFF_POOLS = ["developers", "ops", "support", "moderators"] as const;
 export type StaffPool = (typeof STAFF_POOLS)[number];
 export const STAFF_GRADES = ["junior", "mid", "senior"] as const;
 export type StaffGrade = (typeof STAFF_GRADES)[number];
@@ -21,14 +22,57 @@ export const MIGRATION_PHASES = ["planning", "testing", "moving"] as const;
 export type MigrationPhase = (typeof MIGRATION_PHASES)[number];
 
 /**
- * How long a game runs before it ends, if the company doesn't go bankrupt first. The student picks one of the lengths
- * the preset allows when starting a company. Saved in game state, so don't rename. (Until IPO comes with the IPO.)
+ * How long a game runs before it ends, if the company isn't liquidated first. The student picks one of the lengths
+ * the preset allows when starting a company. Saved in game state, so don't rename. The IPO ends every length; until IPO
+ * has no last day at all.
  */
-export const GAME_LENGTH_IDS = ["180-days", "1-year", "career"] as const;
+export const GAME_LENGTH_IDS = ["180-days", "until-ipo", "1-year", "career"] as const;
 export type GameLengthId = (typeof GAME_LENGTH_IDS)[number];
 
 /** A career runs from founding the company at 18 to retiring at 65. */
 export const CAREER_YEARS = 65 - 18;
+
+/**
+ * How hard a game is. The student picks one of the difficulties the preset allows when starting a company. Saved in
+ * game state, so don't rename.
+ */
+export const DIFFICULTY_IDS = ["easy", "normal", "hard"] as const;
+export type DifficultyId = (typeof DIFFICULTY_IDS)[number];
+
+/**
+ * A difficulty's numbers: multipliers on the preset's own numbers, so a teacher's preset is just as much easier or
+ * harder. A difficulty only changes numbers, never which systems a game has. Normal is all 1s: the preset as it is.
+ */
+export interface DifficultyNumbers {
+  name: string;
+  /** One line on what it changes, for the new-company screen. */
+  blurb: string;
+  /** Multiplies the starting cash. */
+  startingCash: number;
+  /** Multiplies how fast the danger meter climbs (its daily rise and each risk's extra rise): more random events. */
+  dangerRise: number;
+  /** Multiplies each customer type's price threshold: above 1, customers put up with dearer prices. */
+  priceThreshold: number;
+}
+
+/** The built-in difficulties. Not on the config page: the teacher picks which are allowed, not what they do. */
+export const DIFFICULTIES: Record<DifficultyId, DifficultyNumbers> = {
+  easy: {
+    name: "Easy",
+    blurb: "More starting cash, fewer random events, and customers put up with dearer prices.",
+    startingCash: 1.5,
+    dangerRise: 0.75,
+    priceThreshold: 1.15,
+  },
+  normal: { name: "Normal", blurb: "The game as designed.", startingCash: 1, dangerRise: 1, priceThreshold: 1 },
+  hard: {
+    name: "Hard",
+    blurb: "Less starting cash, more random events, and customers are quicker to leave over price.",
+    startingCash: 0.8,
+    dangerRise: 1.33,
+    priceThreshold: 0.9,
+  },
+};
 
 /** Every charge is tagged with one of these, so students can see where their money goes. */
 export const SPEND_CATEGORIES = ["staff", "infrastructure", "cabling", "power", "addons", "debt"] as const;
@@ -252,18 +296,68 @@ export interface StaffGradeConfig {
   leadDays: number;
 }
 
-/** A run of busy days that repeats, like a sale season. */
-export interface SeasonalSpike {
-  /** First day of the first spike. */
-  firstDay: number;
-  /** Days from the start of one spike to the start of the next. */
-  every: number;
-  /** How many days each spike lasts. */
-  length: number;
-  /** Load is multiplied by this during a spike. */
+/**
+ * Agency staff: temporary staff of any grade, in any pool, hired through an agency. Dearer and half as useful as
+ * permanent staff of the same grade, but they start the next day and can be let go with no severance.
+ */
+export interface AgencyConfig {
+  /** Pay as a multiple of a permanent member of the same grade's. */
+  payMultiplier: number;
+  /** Work a day as a multiple of a permanent member of the same grade's. */
+  output: number;
+  /** Days from hiring to starting work, whatever the grade: 1 is the next day. */
+  leadDays: number;
+}
+
+/** What letting go permanent staff costs. Agency staff go with none. */
+export interface SeveranceConfig {
+  /** Days of each person's pay, paid at once when they're let go. */
+  days: number;
+}
+
+/**
+ * When a holiday starts each year: on a fixed date, or a number of days from Easter Sunday or Black Friday (the
+ * Friday after the fourth Thursday in November), which move from year to year. Month is 1–12.
+ */
+export type HolidayStart =
+  | { anchor: "date"; month: number; day: number }
+  | { anchor: "easter"; offset: number }
+  | { anchor: "blackFriday"; offset: number };
+
+/** How a holiday hits one product on each of its days. */
+export interface HolidayEffect {
+  /** Load and CU and DBU demand are multiplied by this (1.5 = half as busy again). */
   loadMultiplier: number;
-  /** Growth is multiplied by this during a spike. */
+  /** Growth is multiplied by this: above 1, more sign-ups; below 1, fewer. */
   growthMultiplier: number;
+  /** What it means for this product, for the student. */
+  detail: string;
+}
+
+/**
+ * A calendar event: a holiday that falls on its dates every year. Outside the encounter system, it doesn't use or
+ * reset the danger meter, so it can be seen coming and planned for. Each product feels it its own way.
+ */
+export interface HolidayConfig {
+  /** Unique. Saved in logs, so don't rename. */
+  id: string;
+  name: string;
+  /** What happens, the same for every product. */
+  description: string;
+  start: HolidayStart;
+  /** Days it lasts, from its start. It can run into the next year. */
+  days: number;
+  /** A product left out doesn't notice it. */
+  effects: Partial<Record<ProductTypeId, HolidayEffect>>;
+}
+
+/** The real calendar each game runs on. Day 1 is a random date in the year the game starts. */
+export interface CalendarConfig {
+  /** The year a game starts in when the caller doesn't say (the server passes the current year). */
+  startYear: number;
+  /** A holiday that hits the product is announced in the log this many days before it starts. */
+  noticeDays: number;
+  holidays: HolidayConfig[];
 }
 
 /** How a product's users grow and how much load they put on the system. */
@@ -286,7 +380,6 @@ export interface GrowthProfile {
   loadPerUser: number;
   /** Daily load varies randomly by up to this share either way. */
   loadNoise: number;
-  seasonalSpike?: SeasonalSpike;
 }
 
 /**
@@ -305,6 +398,11 @@ export interface FeatureConfig {
   growthMultiplier: number;
   /** On SaaS, the add-on's price per user per month, billed a day at a time like the model's per-user fee. */
   addonPricePerUser: number;
+  /**
+   * The customer types it appeals to: once active, each type's weight among new users is multiplied by its number
+   * here (1.5 = half as many again of them). A "pro" feature brings in more professionals. None changes nothing.
+   */
+  appeal?: Partial<Record<CustomerTypeId, number>>;
 }
 
 /** What a product's users expect to pay, and how many use it for free. */
@@ -337,8 +435,16 @@ export interface ProductSupport {
 }
 
 /**
+ * User content on a product where users post it: some of it is reported, and moderators handle the reports. A product
+ * without this setting has no user content, so no reports and no moderators to hire.
+ */
+export interface ProductModeration {
+  /** Reports each user raises per day, paying or free (0.002 = two reports per 1,000 users a day). */
+  reportsPerUser: number;
+}
+/**
  * The units each user needs from the servers, on models with servers. Every user counts, paying or free, and the
- * day's load variation and seasonal spike apply to both.
+ * day's load variation and any holiday apply to both.
  */
 export interface ProductDemand {
   /** Compute units (CU) each user needs: app servers. */
@@ -359,6 +465,8 @@ export interface ProductTypeConfig {
   features: FeatureConfig[];
   /** The paid API other businesses build on, for a product that would have one. Left out, the product has none. */
   api?: ProductApiConfig;
+  /** Reports on user content, for a product where users post it (social, video). Left out, it has no moderators. */
+  moderation?: ProductModeration;
   /** The one or two rivals in the product's market (see RivalsConfig). Empty for none. */
   rivals: RivalConfig[];
 }
@@ -505,6 +613,12 @@ export interface PricingConfig {
   /** How strongly a price above the fair price puts new users on the free tier. 0 for no effect. */
   paidShareSensitivity: number;
   /**
+   * How hard the price filters who joins. Above a customer type's threshold, its weight among new users is multiplied
+   * by (price ÷ its threshold) ^ −newUserFilter, so a dear price brings fewer casual users and the mix moves upmarket.
+   * At or below every threshold new users arrive in the product's mix. 0 for no effect.
+   */
+  newUserFilter: number;
+  /**
    * Days a price change's wave lasts, from the first day played at the new price. Day 1 is the quick reaction
    * (firstDayShare of the whole effect); the rest is spread over the remaining days, building to a peak in the
    * middle and fading, like word spreading on social media.
@@ -603,6 +717,25 @@ export interface SupportConfig {
    * to none at goodSatisfaction. Unhappy customers stop paying first.
    */
   paidChurnAtZero: number;
+}
+
+/**
+ * Moderation, on a product where users post content (see ProductModeration). Each day users report some of it;
+ * moderators handle what they can and the rest waits. Unhandled reports pull satisfaction down, on top of support's
+ * backlog, and raise the odds of a lawsuit over content left up.
+ */
+export interface ModerationConfig {
+  /** Reports one moderator handles a day. */
+  reportsPerPerson: number;
+  /**
+   * Unhandled reports per user at which they pull the satisfaction target to 0% (0.05 = one per 20 users). Below
+   * it they take a straight-line share off it: the support target is multiplied by what's left.
+   */
+  backlogPerUserAtZero: number;
+  /** Lawsuit odds are multiplied by this with that many unhandled reports, rising in a straight line from 1 at none. */
+  lawsuitOddsAtZero: number;
+  /** Unhandled reports are logged once they take at least this share off the satisfaction target (0.1 = 10%). */
+  warnShare: number;
 }
 
 /**
@@ -718,6 +851,11 @@ export interface EventOutcome {
    * double billing and lost add-ons) is the price of getting control back.
    */
   featureGap?: { growthMultiplier: number; features: Record<ProductTypeId, string> };
+  /**
+   * A wave of new free users arrives at the end of the day the event fires, and stays: this share of the users there
+   * that day, and at least `min`. Capacity faces them from the next day.
+   */
+  freeUsers?: { share: number; min: number };
 }
 
 /** How an event hits one model. */
@@ -725,6 +863,11 @@ export interface EventEffect extends EventOutcome {
   /** Ops staff needed to deal with it. With fewer, `shortOfOps` happens instead. */
   opsNeeded?: number;
   shortOfOps?: EventOutcome;
+  /**
+   * What happens instead when patches are overdue: the company had the unpatched risk on the day before (see
+   * EncounterConfig.riskRise). Short of ops, `shortOfOps` comes first.
+   */
+  unpatched?: EventOutcome;
 }
 
 /**
@@ -753,6 +896,13 @@ export interface EncounterOdds {
   maxTimes?: number;
   /** It can't go on a list rolled before this day. Left out, from the start. */
   fromDay?: number;
+  /**
+   * It can only follow one of these events: it can't go on a list until one of them has fired since it last fired.
+   * Left out, it needs nothing first.
+   */
+  follows?: string[];
+  /** With `follows`: only within this many days of the last time one of them fired. Left out, any time after. */
+  followsWithinDays?: number;
 }
 
 /**
@@ -860,6 +1010,11 @@ export interface CustomerTypeConfig {
   thresholdMultiple: number;
   /** Of the type's paying users a price rise loses, the share who drop to free. The rest leave. */
   toFreeShare: number;
+  /**
+   * Share of the type's users, paying or free, who leave for each hour the service is down, on top of the paying users
+   * every type stops paying (outage.paidChurnPerHour). Businesses run on the service, so poor uptime drives them out.
+   */
+  outageLeavePerHour: number;
 }
 
 export interface LoanConfig {
@@ -913,7 +1068,7 @@ export interface SharesConfig {
  *   valuation = max(minimum, annual revenue × max(minMultiple, multiple) + paying users × valuePerPayingUser
  *                            + cash − the loan's money borrowed still to pay back)
  *
- * A bankrupt company is worth nothing, whatever the minimum. Recent uptime is over ConversionConfig's uptimeDays.
+ * A liquidated company is worth nothing, whatever the minimum. Recent uptime is over ConversionConfig's uptimeDays.
  * Share price = valuation ÷ shares in issue.
  */
 export interface ValuationConfig {
@@ -948,6 +1103,107 @@ export interface ValuationConfig {
 export interface FundingConfig {
   friendsAndFamily: { amount: number };
   grant: { amount: number; days: number; minUptime: Record<ModelId, number> };
+}
+
+/** What a product must reach to pass the IPO readiness check: see IpoConfig. */
+export interface IpoProductConfig {
+  /** Users, paying or free. */
+  users: number;
+  /** Annual revenue, as the valuation measures it. */
+  annualRevenue: number;
+  /** The minimum paying customer base: so 300 payers at £1,000 each can't float. */
+  payingUsers: number;
+}
+
+/**
+ * The IPO. The company can apply to float once it passes every condition of the readiness check: users and revenue,
+ * an uptime record, predictable costs, a security audit, profitability, a satisfaction record and a minimum paying
+ * customer base. No investor is needed. Records are measured over the last recordDays days played.
+ *
+ * Each condition also has a comfort, 0–1: how far over it the company is, reaching 1 at comfortMargin over (0.25 = 25%
+ * over a "more than" threshold, or a quarter of the way from it to perfect). The comfort is their average.
+ *
+ * Applying rolls a hidden cold market: coldChance.max at a comfort of 0, falling to coldChance.min at 1. A cold market
+ * postpones the IPO for coldDelayDays and costs coldSatisfactionLoss points of satisfaction. Otherwise it's approved,
+ * and the student floats minFloat to maxFloat (shares after the IPO) in new shares at the offer price, valuation ÷
+ * shares in issue, diluting everyone, and rings the opening bell.
+ *
+ * The first day of trading is `ticks` moves of the share price from the offer price to the close: it drifts by
+ * minDrift at a comfort of 0 up to maxDrift at 1, plus growthDrift × the valuation's growth, with random swings scaled
+ * from swingAtMinFloat at the smallest float to swingAtMaxFloat at the largest. The close is never below
+ * lowestClose × the offer price. Market value at the close: close price × shares in issue, the cash raised included.
+ */
+export interface IpoConfig {
+  products: Record<ProductTypeId, IpoProductConfig>;
+  recordDays: number;
+  /** Uptime % over recordDays. */
+  minUptime: number;
+  /** Average satisfaction % over recordDays. */
+  minSatisfaction: number;
+  /** The most daily running costs over recordDays may vary: their standard deviation ÷ their mean. */
+  maxCostSwing: number;
+  comfortMargin: number;
+  coldChance: { min: number; max: number };
+  coldDelayDays: number;
+  coldSatisfactionLoss: number;
+  /** Shares of the company after the IPO, 0–1. */
+  minFloat: number;
+  maxFloat: number;
+  ticks: number;
+  minDrift: number;
+  maxDrift: number;
+  growthDrift: number;
+  swingAtMinFloat: number;
+  swingAtMaxFloat: number;
+  lowestClose: number;
+}
+
+/**
+ * Negotiating an offer, for any offer: friends and family and grants now, and later investors, deals and renewals. The
+ * other side opens with offer 1; the student can counter twice, and each counter is answered by a roll of a
+ * dieSides-sided die that sets the next offer. Offer 3 is final.
+ *
+ * - How far a counter asks is its distance: each term's change in the student's favour as a share of the offer's,
+ *   added up (asking 20% more cash and a quarter less share is 0.45). A counter must ask for something, and at most
+ *   maxAsk.
+ * - The roll is the die, less greedPenalty × the distance (rounded to a whole pip), plus any bonus (a CFO, later).
+ *   From highFrom the other side moves moves.high of the way to the counter; from middleFrom, moves.middle; below it,
+ *   moves.low. So the further a counter asks, the worse its odds, and asking a lot pays less on average than asking a
+ *   little more than nothing.
+ * - The other side never walks away: its latest offer stands until the student accepts or declines it.
+ */
+export interface NegotiationConfig {
+  dieSides: number;
+  highFrom: number;
+  middleFrom: number;
+  /** Pips off the roll per 100% asked for: 30 is 3 pips per 10%. */
+  greedPenalty: number;
+  /** The most a counter can ask, in all, as a share of the offer (0.5 = 50%). */
+  maxAsk: number;
+  /** Share of the way from the offer to the counter the next offer moves, on each kind of roll. */
+  moves: { high: number; middle: number; low: number };
+}
+
+/**
+ * The rescue buyout: the first time cash runs out, a vulture VC rescues the company instead of the game ending. The
+ * second time is liquidation, and the game ends.
+ *
+ * - Cost cuts first: hires still to start are cancelled, and staffCut of each team is let go (rounded up), the dearest
+ *   grades first. Ops are only cut as far as the servers' ops needed allows.
+ * - Cash: the losses (what took cash below £0), plus breathingDays of what the company is losing a day after the
+ *   cuts, counting at least minCover of its running costs a day.
+ * - Shares: enough new shares for the vulture VC to own `share` of the company.
+ * - Buy-back: the student can buy all its shares back with the company's cash, at its price: its share of today's
+ *   valuation less net cash (the business without the cash that pays for them) × buyBackPremium, but never less than
+ *   minReturn × the cash it put in.
+ */
+export interface RescueConfig {
+  breathingDays: number;
+  minCover: number;
+  share: number;
+  staffCut: number;
+  buyBackPremium: number;
+  minReturn: number;
 }
 
 /**
@@ -994,6 +1250,13 @@ export interface GameConfig {
    * Numbers rather than flags so the config page can store them like every other setting.
    */
   allowedGameLengths: Record<GameLengthId, number>;
+  /**
+   * 1 if time runs on its own on the game page, with pause and speed settings; 0 for Continue only. The server reads it
+   * from the active preset, so switching it off reaches games already being played.
+   */
+  timedFlow: number;
+  /** Which difficulties students can pick from when starting a company: 1 if allowed, 0 if not. At least one must be. */
+  allowedDifficulties: Record<DifficultyId, number>;
   maxCompanyNameLength: number;
   launch: LaunchConfig;
   models: Record<ModelId, ModelConfig>;
@@ -1002,6 +1265,8 @@ export interface GameConfig {
   rivals: RivalsConfig;
   staff: Record<StaffPool, StaffPoolConfig>;
   staffGrades: Record<StaffGrade, StaffGradeConfig>;
+  agency: AgencyConfig;
+  severance: SeveranceConfig;
   capacity: CapacityConfig;
   servers: ServersConfig;
   outage: OutageConfig;
@@ -1010,14 +1275,20 @@ export interface GameConfig {
   shares: SharesConfig;
   valuation: ValuationConfig;
   funding: FundingConfig;
+  ipo: IpoConfig;
+  negotiation: NegotiationConfig;
+  rescue: RescueConfig;
   pricing: PricingConfig;
   support: SupportConfig;
+  moderation: ModerationConfig;
   conversion: ConversionConfig;
   addons: AddonConfig;
   api: ApiConfig;
   migration: MigrationConfig;
   /** The danger meter and encounter list, which decide when random events fire. */
   encounters: EncounterConfig;
+  /** The real calendar and its holidays: calendar events, outside the danger meter. */
+  calendar: CalendarConfig;
   /** Scripted events, in the order they're logged on a day when more than one is on. */
   events: EventConfig[];
 }
@@ -1029,7 +1300,11 @@ export const defaultConfig: GameConfig = {
   finalDay: 180,
   // A normal lesson plays 180 days. The longer lengths could take hours, so the teacher turns them on for clubs,
   // homework or extension work.
-  allowedGameLengths: { "180-days": 1, "1-year": 0, career: 0 },
+  allowedGameLengths: { "180-days": 1, "until-ipo": 0, "1-year": 0, career: 0 },
+  // Time runs on its own and pauses itself when something needs the student.
+  timedFlow: 1,
+  // Normal only, so a class plays the same game unless the teacher opens up the others.
+  allowedDifficulties: { easy: 0, normal: 1, hard: 0 },
   maxCompanyNameLength: 40,
   // Users trickle in over 3 days, building up. SaaS starts on day 1; a platform set up or VMs rented on day 1 start on
   // day 2; on-prem kit bought on day 1 arrives on day 5, so it starts a few days after the cloud models.
@@ -1163,7 +1438,7 @@ export const defaultConfig: GameConfig = {
   productTypes: {
     ecommerce: {
       name: "E-commerce platform",
-      profile: "Big seasonal traffic spikes",
+      profile: "Huge Black Friday and Christmas rushes",
       growth: {
         launchUsersMin: 2_500,
         launchUsersMax: 7_500,
@@ -1172,7 +1447,6 @@ export const defaultConfig: GameConfig = {
         growthNoise: 0.5,
         loadPerUser: 2,
         loadNoise: 0.1,
-        seasonalSpike: { firstDay: 45, every: 45, length: 5, loadMultiplier: 1.6, growthMultiplier: 2 },
       },
       // Baskets and orders: as much database as compute, 500 shoppers to a CU and a DBU. Server sizes are set by it: a
       // small app server serves 3,000 shoppers, a medium 5,000, a large 10,000 and a massive 15,000.
@@ -1195,6 +1469,7 @@ export const defaultConfig: GameConfig = {
           devDays: 20,
           growthMultiplier: 1.15,
           addonPricePerUser: 0.04,
+          appeal: { businesses: 1.5 },
         },
         {
           id: "reviews",
@@ -1203,6 +1478,7 @@ export const defaultConfig: GameConfig = {
           devDays: 12,
           growthMultiplier: 1.1,
           addonPricePerUser: 0.025,
+          appeal: { professionals: 1.5 },
         },
         {
           id: "recommendations",
@@ -1211,6 +1487,7 @@ export const defaultConfig: GameConfig = {
           devDays: 30,
           growthMultiplier: 1.2,
           addonPricePerUser: 0.05,
+          appeal: { casual: 1.5 },
         },
         {
           id: "wishlists",
@@ -1219,6 +1496,7 @@ export const defaultConfig: GameConfig = {
           devDays: 10,
           growthMultiplier: 1.05,
           addonPricePerUser: 0.015,
+          appeal: { enthusiasts: 1.5 },
         },
       ],
       // Other shops, marketplaces and delivery firms check stock and place orders through it.
@@ -1259,6 +1537,8 @@ export const defaultConfig: GameConfig = {
       },
       // Few tickets per user, but a lot of users.
       support: { ticketsPerPaidUser: 0.006, ticketsPerFreeUser: 0.0015 },
+      // Posts, comments and photos: a few get reported every day. Fewer per user than video, but a lot of users.
+      moderation: { reportsPerUser: 0.0015 },
       features: [
         {
           id: "messaging",
@@ -1267,6 +1547,7 @@ export const defaultConfig: GameConfig = {
           devDays: 20,
           growthMultiplier: 1.15,
           addonPricePerUser: 0.08,
+          appeal: { casual: 1.5 },
         },
         {
           id: "photos",
@@ -1275,6 +1556,7 @@ export const defaultConfig: GameConfig = {
           devDays: 16,
           growthMultiplier: 1.12,
           addonPricePerUser: 0.06,
+          appeal: { enthusiasts: 1.5 },
         },
         {
           id: "groups",
@@ -1283,6 +1565,7 @@ export const defaultConfig: GameConfig = {
           devDays: 24,
           growthMultiplier: 1.15,
           addonPricePerUser: 0.08,
+          appeal: { professionals: 1.5 },
         },
         {
           id: "notifications",
@@ -1291,6 +1574,7 @@ export const defaultConfig: GameConfig = {
           devDays: 10,
           growthMultiplier: 1.05,
           addonPricePerUser: 0.03,
+          appeal: { businesses: 1.5 },
         },
       ],
       // A free-and-easy network that pulls casual users, and a slicker one for creators and brands.
@@ -1321,6 +1605,8 @@ export const defaultConfig: GameConfig = {
         customerMix: { casual: 0.55, enthusiasts: 0.3, professionals: 0.12, businesses: 0.03 },
       },
       support: { ticketsPerPaidUser: 0.01, ticketsPerFreeUser: 0.003 },
+      // Uploads and comments: fewer users than a social network, so fewer reports.
+      moderation: { reportsPerUser: 0.002 },
       features: [
         {
           id: "hd",
@@ -1329,6 +1615,7 @@ export const defaultConfig: GameConfig = {
           devDays: 20,
           growthMultiplier: 1.12,
           addonPricePerUser: 0.14,
+          appeal: { enthusiasts: 1.5 },
         },
         {
           id: "comments",
@@ -1337,6 +1624,7 @@ export const defaultConfig: GameConfig = {
           devDays: 10,
           growthMultiplier: 1.05,
           addonPricePerUser: 0.07,
+          appeal: { casual: 1.5 },
         },
         {
           id: "recommendations",
@@ -1345,6 +1633,7 @@ export const defaultConfig: GameConfig = {
           devDays: 30,
           growthMultiplier: 1.2,
           addonPricePerUser: 0.2,
+          appeal: { casual: 1.5 },
         },
         {
           id: "live",
@@ -1353,6 +1642,7 @@ export const defaultConfig: GameConfig = {
           devDays: 36,
           growthMultiplier: 1.2,
           addonPricePerUser: 0.2,
+          appeal: { professionals: 1.5, businesses: 1.5 },
         },
       ],
       // One big, established rival, a little cheaper than fair.
@@ -1363,10 +1653,10 @@ export const defaultConfig: GameConfig = {
   },
   // Casual users react at the fair price, as everyone did in the alpha; the others put up with more, and go free less.
   customerTypes: {
-    casual: { name: "Casual users", blurb: "Use it now and then. Low willingness to pay; go free readily.", thresholdMultiple: 1, toFreeShare: 0.6 },
-    enthusiasts: { name: "Enthusiasts", blurb: "Keen regular users. Will pay a bit more; sometimes go free.", thresholdMultiple: 1.25, toFreeShare: 0.4 },
-    professionals: { name: "Professionals", blurb: "Use it for work. Pay well; rarely go free.", thresholdMultiple: 2, toFreeShare: 0.2 },
-    businesses: { name: "Businesses", blurb: "Run on it. Pay the most; rarely go free, they leave.", thresholdMultiple: 3, toFreeShare: 0.1 },
+    casual: { name: "Casual users", blurb: "Use it now and then. Low willingness to pay; go free readily.", thresholdMultiple: 1, toFreeShare: 0.6, outageLeavePerHour: 0 },
+    enthusiasts: { name: "Enthusiasts", blurb: "Keen regular users. Will pay a bit more; sometimes go free.", thresholdMultiple: 1.25, toFreeShare: 0.4, outageLeavePerHour: 0 },
+    professionals: { name: "Professionals", blurb: "Use it for work. Pay well; rarely go free.", thresholdMultiple: 2, toFreeShare: 0.2, outageLeavePerHour: 0.002 },
+    businesses: { name: "Businesses", blurb: "Run on it. Pay the most; rarely go free, they leave, and fast when it's down.", thresholdMultiple: 3, toFreeShare: 0.1, outageLeavePerHour: 0.01 },
   },
   // Placeholders from the beta design: rivals answer a price two weeks on, and undercut about a third of the time.
   // Casual users chase price and businesses quality, so a cheap rival pulls casual users and a polished one the rest.
@@ -1394,6 +1684,8 @@ export const defaultConfig: GameConfig = {
     ops: { name: "Ops staff", personName: "ops person", dayRate: 120, startingCount: 1 },
     // One to start, enough for the first few weeks: more are needed as users grow.
     support: { name: "Support staff", personName: "support person", dayRate: 100, startingCount: 1 },
+    // None to start: only content products need them, and not until the users are posting.
+    moderators: { name: "Moderators", personName: "moderator", dayRate: 60, startingCount: 0 },
   },
   // A senior does about twice a junior's work for about 1.7× the pay: cheaper per unit of work, dearer up front, and
   // slowest to arrive. Placeholders from the beta design.
@@ -1402,6 +1694,10 @@ export const defaultConfig: GameConfig = {
     mid: { name: "Mid", payMultiplier: 1, output: 1, leadDays: 7 },
     senior: { name: "Senior", payMultiplier: 1.3, output: 1.35, leadDays: 14 },
   },
+  // The expensive way to cover a short gap: 1.25× the pay for half the work, from tomorrow. From the beta design.
+  agency: { payMultiplier: 1.25, output: 0.5, leadDays: 1 },
+  // Two weeks' pay each: cutting staff has a cost, but it's still worth it for a cut you'll keep. A placeholder.
+  severance: { days: 14 },
   capacity: { unstaffedShare: 0.4 },
   // Each size gives a set number of units. A CU serves the same users whatever the size, so the sizes are 6/10/20/30 to
   // match the design notes' users per server: at a shop's 0.002 CU each, a small app server serves 3,000 shoppers, a
@@ -1474,11 +1770,53 @@ export const defaultConfig: GameConfig = {
     friendsAndFamily: { amount: 15_000 },
     grant: { amount: 10_000, days: 60, minUptime: { onprem: 98, iaas: 98.5, paas: 98.5, saas: 99 } },
   },
+  // Set from the harness's sensible bot, which reaches these on PaaS and SaaS around days 180-270 and on-prem and IaaS
+  // later: in a 180-day game a float is rare. Users sit near each market's size; revenue and payers are what take time.
+  ipo: {
+    products: {
+      ecommerce: { users: 18_000, annualRevenue: 1_000_000, payingUsers: 16_000 },
+      social: { users: 36_000, annualRevenue: 1_250_000, payingUsers: 21_000 },
+      video: { users: 18_000, annualRevenue: 1_250_000, payingUsers: 12_000 },
+    },
+    recordDays: 30,
+    minUptime: 99,
+    minSatisfaction: 70,
+    maxCostSwing: 0.25,
+    comfortMargin: 0.25,
+    coldChance: { min: 0.05, max: 0.3 },
+    coldDelayDays: 30,
+    coldSatisfactionLoss: 10,
+    minFloat: 0.15,
+    maxFloat: 0.4,
+    // Half-hourly from 09:30 to the 16:00 close.
+    ticks: 13,
+    minDrift: -0.1,
+    maxDrift: 0.15,
+    growthDrift: 0.1,
+    swingAtMinFloat: 0.2,
+    swingAtMaxFloat: 0.07,
+    lowestClose: 0.3,
+  },
+  // A d20: 14 or more (35% with nothing off) moves 80% of the way, 7 or more halfway, and anything lower a tenth. 3 pips
+  // off per 10% asked makes a counter of about 30% pay best on average; asking 50% leaves only the low roll.
+  negotiation: {
+    dieSides: 20,
+    highFrom: 14,
+    middleFrom: 7,
+    greedPenalty: 30,
+    maxAsk: 0.5,
+    moves: { high: 0.8, middle: 0.5, low: 0.1 },
+  },
+  // Placeholders from the design: about 30 days of breathing space for about 75% of the company. Buying it back costs
+  // at least twice what the vulture VC put in.
+  rescue: { breathingDays: 30, minCover: 0.25, share: 0.75, staffCut: 0.25, buyBackPremium: 1.5, minReturn: 2 },
   pricing: {
     maxPrice: 1_000,
     growthSensitivity: 1,
     maxGrowthBoost: 2,
     paidShareSensitivity: 1,
+    // Twice the casual threshold brings a quarter as many casual users, so a pricier company grows more professional.
+    newUserFilter: 2,
     // A change starts a 7-day wave and locks the price for 14. With these, a 25% rise on a fair price costs about 10%
     // of payers, 50% about 28% and doubling it 80%: the most income comes from about 25-30% above fair, and each rise
     // after that pays less, until raising the price stops paying at all.
@@ -1513,6 +1851,15 @@ export const defaultConfig: GameConfig = {
     growthAtZero: 0.3,
     churnAtZero: 0.02,
     paidChurnAtZero: 0.02,
+  },
+  // A mid moderator handles 60 reports a day: one covers a full social network or video platform. Ignored for a few
+  // weeks, unhandled reports cost a good share of satisfaction; at one per 20 users the odds of a lawsuit are four
+  // times what they'd be.
+  moderation: {
+    reportsPerPerson: 60,
+    backlogPerUserAtZero: 0.05,
+    lawsuitOddsAtZero: 4,
+    warnShare: 0.1,
   },
   // At the fair price with nothing helping or hurting, a shop converts 0.12% of its free users a day. Features, uptime
   // and satisfaction can more than double that, so free users are worth having, but most stay free, still adding load
@@ -1560,11 +1907,82 @@ export const defaultConfig: GameConfig = {
     thresholdMin: 20,
     thresholdMax: 56,
   },
+  // Holidays fall on their dates every year, so a student can see them coming and plan capacity. Each product feels
+  // them its own way: a shop dreads Black Friday, a video platform is busy whenever people have time off.
+  calendar: {
+    startYear: 2026,
+    noticeDays: 14,
+    holidays: [
+      {
+        id: "januaryBlues",
+        name: "January blues",
+        description: "Money's tight after Christmas, so people spend less and sign up for less.",
+        start: { anchor: "date", month: 1, day: 2 },
+        days: 30,
+        effects: {
+          ecommerce: {
+            loadMultiplier: 0.85,
+            growthMultiplier: 0.6,
+            detail: "Shoppers are skint after Christmas: fewer orders and far fewer sign-ups.",
+          },
+        },
+      },
+      {
+        id: "easter",
+        name: "Easter holidays",
+        description: "Schools are off for Easter, so students and families are online more.",
+        start: { anchor: "easter", offset: -9 },
+        days: 16,
+        effects: {
+          social: { loadMultiplier: 1.3, growthMultiplier: 1.25, detail: "Students off school post and chat all day." },
+          video: { loadMultiplier: 1.35, growthMultiplier: 1.2, detail: "Families off school watch far more." },
+        },
+      },
+      {
+        id: "summer",
+        name: "Summer holidays",
+        description: "Schools are off for the summer, so students and families are online more.",
+        start: { anchor: "date", month: 7, day: 22 },
+        days: 42,
+        effects: {
+          // Six weeks long, so growth gets a gentler lift than Easter's: it compounds.
+          social: { loadMultiplier: 1.25, growthMultiplier: 1.1, detail: "Students off school post and chat all summer." },
+          video: { loadMultiplier: 1.3, growthMultiplier: 1.1, detail: "Long summer days mean far more watching." },
+        },
+      },
+      {
+        id: "blackFriday",
+        name: "Black Friday",
+        description: "The biggest shopping weekend of the year, from Black Friday to Cyber Monday.",
+        start: { anchor: "blackFriday", offset: 0 },
+        days: 4,
+        effects: {
+          ecommerce: {
+            loadMultiplier: 2.2,
+            growthMultiplier: 2.5,
+            detail: "A huge shopping spike: more than twice the usual load, and a rush of new shoppers.",
+          },
+        },
+      },
+      {
+        id: "christmas",
+        name: "Christmas",
+        description: "Gifts, new devices and time off, to New Year's Day.",
+        start: { anchor: "date", month: 12, day: 18 },
+        days: 15,
+        effects: {
+          ecommerce: { loadMultiplier: 1.5, growthMultiplier: 1.4, detail: "Last-minute gifts, then the Boxing Day sales." },
+          social: { loadMultiplier: 1.15, growthMultiplier: 1.1, detail: "New phones, and time off to use them." },
+          video: { loadMultiplier: 1.4, growthMultiplier: 1.3, detail: "Time off and new devices: far more watching." },
+        },
+      },
+    ],
+  },
   events: [
     {
       id: "trafficSpike",
       name: "Traffic spike",
-      description: "Your product went viral: a flood of visitors on top of your usual users.",
+      description: "A big news site featured your product: a flood of visitors on top of your usual users.",
       layer: "runtime",
       // The commonest random event.
       encounter: { chance: 0.6 },
@@ -1702,24 +2120,221 @@ export const defaultConfig: GameConfig = {
         },
       },
     },
+    {
+      id: "breach",
+      name: "Security breach",
+      description: "Attackers broke into your systems and stole customer data.",
+      layer: "data",
+      // Much likelier with servers going unpatched, and far worse then: ransomware gets in through a known hole.
+      encounter: { chance: 0.25, risks: { unpatched: 3 } },
+      days: 1,
+      effects: {
+        onprem: {
+          cost: { amount: 3_000, text: "Investigating the breach and telling the customers affected" },
+          detail:
+            "Your servers were patched, so the attackers only got a few accounts through a stolen password. You still had to find out what they took and tell those customers.",
+          unpatched: {
+            downtimeHours: 12,
+            cost: { amount: 12_000, text: "Recovering from ransomware" },
+            detail:
+              "Your servers were behind on patches, so attackers got in through a known hole and locked your data with ransomware. You took everything down and restored it from backups.",
+          },
+        },
+        iaas: {
+          cost: { amount: 3_000, text: "Investigating the breach and telling the customers affected" },
+          detail:
+            "Your VMs were patched, so the attackers only got a few accounts through a stolen password. You still had to find out what they took and tell those customers.",
+          unpatched: {
+            downtimeHours: 12,
+            cost: { amount: 12_000, text: "Recovering from ransomware" },
+            detail:
+              "Your VMs were behind on patches, so attackers got in through a known hole and locked your data with ransomware. You took everything down and restored it from backups.",
+          },
+        },
+        paas: {
+          cost: { amount: 3_000, text: "Investigating the breach and telling the customers affected" },
+          detail:
+            "The provider keeps the platform patched, so the attackers came in through your own app with a stolen password. The data in it is still yours to protect.",
+        },
+        saas: {
+          cost: { amount: 3_000, text: "Investigating the breach and telling the customers affected" },
+          detail:
+            "The provider keeps the platform patched, but the attackers logged in with one of your staff's passwords. Who can see your customers' data is still your job.",
+        },
+      },
+    },
+    {
+      id: "viralGrowth",
+      name: "Viral growth",
+      description: "A post about your product went viral, and a wave of new users signed up for free.",
+      layer: "runtime",
+      // Unhappy customers don't spread the word.
+      encounter: { chance: 0.35, risks: { lowSatisfaction: 0.3 } },
+      days: 1,
+      effects: {
+        onprem: {
+          freeUsers: { share: 0.25, min: 500 },
+          detail:
+            "They're staying, and your own servers carry them from tomorrow. New kit takes days to arrive, so check your capacity now.",
+        },
+        iaas: {
+          freeUsers: { share: 0.25, min: 500 },
+          detail: "They're staying, and your VMs carry them from tomorrow. Renting more is your job, so check your capacity now.",
+        },
+        paas: {
+          freeUsers: { share: 0.25, min: 500 },
+          detail:
+            "They're staying. The provider runs the platform, but how much of it you pay for is up to you, so check your capacity now.",
+        },
+        saas: {
+          freeUsers: { share: 0.25, min: 500 },
+          detail:
+            "They're staying. The provider carries the load, so there's no capacity to worry about, but you pay its fee for every user, free ones too.",
+        },
+      },
+    },
+    {
+      id: "dataCentreFire",
+      name: "Data-centre fire",
+      description: "A fire broke out where your servers run. The sprinklers flooded the floor and the power was cut.",
+      layer: "facilities",
+      // Kit run hot catches fire: likelier when capacity is overloaded. Once at most.
+      encounter: { chance: 0.2, risks: { overloaded: 2 }, maxTimes: 1 },
+      days: 1,
+      effects: {
+        onprem: {
+          downtimeHours: 16,
+          cost: { amount: 8_000, text: "Replacing kit ruined by fire and water" },
+          detail:
+            "It's your own building, so it was your servers that burned. You were down most of the day while you dried out and replaced the ruined kit.",
+        },
+        iaas: {
+          downtimeHours: 4,
+          detail:
+            "The provider moved your VMs to another of its data centres. You were down while it did, but the ruined kit is theirs to replace.",
+        },
+        paas: {
+          downtimeHours: 2,
+          detail:
+            "The provider moved the platform to another of its data centres. You were down briefly, but the ruined kit is theirs to replace.",
+        },
+        saas: {
+          downtimeHours: 1,
+          detail: "The provider runs the platform across several data centres, so it barely blinked. The ruined kit is theirs to replace.",
+        },
+      },
+    },
+    {
+      id: "fraud",
+      name: "Theft or fraud",
+      description: "Fraudsters paid you with stolen card details, and the banks clawed the money back with fees on top.",
+      layer: "application",
+      // Holes left unpatched let thieves in.
+      encounter: { chance: 0.3, risks: { unpatched: 1.5 } },
+      days: 1,
+      effects: {
+        onprem: {
+          cost: { amount: 4_000, text: "Money clawed back by the banks, and their fees" },
+          detail: "You built your own checkout, so spotting fraud is your job, and nothing stopped them.",
+        },
+        iaas: {
+          cost: { amount: 4_000, text: "Money clawed back by the banks, and their fees" },
+          detail: "You built your own checkout, so spotting fraud is your job, and nothing stopped them.",
+        },
+        paas: {
+          cost: { amount: 4_000, text: "Money clawed back by the banks, and their fees" },
+          detail: "You built your own checkout on the platform, so spotting fraud is your job, and nothing stopped them.",
+        },
+        saas: {
+          cost: { amount: 1_500, text: "Money clawed back by the banks, and their fees" },
+          detail: "The provider's checkout has its own fraud checks, which caught most of it. You lost what slipped through.",
+        },
+      },
+    },
+    {
+      id: "lawsuit",
+      name: "Lawsuit",
+      description: "Customers whose data was stolen in your recent security breach are suing you.",
+      layer: "data",
+      // Only after a breach (a deal's badly broken SLA can lead to one too, once there are deals). Unhappy customers
+      // are likelier to sue.
+      encounter: { chance: 0.5, risks: { lowSatisfaction: 1.6 }, follows: ["breach"], followsWithinDays: 60 },
+      days: 1,
+      effects: {
+        onprem: {
+          cost: { amount: 8_000, text: "Legal fees and a settlement" },
+          detail: "You hold your customers' data, so you answer for losing it.",
+        },
+        iaas: {
+          cost: { amount: 8_000, text: "Legal fees and a settlement" },
+          detail: "The provider runs the hardware, but the data on it is yours, so you answer for losing it.",
+        },
+        paas: {
+          cost: { amount: 8_000, text: "Legal fees and a settlement" },
+          detail: "The provider runs the platform, but the data in your app is yours, so you answer for losing it.",
+        },
+        saas: {
+          cost: { amount: 8_000, text: "Legal fees and a settlement" },
+          detail:
+            "The provider runs the platform, but your customers' data is yours, so you answer for losing it. Its contract doesn't cover you.",
+        },
+      },
+    },
   ],
 };
 
-/** The last day played in a game of a length: day finalDay, 365 or a career's 47 years of 365 days. */
-export function gameLengthDays(config: GameConfig, length: GameLengthId): number {
+/**
+ * The last day played in a game of a length: day finalDay, 365 or a career's 47 years of 365 days. Null until IPO,
+ * which has no last day.
+ */
+export function gameLengthDays(config: GameConfig, length: GameLengthId): number | null {
+  if (length === "until-ipo") return null;
   if (length === "1-year") return 365;
   if (length === "career") return CAREER_YEARS * 365;
   return config.finalDay;
 }
 
-/** The game lengths a config lets students pick, shortest first. */
+/** The game lengths a config lets students pick, in GAME_LENGTH_IDS order. */
 export function allowedGameLengths(config: GameConfig): GameLengthId[] {
   return GAME_LENGTH_IDS.filter((id) => config.allowedGameLengths[id] === 1);
 }
 
 /** A game length's name for the screens: "180 days" (or however many the config's shortest game has). */
 export function gameLengthName(config: GameConfig, length: GameLengthId): string {
+  if (length === "until-ipo") return "Until IPO";
   if (length === "1-year") return "1 year";
   if (length === "career") return `Career (${CAREER_YEARS} years, age 18 to 65)`;
   return `${config.finalDay} days`;
+}
+
+/** The difficulties a config lets students pick, easiest first. */
+export function allowedDifficulties(config: GameConfig): DifficultyId[] {
+  return DIFFICULTY_IDS.filter((id) => config.allowedDifficulties[id] === 1);
+}
+
+/** The difficulty a new game gets when the student doesn't pick one: Normal if allowed, otherwise the easiest allowed. */
+export function defaultDifficulty(config: GameConfig): DifficultyId | undefined {
+  const allowed = allowedDifficulties(config);
+  return allowed.includes("normal") ? "normal" : allowed[0];
+}
+
+/** The config a game of a difficulty plays on: the preset's numbers with the difficulty's multipliers. Normal is the preset. */
+export function withDifficulty(config: GameConfig, difficulty: DifficultyId): GameConfig {
+  const d = DIFFICULTIES[difficulty];
+  if (d.startingCash === 1 && d.dangerRise === 1 && d.priceThreshold === 1) return config;
+  const { encounters } = config;
+  return {
+    ...config,
+    startingCash: Math.round(config.startingCash * d.startingCash),
+    encounters: {
+      ...encounters,
+      dailyRise: encounters.dailyRise * d.dangerRise,
+      riskRise: Object.fromEntries(
+        Object.entries(encounters.riskRise).map(([risk, rise]) => [risk, rise * d.dangerRise]),
+      ) as EncounterConfig["riskRise"],
+    },
+    customerTypes: Object.fromEntries(
+      Object.entries(config.customerTypes).map(([id, type]) => [id, { ...type, thresholdMultiple: type.thresholdMultiple * d.priceThreshold }]),
+    ) as GameConfig["customerTypes"],
+  };
 }

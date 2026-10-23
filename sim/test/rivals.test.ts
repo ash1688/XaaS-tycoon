@@ -65,6 +65,23 @@ describe("rivals and market share", () => {
     expect(after.growth).toBeGreaterThan(before.growth);
   });
 
+  it("tilts the student's new users away from the types a rival is the best deal for", () => {
+    const lone = createSim(withoutRivals("ecommerce"));
+    const state = running();
+    const newShare = (s: typeof sim, st: GameState, id: string) => s.customerMix(st).types.find((t) => t.id === id)!.newShare;
+    const pull = (id: string) => sim.customerMix(state).types.find((t) => t.id === id)!.rivalPull;
+    // CartCraft is the best deal for casual users and Tillbox for businesses, but the cheap rival pulls harder.
+    expect(pull("casual")).not.toBe(1);
+    const tilted = sim.customerMix(state).types.map((t) => t.newShare);
+    const plain = lone.customerMix({ ...state, rivals: [] }).types.map((t) => t.newShare);
+    expect(tilted).not.toEqual(plain);
+    expect(tilted.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 10);
+    expect(lone.customerMix({ ...state, rivals: [] }).types.every((t) => t.rivalPull === 1)).toBe(true);
+    // Cutting the price wins back casual users from the cheap rival.
+    const cheap = { ...state, price: sim.fairPrice(state) * 0.7 };
+    expect(newShare(sim, cheap, "casual")).toBeGreaterThan(newShare(sim, state, "casual") - 1e-9);
+  });
+
   it("slows the student's growth when the rivals are the better deal", () => {
     const lone = createSim(withoutRivals("ecommerce"));
     const state = running();

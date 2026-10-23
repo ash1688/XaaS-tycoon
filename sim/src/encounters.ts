@@ -40,12 +40,20 @@ export function createEncounters(config: GameConfig, servers: Servers) {
   const { encounters } = config;
   const eventConfig = (id: string) => config.events.find((e) => e.id === id);
 
-  /** Whether an event can still hit the company: its model is hit, it hasn't fired its most, and its gap isn't open. */
-  function canHit(state: Situation, event: EventConfig): boolean {
+  /**
+   * Whether an event can still hit the company: its model is hit, it hasn't fired its most, what it follows has fired
+   * since it last did (recently enough, by the day it would fire), and its gap isn't open.
+   */
+  function canHit(state: Situation, event: EventConfig, day: number): boolean {
     const effect = event.effects[state.model];
     if (!event.encounter || !effect) return false;
-    const { maxTimes } = event.encounter;
+    const { maxTimes, follows, followsWithinDays } = event.encounter;
     if (maxTimes !== undefined && state.schedule.filter((s) => s.event === event.id).length >= maxTimes) return false;
+    if (follows) {
+      const last = state.schedule.findLastIndex((s) => s.event === event.id);
+      const recent = (fired: number) => followsWithinDays === undefined || day - fired <= followsWithinDays;
+      if (!state.schedule.slice(last + 1).some((s) => follows.includes(s.event) && recent(s.day))) return false;
+    }
     return !(effect.featureGap && state.featureGaps.some((g) => g.event === event.id && g.model === state.model));
   }
 
@@ -68,7 +76,7 @@ export function createEncounters(config: GameConfig, servers: Servers) {
       const [r, afterChance] = nextRandom(rng);
       rng = afterChance;
       const chance = chanceOf(state, event);
-      if (!canHit(state, event) || day < (event.encounter.fromDay ?? 0) || r >= chance) continue;
+      if (!canHit(state, event, day) || day < (event.encounter.fromDay ?? 0) || r >= chance) continue;
       const [u, afterThreshold] = nextRandom(rng);
       rng = afterThreshold;
       list.push({ event: event.id, threshold: Math.round(encounters.thresholdMin + span * u * (1 - chance / 2)) });
@@ -91,7 +99,7 @@ export function createEncounters(config: GameConfig, servers: Servers) {
     // An event that can no longer hit the company (its model left behind, or taken out of config) is dropped.
     const list = state.encounterList.filter((e) => {
       const event = eventConfig(e.event);
-      return !!event && canHit(state, event);
+      return !!event && canHit(state, event, day);
     });
     const next = list[0];
     const fires = !!next && state.dangerMeter >= next.threshold;

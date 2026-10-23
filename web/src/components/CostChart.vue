@@ -7,7 +7,7 @@ import { dayTicks, formatAxisCash, niceTicks, useWidth } from "../chart";
 // Spend on each day as a stacked bar, so a day when spending jumped (an upfront purchase, the first day of a
 // migration, an event's clean-up bill) stands out. The x axis runs to the final day, so a game that ended early
 // shows how early.
-const props = defineProps<{ days: SummaryDay[]; finalDay: number; labels: Record<SpendCategory, string> }>();
+const props = defineProps<{ days: SummaryDay[]; finalDay: number | null; labels: Record<SpendCategory, string> }>();
 
 const el = ref<HTMLElement>();
 const width = useWidth(el);
@@ -18,7 +18,7 @@ const M = { top: 26, right: 12, bottom: 42, left: 70 };
 const plotW = computed(() => Math.max(100, width.value - M.left - M.right));
 const plotH = HEIGHT - M.top - M.bottom;
 
-const lastDay = computed(() => Math.max(props.finalDay, props.days.at(-1)?.day ?? 1));
+const lastDay = computed(() => Math.max(props.finalDay ?? 0, props.days.at(-1)?.day ?? 1));
 const band = computed(() => plotW.value / lastDay.value);
 const total = (d: SummaryDay) => SPEND_CATEGORIES.reduce((sum, c) => sum + d[c], 0);
 const yTicks = computed(() => niceTicks(0, Math.max(1, ...props.days.map(total)), 4));

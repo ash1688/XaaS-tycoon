@@ -34,8 +34,8 @@ const confirming = ref<
 const busy = ref(false);
 let timer: ReturnType<typeof setInterval> | undefined;
 
-const STATUS_LABELS = { active: "Active", retired: "Retired", bankrupt: "Bankrupt", finished: "Finished" } as const;
-const STATUS_BADGES = { active: "", retired: "retired-badge", bankrupt: "warn-badge", finished: "done-badge" } as const;
+const STATUS_LABELS = { active: "Active", retired: "Retired", liquidated: "Liquidated", finished: "Finished" } as const;
+const STATUS_BADGES = { active: "", retired: "retired-badge", liquidated: "warn-badge", finished: "done-badge" } as const;
 
 // "Rent VMs (IaaS)" -> "IaaS": short enough for a table column.
 function modelName(id: string) {
@@ -286,7 +286,7 @@ const formatTime = (d: Date) => d.toLocaleTimeString("en-GB", { timeStyle: "shor
                   </span>
                 </td>
                 <td class="live-preset col-wide" :title="g.preset" data-testid="live-preset">{{ g.preset }}</td>
-                <td class="num" data-testid="live-day">{{ g.day }}<span class="muted">/{{ g.finalDay }}</span></td>
+                <td class="num" data-testid="live-day">{{ g.day }}<span v-if="g.finalDay !== null" class="muted">/{{ g.finalDay }}</span></td>
                 <td :class="['num', 'col-mid', { neg: g.cash < 0 }]">{{ formatCash(g.cash) }}</td>
                 <td class="num" data-testid="live-users">
                   {{ formatCount(g.users) }}

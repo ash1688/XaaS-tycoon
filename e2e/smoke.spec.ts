@@ -107,20 +107,23 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await expect(student.getByTestId("staff-cost")).toHaveText("£460");
   // The grades: a junior would start in 3 days, a senior in 14.
   await student.getByRole("radio", { name: "Junior" }).first().check();
-  await expect(student.getByTestId("developers-grade-note")).toContainText("Juniors: £90 each a day, 0.65× a mid's work, start 3 days after hiring.");
+  await expect(student.getByTestId("developers-grade-note")).toContainText(
+    "Juniors: £90 each a day, 0.65× a mid's work, start 3 days after hiring, £1,260 severance each if let go.",
+  );
 
   // Features: IaaS builds them in developer-days, one at a time.
   await goTo(student, "Product");
   const features = student.getByTestId("features");
   await expect(features.locator('[data-feature="photos"]')).toHaveAttribute("data-status", "notStarted");
+  // Each feature pulls in a customer type among new users.
+  await expect(features.locator('[data-feature="groups"]')).toContainText("+15% growth · pulls in professionals");
   await student.getByRole("button", { name: "Build Photo sharing" }).click();
   await expect(features.locator('[data-feature="photos"]')).toHaveAttribute("data-status", "building");
   await expect(student.getByTestId("feature-progress-photos")).toContainText("0 of 16 developer-days");
   await expect(student.getByRole("button", { name: "Build Groups" })).toBeDisabled();
 
-  // Timed flow is off by default: only the Continue button, no Play/Pause or countdown.
-  await expect(student.getByTestId("timed-flow")).toHaveCount(0);
-  await expect(student.getByRole("button", { name: "Play" })).toHaveCount(0);
+  // Timed flow is on by default, and a game opens paused, so Continue still plays a day at a time.
+  await expect(student.getByTestId("timed-status")).toContainText("Paused");
   // Continue is in the nav bar, so it plays the day from any page, here Product.
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
@@ -197,7 +200,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await expect(teacher.getByTestId("live-dashboard")).toBeVisible();
 });
 
-test("a company that runs out of cash goes bankrupt and can't continue", async ({ browser, request }) => {
+test("running out of cash brings a vulture VC's rescue, a buy-back, then liquidation", async ({ browser, request }) => {
   const teacher = await (await browser.newContext()).newPage();
   await teacher.goto("/staff");
   await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
@@ -209,13 +212,16 @@ test("a company that runs out of cash goes bankrupt and can't continue", async (
   });
   const { id } = await created.json();
 
-  // Run the company down to its last £100 in the test database, as if it had overspent for months.
-  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
-  try {
-    await sql`update companies set state = jsonb_set(state, '{cash}', '100') where id = ${id}`;
-  } finally {
-    await sql.end();
-  }
+  // Sets the company's cash in the test database, as if it had overspent for months (or done very well).
+  const setCash = async (cash: number) => {
+    const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
+    try {
+      await sql`update companies set state = jsonb_set(state, '{cash}', to_jsonb(${cash}::int)) where id = ${id}`;
+    } finally {
+      await sql.end();
+    }
+  };
+  await setCash(100);
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
@@ -230,32 +236,67 @@ test("a company that runs out of cash goes bankrupt and can't continue", async (
   await goTo(student, "Home");
   await student.getByRole("button", { name: "Continue" }).click();
 
-  await expect(student.getByTestId("bankrupt-screen")).toContainText("Game over");
-  // It says why there's no loan now, and Finance offers none.
-  await expect(student.getByTestId("bankrupt-screen")).toContainText("too late for a bank loan");
+  // The first time, a vulture VC rescues the company: the cash, the share it took and the cuts.
+  const rescue = student.getByTestId("home-day-log").getByTestId("rescue");
+  await expect(rescue.first()).toContainText("a vulture VC rescued Broke Ltd");
+  await expect(rescue.first()).toContainText("75% of the company. You now own 25%");
+  await expect(rescue.nth(1)).toContainText("Forced cost cuts");
+  // It's a pause trigger, so timed flow stops for it and says why.
+  await expect(student.getByTestId("pause-reasons")).toContainText("Cash ran out: a vulture VC rescued the company for 75% of it");
+  await expect(student.getByTestId("home-alerts")).toContainText("A vulture VC owns 75% of the company");
+  await expect(student.getByRole("button", { name: "Continue" })).toBeEnabled();
+  await goTo(student, "Finance");
+  const panel = student.getByTestId("rescue-panel");
+  await expect(panel.getByTestId("rescue-terms")).toContainText("30,000 new shares, 75% of the company");
+  await expect(panel.getByTestId("rescue-cuts")).toContainText("Forced cost cuts");
+  await expect(panel.getByTestId("rescue-buy-back")).toContainText("will sell all of it back for");
+  await expect(panel.getByTestId("buy-back")).toBeDisabled();
+  await expect(student.getByTestId("cap-table")).toContainText("Vulture VC");
+
+  // With the cash, the student buys its shares back at its price.
+  await setCash(1_000_000);
+  await student.reload();
+  await panel.getByTestId("buy-back").click();
+  await expect(panel.getByTestId("rescue-bought-back")).toContainText("You bought its shares back on day 2");
+  await expect(student.getByTestId("cap-table")).not.toContainText("Vulture VC");
+
+  // The second time is liquidation: the game ends.
+  await setCash(100);
+  await student.reload();
+  await goTo(student, "Home");
+  await student.getByRole("button", { name: "Continue" }).click();
+  await expect(student.getByTestId("liquidation-screen")).toContainText("Game over");
+  await expect(student.getByTestId("liquidation-screen")).toContainText("gone into liquidation");
   await expect(student.getByTestId("low-cash")).toBeHidden();
-  await expect(student.getByTestId("home-loan")).toHaveText("No bank loan: banks don't lend once you've gone under.");
-  await expect(student.getByTestId("home-day-log").getByTestId("bankrupt")).toContainText("Broke Ltd is bankrupt");
+  await expect(student.getByTestId("home-loan")).toHaveText("No bank loan: banks don't lend to a company in liquidation.");
+  await expect(student.getByTestId("home-day-log").getByTestId("liquidation")).toContainText(
+    "after the rescue buyout on day 2: Broke Ltd goes into liquidation",
+  );
   // The game is over: Home shows the summary, Continue is off, and the pages are read-only.
   await expect(student.getByRole("button", { name: "Continue" })).toBeDisabled();
   const summary = student.getByTestId("summary");
-  await expect(summary).toContainText("Ran out of cash on day 2");
+  await expect(summary).toContainText("Went into liquidation on day 3");
+  await expect(student.getByTestId("summary-rescue")).toContainText("Rescued by a vulture VC on day 2");
   await expect(student.getByTestId("summary-cash")).toHaveText(/^-£/);
   await goTo(student, "People");
   await expect(student.getByTestId("read-only")).toContainText("This game has ended");
   await expect(student.getByRole("button", { name: "Hire one mid developer" })).toBeDisabled();
   await goTo(student, "Finance");
-  await expect(student.getByTestId("loan-bankrupt")).toContainText("banks don't lend");
+  await expect(student.getByTestId("loan-liquidated")).toContainText("banks don't lend");
   await expect(student.getByTestId("loan-open")).toBeHidden();
   await goTo(student, "Home");
 
-  // Still bankrupt after a reload, with its summary, and the API refuses to carry on.
+  // Still liquidated after a reload, with its summary, and the API refuses to carry on.
   await student.reload();
-  await expect(student.getByTestId("bankrupt-screen")).toBeVisible();
+  await expect(student.getByTestId("liquidation-screen")).toBeVisible();
   await expect(summary).toBeVisible();
   await expect(student.getByRole("button", { name: "Continue" })).toBeDisabled();
   const again = await request.post(`/api/codes/${code}/companies/${id}/continue`);
   expect(again.status()).toBe(409);
+
+  // The staff dashboard says liquidated too.
+  await teacher.goto("/staff");
+  await expect(teacher.locator(`tr[data-company="${id}"]`).getByTestId("live-status")).toHaveText("Liquidated");
 });
 
 test("a SaaS company buys an add-on and pays for it per user", async ({ browser, request }) => {
@@ -283,7 +324,10 @@ test("a SaaS company buys an add-on and pays for it per user", async ({ browser,
   // Add-ons need a configuration team of 2 developers: with 1, they can't be bought.
   await expect(student.getByTestId("config-team")).toContainText("at least 2 developers");
   await goTo(student, "People");
+  // Permanent staff are paid severance when let go, shown before confirming: 14 days of a mid developer's £120.
   await student.getByRole("button", { name: "Let go one mid developer" }).click();
+  await expect(student.getByTestId("severance-cost")).toHaveText("£1,680");
+  await student.getByTestId("severance-confirm").click();
   await expect(student.getByTestId("developers-count")).toHaveText("1");
   await goTo(student, "Product");
   await expect(student.getByTestId("config-team")).toContainText("Hire 1 more to buy add-ons");
@@ -625,6 +669,40 @@ test("on SaaS, a feature the platform can't provide shows a card, then stays on 
   await expect(student.getByTestId("gap-shop-note")).toContainText("a feed that ranks posts your way");
 });
 
+test("viral growth brings a wave of free users, shown as good news with whose job it is to carry them", async ({
+  browser,
+  request,
+}) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  const code = await createCode(teacher);
+
+  // Started with only viral growth as a random event, at a threshold of 4. SaaS launches as the game starts, so the
+  // danger meter reaches 4 at the end of day 5 and the wave comes on day 6.
+  const created = await withOnlyEncounter(request, "viralGrowth", 4, () =>
+    request.post(`/api/codes/${code}/companies`, { data: { name: "Buzz Ltd", productType: "social", model: "saas" } }),
+  );
+  const { id } = await created.json();
+
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${id}`);
+  for (let day = 2; day <= 6; day++) {
+    await student.getByRole("button", { name: "Continue" }).click();
+    await expect(student.getByTestId("day")).toContainText(`${day} of ${E2E_FINAL_DAY}`);
+  }
+
+  const card = student.getByTestId("event-card");
+  await expect(card).toHaveAttribute("data-event", "viralGrowth");
+  await expect(card.getByRole("strong").first()).toHaveText("Viral growth");
+  await expect(card.getByTestId("event-responsibility")).toHaveText("Runtime and scaling is the provider's job on SaaS.");
+  await expect(card.getByTestId("event-outcome")).toContainText(/[\d,]+ new free users signed up\. They're staying\./);
+  await expect(card.getByTestId("event-tone")).toHaveText("Good news");
+  const dayLog = await openDayLog(student);
+  await expect(dayLog.getByTestId("event")).toContainText("new free users signed up");
+});
+
 test("a company plays to the final day and sees its summary, again when reopened", async ({ browser, request }) => {
   const teacher = await (await browser.newContext()).newPage();
   await teacher.goto("/staff");
@@ -837,7 +915,8 @@ test("a Home card opens an accessible modal with its controls, and Continue work
   const modal = student.getByRole("dialog", { name: "Staff" });
   await expect(modal).toBeVisible();
   await expect(modal).toHaveAttribute("aria-modal", "true");
-  await expect(modal.getByRole("radio", { name: "Junior" }).first()).toBeFocused();
+  // The first control: permanent or agency staff.
+  await expect(modal.getByRole("radio", { name: "Permanent" }).first()).toBeFocused();
 
   // Its quick actions work in place. A hire waits for its grade's lead time; a move is at once, and the card behind
   // it keeps up.
@@ -1043,6 +1122,9 @@ test("a student previews prices live, raises the price, and sees the backlash an
   await expect(mix.getByTestId("mix-over")).toContainText("above what casual users think it's worth");
   await expect(mix.locator('tr[data-type="casual"] td').last()).toHaveText(/^\s*£5\s*you're over\s*$/);
   await expect(mix.locator('tr[data-type="enthusiasts"]')).not.toContainText("you're over");
+  // And it filters who joins: £6.25 is 1.25 times the casual threshold, so 0.64 as many casual users join.
+  await expect(mix.locator('tr[data-type="casual"] [data-testid="mix-new"]')).toContainText("price ×0.64");
+  await expect(mix.locator('tr[data-type="businesses"] [data-testid="mix-new"]')).toHaveText(/^\s*\d+%\s*$/);
 });
 
 test("a SaaS company without support builds a backlog, hires support from Home and sees it cleared", async ({
@@ -1153,6 +1235,9 @@ test("free users start paying each day, and Customers shows what's helping or hu
   await expect(mix.getByRole("img")).toHaveAttribute("aria-label", "Casual users 70%, Enthusiasts 20%, Professionals 8%, Businesses 2%");
   await expect(mix.getByTestId("mix-thresholds").locator(".mix-threshold")).toHaveText(["£5", "£6.25", "£10", "£15"]);
   await expect(mix.getByTestId("mix-over")).toBeHidden();
+  // New users join in the product's mix, with nothing tilting it yet.
+  await expect(mix.getByTestId("mix-new")).toHaveText(["70%", "20%", "8%", "2%"]);
+  await expect(mix.getByTestId("mix-shifts")).toContainText("A rise loses casual users first");
 
   // The day log says so too.
   await expect((await openDayLog(student)).locator('[data-kind="conversion"]')).toContainText("Free to paid:");

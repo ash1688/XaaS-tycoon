@@ -83,6 +83,7 @@ export function snapshotOf(company: CompanyView): PlaySnapshot {
     developers: company.developers,
     ops: company.ops,
     support: company.support,
+    moderators: company.moderators,
     loan: !loan ? "none" : loan.remaining > 0 ? "repaying" : "repaid",
     loanRemaining: loan ? Math.round(loan.remaining) : null,
   };
@@ -126,6 +127,8 @@ export interface ExportRow {
   developers: number | null;
   ops: number | null;
   support: number | null;
+  /** Null in rows logged before moderators, as well as for events with no snapshot. */
+  moderators: number | null;
   loan: string | null;
   loanRemaining: number | null;
   params: Record<string, unknown>;
@@ -145,6 +148,7 @@ const SNAPSHOT_COLUMNS = [
   "developers",
   "ops",
   "support",
+  "moderators",
   "loan",
   "loanRemaining",
 ] as const satisfies readonly (keyof PlaySnapshot & keyof ExportRow)[];

@@ -3,12 +3,13 @@
 //   npm run balance -w sim                              every strategy, seeds 1–5, on the default config
 //   npm run balance -w sim -- --seeds 10 --out report.md
 //   npm run balance -w sim -- --strategy sensible,no-loan --overrides preset.json
+//   npm run balance -w sim -- --difficulty hard
 //
-// --overrides takes a JSON file of config overrides (path → number), as the teacher's config page saves them. --json
+// --difficulty plays every game on Easy, Normal (the default) or Hard. --overrides takes a JSON file of config overrides (path → number), as the teacher's config page saves them. --json
 // writes every game's result as well, for a closer look.
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { applyOverrides, defaultConfig, validateOverrides } from "../src/index.ts";
+import { applyOverrides, defaultConfig, DIFFICULTY_IDS, isDifficultyId, validateOverrides } from "../src/index.ts";
 import { renderReport, runAll, STRATEGIES } from "./harness.ts";
 
 const { values } = parseArgs({
@@ -19,6 +20,7 @@ const { values } = parseArgs({
     out: { type: "string" },
     title: { type: "string" },
     json: { type: "string" },
+    difficulty: { type: "string", default: "normal" },
   },
 });
 
@@ -32,6 +34,14 @@ if (values.overrides) {
   }
   config = applyOverrides(overrides as Record<string, number>);
 }
+
+const difficulty = values.difficulty;
+if (!isDifficultyId(difficulty)) {
+  console.error(`No such difficulty. Pick from: ${DIFFICULTY_IDS.join(", ")}`);
+  process.exit(1);
+}
+// Every game plays on the one difficulty allowed.
+config = { ...config, allowedDifficulties: { easy: 0, normal: 0, hard: 0, [difficulty]: 1 } };
 
 const seeds = Array.from({ length: Number(values.seeds) }, (_, i) => i + 1);
 const wanted = values.strategy?.split(",");

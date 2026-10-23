@@ -1,4 +1,5 @@
-import type { GameConfig, ProductTypeId } from "./config.ts";
+import type { Calendar } from "./calendar.ts";
+import { CUSTOMER_TYPE_IDS, type CustomerTypeId, type GameConfig, type ProductTypeId } from "./config.ts";
 import type { Events } from "./events.ts";
 import type { Features } from "./features.ts";
 import { count } from "./finance.ts";
@@ -6,6 +7,7 @@ import type { Pricing } from "./pricing.ts";
 import type { Rivals } from "./rivals.ts";
 import { nextRandom, seedRng, vary } from "./rng.ts";
 import type { GameState, LogEntry, UnitDemand } from "./state.ts";
+import type { UsersLost } from "./mix.ts";
 import type { Support } from "./support.ts";
 
 /**
@@ -18,6 +20,7 @@ export function createCustomers(
   events: Events,
   pricing: Pricing,
   support: Support,
+  calendar: Calendar,
   rivals: Rivals,
 ) {
   /**
@@ -40,34 +43,23 @@ export function createCustomers(
     };
   }
 
-  function inSpike(productType: ProductTypeId, day: number): boolean {
-    const spike = config.productTypes[productType].growth.seasonalSpike;
-    return !!spike && day >= spike.firstDay && (day - spike.firstDay) % spike.every < spike.length;
+  /** Load from a product's users on a given day, before random variation: any holidays on it move it. */
+  function baseLoad(state: Pick<GameState, "productType" | "startDate">, users: number, day: number): number {
+    return users * config.productTypes[state.productType].growth.loadPerUser * calendar.loadMultiplier(state, day);
   }
 
-  /** What the seasonal spike multiplies load and demand by on a day: 1 outside one. */
-  function spikeMultiplier(productType: ProductTypeId, day: number): number {
-    const spike = config.productTypes[productType].growth.seasonalSpike;
-    return spike && inSpike(productType, day) ? spike.loadMultiplier : 1;
-  }
-
-  /** Load from a product's users on a given day, before random variation. */
-  function baseLoad(productType: ProductTypeId, users: number, day: number): number {
-    return users * config.productTypes[productType].growth.loadPerUser * spikeMultiplier(productType, day);
-  }
-
-  /** CU and DBU demand from a product's users on a given day, before random variation. It spikes like load. */
-  function baseDemand(productType: ProductTypeId, users: number, day: number): UnitDemand {
-    const { cuPerUser, dbuPerUser } = config.productTypes[productType].demand;
-    const spike = spikeMultiplier(productType, day);
-    return { cu: users * cuPerUser * spike, dbu: users * dbuPerUser * spike };
+  /** CU and DBU demand from a product's users on a given day, before random variation. Holidays move it like load. */
+  function baseDemand(state: Pick<GameState, "productType" | "startDate">, users: number, day: number): UnitDemand {
+    const { cuPerUser, dbuPerUser } = config.productTypes[state.productType].demand;
+    const busy = calendar.loadMultiplier(state, day);
+    return { cu: users * cuPerUser * busy, dbu: users * dbuPerUser * busy };
   }
 
   /** Each factor scales the day's growth. Later mechanics (reputation) add their own here. */
   function growthFactors(state: GameState, day: number, outage: boolean): number[] {
-    const spike = config.productTypes[state.productType].growth.seasonalSpike;
     return [
-      spike && inSpike(state.productType, day) ? spike.growthMultiplier : 1,
+      // Any holidays on today.
+      calendar.growthMultiplier(state, day),
       outage ? config.outage.growthMultiplier : 1,
       // Each feature built before today, and each add-on bought.
       ...features.activeGrowth(state),
@@ -83,13 +75,38 @@ export function createCustomers(
   }
 
   /** Each share of users who leave in a day. Added together. Later mechanics (price waves) add their own here. */
-  function churnShares(state: GameState): number[] {
-    return [support.satisfactionChurn(state)];
+  function churnShares(state: GameState, hoursDown: number): number[] {
+    return [support.satisfactionChurn(state), outageLeave(state, hoursDown)];
+  }
+
+  /** Share of a customer type's users who leave over a day's downtime: businesses go fastest, casual users not at all. */
+  const typeOutageLeave = (type: CustomerTypeId, hoursDown: number) =>
+    Math.min(1, config.customerTypes[type].outageLeavePerHour * hoursDown);
+
+  /** Share of all users who leave over a day's downtime: each type's share, weighted by its share of users. */
+  const outageLeave = (state: GameState, hoursDown: number) =>
+    CUSTOMER_TYPE_IDS.reduce((sum, t) => sum + state.customerMix[t] * typeOutageLeave(t, hoursDown), 0);
+
+  /** Who churn takes, by customer type: support takes every type alike, downtime businesses first. */
+  function churnMix(state: GameState, hoursDown: number): Record<CustomerTypeId, number> {
+    const satisfaction = support.satisfactionChurn(state);
+    const weights = CUSTOMER_TYPE_IDS.map((t) => [t, state.customerMix[t] * (satisfaction + typeOutageLeave(t, hoursDown))]);
+    return Object.fromEntries(weights) as Record<CustomerTypeId, number>;
   }
 
   /** Each share of paying users who stop paying in a day, on top of churn, the price's first. Added together. */
   function paidChurnShares(state: GameState, hoursDown: number): number[] {
     return [pricing.priceChurn(state), support.satisfactionPaidChurn(state), config.outage.paidChurnPerHour * hoursDown];
+  }
+
+  /**
+   * Who the paying users who stopped paying and left are, by customer type: each type's share of users × its own
+   * share lost, over the price (casual users first), support and downtime (every type alike).
+   */
+  function leftMix(state: GameState, hoursDown: number): Record<CustomerTypeId, number> {
+    const others = support.satisfactionPaidChurn(state) + config.outage.paidChurnPerHour * hoursDown;
+    const weights = pricing.priceChurnByType(state).map((p) => [p.id, p.share * (p.reaction + others)]);
+    return Object.fromEntries(weights) as Record<CustomerTypeId, number>;
   }
 
   /**
@@ -105,8 +122,9 @@ export function createCustomers(
       (r, f) => r * f,
       profile.dailyGrowth * (1 - state.users / profile.marketSize) * growthVariation,
     );
-    const churnShare = Math.min(1, churnShares(state).reduce((sum, c) => sum + c, 0));
+    const churnShare = Math.min(1, churnShares(state, hoursDown).reduce((sum, c) => sum + c, 0));
     const churned = Math.round(state.users * churnShare);
+    const leftOverDowntime = Math.min(churned, Math.round(state.users * outageLeave(state, hoursDown)));
     const stayed = state.users - churned;
     const stayedPaid = pricing.paidUsersAfter(state, stayed);
     const shares = paidChurnShares(state, hoursDown);
@@ -118,11 +136,25 @@ export function createCustomers(
     const leftPaying = stoppedPaying - droppedToFree;
     const kept: GameState = { ...state, users: stayed - leftPaying, paidUsers: stayedPaid - stoppedPaying };
     const users = Math.max(0, kept.users + Math.round(state.users * rate));
-    const entries: LogEntry[] =
-      stoppedPaying > 0
-        ? [{ text: stoppedPayingText(state, hoursDown, leftPaying, droppedToFree), cashDelta: 0 }]
-        : [];
-    return { users, paidUsers: pricing.paidUsersAfter(kept, users), churned, pricedOut, rng: next, entries };
+    // For the customer mix: who churn took and who stopped paying and left.
+    const lost: UsersLost[] = [
+      { users: churned, weights: churnMix(state, hoursDown) },
+      { users: leftPaying, weights: leftMix(state, hoursDown) },
+    ];
+    const entries: LogEntry[] = [
+      ...(leftOverDowntime > 0 ? [{ text: downtimeLeaversText(hoursDown, leftOverDowntime), cashDelta: 0 }] : []),
+      ...(stoppedPaying > 0 ? [{ text: stoppedPayingText(state, hoursDown, leftPaying, droppedToFree), cashDelta: 0 }] : []),
+    ];
+    return { users, paidUsers: pricing.paidUsersAfter(kept, users), churned, pricedOut, lost, arrived: users - kept.users, rng: next, entries };
+  }
+
+  /** Users who left over the downtime, and who: "Downtime: 40 users left, businesses and professionals who …". */
+  function downtimeLeaversText(hoursDown: number, left: number): string {
+    const who = CUSTOMER_TYPE_IDS.filter((t) => typeOutageLeave(t, hoursDown) > 0)
+      .reverse()
+      .map((t) => config.customerTypes[t].name.toLowerCase());
+    const names = who.length > 1 ? `${who.slice(0, -1).join(", ")} and ${who.at(-1)}` : who[0];
+    return `Downtime: ${count.format(left)} ${left === 1 ? "user" : "users"} left, ${names} who can't run on a service that goes down.`;
   }
 
   /** How many paying users stopped paying today, and why: "Paying users lost: 12 left and 8 dropped to free, because …". */

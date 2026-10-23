@@ -3,6 +3,7 @@
 // decision. Every game writes the same rows as the classroom playtest log, so the same analysis runs on both.
 // A tool for testing the game, not part of it. See play.ts for the command line.
 import {
+  DIFFICULTIES,
   gameLengthName,
   MANAGED_SERVICES,
   MODEL_IDS,
@@ -13,17 +14,26 @@ import {
   STAFF_GRADES,
   STAFF_POOLS,
   type Action,
+  type CounterOdds,
   type DayLog,
+  type FeatureView,
   type FunderId,
+  type GameDate,
   type GameState,
+  type IpoResult,
+  type NegotiationRound,
+  type NegotiationView,
+  type HolidayView,
   type ManagedService,
   type ModelId,
+  type PauseReason,
   type RackSize,
   type ServerSize,
   type ServerType,
   type Sim,
   type StaffGrade,
   type StaffPool,
+  type Terms,
 } from "../src/index.ts";
 
 /** One row of the playtest log, as the staff dashboard exports it, so the classroom analysis runs on AI games too. */
@@ -49,6 +59,8 @@ export interface LogRow {
   developers: number;
   ops: number;
   support: number;
+  /** Moderators: 0 on a product without user content. */
+  moderators: number;
   loan: string;
   loanRemaining: number | null;
   params: Record<string, unknown>;
@@ -67,10 +79,23 @@ const money = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
 /** A price, to the penny when it has pence: £7.50, £5. */
 const price = (n: number) => (Number.isInteger(n) ? money(n) : `£${n.toFixed(2)}`);
 const pct = (n: number) => `${Math.round(n)}%`;
+const share = (n: number) => `${(100 * n).toFixed(1)}%`;
 /** A share of the company, 0–1, to one decimal place of a percent. */
 const stake = (share: number) => `${Math.round(share * 1000) / 10}%`;
 /** A share price, which can be under a penny with many shares. */
 const perShare = (n: number) => `£${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
+
+/** An offer's terms in words: friends and family's cash for their share, the grant's cash for its condition's days. */
+const termsText = (funder: FunderId, t: Terms) =>
+  funder === "friendsAndFamily" ? `${money(t.amount!)} for ${stake(t.share!)}` : `${money(t.amount!)} for ${t.days} days of uptime`;
+
+/** A roll in words: "rolled 15 −6 for asking 20% = 9: middle, they moved 50% of the way". */
+const rollText = (r: NegotiationRound) =>
+  `rolled ${r.die}${r.penalty ? ` −${r.penalty} for asking ${pct(r.ask * 100)}` : ""}${r.bonus ? ` +${r.bonus} bonus` : ""} = ${r.total < 0 ? `−${-r.total}` : r.total}: ${r.result}, they moved ${pct(r.move * 100)} of the way`;
+
+/** Where a negotiation stands: offer 2 of 3, with a counter left, or the final offer. */
+const standing = (n: NegotiationView) =>
+  n.final ? "final offer" : `offer ${n.offers.length} of 3, ${n.countersLeft} counter${n.countersLeft === 1 ? "" : "s"} left`;
 
 /** The tier that runs out first, and how full it is: 999 with demand and no capacity, as the classroom log does. */
 function tierUse(sim: Sim, state: GameState): { tier: string | null; use: number | null } {
@@ -109,7 +134,7 @@ export function runway(sim: Sim, state: GameState): number | null {
 export function logRow(sim: Sim, state: GameState, who: Player, type: string, params: Record<string, unknown>, error: string | null = null): LogRow {
   const { tier, use } = tierUse(sim, state);
   const loan = sim.loan(state);
-  const heads = (pool: StaffPool) => sim.staff(state).find((p) => p.pool === pool)!.headcount;
+  const heads = (pool: StaffPool) => sim.staff(state).find((p) => p.pool === pool)?.headcount ?? 0;
   return {
     at: new Date().toISOString(),
     player: who.player,
@@ -132,19 +157,41 @@ export function logRow(sim: Sim, state: GameState, who: Player, type: string, pa
     developers: heads("developers"),
     ops: heads("ops"),
     support: heads("support"),
+    moderators: heads("moderators"),
     loan: !loan ? "none" : loan.remaining > 0 ? "repaying" : "repaid",
     loanRemaining: loan ? Math.round(loan.remaining) : null,
     params,
   };
 }
 
-/** Each customer type's share of users and price threshold, "!" where today's price is over it. */
+/** Each customer type's share of users, to a tenth of a percent so a shift shows, and price threshold, "!" where today's price is over it. */
 export function renderMix(sim: Sim, state: GameState): string {
   return sim
     .customerMix(state)
-    .types.map((t) => `${t.id} ${pct(100 * t.share)} (threshold ${price(t.threshold)}${t.overThreshold ? "!" : ""})`)
+    .types.map((t) => `${t.id} ${share(t.share)} (threshold ${price(t.threshold)}${t.overThreshold ? "!" : ""})`)
     .join(", ");
 }
+
+/** Each customer type's share of today's new users, with what tilts it from the product's mix: features, price, rivals. */
+export function renderNewUsers(sim: Sim, state: GameState): string {
+  return sim
+    .customerMix(state)
+    .types.map((t) => {
+      const why = [
+        t.featureAppeal !== 1 ? `features x${+t.featureAppeal.toFixed(2)}` : "",
+        t.priceFilter !== 1 ? `price x${+t.priceFilter.toFixed(2)}` : "",
+        t.rivalPull !== 1 ? `rivals x${+t.rivalPull.toFixed(2)}` : "",
+      ].filter(Boolean);
+      return `${t.id} ${share(t.newShare)}${why.length ? ` (${why.join(", ")})` : ""}`;
+    })
+    .join(", ");
+}
+
+/** Who a feature appeals to: " [pulls professionals x1.5]". */
+const appeal = (a: FeatureView["appeal"]) => {
+  const parts = Object.entries(a ?? {}).map(([t, m]) => `${t} x${m}`);
+  return parts.length ? ` [pulls ${parts.join(", ")}]` : "";
+};
 
 /**
  * The market in a line: each company's share of users, price and quality, what rivals do to growth, and when they'll
@@ -186,12 +233,13 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const fair = sim.fairPrice(state);
   const lock = sim.priceLockDaysLeft(state);
   const left = runway(sim, state);
-  const daysToPlay = state.finalDay - state.day;
+  const daysToPlay = state.finalDay === null ? Infinity : state.finalDay - state.day;
   const lasts = left === null ? "not losing money" : left > daysToPlay ? `lasts past day ${state.finalDay}` : `${left} days`;
-  const status = state.endedByTeacher ? "ENDED BY TEACHER" : state.status.toUpperCase();
+  const status = state.ipo.result ? "FLOATED" : state.endedByTeacher ? "ENDED BY TEACHER" : state.status.toUpperCase();
+  const calendar = sim.calendar(state);
   lines.push(
-    `== ${state.companyName} | ${state.productType} on ${state.model} | day ${state.day}/${state.finalDay} ` +
-      `(${gameLengthName(sim.config, state.gameLength)}) | ${status}`,
+    `== ${state.companyName} | ${state.productType} on ${state.model} | day ${state.day}${state.finalDay === null ? "" : `/${state.finalDay}`} ` +
+      `(${gameLengthName(sim.config, state.gameLength)}, ${DIFFICULTIES[state.difficulty].name}${sim.tickDays(state) === 7 ? ", a week a tick" : ""}) | ${calendar.today.text} | ${status}`,
   );
   lines.push(
     `cash ${money(state.cash)} | income ${money(dailyIncome(sim, state))}/day | costs ${money(dailyCosts(sim, state))}/day | runway ${lasts}`,
@@ -204,6 +252,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
     );
   }
   lines.push(`customer mix: ${renderMix(sim, state)}`);
+  lines.push(`new users join as: ${renderNewUsers(sim, state)}`);
   const market = renderMarket(sim, state);
   if (market) lines.push(market);
   const conversion = sim.conversion(state);
@@ -213,6 +262,13 @@ export function renderStatus(sim: Sim, state: GameState): string {
   lines.push(
     `satisfaction ${pct(state.satisfaction)} | uptime ${sim.uptime(state).toFixed(1)}% | tickets ${Math.round(sim.usualTickets(state))}/day vs ${Math.round(sim.dailyClearance(state))} cleared, backlog ${Math.round(state.backlog)}`,
   );
+  const moderation = sim.moderation(state);
+  if (moderation) {
+    lines.push(
+      `reports ${moderation.usualReports}/day | moderators can handle ${Math.round(moderation.dailyClearance)}/day (a mid ${sim.config.moderation.reportsPerPerson}), handled ${moderation.handledToday} yesterday | unhandled ${moderation.backlog}` +
+        ` | satisfaction target ×${moderation.satisfactionFactor.toFixed(2)} | lawsuit odds ×${moderation.lawsuitOdds.toFixed(2)}`,
+    );
+  }
   lines.push(`power and cooling ${money(sim.powerAndCooling(state.model))}/day`);
   lines.push(...staffLines(sim, state));
 
@@ -278,7 +334,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const features = sim.features(state);
   lines.push(
     `features: ${features
-      .map((f) => `${f.id} ${f.status === "notStarted" ? "not started" : f.status}${f.daysLeft ? ` (${f.daysLeft}d left)` : ""}`)
+      .map((f) => `${f.id} ${f.status === "notStarted" ? "not started" : f.status}${f.daysLeft ? ` (${f.daysLeft}d left)` : ""}${appeal(f.appeal)}`)
       .join(", ")}`,
   );
 
@@ -291,9 +347,12 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const valuation = sim.valuation(state);
   const table = sim.capTable(state);
   lines.push(
-    `valuation ${money(valuation.valuation)} | share price ${perShare(valuation.sharePrice)} | ${table.rows.map((r) => `${r.name.toLowerCase()} ${stake(r.share)}`).join(", ")} of ${table.sharesInIssue.toLocaleString("en-GB")} shares`,
+    `${state.ipo.result ? `market value ${money(state.ipo.result.marketValue)} at the first day's close` : `valuation ${money(valuation.valuation)}`} | share price ${perShare(table.sharePrice)} | ${table.rows.map((r) => `${r.name.toLowerCase()} ${stake(r.share)}`).join(", ")} of ${table.sharesInIssue.toLocaleString("en-GB")} shares`,
   );
   lines.push(`funding: ${fundingStatus(sim, state)}`);
+  lines.push(`ipo: ${ipoStatus(sim, state)}`);
+  const rescue = rescueStatus(sim, state);
+  if (rescue) lines.push(`rescue: ${rescue}`);
   const migration = sim.migration(state);
   if (migration) lines.push(`migration: ${migration.from}→${migration.to}, ${migration.phase}, ${migration.daysLeft} days left`);
   const danger = sim.danger(state);
@@ -302,20 +361,120 @@ export function renderStatus(sim: Sim, state: GameState): string {
     `danger meter: ${danger.meter} (no event waits past ${danger.max}) | rose ${danger.rise} today (well-run day +${danger.dailyRise}${risks ? `, ${risks}` : ""})`,
   );
   for (const r of danger.risks) lines.push(`  ${r.label}: ${r.detail}`);
-  for (const e of sim.events(state)) lines.push(`event today: ${e.name}. ${e.outcome}`);
+  lines.push(`calendar: ${calendarLine(sim, state)}`);
+  for (const e of sim.events(state)) lines.push(`event today: ${e.name}. ${e.responsibility} ${e.outcome}`);
   for (const g of sim.featureGaps(state)) lines.push(`feature gap: ${g.name}. ${g.detail}`);
   return lines.join("\n");
+}
+
+/** The IPO in a line: how many readiness conditions are met and what's next. */
+function ipoStatus(sim: Sim, state: GameState): string {
+  const ipo = sim.ipo(state);
+  const met = ipo.conditions.filter((x) => x.met).length;
+  const todo = ipo.conditions.filter((x) => !x.met).map((x) => x.label.toLowerCase());
+  switch (ipo.status) {
+    case "floated": {
+      const r = ipo.result!;
+      return `floated ${stake(r.float)} on day ${r.day}: raised ${money(r.cashRaised)}, closed at ${perShare(r.closePrice)} (offer ${perShare(r.offerPrice)}), market value ${money(r.marketValue)}; you own ${stake(r.studentShare)}, worth ${money(r.studentValue)}`;
+    }
+    case "approved":
+      return `APPROVED on day ${ipo.approvedDay}: pick a float and ring the bell ("ipo" for the offer)`;
+    case "cold":
+      return `cold market: can apply again on day ${ipo.retryDay} | ${met}/${ipo.conditions.length} conditions met`;
+    case "ready":
+      return `READY: all ${met} conditions met, comfort ${Math.round(ipo.comfort * 100)}% ("apply" to float)`;
+    default:
+      return `${met}/${ipo.conditions.length} readiness conditions met; still to meet: ${todo.join(", ")}`;
+  }
+}
+
+/** Once approved, the offer and what a float every 5% would do. */
+function offerLines(sim: Sim, state: GameState): string[] {
+  const o = sim.ipo(state).offer;
+  if (!o) return [];
+  return [
+    `offer: valuation ${money(o.valuation)}, ${o.sharesInIssue.toLocaleString("en-GB")} shares at ${perShare(o.offerPrice)}; you own ${stake(o.studentShare)}. Float ${stake(o.minFloat)}–${stake(o.maxFloat)} ("ring <percent>"):`,
+    ...o.floats
+      .filter((_, i) => i % 5 === 0 || i === o.floats.length - 1)
+      .map(
+        (f) =>
+          `  ${stake(f.float)}: ${f.newShares.toLocaleString("en-GB")} new shares, raises ${money(f.cashRaised)}, you'd own ${stake(f.studentShareAfter)}, first day swings about ±${Math.round(f.swing * 100)}%`,
+      ),
+  ];
+}
+
+/** The readiness checklist in full, the offer once approved, and the first day of trading once floated. */
+function ipoLines(sim: Sim, state: GameState): string[] {
+  const ipo = sim.ipo(state);
+  const lines = [
+    `ipo: ${ipoStatus(sim, state)}`,
+    `readiness (comfort ${Math.round(ipo.comfort * 100)}%: the more comfortably ready, the less chance of a cold market):`,
+  ];
+  for (const x of ipo.conditions) {
+    lines.push(`  [${x.met ? "x" : " "}] ${x.label}: ${x.now}. Needs ${x.needed}.${x.met ? ` Comfort ${Math.round(x.comfort * 100)}%.` : ""}`);
+  }
+  if (ipo.refusal && ipo.status !== "approved" && ipo.status !== "floated") lines.push(`apply: ${ipo.refusal}`);
+  for (const a of ipo.applications) lines.push(`  applied day ${a.day}: ${a.cold ? "cold market, postponed" : "approved"}`);
+  lines.push(...offerLines(sim, state));
+  if (ipo.result) lines.push(...bellLines(ipo.result));
+  return lines;
+}
+
+/** The opening bell: the first day of trading, half-hour by half-hour, and how it ended. */
+function bellLines(r: IpoResult): string[] {
+  const time = (i: number) => {
+    const minutes = 9 * 60 + 30 + i * 30;
+    return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+  };
+  const change = r.closePrice / r.offerPrice - 1;
+  return [
+    `opening bell! floated ${stake(r.float)}: ${r.newShares.toLocaleString("en-GB")} new shares at ${perShare(r.offerPrice)} raised ${money(r.cashRaised)}`,
+    `first day: ${r.prices.map((p, i) => `${time(i)} ${perShare(p)}`).join(", ")}`,
+    `close ${perShare(r.closePrice)} (${change >= 0 ? "+" : "−"}${pct(Math.abs(change) * 100)} on the offer) | market value ${money(r.marketValue)} (cash raised included) | you own ${stake(r.studentShare)}, worth ${money(r.studentValue)}`,
+    ...r.reasons.map((x) => `  ${x}`),
+  ];
+}
+
+/** What a holiday does to the product: "load ×2.2, growth ×2.5", or "no effect on you". */
+const holidayEffect = (h: HolidayView) =>
+  h.effect ? `load ×${h.effect.loadMultiplier}, growth ×${h.effect.growthMultiplier}` : "no effect on you";
+
+/** "2 Dec 2026". */
+const shortDate = (h: GameDate) => `${h.dayOfMonth} ${h.text.split(" ")[2]!.slice(0, 3)} ${h.year}`;
+
+/** The holidays on now and the next one to come, in a line. */
+function calendarLine(sim: Sim, state: GameState): string {
+  const { on, upcoming } = sim.calendar(state);
+  // A holiday the product doesn't notice is left to the full calendar.
+  const now = on.filter((h) => h.effect).map((h) => `${h.name} on now to day ${h.endDay} (${holidayEffect(h)})`);
+  const next = upcoming[0];
+  const parts = [...now, next ? `next: ${next.name} in ${next.daysUntil} days, day ${next.startDay} (${holidayEffect(next)})` : "no more holidays this game"];
+  return `${parts.join(" | ")}   ("calendar" for all)`;
+}
+
+/** Every holiday to come in the game, with its dates and what it does to the product. */
+function calendarLines(sim: Sim, state: GameState): string[] {
+  const { today, startYear, on, upcoming } = sim.calendar(state);
+  const line = (h: HolidayView) =>
+    `  ${h.name}: ${h.daysUntil > 0 ? `in ${h.daysUntil} days, ` : ""}${shortDate(h.start)}–${shortDate(h.end)} (days ${h.startDay}–${h.endDay}), ${holidayEffect(h)}${h.effect ? `. ${h.effect.detail}` : ""}`;
+  return [
+    `calendar: ${today.text}, year ${today.year - startYear + 1} of the game (started ${startYear})`,
+    ...(on.length ? ["on now:", ...on.map(line)] : []),
+    upcoming.length ? "coming up:" : "no more holidays before the game ends",
+    ...upcoming.map(line),
+  ];
 }
 
 /** Friends and family and the grant in a line: each one's offer, or how it stands. */
 function fundingStatus(sim: Sim, state: GameState): string {
   const f = sim.funding(state);
+  const n = f.negotiations;
   const ff = f.friendsAndFamilyOffer
-    ? `offer ${money(f.friendsAndFamilyOffer.amount)} for ${stake(f.friendsAndFamilyOffer.theirShare)}`
+    ? `${standing(n.friendsAndFamily!)} ${money(f.friendsAndFamilyOffer.amount)} for ${stake(f.friendsAndFamilyOffer.theirShare)}`
     : f.friendsAndFamily!.status;
   const g = f.grant;
   const grant = f.grantOffer
-    ? `offer ${money(f.grantOffer.amount)} if uptime ≥ ${f.grantOffer.minUptime}% for ${f.grantOffer.days} days`
+    ? `${standing(n.grant!)} ${money(f.grantOffer.amount)} if uptime ≥ ${f.grantOffer.minUptime}% for ${f.grantOffer.days} days`
     : g!.status === "accepted"
       ? g!.untilDay === null
         ? `${g!.maxHoursDown}h down allowed over ${g!.days} days, starting once the launch is over`
@@ -324,23 +483,63 @@ function fundingStatus(sim: Sim, state: GameState): string {
   return `friends and family ${ff} | grant ${grant}`;
 }
 
+/** The rescue buyout in a line, once it has happened: what the vulture VC put in and took, and its buy-back price. */
+function rescueStatus(sim: Sim, state: GameState): string | null {
+  const r = sim.rescue(state);
+  if (!r) return null;
+  const terms = `day ${r.day}, a vulture VC put in ${money(r.amount)} for ${stake(r.share)}`;
+  if (r.boughtBack) return `${terms}; you bought it back on day ${r.boughtBack.day} for ${money(r.boughtBack.price)}`;
+  if (r.buyBackPrice === null) return `${terms}; it owns ${stake(r.vultureShare)}`;
+  return `${terms}; it owns ${stake(r.vultureShare)} and sells it back for ${money(r.buyBackPrice)}${r.canBuyBack ? "" : " (more than your cash)"}. Run out of cash again and it's liquidation`;
+}
+
+/** The rescue buyout in full: the cash, the share taken, the cuts, and the buy-back. */
+function rescueLines(sim: Sim, state: GameState): string[] {
+  const r = sim.rescue(state);
+  if (!r) return ["no rescue yet: the first time cash runs out, a vulture VC rescues the company; the second time is liquidation"];
+  const cuts = [
+    ...r.cuts.map((c) => `${c.count} ${c.agency ? "agency " : ""}${c.grade} ${c.pool}`),
+    ...(r.hiresCancelled ? [`${r.hiresCancelled} hires cancelled`] : []),
+  ];
+  return [
+    `rescue on day ${r.day}: a vulture VC put in ${money(r.amount)} (${money(r.losses)} of losses${r.severance ? `, ${money(r.severance)} of severance` : ""}, the rest breathing space) for ${r.shares.toLocaleString("en-GB")} new shares, ${stake(r.share)} of the company`,
+    `forced cuts: ${cuts.length ? cuts.join(", ") : "none"}${r.savedPerDay ? `, saving ${money(r.savedPerDay)}/day` : ""}${r.severance ? `, paying ${money(r.severance)} severance` : ""}`,
+    r.boughtBack
+      ? `bought back on day ${r.boughtBack.day} for ${money(r.boughtBack.price)}`
+      : r.buyBackPrice === null
+        ? `the vulture VC owns ${stake(r.vultureShare)}`
+        : `buy-back (buyback): ${money(r.buyBackPrice)} for its ${r.vultureShares.toLocaleString("en-GB")} shares (${stake(r.vultureShare)}), paid from company cash: ${r.priceDetail}. ${r.canBuyBack ? "You can afford it." : `You have ${money(state.cash)}.`}`,
+  ];
+}
+
 /**
- * Staff by pool: headcount by grade, their work a day in mids (what's measured against ops needed, build days and
- * tickets), each grade's pay, and hires still to start.
+ * Staff by pool: permanent headcount by grade, any agency staff apart, everyone's work a day in mids (what's measured
+ * against ops needed, build days and tickets), each grade's pay and severance, agency pay, and hires still to start.
  */
 function staffLines(sim: Sim, state: GameState): string[] {
   const g = sim.config.staffGrades;
+  const a = sim.config.agency;
   const lines = [
     `staff: cost ${money(sim.dailyStaffCost(state))}/day | grades: ${STAFF_GRADES.map((grade) => `${grade} work ${g[grade].output}, starts ${g[grade].leadDays}d after hiring`).join("; ")}`,
+    `  agency staff: ${a.payMultiplier}x the pay and ${a.output}x the work of the same grade, start ${a.leadDays}d after hiring, ` +
+      `no severance | letting go permanent staff pays ${sim.config.severance.days} days' pay each in severance, at once`,
   ];
   for (const p of sim.staff(state)) {
     const grades = p.grades.map((x) => `${x.count} ${x.grade}`).join(", ");
+    const agency = p.agencyCount
+      ? ` + agency ${p.agencyCount} (${p.agency.filter((x) => x.count).map((x) => `${x.count} ${x.grade}`).join(", ")})`
+      : "";
     const pay = p.grades.map((x) => money(x.dayRate)).join("/");
+    const agencyPay = p.agency.map((x) => money(x.dayRate)).join("/");
+    const severance = p.grades.map((x) => money(x.severance)).join("/");
     const need = p.pool === "ops" ? `, need ${sim.opsNeededNow(state)}` : "";
     const hiring = p.hiring.length
-      ? ` | hired, not started: ${p.hiring.map((h) => `${h.count} ${h.grade} on day ${h.arrivesOn} (${h.daysLeft}d)`).join(", ")}`
+      ? ` | hired, not started: ${p.hiring.map((h) => `${h.count} ${h.agency ? "agency " : ""}${h.grade} on day ${h.arrivesOn} (${h.daysLeft}d)`).join(", ")}`
       : "";
-    lines.push(`  ${p.pool} ${p.headcount} (${grades}) work ${p.output}${need} | pay junior/mid/senior ${pay}/day${hiring}`);
+    lines.push(
+      `  ${p.pool} ${p.headcount} (${grades})${agency} work ${p.output}${need} | pay junior/mid/senior ${pay}/day, ` +
+        `agency ${agencyPay}/day | severance ${severance} each${hiring}`,
+    );
   }
   return lines;
 }
@@ -348,9 +547,13 @@ function staffLines(sim: Sim, state: GameState): string[] {
 /** Every command that does something right now, with the values it takes. */
 export function renderCommands(sim: Sim, state: GameState): string {
   const lines = ["commands (join several with ';'):"];
-  const pools = STAFF_POOLS.join("|");
+  // Moderators only on a product with user content.
+  const pools = sim.staff(state).map((p) => p.pool).join("|");
   const grades = STAFF_GRADES.join("|");
-  lines.push(`  hire <${pools}> [${grades}] [n] | letgo <${pools}> [${grades}] [n] | move <to> [from] [${grades}]   (grade defaults to mid)`);
+  lines.push(
+    `  hire <${pools}> [agency] [${grades}] [n] | letgo <${pools}> [agency] [${grades}] [n] | move <to> [from] [${grades}]   ` +
+      `(grade defaults to mid; permanent staff unless "agency"; move is permanent staff only)`,
+  );
   if (sim.priceLockDaysLeft(state) === 0) lines.push(`  price <0.01–${sim.config.pricing.maxPrice}>`);
   lines.push(`  preview <price>   (what a price would do; changes nothing)`);
   const notStarted = sim.features(state).filter((f) => f.status === "notStarted");
@@ -426,10 +629,34 @@ export function renderCommands(sim: Sim, state: GameState): string {
   if (open) {
     lines.push(`  funding   (each open offer in full: what friends and family get, the grant's condition; changes nothing)`);
     lines.push(`  accept <${open}> | decline <${open}>   (each can be answered once; ff = friends and family)`);
+    const countering = [funding.negotiations.friendsAndFamily?.countersLeft && "ff", funding.negotiations.grant?.countersLeft && "grant"];
+    const max = pct(sim.config.negotiation.maxAsk * 100);
+    if (countering[0]) {
+      lines.push(`  counter ff [amount <£>] [share <%>]   (ask for more cash and/or a smaller share for them; up to ${max} better in all; a dice roll sets their next offer, the third is final)`);
+    }
+    if (countering[1]) lines.push(`  counter grant [amount <£>] [days <n>]   (ask for more cash and/or fewer days of the uptime condition, the same way)`);
+    const odds = countering.filter(Boolean).join("|");
+    if (odds) lines.push(`  odds <${odds}> ...   (the same terms as counter: the odds on the roll and each offer it could bring; changes nothing)`);
+  }
+  const rescue = sim.rescue(state);
+  if (rescue) lines.push(`  rescue   (the rescue buyout in full: cash, share taken, cuts, the buy-back price; changes nothing)`);
+  if (rescue?.buyBackPrice) {
+    lines.push(`  buyback   (buy all the vulture VC's shares back from company cash: ${money(rescue.buyBackPrice)}${rescue.canBuyBack ? "" : ", more than your cash"})`);
+  }
+  const ipo = sim.ipo(state);
+  lines.push(`  ipo   (the IPO readiness checklist in full, and once approved the offer; changes nothing)`);
+  if (ipo.canApply) lines.push(`  apply   (apply to float: a small hidden chance of a cold market, less the more comfortably ready you are)`);
+  if (ipo.offer) {
+    const range = `${Math.round(ipo.offer.minFloat * 100)}-${Math.round(ipo.offer.maxFloat * 100)}`;
+    lines.push(`  ring <${range}>   (float that % of the company in new shares and ring the opening bell: ENDS THE GAME)`);
   }
   const loan = sim.loan(state);
   if (loan?.remaining) lines.push(`  repayloan   (pay off the loan now: ${money(loan.payoff)}, saving ${money(loan.interestSaved)} interest)`);
-  lines.push(`  next [days]   (advance up to that many days, default 7; stops early when something needs you)`);
+  lines.push(`  calendar   (the holidays to come, their dates and what each does to your product)`);
+  const tick = sim.tickDays(state) === 7 ? "a week (this is a career)" : "a day";
+  lines.push(
+    `  next [days]   (play ticks of ${tick} until that many days have gone by, default 7; stops early, on the day, when something needs you)`,
+  );
   lines.push(`  end   (as the teacher: end the game now, scored as it stands)`);
   return lines.join("\n");
 }
@@ -442,6 +669,10 @@ export type Command =
   | { kind: "valuation" }
   | { kind: "market" }
   | { kind: "funding" }
+  | { kind: "ipo" }
+  | { kind: "odds"; funder: FunderId; terms: Partial<Terms> }
+  | { kind: "rescue" }
+  | { kind: "calendar" }
   | { kind: "next"; days: number }
   /** The teacher ends the game, as from the staff panel. */
   | { kind: "end" };
@@ -476,16 +707,29 @@ export function parseCommand(text: string): Command {
   };
   const service = (w: string | undefined) => oneOf<ManagedService>(w, MANAGED_SERVICES, "a managed service");
   const pool = (w: string | undefined) => oneOf<StaffPool>(w, STAFF_POOLS, "a staff pool");
-  // An optional grade before the count: "hire support junior 5", "hire support 5" (mids).
-  const staffArgs = (rest: string[]): { grade?: StaffGrade; count: number } => {
+  // Optional "agency", then an optional grade, before the count: "hire support junior 5", "hire support 5" (mids),
+  // "hire support agency 2", "letgo ops agency senior".
+  const staffArgs = (words: string[]): { grade?: StaffGrade; count: number; agency?: true } => {
+    const agency = words[0] === "agency";
+    const rest = agency ? words.slice(1) : words;
     const grade = rest[0] !== undefined && /^[a-z]/.test(rest[0]) ? oneOf<StaffGrade>(rest[0], STAFF_GRADES, "a grade") : undefined;
-    return { ...(grade ? { grade } : {}), count: count(grade ? rest[1] : rest[0]) };
+    return { ...(agency ? { agency } : {}), ...(grade ? { grade } : {}), count: count(grade ? rest[1] : rest[0]) };
   };
   const one = (action: Action): Command => ({ kind: "action", action, times: 1 });
   const funder = (w: string | undefined): FunderId => {
     if (w === "ff" || w === "friends" || w === "friendsandfamily") return "friendsAndFamily";
     if (w === "grant") return "grant";
     throw new SimError("bad_command", "Expected a funder: ff (friends and family) or grant.");
+  };
+  // "amount 18000 share 18", in any order: a share is a percent; days are whole days.
+  const terms = (rest: string[]): Partial<Terms> => {
+    const out: Partial<Terms> = {};
+    for (let i = 0; i < rest.length; i += 2) {
+      const key = oneOf(rest[i], ["amount", "share", "days"] as const, "a term");
+      const value = number(rest[i + 1]?.replace(/[£%,]/g, ""), `the ${key}`);
+      out[key] = key === "share" ? value / 100 : value;
+    }
+    return out;
   };
   switch (verb) {
     case "hire":
@@ -538,10 +782,22 @@ export function parseCommand(text: string): Command {
       return { kind: "market" };
     case "funding":
       return { kind: "funding" };
+    case "calendar":
+      return { kind: "calendar" };
     case "accept":
       return one({ type: "acceptFunding", funder: funder(args[0]) });
     case "decline":
       return one({ type: "declineFunding", funder: funder(args[0]) });
+    case "ipo":
+      return { kind: "ipo" };
+    case "apply":
+      return one({ type: "applyForIpo" });
+    case "ring":
+      return one({ type: "ringBell", float: number(args[0], "a float percentage, 15 to 40") / 100 });
+    case "counter":
+      return one({ type: "counterFunding", funder: funder(args[0]), terms: terms(args.slice(1)) });
+    case "odds":
+      return { kind: "odds", funder: funder(args[0]), terms: terms(args.slice(1)) };
     case "buyapi":
       return one({ type: "buyApi" });
     case "switch":
@@ -550,6 +806,10 @@ export function parseCommand(text: string): Command {
       return one({ type: "setApiInstances", count: number(args[0], "an API instance count") });
     case "repayloan":
       return one({ type: "repayLoan" });
+    case "rescue":
+      return { kind: "rescue" };
+    case "buyback":
+      return one({ type: "buyBack" });
     case "next":
       return { kind: "next", days: args[0] === undefined ? 7 : count(args[0]) };
     case "end":
@@ -606,6 +866,10 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
   if (command.kind === "valuation") return { state, rows: [], lines: valuationLines(sim, state) };
   if (command.kind === "market") return { state, rows: [], lines: marketLines(sim, state) };
   if (command.kind === "funding") return { state, rows: [], lines: fundingLines(sim, state) };
+  if (command.kind === "ipo") return { state, rows: [], lines: ipoLines(sim, state) };
+  if (command.kind === "odds") return { state, rows: [], lines: oddsLines(command.funder, sim.counterOdds(state, command.funder, command.terms)) };
+  if (command.kind === "rescue") return { state, rows: [], lines: rescueLines(sim, state) };
+  if (command.kind === "calendar") return { state, rows: [], lines: calendarLines(sim, state) };
   if (command.kind === "end") {
     const ended = sim.endGame(state);
     // Logged as the classroom server logs a game the teacher ends.
@@ -628,7 +892,51 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
       return { state: current, rows, lines: [what + err.message + teamNow(sim, current, command.action, err)] };
     }
   }
-  return { state: current, rows, lines: [`${command.action.type}${command.times > 1 ? ` ×${done}` : ""}: done`] };
+  // Letting go permanent staff pays their severance at once.
+  const severance = current.spend.staff - state.spend.staff;
+  const paid = severance > 0 ? `, paid ${money(severance)} severance` : "";
+  if (command.action.type === "applyForIpo") {
+    const ipo = sim.ipo(current);
+    const lines =
+      ipo.status === "approved"
+        ? ["applyForIpo: APPROVED. Pick a float and ring the opening bell.", ...offerLines(sim, current)]
+        : [`applyForIpo: COLD MARKET. The IPO is postponed: apply again from day ${ipo.retryDay}. Satisfaction fell to ${pct(current.satisfaction)}.`];
+    return { state: current, rows, lines };
+  }
+  if (command.action.type === "ringBell") {
+    // Logged as the classroom server logs a game that ends.
+    rows.push(logRow(sim, current, who, "end", { status: current.status, ending: "ipo" }));
+    return { state: current, rows, lines: [...bellLines(current.ipo.result!), `GAME OVER: floated on day ${current.day}`] };
+  }
+  if (command.action.type === "counterFunding") return { state: current, rows, lines: [counterLine(sim, current, command.action.funder)] };
+  return { state: current, rows, lines: [`${command.action.type}${command.times > 1 ? ` ×${done}` : ""}: done${paid}`] };
+}
+
+/** What a counter's roll did, and the offer that stands now. */
+function counterLine(sim: Sim, state: GameState, funder: FunderId): string {
+  const n = sim.funding(state).negotiations[funder]!;
+  const round = n.rounds.at(-1)!;
+  return `counter ${termsText(funder, round.counter)}: ${rollText(round)}. Offer ${n.offers.length}: ${termsText(funder, n.offers.at(-1)!)}${n.final ? " (final: accept or decline)" : ` (${n.countersLeft} counter left)`}`;
+}
+
+/** A counter's odds, before it's made. */
+function oddsLines(funder: FunderId, o: CounterOdds): string[] {
+  const chance = (x: number) => pct(x * 100);
+  return [
+    `counter ${termsText(funder, o.counter)} asks ${pct(o.ask * 100)} better (most ${pct(o.maxAsk * 100)}): −${o.penalty} on the roll${o.bonus ? `, +${o.bonus} bonus` : ""}`,
+    `  high ${chance(o.chances.high)} → ${termsText(funder, o.outcomes.high)}`,
+    `  middle ${chance(o.chances.middle)} → ${termsText(funder, o.outcomes.middle)}`,
+    `  low ${chance(o.chances.low)} → ${termsText(funder, o.outcomes.low)}`,
+  ];
+}
+
+/** A negotiation so far, if the student has countered: each offer and the roll that came after it. */
+function negotiationLines(funder: FunderId, n: NegotiationView | null): string[] {
+  if (!n?.rounds.length) return [];
+  return n.rounds.map(
+    (r, i) =>
+      `  offer ${i + 1} ${termsText(funder, n.offers[i]!)}; you asked ${termsText(funder, r.counter)}, ${rollText(r)} → offer ${i + 2} ${termsText(funder, n.offers[i + 1]!)}`,
+  );
 }
 
 /** After a refused letgo or move for want of staff, who the team has now, so the player can pick a grade they have. */
@@ -636,7 +944,9 @@ function teamNow(sim: Sim, state: GameState, action: Action, err: SimError): str
   if (err.code !== "no_staff" || (action.type !== "letGo" && action.type !== "moveStaff")) return "";
   const pool = action.type === "letGo" ? action.pool : (action.from ?? (action.to === "developers" ? "ops" : "developers"));
   const team = sim.staff(state).find((p) => p.pool === pool);
-  return team ? ` (${pool} now: ${team.grades.map((x) => `${x.count} ${x.grade}`).join(", ")})` : "";
+  if (!team) return "";
+  const agency = action.type === "letGo" && action.agency;
+  return ` (${pool} now: ${(agency ? team.agency : team.grades).map((x) => `${x.count} ${agency ? "agency " : ""}${x.grade}`).join(", ")})`;
 }
 
 /**
@@ -655,8 +965,9 @@ export function runScript(sim: Sim, state: GameState, script: string, who: Playe
     }
     try {
       const command = parseCommand(text);
-      // Once the game is over, only what changes nothing still works: the valuation, who owns the company and the market.
-      if (current.status !== "playing" && command.kind !== "valuation" && command.kind !== "funding" && command.kind !== "market") {
+      // Once the game is over, only what changes nothing still works: the valuation, who owns the company, the IPO, the
+      // market.
+      if (current.status !== "playing" && !["valuation", "funding", "rescue", "ipo", "market"].includes(command.kind)) {
         skipped = "the game is over";
         lines.push(`> ${text}`, `not run: ${skipped}`);
         continue;
@@ -696,15 +1007,22 @@ function fundingLines(sim: Sim, state: GameState): string[] {
   const ff = f.friendsAndFamilyOffer;
   if (ff) {
     lines.push(
-      `friends and family (accept ff): ${money(ff.amount)} for ${ff.newShares.toLocaleString("en-GB")} new shares at ${perShare(ff.sharePrice)} (valuation ${money(ff.valuation)}). ` +
-        `They'd own ${stake(ff.theirShare)}; you'd go from ${stake(ff.yourShareBefore)} to ${stake(ff.yourShareAfter)}. Paid now, no target.`,
+      `friends and family (accept ff): ${money(ff.amount)} for ${ff.newShares.toLocaleString("en-GB")} new shares at ${perShare(ff.sharePrice)} (${f.negotiations.friendsAndFamily?.rounds.length ? "the price they're paying values the company at" : "valuation"} ${money(ff.valuation)}). ` +
+        `They'd own ${stake(ff.theirShare)}; you'd go from ${stake(ff.yourShareBefore)} to ${stake(ff.yourShareAfter)}. Paid now, no target. ` +
+        `Negotiation: ${standing(f.negotiations.friendsAndFamily!)}.`,
+      ...negotiationLines("friendsAndFamily", f.negotiations.friendsAndFamily),
     );
   } else {
     const t = f.friendsAndFamily!;
     lines.push(`friends and family: ${t.status} on day ${t.day}${t.status === "accepted" ? `, ${money(t.amount)} for ${t.shares.toLocaleString("en-GB")} shares` : ""}`);
   }
   const g = f.grantOffer;
-  if (g) lines.push(`grant (accept grant): ${money(g.amount)}, no shares. ${g.condition} ${g.ifMissed}`);
+  if (g) {
+    lines.push(
+      `grant (accept grant): ${money(g.amount)}, no shares. ${g.condition} ${g.ifMissed} Negotiation: ${standing(f.negotiations.grant!)}.`,
+      ...negotiationLines("grant", f.negotiations.grant),
+    );
+  }
   else {
     const t = f.grant!;
     lines.push(
@@ -725,70 +1043,49 @@ function fundingLines(sim: Sim, state: GameState): string[] {
  * Log entry kinds worth showing every day they appear. Feature, migration and API entries show only on days they stop
  * time.
  */
-const SHOWN_KINDS = new Set(["outage", "event", "bankrupt", "finished", "support", "price", "launch", "staff", "funding", "danger", "rival"]);
+const SHOWN_KINDS = new Set(["outage", "event", "rescue", "liquidation", "finished", "support", "price", "launch", "staff", "funding", "danger", "calendar", "rival"]);
 const STOPPING_KINDS = new Set(["feature", "migration", "api"]);
 
-const builtCount = (state: GameState) => Object.values(state.features).filter((f) => f.status !== "building").length;
-
-/** Why the day just played needs a decision, if it does: compares the company before and after the day. */
-function stopReasons(sim: Sim, before: GameState, after: GameState): string[] {
+/**
+ * Stops the text interface makes on top of the sim's own pause triggers, comparing the company before and after a
+ * tick: worth a look for a playtester, though the game page plays on through them.
+ */
+function extraStops(sim: Sim, before: GameState, after: GameState, pauses: PauseReason[]): string[] {
   const reasons: string[] = [];
-  // Only events that need the player stop time: ones that hurt or found the company short of ops. A provider patch
-  // with nothing to do is just shown. An event lasting several days stops on its first day only.
-  const yesterday = new Set(sim.events(before).map((e) => e.id));
-  const events = sim.events(after).filter((e) => (e.hit || e.shortOfOps) && !yesterday.has(e.id));
-  if (events.length) reasons.push(`event: ${events.map((e) => e.name).join(", ")}`);
-  if (after.outageDays > before.outageDays) reasons.push("outage");
   // A risk that's new today makes the danger meter climb faster: worth a decision before the next random event.
   const risksBefore = new Set(sim.danger(before).risks.map((r) => r.id));
   const newRisks = sim.danger(after).risks.filter((r) => !risksBefore.has(r.id));
   if (newRisks.length) reasons.push(`danger meter climbing faster: ${newRisks.map((r) => r.label.toLowerCase()).join(", ")}`);
-  if (builtCount(after) > builtCount(before)) reasons.push("feature built");
-  const launchBefore = sim.launch(before).status;
-  const launchAfter = sim.launch(after).status;
-  if (launchAfter !== launchBefore && (launchAfter === "launching" || launchAfter === "launched")) reasons.push(`launch ${launchAfter}`);
-  const migBefore = sim.migration(before);
-  const migAfter = sim.migration(after);
-  if (migBefore && !migAfter) reasons.push("migration complete");
-  else if (migBefore && migAfter && migAfter.phase !== migBefore.phase) reasons.push(`migration now ${migAfter.phase}`);
-  const pending = (st: GameState) => sim.servers(st).filter((x) => x.status === "pending").length;
-  if (pending(after) < pending(before)) reasons.push("server arrived");
   if (after.hiring.length < before.hiring.length) reasons.push("staff started");
-  const { use } = tierUse(sim, after);
-  const { use: useBefore } = tierUse(sim, before);
-  if (use !== null && use > 100 && (useBefore === null || useBefore <= 100)) reasons.push(`capacity over 100% (${use}%)`);
-  if (after.satisfaction <= before.satisfaction - 15 || (after.satisfaction < 50 && before.satisfaction >= 50)) {
-    reasons.push(`satisfaction fell to ${pct(after.satisfaction)}`);
-  }
-  const left = runway(sim, after);
-  const leftBefore = runway(sim, before);
-  if (left !== null && left <= 7 && (leftBefore === null || leftBefore > 7)) reasons.push(`cash runs out in ${left} days`);
+  const fell = after.satisfaction <= before.satisfaction - 15 || (after.satisfaction < 50 && before.satisfaction >= 50);
+  if (fell && !pauses.some((p) => p.id === "satisfaction")) reasons.push(`satisfaction fell to ${pct(after.satisfaction)}`);
+  // Reports left unhandled long enough to cost satisfaction: the same point the game logs its warning.
+  const warnAt = 1 - sim.config.moderation.warnShare;
+  const factor = (st: GameState) => sim.moderation(st)?.satisfactionFactor ?? 1;
+  if (factor(after) < warnAt && factor(before) >= warnAt) reasons.push(`reports unhandled (${after.reportBacklog})`);
   if (sim.priceLockDaysLeft(before) > 0 && sim.priceLockDaysLeft(after) === 0) reasons.push("price can change again");
-  const grantBefore = before.funding.grant?.status;
-  const grantAfter = after.funding.grant?.status;
-  if (grantBefore === "accepted" && grantAfter !== "accepted") reasons.push(`grant ${grantAfter}`);
-  const dropped = (st: GameState) => st.api?.dropped ?? 0;
-  if (dropped(after) > 0 && dropped(before) === 0) reasons.push(`API calls dropped (${dropped(after).toLocaleString("en-GB")})`);
   return reasons;
 }
 
 /**
- * Plays up to `days` days, one at a time, and stops early when something needs a decision: an event, outage, a new
- * risk on the danger meter, built feature, migration step, the launch, a server arriving, staff starting, capacity
- * running out, satisfaction falling hard, cash about to run out, the price unlocking, or API calls starting to be
- * dropped. Returns the notable lines of each day played and why it stopped.
+ * Plays ticks until at least `days` days have gone by: a tick is a day, or a week in a career, as Continue plays on
+ * the game page. Stops early when the sim pauses itself (an event that hurts, an alert, an offer, low cash or something
+ * finished), on the day it does, and also when a new risk climbs the danger meter, staff start, satisfaction falls
+ * hard, reports go unhandled or the price unlocks. Logs one Continue a tick, as the classroom server does. Returns the
+ * notable lines of each day played and why it stopped.
  */
 export function advanceUntil(sim: Sim, state: GameState, days: number, who: Player): Turn {
   let current = state;
   const lines: string[] = [];
   const rows: LogRow[] = [];
   let stop: string | null = null;
-  for (let i = 0; i < days && current.status === "playing" && !stop; i++) {
+  for (let played = 0; played < days && current.status === "playing" && !stop; ) {
     const before = current;
-    const result = sim.advance(current, 1);
+    const result = sim.tick(current);
     current = result.state;
+    played += result.days;
     rows.push(logRow(sim, current, who, "continue", { events: sim.events(current).map((e) => e.id) }));
-    const reasons = stopReasons(sim, before, current);
+    const reasons = current.status === "playing" ? [...result.pauses.map((p) => p.text), ...extraStops(sim, before, current, result.pauses)] : [];
     lines.push(...dayLines(result.log, reasons.length > 0));
     if (reasons.length) stop = `stopped on day ${current.day}: ${reasons.join("; ")}`;
   }
@@ -829,6 +1126,8 @@ export function renderSummary(sim: Sim, state: GameState): string {
   // The day-by-day series are for charts; the player only needs the totals.
   const { days: _days, incomeVsCosts: _incomeVsCosts, ...summary } = sim.summarise(state);
   const yours = sim.capTable(state).rows.find((r) => r.id === "student")!;
-  const valuation = { valuation: sim.valuation(state).valuation, yourShare: stake(yours.share), yourSharesWorth: yours.value };
+  // After an IPO the company is worth its market value at the first day's close, not the formula's valuation.
+  const worth = state.ipo.result ? { marketValue: state.ipo.result.marketValue } : { valuation: sim.valuation(state).valuation };
+  const valuation = { ...worth, yourShare: stake(yours.share), yourSharesWorth: yours.value };
   return JSON.stringify({ ...summary, ...valuation }, null, 1);
 }

@@ -3,6 +3,8 @@ import { computed } from "vue";
 import { SPEND_CATEGORIES, type SpendCategory } from "@xaas/sim";
 import type { SummaryView } from "@xaas/server/api-types";
 import { formatCash, formatCount, formatUptime } from "../api";
+import { dayOf } from "../game";
+import { formatShare, formatSharePrice } from "../shares";
 import CostChart from "./CostChart.vue";
 import CashChart from "./CashChart.vue";
 import IncomeChart from "./IncomeChart.vue";
@@ -36,15 +38,19 @@ const biggest = computed(() =>
     <h2 id="summary-heading">How {{ summary.companyName }} did</h2>
     <p class="muted">
       <template v-if="summary.ending === 'completed'">Played all {{ summary.finalDay }} days</template>
-      <template v-else-if="summary.ending === 'bankrupt'">
-        Ran out of cash on day {{ summary.day }} of {{ summary.finalDay }}
+      <template v-else-if="summary.ending === 'ipo'">Floated on {{ dayOf(summary.day, summary.finalDay) }}</template>
+      <template v-else-if="summary.ending === 'liquidation'">
+        Went into liquidation on {{ dayOf(summary.day, summary.finalDay) }}
       </template>
-      <template v-else-if="summary.ending === 'ended'">
-        Ended by the teacher on day {{ summary.day }} of {{ summary.finalDay }}
-      </template>
-      <template v-else-if="retired">Retired on day {{ summary.day }} of {{ summary.finalDay }}</template>
-      <template v-else>So far: day {{ summary.day }} of {{ summary.finalDay }}</template>
+      <template v-else-if="summary.ending === 'ended'">Ended by the teacher on {{ dayOf(summary.day, summary.finalDay) }}</template>
+      <template v-else-if="retired">Retired on {{ dayOf(summary.day, summary.finalDay) }}</template>
+      <template v-else>So far: {{ dayOf(summary.day, summary.finalDay) }}</template>
       · ended on {{ modelName }}
+    </p>
+    <p v-if="summary.rescue" class="muted" data-testid="summary-rescue">
+      Rescued by a vulture VC on day {{ summary.rescue.day }}: {{ formatCash(summary.rescue.amount) }} for
+      {{ Math.round(summary.rescue.share * 100) }}% of the company<template v-if="summary.rescue.boughtBack">,
+        bought back on day {{ summary.rescue.boughtBack.day }} for {{ formatCash(summary.rescue.boughtBack.price) }}</template>.
     </p>
 
     <div :class="['summary-headline', loss ? 'loss' : 'profit']" data-testid="summary-headline">
@@ -54,6 +60,24 @@ const biggest = computed(() =>
         Income <strong data-testid="summary-income">{{ formatCash(summary.income) }}</strong>
         − costs <strong data-testid="summary-costs">{{ formatCash(summary.costs) }}</strong>
       </span>
+    </div>
+
+    <div v-if="summary.ipo" class="stats ipo-stats" data-testid="summary-ipo">
+      <div class="stat">
+        <span class="label">Cash raised</span>
+        <span class="value">{{ formatCash(summary.ipo.cashRaised) }}</span>
+        <small>{{ formatShare(summary.ipo.float) }} floated at {{ formatSharePrice(summary.ipo.offerPrice) }} a share</small>
+      </div>
+      <div class="stat">
+        <span class="label">Market value at the close</span>
+        <span class="value" data-testid="summary-market-value">{{ formatCash(summary.ipo.marketValue) }}</span>
+        <small>closed at {{ formatSharePrice(summary.ipo.closePrice) }}</small>
+      </div>
+      <div class="stat">
+        <span class="label">Your stake</span>
+        <span class="value">{{ formatCash(summary.ipo.studentValue) }}</span>
+        <small>{{ formatShare(summary.ipo.studentShare) }} of the company</small>
+      </div>
     </div>
 
     <div class="stats">

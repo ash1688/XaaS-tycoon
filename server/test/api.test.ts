@@ -7,6 +7,7 @@ import type {
   ActionBody,
   CompanyView,
   ConfigErrorView,
+  CounterOddsView,
   ContinueResult,
   MetaView,
   MigrationQuoteView,
@@ -32,6 +33,8 @@ const STARTING_USERS = { ecommerce: 2000, social: 1000, video: 1000 };
 const sim = createSim({
   ...defaultConfig,
   startingCash: 1000,
+  // Games start on a random date, so holidays are left out unless a test adds them: they'd move load and growth.
+  calendar: { ...defaultConfig.calendar, holidays: [] },
   // Add-ons cost only their per-user price, so buying one fits in the starting cash.
   addons: { ...defaultConfig.addons, setupFeePerDevDay: 0 },
   servers: {
@@ -108,6 +111,7 @@ const sim = createSim({
     developers: { ...defaultConfig.staff.developers, dayRate: 10, startingCount: 0 },
     ops: { ...defaultConfig.staff.ops, dayRate: 4, startingCount: 0 },
     support: { ...defaultConfig.staff.support, dayRate: 3, startingCount: 0 },
+    moderators: { ...defaultConfig.staff.moderators, dayRate: 2, startingCount: 0 },
   },
   // Mids (the default hire) and seniors start at once, so tests needn't wait; juniors wait 3 days, to test lead times.
   staffGrades: {
@@ -348,12 +352,12 @@ describe("active company limit and retiring", () => {
     expect((await newCompany(code)).statusCode).toBe(409);
   });
 
-  it("doesn't count finished or bankrupt games", async () => {
+  it("doesn't count finished or liquidated games", async () => {
     const code = await newCode();
     const ids = [];
     for (let i = 0; i < 3; i++) ids.push((await newCompany(code)).json<CompanyView>().id);
     await setStatus(ids[0]!, "finished");
-    await setStatus(ids[1]!, "bankrupt");
+    await setStatus(ids[1]!, "liquidated");
     expect((await newCompany(code)).statusCode).toBe(201);
     expect((await newCompany(code)).statusCode).toBe(201);
     expect((await newCompany(code)).statusCode).toBe(409);
@@ -385,17 +389,17 @@ describe("active company limit and retiring", () => {
     expect(summary.json<SummaryView>()).toMatchObject({ companyName: "Acme", day: 2 });
   });
 
-  it("retiring twice is fine, but a finished or bankrupt game can't be retired", async () => {
+  it("retiring twice is fine, but a finished or liquidated game can't be retired", async () => {
     const code = await newCode();
     const a = (await newCompany(code)).json<CompanyView>().id;
     const b = (await newCompany(code)).json<CompanyView>().id;
     await retire(code, a);
     expect((await retire(code, a)).json<CompanyView>().status).toBe("retired");
-    await setStatus(b, "bankrupt");
+    await setStatus(b, "liquidated");
     const res = await retire(code, b);
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ error: "not_active" });
-    expect(await statuses(code)).toEqual(["bankrupt", "retired"]);
+    expect(await statuses(code)).toEqual(["liquidated", "retired"]);
   });
 
   it("returns 404 when retiring another code's company, or a malformed id", async () => {
@@ -426,12 +430,37 @@ describe("continue", () => {
     const res = await app.inject({ method: "POST", url: `${url}/continue` });
     expect(res.statusCode).toBe(200);
     const body = res.json<ContinueResult>();
-    expect(body.company).toMatchObject({ day: 2, cash: 975 });
+    expect(body.company).toMatchObject({ day: 2, cash: 975, tickDays: 1 });
+    expect(body).toMatchObject({ days: 1, pauses: [] });
     expect(body.log).toHaveLength(1);
     expect(body.log[0]!.day).toBe(2);
 
     // Resuming later (a fresh request, as from another machine) sees the saved state.
     expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({ day: 2, cash: 975 });
+  });
+
+  it("plays a week a press in a career, stopping on the day something needs the student, with why", async () => {
+    await useOverrides({ "allowedGameLengths.career": 1 });
+    const code = await newCode();
+    const company = (
+      await newCompany(code, { name: "Lifer", productType: "social", model: "saas", gameLength: "career" })
+    ).json<CompanyView>();
+    expect(company.tickDays).toBe(7);
+    const url = `/api/codes/${code}/companies/${company.id}/continue`;
+
+    // £1,000 of cash runs low inside the first week: time stops that day, with why.
+    const first = (await app.inject({ method: "POST", url })).json<ContinueResult>();
+    expect(first.days).toBeGreaterThan(0);
+    expect(first.days).toBeLessThan(7);
+    expect(first.pauses).toContainEqual({ kind: "lowCash", id: "low-cash", text: expect.stringMatching(/^Cash runs out/) });
+    expect(first.company.day).toBe(1 + first.days);
+    expect(first.log.map((d) => d.day)).toEqual(Array.from({ length: first.days }, (_, i) => 2 + i));
+
+    // The next press plays on from there, up to a week.
+    const second = (await app.inject({ method: "POST", url })).json<ContinueResult>();
+    expect(second.log[0]!.day).toBe(first.company.day + 1);
+    expect(second.days).toBeLessThanOrEqual(7);
+    expect(second.company.day).toBe(first.company.day + second.days);
   });
 
   it("serialises concurrent presses so each advances one day", async () => {
@@ -508,6 +537,30 @@ describe("staff actions", () => {
     expect(played.company.cash).toBe(1000 - 45);
   });
 
+  it("hires moderators only on a product with user content, and shows its reports", async () => {
+    const { code, act } = await setup();
+    const refused = await act({ type: "hire", pool: "moderators" });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toMatchObject({ error: "no_content" });
+    const shop = (await act({ type: "hire", pool: "support" })).json<CompanyView>();
+    expect(shop).toMatchObject({ moderators: 0, moderation: null });
+    expect(shop.staff.map((p) => p.pool)).not.toContain("moderators");
+
+    const social = (await newCompany(code, { name: "Chatter", productType: "social", model: "saas" })).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${social.id}`;
+    expect(social.staff.map((p) => p.pool)).toContain("moderators");
+    expect(social.moderation).toMatchObject({ backlog: 0, dailyClearance: 0, lawsuitOdds: 1 });
+    // With no moderators, the reports the users raise go unhandled, and the lawsuit odds rise.
+    const played = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>().company;
+    expect(played.moderation!.reportsToday).toBeGreaterThan(0);
+    expect(played.moderation!.backlog).toBe(played.moderation!.reportsToday);
+    expect(played.moderation!.lawsuitOdds).toBeGreaterThan(1);
+    const hired = await app.inject({ method: "POST", url: `${url}/actions`, payload: { type: "hire", pool: "moderators", count: 2 } });
+    expect(hired.json<CompanyView>()).toMatchObject({ moderators: 2, moderation: { dailyClearance: 2 * defaultConfig.moderation.reportsPerPerson } });
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.reportsPerPerson).toBe(defaultConfig.moderation.reportsPerPerson);
+  });
+
   it("rejects letting go below zero with 400 and changes nothing", async () => {
     const { url, act } = await setup();
     const res = await act({ type: "letGo", pool: "ops" });
@@ -561,6 +614,35 @@ describe("staff actions", () => {
     expect(played!.company).toMatchObject({ day: 4, support: 3, dailyStaffCost: 8 });
     expect(played!.log[0]!.entries).toContainEqual({ text: "2 junior support staff started work.", cashDelta: 0, kind: "staff" });
     expect((await act({ type: "hire", pool: "support", grade: "intern" })).statusCode).toBe(400);
+  });
+
+  it("hires agency staff for the next day, shown apart, and charges severance only for permanent staff", async () => {
+    const { url, act } = await setup();
+    // An agency mid in support is £3 × 1.25 = £3.75, rounded to £4, and does half a mid's work.
+    const hired = (await act({ type: "hire", pool: "support", agency: true, count: 2 })).json<CompanyView>();
+    expect(hired.staff.find((p) => p.pool === "support")).toMatchObject({
+      headcount: 0,
+      agencyCount: 0,
+      hiring: [{ grade: "mid", count: 2, agency: true, arrivesOn: 2, daysLeft: 1 }],
+    });
+    const played = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    expect(played.company).toMatchObject({ support: 0, dailyStaffCost: 8, dailyClearance: 30 });
+    expect(played.company.staff.find((p) => p.pool === "support")).toMatchObject({
+      agencyCount: 2,
+      output: 1,
+      agency: [{ grade: "junior", count: 0 }, { grade: "mid", count: 2, dayRate: 4, output: 0.5, severance: 0 }, { grade: "senior", count: 0 }],
+    });
+    expect(played.log[0]!.entries).toContainEqual({ text: "Agency support staff pay (2 mids)", cashDelta: -8, category: "staff" });
+
+    const cash = played.company.cash;
+    const agencyGone = (await act({ type: "letGo", pool: "support", agency: true, count: 2 })).json<CompanyView>();
+    expect(agencyGone).toMatchObject({ cash, dailyStaffCost: 0 });
+
+    // A permanent mid in support is £3 a day: severance is 14 days' pay, £42, shown before they go and paid at once.
+    const permanent = (await act({ type: "hire", pool: "support" })).json<CompanyView>();
+    const mid = permanent.staff.find((p) => p.pool === "support")!.grades.find((g) => g.grade === "mid")!;
+    expect(mid.severance).toBe(42);
+    expect((await act({ type: "letGo", pool: "support" })).json<CompanyView>()).toMatchObject({ support: 0, cash: cash - 42 });
   });
 
   it("lists the grades in the game's meta", async () => {
@@ -712,6 +794,51 @@ describe("games from an older version", () => {
     }
     const list = (await app.inject({ method: "GET", url: `/api/codes/${code}` })).json<{ companies: CompanyView[] }>();
     expect(list.companies.map((c) => c.name).sort()).toEqual(["One", "Three", "Two"]);
+  });
+});
+
+describe("difficulty", () => {
+  it("offers only Normal by default, and refuses a difficulty the preset doesn't allow", async () => {
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.difficulties).toEqual([
+      { id: "normal", name: "Normal", blurb: expect.any(String), startingCash: meta.startingCash },
+    ]);
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    expect(company).toMatchObject({ difficulty: "normal", difficultyName: "Normal" });
+    const refused = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "iaas", difficulty: "easy" });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toMatchObject({ error: "difficulty_not_allowed", message: expect.stringContaining("Normal") });
+  });
+
+  it("starts a game on a difficulty the preset allows, with its numbers, and records it", async () => {
+    await useOverrides({ "allowedDifficulties.easy": 1, "allowedDifficulties.hard": 1 });
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.difficulties.map((d) => d.id)).toEqual(["easy", "normal", "hard"]);
+    const [easy, normal, hard] = meta.difficulties.map((d) => d.startingCash);
+    expect(easy).toBeGreaterThan(normal!);
+    expect(hard).toBeLessThan(normal!);
+    const code = await newCode();
+    const games: Record<string, CompanyView> = {};
+    for (const difficulty of ["easy", "normal", "hard"]) {
+      const created = await newCompany(code, { name: difficulty, productType: "social", model: "saas", difficulty });
+      expect(created.statusCode).toBe(201);
+      games[difficulty] = created.json<CompanyView>();
+    }
+    expect(games.hard).toMatchObject({ difficulty: "hard", difficultyName: "Hard" });
+    // SaaS has nothing to pay up front, so each game's cash follows its starting cash.
+    expect(games.easy!.cash - games.normal!.cash).toBe(easy! - normal!);
+    expect(games.normal!.cash - games.hard!.cash).toBe(normal! - hard!);
+    // Left out, Normal.
+    const plain = await newCompany(await newCode(), { name: "Plain", productType: "social", model: "saas" });
+    expect(plain.json<CompanyView>().difficulty).toBe("normal");
+
+    // The game keeps its difficulty after the preset stops allowing it.
+    await useOverrides({}, "Normal only");
+    const url = `/api/codes/${code}/companies/${games.hard!.id}`;
+    expect((await app.inject({ method: "POST", url: `${url}/continue` })).statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({ difficulty: "hard", day: 2 });
+    expect((await app.inject({ method: "GET", url: `${url}/summary` })).json<SummaryView>()).toMatchObject({ difficulty: "hard" });
   });
 });
 
@@ -1230,7 +1357,7 @@ describe("PaaS managed services and SaaS with no servers", () => {
   });
 });
 
-describe("ledger and bankruptcy", () => {
+describe("ledger, rescue buyout and liquidation", () => {
   async function setup() {
     const code = await newCode();
     const company = (await newCompany(code)).json<CompanyView>();
@@ -1279,14 +1406,45 @@ describe("ledger and bankruptcy", () => {
     expect((await app.inject({ method: "GET", url })).json<CompanyView>().spend).toEqual(spend);
   });
 
-  it("goes bankrupt when cash drops below zero, then rejects continue and actions with 409", async () => {
+  it("has a vulture VC rescue the company the first time cash drops below zero", async () => {
     const { company, url } = await setup();
     await setCash(company.id, 10);
     const res = await app.inject({ method: "POST", url: `${url}/continue` });
     expect(res.statusCode).toBe(200);
     const body = res.json<ContinueResult>();
-    expect(body.company).toMatchObject({ day: 2, cash: -15, status: "bankrupt" });
-    expect(body.log[0]!.entries.at(-1)).toMatchObject({ kind: "bankrupt" });
+    // £15 of losses and 30 days at £25 a day, to the £100 above: £800.
+    expect(body.company).toMatchObject({ day: 2, cash: 785, status: "active" });
+    expect(body.company.rescue).toMatchObject({ day: 2, amount: 800, losses: 15, shares: 30_000, share: 0.75, buyBackPrice: 1_600 });
+    expect(body.company.capTable.rows.map((r) => r.id)).toEqual(["student", "vulture"]);
+    const rescue = body.log[0]!.entries.filter((e) => e.kind === "rescue");
+    expect(rescue.map((e) => e.text)).toEqual([expect.stringMatching(/vulture VC rescued Acme: it put in £800/), expect.stringMatching(/^Forced cost cuts/)]);
+    expect((await app.inject({ method: "GET", url })).json<CompanyView>().rescue).toMatchObject({ day: 2, amount: 800 });
+  });
+
+  it("buys the vulture VC's shares back at its price", async () => {
+    const { company, url } = await setup();
+    await setCash(company.id, 10);
+    await app.inject({ method: "POST", url: `${url}/continue` });
+    const refused = await app.inject({ method: "POST", url: `${url}/actions`, payload: { type: "buyBack" } });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toMatchObject({ error: "cant_afford", cost: 1_600, cash: 785 });
+    await setCash(company.id, 2_000);
+    const bought = (await app.inject({ method: "POST", url: `${url}/actions`, payload: { type: "buyBack" } })).json<CompanyView>();
+    expect(bought).toMatchObject({ cash: 400, rescue: { boughtBack: { day: 2, price: 1_600 }, buyBackPrice: null } });
+    expect(bought.capTable.rows.map((r) => [r.id, r.share])).toEqual([["student", 1]]);
+  });
+
+  it("goes into liquidation when cash drops below zero again, then rejects continue and actions with 409", async () => {
+    const { company, url } = await setup();
+    await setCash(company.id, 10);
+    await app.inject({ method: "POST", url: `${url}/continue` });
+    await setCash(company.id, 10);
+    const res = await app.inject({ method: "POST", url: `${url}/continue` });
+    expect(res.statusCode).toBe(200);
+    const body = res.json<ContinueResult>();
+    expect(body.company).toMatchObject({ day: 3, cash: -15, status: "liquidated" });
+    expect(body.log[0]!.entries.at(-1)).toMatchObject({ kind: "liquidation" });
+    expect(body.company.valuation.valuation).toBe(0);
 
     for (const attempt of [
       app.inject({ method: "POST", url: `${url}/continue` }),
@@ -1294,18 +1452,18 @@ describe("ledger and bankruptcy", () => {
     ]) {
       const rejected = await attempt;
       expect(rejected.statusCode).toBe(409);
-      expect(rejected.json()).toMatchObject({ error: "bankrupt", message: expect.stringContaining("bankrupt") });
+      expect(rejected.json()).toMatchObject({ error: "liquidated", message: expect.stringContaining("liquidation") });
     }
 
-    // Nothing changed, and the game still shows as bankrupt after a reload.
+    // Nothing changed, and the game still shows as liquidated after a reload.
     expect((await app.inject({ method: "GET", url })).json<CompanyView>()).toMatchObject({
-      day: 2,
+      day: 3,
       cash: -15,
       ops: 0,
-      status: "bankrupt",
+      status: "liquidated",
     });
     const [row] = await testDb.db.select().from(companies).where(eq(companies.id, company.id));
-    expect(row!.status).toBe("bankrupt");
+    expect(row!.status).toBe("liquidated");
   });
 
   it("keeps going at exactly zero cash", async () => {
@@ -1531,10 +1689,150 @@ describe("shares and funding", () => {
     expect(after.funding.grant).toMatchObject({ status: "accepted", day: 1, hoursDown: 0, daysLeft: sim.config.funding.grant.days });
   });
 
+  it("negotiates an offer: odds first, then counters, the offer that stands accepted", async () => {
+    const { company, act, url } = await setup();
+    const opening = company.funding.negotiations.friendsAndFamily!;
+    expect(opening).toMatchObject({ countersLeft: 2, final: false, rounds: [] });
+    const amount = opening.offers[0]!.amount! * 1.2;
+    const odds = await app.inject({ method: "GET", url: `${url}/counter-odds?funder=friendsAndFamily&amount=${amount}` });
+    expect(odds.statusCode).toBe(200);
+    expect(odds.json<CounterOddsView>()).toMatchObject({ ask: expect.closeTo(0.2), penalty: 6, chances: { high: expect.closeTo(0.05) } });
+    const greedy = await app.inject({ method: "GET", url: `${url}/counter-odds?funder=friendsAndFamily&amount=${amount * 2}` });
+    expect(greedy.json()).toMatchObject({ error: "counter_too_far" });
+
+    const first = (await act({ type: "counterFunding", funder: "friendsAndFamily", terms: { amount } })).json<CompanyView>();
+    const talks = first.funding.negotiations.friendsAndFamily!;
+    expect(talks.offers).toHaveLength(2);
+    expect(talks.rounds[0]).toMatchObject({ ask: expect.closeTo(0.2), penalty: 6 });
+    expect(first.funding.friendsAndFamilyOffer!.amount).toBe(talks.offers[1]!.amount);
+    // The game's own randomness is untouched, so the cash and the day are as they were.
+    expect(first.cash).toBe(company.cash);
+
+    const share = talks.offers[1]!.share! * 0.9;
+    const second = (await act({ type: "counterFunding", funder: "friendsAndFamily", terms: { share } })).json<CompanyView>();
+    expect(second.funding.negotiations.friendsAndFamily).toMatchObject({ final: true, countersLeft: 0 });
+    const third = await act({ type: "counterFunding", funder: "friendsAndFamily", terms: { share: share * 0.9 } });
+    expect(third.statusCode).toBe(400);
+    expect(third.json()).toMatchObject({ error: "final_offer" });
+
+    const standing = second.funding.friendsAndFamilyOffer!;
+    const accepted = (await act({ type: "acceptFunding", funder: "friendsAndFamily" })).json<CompanyView>();
+    expect(accepted.cash).toBe(company.cash + standing.amount);
+    expect(accepted.capTable.rows[1]).toMatchObject({ id: "friendsAndFamily", shares: standing.newShares });
+    expect(accepted.funding.negotiations.friendsAndFamily).toBeNull();
+  });
+
+  it("negotiates the grant on its cash and days, and validates counters", async () => {
+    const { act } = await setup();
+    const res = await act({ type: "counterFunding", funder: "grant", terms: { days: 45 } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json<CompanyView>().funding.grantOffer!.days).toBeLessThan(sim.config.funding.grant.days);
+    expect((await act({ type: "counterFunding", funder: "grant" })).statusCode).toBe(400);
+    expect((await act({ type: "counterFunding", funder: "grant", terms: { price: 5 } })).statusCode).toBe(400);
+    expect((await act({ type: "counterFunding", funder: "grant", terms: { days: 2.5 } })).statusCode).toBe(400);
+    const wrong = await act({ type: "counterFunding", funder: "grant", terms: { share: 0.1 } });
+    expect(wrong.statusCode).toBe(400);
+    expect(wrong.json()).toMatchObject({ error: "bad_counter" });
+    const worse = await act({ type: "counterFunding", funder: "grant", terms: { days: 90 } });
+    expect(worse.json()).toMatchObject({ error: "worse_counter" });
+  });
+
   it("validates the funder", async () => {
     const { act } = await setup();
     expect((await act({ type: "acceptFunding" })).statusCode).toBe(400);
     expect((await act({ type: "acceptFunding", funder: "angel" })).statusCode).toBe(400);
+  });
+});
+
+describe("the IPO", () => {
+  // Thresholds anyone can meet after a couple of days, every user paying, and never a cold market.
+  const EASY_IPO = {
+    "productTypes.ecommerce.pricing.freeShare": 0,
+    "ipo.products.ecommerce.users": 0,
+    "ipo.products.ecommerce.annualRevenue": 0,
+    "ipo.products.ecommerce.payingUsers": 0,
+    "ipo.recordDays": 2,
+    "ipo.minUptime": 0,
+    "ipo.minSatisfaction": 0,
+    "ipo.maxCostSwing": 5,
+    "ipo.coldChance.min": 0,
+    "ipo.coldChance.max": 0,
+  };
+
+  async function setup(overrides: object = EASY_IPO, body: object = {}) {
+    await useOverrides(overrides);
+    const code = await newCode();
+    const created = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "saas", ...body });
+    expect(created.statusCode).toBe(201);
+    const company = created.json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
+    const next = () => app.inject({ method: "POST", url: `${url}/continue` });
+    return { code, company, url, act, next };
+  }
+
+  it("shows the readiness checklist, and refuses to apply until every condition is met", async () => {
+    const { company, act } = await setup({});
+    expect(company.ipo.conditions.map((c) => c.id)).toEqual([
+      "usersAndRevenue",
+      "uptime",
+      "costs",
+      "security",
+      "profit",
+      "satisfaction",
+      "payingUsers",
+    ]);
+    expect(company.ipo).toMatchObject({ status: "not-ready", ready: false, canApply: false, offer: null, result: null });
+    const res = await act({ type: "applyForIpo" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: "ipo_not_ready", message: expect.stringContaining("Not ready to float yet") });
+  });
+
+  it("applies once ready, holds the game, then floats and rings the bell, ending it", async () => {
+    const { url, act, next } = await setup();
+    await next();
+    const ready = (await next()).json<ContinueResult>().company;
+    expect(ready.ipo).toMatchObject({ status: "ready", canApply: true });
+    const approved = (await act({ type: "applyForIpo" })).json<CompanyView>();
+    expect(approved.ipo).toMatchObject({ status: "approved", approvedDay: 3, offer: { minFloat: 0.15, maxFloat: 0.4 } });
+    const held = await next();
+    expect(held.statusCode).toBe(409);
+    expect(held.json()).toMatchObject({ error: "ring_the_bell" });
+
+    for (const payload of [{ type: "ringBell" }, { type: "ringBell", float: 2 }]) expect((await act(payload)).statusCode).toBe(400);
+    expect((await act({ type: "ringBell", float: 0.5 })).json()).toMatchObject({ error: "bad_float" });
+
+    const preview = approved.ipo.offer!.floats.find((f) => f.float === 0.2)!;
+    const rung = await act({ type: "ringBell", float: 0.2 });
+    expect(rung.statusCode).toBe(200);
+    const floated = rung.json<CompanyView>();
+    const result = floated.ipo.result!;
+    expect(floated).toMatchObject({ status: "finished", cash: approved.cash + preview.cashRaised });
+    expect(floated.ipo.status).toBe("floated");
+    expect(result).toMatchObject({ float: 0.2, newShares: preview.newShares, cashRaised: preview.cashRaised, day: 3 });
+    expect(result.prices).toHaveLength(sim.config.ipo.ticks + 1);
+    expect(result.marketValue).toBe(Math.round(result.closePrice * result.sharesAfter));
+    expect(floated.capTable.rows.map((r) => [r.id, r.shares])).toEqual([
+      ["student", 10_000],
+      ["public", preview.newShares],
+    ]);
+    const summary = (await app.inject({ method: "GET", url: `${url}/summary` })).json<SummaryView>();
+    expect(summary).toMatchObject({ ending: "ipo", ipo: result });
+    const after = await next();
+    expect(after.statusCode).toBe(409);
+    expect(after.json()).toMatchObject({ error: "finished", message: expect.stringContaining("Acme floated on day 3") });
+  });
+
+  it("offers until IPO as a game length with no last day, when the preset allows it", async () => {
+    const { company } = await setup({ "allowedGameLengths.until-ipo": 1 }, { gameLength: "until-ipo" });
+    const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
+    expect(meta.gameLengths).toEqual([
+      { id: "180-days", name: "180 days", finalDay: 180 },
+      { id: "until-ipo", name: "Until IPO", finalDay: null },
+    ]);
+    expect(company).toMatchObject({ gameLength: "until-ipo", gameLengthName: "Until IPO", finalDay: null });
+    const games = (await app.inject({ method: "GET", url: "/api/teacher/games", cookies: await teacherCookie() })).json<TeacherGamesView>();
+    expect(games.codes[0]!.companies[0]).toMatchObject({ finalDay: null });
   });
 });
 
@@ -1629,12 +1927,14 @@ describe("game end and summary", () => {
     ]);
   });
 
-  it("summarises a bankrupt game", async () => {
+  it("summarises a liquidated game, with its rescue", async () => {
     const { id, url } = await setup();
-    await testDb.db.execute(sql`update companies set state = jsonb_set(state, '{cash}', '10'::jsonb) where id = ${id}`);
-    await shortApp.inject({ method: "POST", url: `${url}/continue` });
+    for (let i = 0; i < 2; i++) {
+      await testDb.db.execute(sql`update companies set state = jsonb_set(state, '{cash}', '10'::jsonb) where id = ${id}`);
+      await shortApp.inject({ method: "POST", url: `${url}/continue` });
+    }
     const summary = (await shortApp.inject({ method: "GET", url: `${url}/summary` })).json<SummaryView>();
-    expect(summary).toMatchObject({ ending: "bankrupt", day: 2, cash: -15 });
+    expect(summary).toMatchObject({ ending: "liquidation", day: 3, cash: -15, rescue: { day: 2 } });
   });
 
   it("gives a summary so far for a game still being played", async () => {
@@ -2428,6 +2728,41 @@ describe("leaving SaaS (vendor lock-in)", () => {
   });
 });
 
+describe("the real calendar", () => {
+  const calendarSim = createSim({ ...sim.config, calendar: defaultConfig.calendar });
+  let calendarApp: Awaited<ReturnType<typeof buildApp>>;
+
+  beforeAll(async () => {
+    calendarApp = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), sim: calendarSim });
+  });
+
+  afterAll(async () => {
+    await calendarApp?.close();
+  });
+
+  it("starts the company on a random date this year, and counts the calendar forward a day at a time", async () => {
+    const code = await newCode();
+    const payload = { name: "Acme", productType: "ecommerce", model: "iaas" };
+    const created = await calendarApp.inject({ method: "POST", url: `/api/codes/${code}/companies`, payload });
+    const company = created.json<CompanyView>();
+    const year = new Date().getUTCFullYear();
+    expect(company.calendar).toMatchObject({ startYear: year, today: { year } });
+    expect(company.calendar.today.iso.startsWith(`${year}-`)).toBe(true);
+    // The next holidays are shown ahead of time, soonest first, each with what it does to a shop (or null).
+    const { upcoming } = company.calendar;
+    expect(upcoming.length).toBeGreaterThan(0);
+    expect(upcoming.map((h) => h.startDay)).toEqual([...upcoming.map((h) => h.startDay)].sort((x, y) => x - y));
+    for (const h of upcoming) {
+      expect(h.effect === null || h.effect.loadMultiplier > 0).toBe(true);
+      expect(h.daysUntil).toBe(h.startDay - 1);
+    }
+    const url = `/api/codes/${code}/companies/${company.id}/continue`;
+    const next = (await calendarApp.inject({ method: "POST", url })).json<ContinueResult>();
+    const tomorrow = new Date(Date.parse(company.calendar.today.iso) + 864e5).toISOString().slice(0, 10);
+    expect(next.company.calendar.today.iso).toBe(tomorrow);
+  });
+});
+
 describe("encounters", () => {
   // Only the OS patch, certain to come up, at a threshold of 2: it fires when the meter reaches 2.
   const encounterSim = createSim({
@@ -2697,22 +3032,41 @@ describe("provider and SaaS events", () => {
 });
 
 describe("meta", () => {
-  it("reports timed flow as off by default, with the default interval", async () => {
+  const SPEEDS_AT_15 = [
+    { id: "slow", name: "Slow", seconds: 30 },
+    { id: "normal", name: "Normal", seconds: 15 },
+    { id: "fast", name: "Fast", seconds: 5 },
+    { id: "fastest", name: "Fastest", seconds: 1.5 },
+  ];
+
+  it("reports timed flow as on by default, with the default interval and its speeds", async () => {
     const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
-    expect(meta.timedFlow).toEqual({ enabled: false, seconds: 15 });
+    expect(meta.timedFlow).toEqual({ enabled: true, seconds: 15, speeds: SPEEDS_AT_15 });
   });
 
-  it("reports timed flow and its interval when the server turns it on", async () => {
+  it("lets the teacher switch timed flow off, reaching games already being played", async () => {
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    const gameMeta = async () =>
+      (await app.inject({ method: "GET", url: `/api/codes/${code}/companies/${company.id}/meta` })).json<MetaView>().timedFlow;
+    expect((await gameMeta()).enabled).toBe(true);
+    await useOverrides({ timedFlow: 0 });
+    expect((await gameMeta()).enabled).toBe(false);
+    expect((await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>().timedFlow.enabled).toBe(false);
+  });
+
+  it("reports timed flow off when the server switches it off, whatever the preset says", async () => {
     const timed = await buildApp({
       db: testDb.db,
       teacherPassword: PASSWORD,
       sessionSecret: "x".repeat(32),
       sim,
-      timedFlow: { enabled: true, seconds: 5 },
+      timedFlow: { enabled: false, seconds: 3 },
     });
     try {
       const meta = (await timed.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
-      expect(meta.timedFlow).toEqual({ enabled: true, seconds: 5 });
+      expect(meta.timedFlow).toMatchObject({ enabled: false, seconds: 3 });
+      expect(meta.timedFlow.speeds.map((s) => s.seconds)).toEqual([6, 3, 1, 0.3]);
     } finally {
       await timed.close();
     }
@@ -2742,6 +3096,7 @@ describe("meta", () => {
       ["developers", 10],
       ["ops", 4],
       ["support", 3],
+      ["moderators", 2],
     ]);
     // On-prem's and IaaS's from their starter servers; PaaS's and SaaS's a small fixed number.
     expect(meta.models.map((m) => m.opsNeeded)).toEqual([2, 1, 1, 1]);

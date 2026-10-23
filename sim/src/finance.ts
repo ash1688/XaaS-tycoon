@@ -36,25 +36,48 @@ export const profitCosts = (spend: Spend, interestPaid: number) =>
 const borrowedIn = (entries: LogEntry[]) =>
   entries.reduce((sum, e) => sum + (e.kind === "loan" && !e.category ? e.cashDelta : 0), 0);
 
-/** Money from funders in some entries, less a grant paid back. Cash, but neither income nor a charge. */
+/**
+ * Money from funders in some entries, the rescue buyout's included, less a grant paid back or a buy-back. Cash, but
+ * neither income nor a charge.
+ */
 const raisedIn = (entries: LogEntry[]) =>
-  entries.reduce((sum, e) => sum + (e.kind === "funding" && !e.category ? e.cashDelta : 0), 0);
+  entries.reduce((sum, e) => sum + ((e.kind === "funding" || e.kind === "rescue") && !e.category ? e.cashDelta : 0), 0);
 /** The interest in some entries' loan repayments. */
 const interestOf = (entries: LogEntry[]) => entries.reduce((sum, e) => sum + (e.interest ?? 0), 0);
 
-/** Where the customers stood at the end of a day, kept with its spend for the summary. */
-const customersAt = ({ users, paidUsers, satisfaction }: GameState) => ({ users, paidUsers, satisfaction });
+/**
+ * What happens the first time cash runs out, given the state with the day settled: the rescue buyout, with cash back
+ * above £0 and its entries.
+ */
+export type RescueHook = (state: GameState) => { state: GameState; entries: LogEntry[] };
+
+/**
+ * Where the customers stood at the end of a day, kept with its spend for the summary, and its hours down (the last of
+ * recent uptime's) for the IPO's uptime record.
+ */
+const customersAt = ({ users, paidUsers, satisfaction, recentHoursDown }: GameState) => ({
+  users,
+  paidUsers,
+  satisfaction,
+  hoursDown: recentHoursDown.at(-1) ?? 0,
+});
 
 /** Finance and the ledger: where every day's entries land in cash and spend, and where a game ends. */
 export function createFinance(config: GameConfig) {
   /**
    * The ledger. Applies a day's entries to cash, adds each charge to its category's running total and the day's
    * spend, and income to its own total, apart from the costs, so profit is income − profitCosts. Money borrowed or
-   * raised from funders is cash but neither, kept on the day so the cash chart adds up. Then ends the game if cash has gone below zero or this
-   * was the final day. Returns the entries with any notice of the end added. Going bankrupt on the final day counts as
-   * bankrupt.
+   * raised from funders is cash but neither, kept on the day so the cash chart adds up. If cash has gone below zero,
+   * the first time `rescue` rescues the company, and after that it's liquidation and the game ends. Then ends it if
+   * this was the final day. Returns the entries with any notice of the rescue or end added. Liquidation on the final
+   * day counts as liquidation.
    */
-  function settle(state: GameState, day: number, entries: LogEntry[]): { state: GameState; entries: LogEntry[] } {
+  function settle(
+    state: GameState,
+    day: number,
+    entries: LogEntry[],
+    rescue?: RescueHook,
+  ): { state: GameState; entries: LogEntry[] } {
     const daySpend = noSpend();
     let dayIncome = 0;
     for (const e of entries) {
@@ -64,7 +87,7 @@ export function createFinance(config: GameConfig) {
     const spend = noSpend();
     for (const c of SPEND_CATEGORIES) spend[c] = state.spend[c] + daySpend[c];
     const cash = state.cash + entries.reduce((sum, e) => sum + e.cashDelta, 0);
-    const settled: GameState = {
+    let settled: GameState = {
       ...state,
       cash,
       spend,
@@ -83,16 +106,20 @@ export function createFinance(config: GameConfig) {
         },
       ],
     };
-    if (cash < 0) {
+    if (cash < 0 && rescue && !state.rescue) {
+      const rescued = rescue(settled);
+      settled = rescued.state;
+      entries = [...entries, ...rescued.entries];
+    } else if (cash < 0) {
+      const text = state.rescue
+        ? `Cash ran out again, after the rescue buyout on day ${state.rescue.day}: ${state.companyName} goes into liquidation. Game over.`
+        : `Cash ran out: ${state.companyName} goes into liquidation. Game over.`;
       return {
-        state: { ...settled, status: "bankrupt" },
-        entries: [
-          ...entries,
-          { text: `Cash ran out: ${state.companyName} is bankrupt. Game over.`, cashDelta: 0, kind: "bankrupt" },
-        ],
+        state: { ...settled, status: "liquidated" },
+        entries: [...entries, { text, cashDelta: 0, kind: "liquidation" }],
       };
     }
-    if (day >= state.finalDay) {
+    if (state.finalDay !== null && day >= state.finalDay) {
       const text = `Day ${day} was the last: ${state.companyName} made it to the end. See how you did in the summary.`;
       return { state: { ...settled, status: "finished" }, entries: [...entries, { text, cashDelta: 0, kind: "finished" }] };
     }

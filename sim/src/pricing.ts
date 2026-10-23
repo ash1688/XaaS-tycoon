@@ -53,7 +53,23 @@ export interface CustomerTypeView {
   threshold: number;
   /** Today's price is above the type's threshold: it loses payers to the price each day, and reacts more to a rise. */
   overThreshold: boolean;
+  /** The type's share of today's new users (see CustomerMix), and what tilts it from the product's mix. */
+  newShare: number;
+  /**
+   * How much the active features tilt new users towards the type, against the product's mix: 1.44 = 44% more of them.
+   * Features that pull every type alike cancel out to 1.
+   */
+  featureAppeal: number;
+  /** The price's filter on the type: 1 at or below its threshold, less above it. */
+  priceFilter: number;
+  /**
+   * How much rivals tilt new users towards the type (above 1) or away from it (below 1), against the product's mix: a
+   * cheap rival takes casual users, so more of the student's new users are businesses. 1 with no rivals.
+   */
+  rivalPull: number;
 }
+
+type MixShift = "newShare" | "featureAppeal" | "priceFilter" | "rivalPull";
 
 /** The customer mix, for the screens: each type's share, with its price threshold to mark on the bar. */
 export interface CustomerMixView {
@@ -106,7 +122,7 @@ export function createPricing(config: GameConfig) {
   const fairPrice = (productType: ProductTypeId) => config.productTypes[productType].pricing.fairPrice;
 
   /** A product's customer mix, its shares scaled to add up to 1. All casual if they add up to nothing. */
-  function startingMix(productType: ProductTypeId): Record<CustomerTypeId, number> {
+  function baseMix(productType: ProductTypeId): Record<CustomerTypeId, number> {
     const mix = config.productTypes[productType].pricing.customerMix;
     const sum = CUSTOMER_TYPE_IDS.reduce((total, t) => total + Math.max(0, mix[t] ?? 0), 0);
     const shares = CUSTOMER_TYPE_IDS.map((t) => [t, sum > 0 ? Math.max(0, mix[t] ?? 0) / sum : t === "casual" ? 1 : 0]);
@@ -127,7 +143,7 @@ export function createPricing(config: GameConfig) {
     return {
       price: fairPrice,
       paidUsers: Math.round(users * (1 - freeShare)),
-      customerMix: startingMix(productType),
+      customerMix: baseMix(productType),
       income: 0,
       priceWave: null,
       priceLockedUntil: 0,
@@ -293,14 +309,25 @@ export function createPricing(config: GameConfig) {
   }
 
   function planWave(state: GameState, to: number): PriceWave {
+    const rise = to > state.price;
     return {
-      direction: to > state.price ? "rise" : "cut",
+      direction: rise ? "rise" : "cut",
       from: state.price,
       to,
       firstDay: state.day + 1,
       days: planDays(state, to),
       done: noEffect(),
+      leftMix: rise ? leftMix(state, to) : null,
     };
+  }
+
+  /**
+   * Who a rise loses for good: each customer type's share of users × its reaction × the share of its lost payers who
+   * leave rather than go free. Those who go free stay users, so only the leavers shift the mix.
+   */
+  function leftMix(state: GameState, to: number): Record<CustomerTypeId, number> {
+    const weights = riseReactions(state, to).map((r) => [r.id, r.share * r.reaction * (1 - config.customerTypes[r.id].toFreeShare)]);
+    return Object.fromEntries(weights) as Record<CustomerTypeId, number>;
   }
 
   const datedDays = (days: WaveEffect[], firstDay: number) => days.map((d, i) => ({ ...d, day: firstDay + i }));
@@ -365,7 +392,7 @@ export function createPricing(config: GameConfig) {
     const i = wave ? day - wave.firstDay : -1;
     const plan = wave?.days[i];
     if (!wave || !plan) {
-      return { users, paidUsers, priceWave: wave, refused: 0, bursts: [] as TicketBurst[], entries: [] as LogEntry[] };
+      return { users, paidUsers, priceWave: wave, refused: 0, left: null, joined: 0, bursts: [] as TicketBurst[], entries: [] as LogEntry[] };
     }
 
     const today: WaveEffect = { ...plan };
@@ -382,6 +409,9 @@ export function createPricing(config: GameConfig) {
       priceWave: { ...wave, done },
       // Paying users a rise lost today refused the new price, so they don't pay it today either.
       refused: wave.direction === "rise" ? today.left + today.toFree : 0,
+      // Who left and joined today, for the customer mix: leavers split by the wave's leftMix.
+      left: today.left > 0 ? { users: today.left, weights: wave.leftMix ?? state.customerMix } : null,
+      joined: today.joined,
       bursts,
       entries: waveEntries(wave, i, today, i === n - 1 ? done : null),
     };
@@ -457,12 +487,20 @@ export function createPricing(config: GameConfig) {
    * users. None at or below every threshold.
    */
   function priceChurn(state: GameState): number {
-    const { priceChurn, maxPriceChurn } = config.pricing;
-    return weightedReaction(byType(state, (th) => Math.min(maxPriceChurn, priceChurn * Math.max(0, state.price / th - 1) ** 2)));
+    return weightedReaction(priceChurnByType(state));
   }
 
-  /** The customer mix for the screens: each type's share and users, and its price threshold to mark on the bar. */
-  function customerMix(state: GameState): CustomerMixView {
+  /** Each customer type's share of users and the share of its paying users the price loses each day: see priceChurn. */
+  function priceChurnByType(state: GameState): TypeReaction[] {
+    const { priceChurn, maxPriceChurn } = config.pricing;
+    return byType(state, (th) => Math.min(maxPriceChurn, priceChurn * Math.max(0, state.price / th - 1) ** 2));
+  }
+
+  /**
+   * The customer mix for the screens: each type's share and users, and its price threshold to mark on the bar.
+   * CustomerMix adds what new users would be.
+   */
+  function customerMix(state: GameState): Omit<CustomerMixView, "types"> & { types: Omit<CustomerTypeView, MixShift>[] } {
     return {
       types: CUSTOMER_TYPE_IDS.map((id) => {
         const { name, blurb } = config.customerTypes[id];
@@ -477,6 +515,8 @@ export function createPricing(config: GameConfig) {
 
   return {
     fairPrice,
+    baseMix,
+    threshold,
     startingPricing,
     setPrice,
     lockDaysLeft,
@@ -487,6 +527,7 @@ export function createPricing(config: GameConfig) {
     paidUsersAfter,
     paidShareOfNew,
     priceChurn,
+    priceChurnByType,
     customerMix,
     dailyIncome,
     incomeEntries,

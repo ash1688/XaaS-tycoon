@@ -101,9 +101,9 @@ function describe(e: PlayEventView): string {
       return events?.length ? `Continue (events: ${events.join(", ")})` : "Continue";
     }
     case "hire":
-      return `Hired one ${poolName(p.pool)}`;
+      return `Hired one ${p.agency ? "agency " : ""}${poolName(p.pool)}`;
     case "letGo":
-      return `Let go one ${poolName(p.pool)}`;
+      return `Let go one ${p.agency ? "agency " : ""}${poolName(p.pool)}`;
     case "moveStaff":
       return `Moved one ${poolName(p.from ?? "?")} to ${poolName(p.to)}`;
     case "buildFeature":

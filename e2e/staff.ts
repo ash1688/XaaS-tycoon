@@ -113,7 +113,18 @@ export async function withOnlyEncounter<T>(
   threshold: number,
   start: () => Promise<T>,
 ): Promise<T> {
-  const ids = ["trafficSpike", "osPatch", "providerPriceRise", "providerOutage", "saasFeatureGap"];
+  const ids = [
+    "trafficSpike",
+    "osPatch",
+    "providerPriceRise",
+    "providerOutage",
+    "saasFeatureGap",
+    "breach",
+    "viralGrowth",
+    "dataCentreFire",
+    "fraud",
+    "lawsuit",
+  ];
   const overrides: Record<string, number> = {
     "encounters.thresholdMin": threshold,
     "encounters.thresholdMax": threshold,

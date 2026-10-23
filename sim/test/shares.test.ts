@@ -115,11 +115,11 @@ describe("valuation", () => {
     expect(total(v)).toBe(v.valuation);
   });
 
-  it("is nothing once the company is bankrupt, whatever the minimum", () => {
-    const v = sim.valuation({ ...trading(begin(), 2_000, 10), status: "bankrupt" });
+  it("is nothing once the company is in liquidation, whatever the minimum", () => {
+    const v = sim.valuation({ ...trading(begin(), 2_000, 10), status: "liquidated" });
     expect(v.valuation).toBe(0);
     expect(v.sharePrice).toBe(0);
-    expect(v.drivers.at(-1)).toMatchObject({ id: "bankrupt" });
+    expect(v.drivers.at(-1)).toMatchObject({ id: "liquidation" });
     expect(total(v)).toBe(0);
   });
 
@@ -185,7 +185,8 @@ describe("valuation", () => {
   });
 
   it("doesn't count the launch ramp's users arriving as growth", () => {
-    const ramping = begin();
+    // Moderators enough for the social network's reports, so its users grow steadily after the ramp.
+    const ramping = { ...begin(), staff: { ...begin().staff, moderators: { junior: 0, mid: 2, senior: 0 } } };
     expect(sim.launch(ramping).status).toBe("launching");
     expect(sim.valuation({ ...ramping, paidUsers: ramping.paidUsers * 5 }).growth).toBe(0);
     const launched = sim.advance(ramping, 5).state;
