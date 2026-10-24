@@ -22,6 +22,7 @@ import type {
   IpoView,
   LaunchView,
   MvpView,
+  OptimisationView,
   LoanQuote,
   LoanView,
   ManagedView,
@@ -247,6 +248,11 @@ export interface CompanyView {
   launch: LaunchView;
   /** The MVP every game opens with: developer-days done of its total, and the day it'll be done at today's developers. */
   mvp: MvpView;
+  /**
+   * The developer slider after launch: the share of developer output on optimisation, its developer-days so far, and
+   * the saving on resource need per user out of the current model's cap.
+   */
+  optimisation: OptimisationView;
   /** Every user, paying or free. No users until launch. */
   users: number;
   /** Of the users, those who pay. */

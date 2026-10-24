@@ -30,7 +30,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 39;
+export const GAME_STATE_VERSION = 40;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -584,6 +584,16 @@ export interface GameState {
   /** The MVP: no users arrive until it's done. */
   mvp: MvpProgress;
   /**
+   * The developer slider: once the MVP is done, the share of developer output going into optimisation (0–1). The rest
+   * goes into the current feature build. 0 to begin with.
+   */
+  optimisationShare: number;
+  /**
+   * Optimisation developer-days built up: they cut resource need per user for good (see OptimisationConfig). The
+   * company's code, so kept through migrations, where the new model's cap applies.
+   */
+  optimisationDays: number;
+  /**
    * The launch total: users who trickle in over the launch ramp, drawn from the product's range when the game starts.
    * Kept from the student: the screens show only those who have joined.
    */
@@ -736,6 +746,11 @@ export type Action =
   | { type: "buildFeature"; feature: string }
   /** Buys one of the product's features as an add-on, active at once. SaaS only, with a configuration team. */
   | { type: "buyAddon"; feature: string }
+  /**
+   * Sets the developer slider: the share of developer output (0–1) going into optimisation rather than features, from
+   * the next day played. Any time, on any model; it only takes effect once the MVP is done.
+   */
+  | { type: "setOptimisation"; share: number }
   /**
    * Moves one person from one pool into another, keeping their grade. Any time, including during a migration. Without
    * `from`, a move into developers comes from ops and any other move from developers. Without `grade`, a mid moves if

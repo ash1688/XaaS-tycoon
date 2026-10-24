@@ -61,7 +61,7 @@ export function createLaunch(config: GameConfig, servers: Servers, pricing: Pric
    */
   function readyBy(state: GameState, day: number): boolean {
     if (!servers.hasServers(state.model)) return (config.models[state.model].capacity ?? Infinity) > 0;
-    return servers.usersSupported(servers.capacityOn(state, day + 1, 1), state.productType) > 0;
+    return servers.usersSupported(servers.capacityOn(state, day + 1, 1), state) > 0;
   }
 
   /** Whether the company's first users arrive at the end of `day`: not launched yet, its MVP done and ready by then. */

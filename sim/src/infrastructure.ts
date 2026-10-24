@@ -2,6 +2,7 @@ import type { GameConfig, ModelId, ProductTypeId } from "./config.ts";
 import type { Customers } from "./customers.ts";
 import type { EventToday, Events } from "./events.ts";
 import { count, pounds, risen } from "./finance.ts";
+import { demandPerUser, optimisedShare } from "./optimisation.ts";
 import { vary } from "./rng.ts";
 import type { Servers, UnitCapacity, UnitsView } from "./servers.ts";
 import { staffOutput } from "./staff.ts";
@@ -58,12 +59,13 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     -upfrontEntries(modelId, setup).reduce((sum, e) => sum + e.cashDelta, 0);
 
   /**
-   * The company's usual CU and DBU demand today: every user at the product's demand per user, before load variation,
-   * seasons and events. A migration sizes the setup it builds to this, plus headroom (see Servers.sizeSetupFor), so a
-   * traffic spike on the day it starts doesn't oversize it. With a paid API, the APIU its calls need too.
+   * The company's usual CU and DBU demand today on a model (its own if left out): every user at the product's demand
+   * per user after optimisation there, before load variation, seasons and events. A migration sizes the setup it builds
+   * to this, plus headroom (see Servers.sizeSetupFor), so a traffic spike on the day it starts doesn't oversize it. With
+   * a paid API, the APIU its calls need too.
    */
-  function usualDemand(state: GameState): UnitDemand {
-    const { cuPerUser, dbuPerUser } = config.productTypes[state.productType].demand;
+  function usualDemand(state: GameState, model: ModelId = state.model): UnitDemand {
+    const { cuPerUser, dbuPerUser } = demandPerUser(config, state, model);
     const demand: UnitDemand = { cu: state.users * cuPerUser, dbu: state.users * dbuPerUser };
     if (state.api) demand.apiu = state.api.calls / config.api.callsPerApiu;
     return demand;
@@ -77,11 +79,15 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     return [{ text, cashDelta: -Math.round(powerAndCooling * days), category: "power" }];
   }
 
-  /** A model's monthly and per-user prices for the company's product, after any provider price rises. */
+  /**
+   * A model's monthly and per-user prices for the company's product, after any provider price rises. Optimisation cuts
+   * the per-user fee (SaaS's platform fee) by its saving on the model.
+   */
   function modelPrices(state: GameState, modelId: ModelId) {
     const rise = state.priceRises[modelId] ?? 1;
     const { monthlyCost } = config.models[modelId];
-    return { monthlyCost: risen(monthlyCost, rise), monthlyCostPerUser: risen(perUserFee(state.productType, modelId), rise) };
+    const perUser = perUserFee(state.productType, modelId) * optimisedShare(config, state, modelId);
+    return { monthlyCost: risen(monthlyCost, rise), monthlyCostPerUser: risen(perUser, rise) };
   }
 
   /** A model's per-user fee for a product, before any provider price rise: dearer for a product heavy on compute. */
@@ -157,7 +163,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
   function baseCapacity(state: GameState): number {
     if (unlimited(state.model)) return Infinity;
     if (servers.hasServers(state.model)) {
-      const users = servers.usersSupported(unitCapacity(state, state.day + 1), state.productType);
+      const users = servers.usersSupported(unitCapacity(state, state.day + 1), state);
       const load = users * config.productTypes[state.productType].growth.loadPerUser;
       return Number.isFinite(load) ? Math.round(load) : Number.MAX_SAFE_INTEGER;
     }
@@ -199,7 +205,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     const round = (n: number) => Math.round(n * 10) / 10;
     const cu = burst ? Math.max(cap.cu, state.demand.cu) : cap.cu;
     const dbu = burst ? Math.max(cap.dbu, served.dbuAfterCache) : cap.dbu;
-    const users = servers.usersSupported(cap, state.productType);
+    const users = servers.usersSupported(cap, state);
     return {
       cu: { demand: round(state.demand.cu), capacity: round(cu) },
       dbu: { demand: round(served.dbuAfterCache), capacity: round(dbu), beforeCache: round(state.demand.dbu) },

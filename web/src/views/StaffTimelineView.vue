@@ -110,6 +110,8 @@ function describe(e: PlayEventView): string {
       return `Started building ${featureName(p.feature)}`;
     case "buyAddon":
       return `Bought the ${featureName(p.feature)} add-on`;
+    case "setOptimisation":
+      return `Set the developer slider to ${Math.round(100 * Number(p.share))}% optimisation`;
     case "startMigration":
       return `Started migrating to ${modelName(String(p.model))}`;
     case "setPrice":

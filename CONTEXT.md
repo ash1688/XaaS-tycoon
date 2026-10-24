@@ -42,6 +42,14 @@ _Avoid_: Eras, ageing
 The first version of the product, which every game opens with the developers building, measured in developer-days. No users arrive until it's done: launch is the first day it's done and servers can serve them.
 _Avoid_: Prototype, beta
 
+**Developer slider**:
+After the MVP, the split of developer time between building features and optimisation, from 0% to 100% optimisation.
+_Avoid_: Dev split, focus
+
+**Optimisation**:
+Developer work that makes the product cheaper to run: fewer CU and DBU per user (so fewer servers and ops, or fewer instances on PaaS), or a lower per-user platform fee on SaaS. The saving flattens out under a cap, highest on-prem. It's permanent and kept through a migration, capped at the new model's maximum.
+_Avoid_: Tuning, performance work, refactoring
+
 **Go-live**:
 The launch day: the first day users arrive. Hosting bills start from it.
 _Avoid_: Release, ship date

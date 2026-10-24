@@ -4,12 +4,12 @@ import {
   type GameConfig,
   type ManagedService,
   type ModelId,
-  type ProductTypeId,
   type ServerCount,
   type ServerSize,
   type ServerType,
 } from "./config.ts";
 import { count, pounds, risen, type Finance } from "./finance.ts";
+import { demandPerUser } from "./optimisation.ts";
 import type { Racks } from "./racks.ts";
 import {
   isManagedService,
@@ -831,11 +831,15 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
   }
 
   /**
-   * Users the capacity can serve at a product's demand per user. The database serves u users while
-   * u × DBU − min(CH, share × u × DBU) is within its DBU, which works out as both of the limits below.
+   * Users the capacity can serve at the company's demand per user, after optimisation on its model. The database
+   * serves u users while u × DBU − min(CH, share × u × DBU) is within its DBU, which works out as both of the limits
+   * below.
    */
-  function usersSupported(cap: Pick<UnitCapacity, "cu" | "dbu" | "ch">, productType: ProductTypeId): number {
-    const { cuPerUser, dbuPerUser } = config.productTypes[productType].demand;
+  function usersSupported(
+    cap: Pick<UnitCapacity, "cu" | "dbu" | "ch">,
+    state: Pick<GameState, "productType" | "model" | "optimisationDays">,
+  ): number {
+    const { cuPerUser, dbuPerUser } = demandPerUser(config, state, state.model);
     const share = config.servers.cacheableShare;
     const byCu = cuPerUser > 0 ? cap.cu / cuPerUser : Infinity;
     const byDbu =

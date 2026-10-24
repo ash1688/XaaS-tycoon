@@ -1108,6 +1108,37 @@ fieldset > p {
   font-size: 0.9rem;
 }
 
+.optimisation {
+  margin: 0 0 0.75rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  background: var(--shared-soft);
+  border-left: 4px solid var(--shared);
+}
+
+.optimisation label {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem 0.75rem;
+}
+
+.optimisation input[type="range"] {
+  width: 100%;
+  margin-top: 0.35rem;
+}
+
+.optimisation-scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+}
+
+.optimisation p {
+  margin: 0.35rem 0 0;
+  font-size: 0.9rem;
+}
+
 .feature-progress p {
   margin: 0.35rem 0 0;
   font-size: 0.9rem;

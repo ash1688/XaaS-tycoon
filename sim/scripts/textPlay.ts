@@ -320,6 +320,12 @@ export function renderStatus(sim: Sim, state: GameState): string {
   if (!mvp.done) {
     const due = mvp.launchDay === null ? "no developers to finish it" : `done by the end of day ${mvp.launchDay}`;
     lines.push(`MVP: ${+mvp.progress.toFixed(1)}/${mvp.total} developer-days (${due}); no users until it's done`);
+  } else {
+    const o = sim.optimisation(state);
+    lines.push(
+      `optimisation: ${Math.round(100 * o.share)}% of developer time, ${+o.days.toFixed(1)} dev-days built up, ` +
+        `saving ${(100 * o.saving).toFixed(1)}% of resource need per user (most ${Math.round(100 * o.cap)}% on this model)`,
+    );
   }
   const launch = sim.launch(state);
   if (launch.status !== "launched") {
@@ -681,6 +687,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
         .join(", ")}`,
     );
   }
+  lines.push(`  optimise <0–100>   (% of developer time on optimisation rather than features, once the MVP is done)`);
   const options = sim.serverOptions(state);
   const racks = sim.racks(state);
   if (options.length) {
@@ -883,6 +890,8 @@ export function parseCommand(text: string): Command {
       return one({ type: "buildFeature", feature: args[0] ?? "" });
     case "addon":
       return one({ type: "buyAddon", feature: args[0] ?? "" });
+    case "optimise":
+      return one({ type: "setOptimisation", share: number(args[0], "a percent") / 100 });
     case "buy":
       return one({
         type: "buyServer",

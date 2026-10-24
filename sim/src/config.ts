@@ -1035,6 +1035,20 @@ export interface MvpConfig {
 }
 
 /**
+ * Optimisation: once the MVP is done, the developer slider sends a share of developer output into making the product
+ * cheaper to run instead of building features. The developer-days build up into a saving on resource need per user:
+ * cap(model) × (1 − e^(−days ÷ k)), quick at first and flattening out under the cap. It cuts CU and DBU per user (so
+ * fewer servers and ops, or fewer instances on PaaS), and the per-user platform fee on SaaS. It's permanent, and kept
+ * through migrations, where the new model's cap applies.
+ */
+export interface OptimisationConfig {
+  /** Developer-days for the saving to reach about 63% of its cap (1 − 1/e): bigger is slower. */
+  k: number;
+  /** The most optimisation can save on each model, as a share of resource need per user: highest on-prem. */
+  cap: Record<ModelId, number>;
+}
+
+/**
  * A new company has no users, no servers and an MVP to build (see MvpConfig). Its first users arrive at the end of the
  * first day its MVP is done and it has capacity to serve them: servers ready by the end of that day, so rented VMs the
  * day after they're rented, bought kit when it arrives, a platform's instances and database at once. A model with no
@@ -1413,6 +1427,7 @@ export interface GameConfig {
   maxCompanyNameLength: number;
   launch: LaunchConfig;
   mvp: MvpConfig;
+  optimisation: OptimisationConfig;
   models: Record<ModelId, ModelConfig>;
   productTypes: Record<ProductTypeId, ProductTypeConfig>;
   customerTypes: Record<CustomerTypeId, CustomerTypeConfig>;
@@ -1470,6 +1485,9 @@ export const defaultConfig: GameConfig = {
     baseDevDays: { ecommerce: 22, social: 28, video: 30, payments: 26, assistant: 24, games: 26 },
     modelShare: { onprem: 1, iaas: 0.85, paas: 0.65, saas: 0.4 },
   },
+  // Placeholders for the balance pass: a developer on optimisation full time gets about 63% of the cap in 60 days. On-prem
+  // owns the whole stack and its hardware costs the most, so it has the most to gain.
+  optimisation: { k: 60, cap: { onprem: 0.5, iaas: 0.35, paas: 0.35, saas: 0.35 } },
   models: {
     onprem: {
       name: "Own servers (on-prem)",

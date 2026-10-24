@@ -28,6 +28,7 @@ import { createLaunch, type LaunchView } from "./launch.ts";
 import { createLoan, type LoanQuote, type LoanView } from "./loan.ts";
 import { mvpDay, mvpStatus, startingMvp, type MvpView } from "./mvp.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
+import { optimisationDay, optimisationView, type OptimisationView } from "./optimisation.ts";
 import { createCustomerMix } from "./mix.ts";
 import { isNameAllowed } from "./nameFilter.ts";
 import type { CounterOdds, Terms } from "./negotiation.ts";
@@ -74,6 +75,7 @@ export type { AngelView, InvestorOffer, InvestorsView } from "./investors.ts";
 export type { FloatPreview, IpoCondition, IpoConditionId, IpoOffer, IpoStatus, IpoView } from "./ipo.ts";
 export type { LaunchView } from "./launch.ts";
 export type { MvpView } from "./mvp.ts";
+export type { OptimisationView } from "./optimisation.ts";
 export type { LoanQuote, LoanView } from "./loan.ts";
 export type { LostAddon, MigrationQuote, MigrationView, SetupRack } from "./migration.ts";
 export { LOW_CASH_DAYS, type PauseKind, type PauseReason, type TickResult } from "./pauses.ts";
@@ -391,6 +393,11 @@ export interface Sim {
    * today's developers. Users can arrive from the end of that day, once there are servers to serve them (see launch).
    */
   mvp(state: GameState): MvpView;
+  /**
+   * The developer slider and what it has built up: the share of developer output going into optimisation, its
+   * developer-days so far, and the saving on resource need per user out of the current model's cap.
+   */
+  optimisation(state: GameState): OptimisationView;
   /** The migration under way, or null. */
   migration(state: GameState): MigrationView | null;
   /**
@@ -556,6 +563,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       ...staff.startingStaff({ productType }),
       ...customers.startingCustomers(productType, seed),
       mvp: startingMvp(config, productType, model),
+      optimisationShare: 0,
+      optimisationDays: 0,
       ...support.startingSupport(),
       ...moderation.startingModeration(),
       ...conversion.startingConversion(),
@@ -660,6 +669,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
         return features.startBuild(state, action.feature);
       case "buyAddon":
         return features.buyAddon(state, action.feature);
+      case "setOptimisation":
+        return setOptimisation(state, action.share);
       case "moveStaff":
         return staff.moveStaff(state, action.to, action.from, action.grade);
       case "startMigration":
@@ -774,8 +785,11 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     // Rivals answer the student's price from reactionDays ago and win their share of the market's new users.
     const market = rivals.rivalsDay(state, day);
 
-    // Developers work on the current build. A feature finished today helps growth from tomorrow.
+    // Developers work on the current build, and once the MVP was done before today, the slider's share of their output
+    // goes into optimisation instead. A feature finished today helps growth from tomorrow, and so does today's
+    // optimisation.
     const build = features.buildDay(state);
+    const optimisationDays = optimisationDay(state, staffOutput(config, state, "developers"), yesterday.mvp.doneDay !== null);
 
     // Each event explains itself first, then any outage. Billed on the current model until a migration completes, so
     // the model being left is billed pro rata up to the day you leave. During a migration the new model is billed as
@@ -833,6 +847,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       outageDays: state.outageDays + (served.hoursDown > 0 ? 1 : 0),
       downtimeHours: state.downtimeHours + served.hoursDown,
       features: build.features,
+      optimisationDays,
       events: recorded.records,
       ticketsToday: care.ticketsToday,
       burstTickets: care.burstTickets,
@@ -915,23 +930,40 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
 
   /**
    * Why developers on the team have nothing to do, if they haven't: on SaaS the provider builds the features, so they
-   * only set up add-ons; on the other models, nothing is being built.
+   * only set up add-ons; on the other models, nothing is being built. Time the developer slider sends to optimisation
+   * is never idle, so with some on it, only the rest is.
    */
   function developersIdle(state: GameState): string | null {
     if (staffOutput(config, state, "developers") <= 0 || state.mvp.doneDay === null) return null;
+    if (state.optimisationShare >= 1) return null;
     const list = config.productTypes[state.productType].features;
     const allOn = list.every((f) => ["built", "addon"].includes(state.features[f.id]?.status ?? ""));
+    const optimising = state.optimisationShare > 0;
+    const spare = optimising
+      ? `the ${Math.round(100 * (1 - state.optimisationShare))}% of your developers' time not on optimisation goes spare`
+      : "your developers have nothing to do";
+    const slider = optimising ? "" : " Or move the slider to put them on optimisation.";
     if (state.model === "saas") {
       const needed = config.addons.minConfigDevelopers;
       const setUp = needed > 0 ? ` Setting up an add-on needs the work of ${needed} developer${needed === 1 ? "" : "s"}.` : "";
       return allOn
-        ? "On SaaS the provider builds the features, and every add-on is on: your developers have nothing to do."
-        : `On SaaS the provider builds the features: your developers only set up add-ons, and sit idle in between.${setUp}`;
+        ? `On SaaS the provider builds the features, and every add-on is on: ${spare}.${slider}`
+        : optimising
+          ? `On SaaS the provider builds the features: ${spare} between add-ons.${setUp}`
+          : `On SaaS the provider builds the features: your developers only set up add-ons, and sit idle in between.${setUp}${slider}`;
     }
     if (features.currentBuild(state)) return null;
     return allOn
-      ? "Every feature is built: your developers have nothing to do."
-      : "Nothing is being built: your developers have nothing to do until you start a feature.";
+      ? `Every feature is built: ${spare}.${slider}`
+      : `Nothing is being built: ${spare} until you start a feature.${slider}`;
+  }
+
+  /** Sets the developer slider: the share of developer output going into optimisation, from the next day played. */
+  function setOptimisation(state: GameState, share: number): GameState {
+    if (typeof share !== "number" || !Number.isFinite(share) || share < 0 || share > 1) {
+      throw new SimError("bad_optimisation", "Set the slider between 0% and 100% of developer time on optimisation.");
+    }
+    return { ...state, optimisationShare: Math.round(share * 100) / 100 };
   }
 
   function staffWithIdle(state: GameState): StaffPoolView[] {
@@ -997,6 +1029,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     investorCounterOdds: (s, terms) => investors.counterOdds(load(s), terms),
     launch: (s) => launch.launchView(load(s)),
     mvp: (s) => mvpView(load(s)),
+    optimisation: (s) => {
+      const state = load(s);
+      return optimisationView(config, state, staffOutput(config, state, "developers"));
+    },
     migration: (s) => migration.migration(load(s)),
     migrationQuote: (s, target) => migration.migrationQuote(load(s), target),
     events: (s) => events.events(load(s)),
