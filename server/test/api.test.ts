@@ -1756,7 +1756,11 @@ describe("shares and funding", () => {
     const { act } = await setup();
     const res = await act({ type: "counterFunding", funder: "grant", terms: { days: 45 } });
     expect(res.statusCode).toBe(200);
-    expect(res.json<CompanyView>().funding.grantOffer!.days).toBeLessThan(sim.config.funding.grant.days);
+    // A low roll makes the grant dig in, with a longer condition; any other roll shortens it.
+    const { funding } = res.json<CompanyView>();
+    const days = funding.grantOffer!.days;
+    if (funding.negotiations.grant!.rounds[0]!.result === "low") expect(days).toBeGreaterThan(sim.config.funding.grant.days);
+    else expect(days).toBeLessThan(sim.config.funding.grant.days);
     expect((await act({ type: "counterFunding", funder: "grant" })).statusCode).toBe(400);
     expect((await act({ type: "counterFunding", funder: "grant", terms: { price: 5 } })).statusCode).toBe(400);
     expect((await act({ type: "counterFunding", funder: "grant", terms: { days: 2.5 } })).statusCode).toBe(400);
