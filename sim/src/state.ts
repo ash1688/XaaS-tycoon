@@ -24,13 +24,14 @@ import {
   type SpendCategory,
   type StaffGrade,
   type StaffPool,
+  type TierNumber,
 } from "./config.ts";
 
 /**
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 41;
+export const GAME_STATE_VERSION = 42;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -419,6 +420,23 @@ export interface Server {
   apiu?: boolean;
   /** The rack it's installed in, by id, on a model with racks: it takes its U there from the day it's ordered. */
   rack?: number;
+  /**
+   * The hardware slider, on a model that buys its servers (on-prem): the share of its normal capacity it runs at, 0 to
+   * the configured top (1.5 = 150%). Left out at 100%.
+   */
+  performance?: number;
+  /** Wear built up each day it has been in service: the slider squared a day. Left out before any. */
+  wear?: number;
+  /** Overheated: it gives the configured share of its capacity on every day up to and including this one. */
+  overheatedUntil?: number;
+  /** Crashed: it gives nothing on every day up to and including this one, while ops fix it. */
+  crashedUntil?: number;
+}
+
+/** A tier that became available, and the day it did. Tier 1 is available from the start, so isn't listed. */
+export interface TierReached {
+  tier: TierNumber;
+  day: number;
 }
 
 /**
@@ -600,6 +618,18 @@ export interface GameState {
   optimisationDays: number;
   /** Research points (RP) banked: researchers earn them each day, with no cap. Nothing spends them yet. */
   researchPoints: number;
+  /**
+   * Tiers above 1 whose condition has been met, in order: each stays available once met. They belong to the company,
+   * so a migration keeps them.
+   */
+  tiers: TierReached[];
+  /**
+   * The model benefits on, by id: all on the current model, bought once their tier was unlocked and billed monthly. A
+   * migration loses them, with no refund.
+   */
+  benefits: string[];
+  /** The hardware slider's own seeded RNG, so a roll for overheating doesn't change the rest of the game. */
+  hardwareRng: number;
   /**
    * The launch total: users who trickle in over the launch ramp, drawn from the product's range when the game starts.
    * Kept from the student: the screens show only those who have joined.
@@ -849,7 +879,19 @@ export type Action =
    */
   | { type: "switchServer"; id: number; gives: "cu" | "apiu" }
   /** Sets how many API instances run on PaaS, from 0 to the platform's most, like the app instance count. */
-  | { type: "setApiInstances"; count: number };
+  | { type: "setApiInstances"; count: number }
+  /**
+   * Buys a model benefit for the current model, once its tier is unlocked: its set-up fee is charged at once, and its
+   * monthly fee billed a day at a time from the next day played. It's on until cancelled or a migration.
+   */
+  | { type: "buyBenefit"; benefit: string }
+  /** Cancels a model benefit that's on: its monthly fee stops, with no refund of the set-up fee. */
+  | { type: "cancelBenefit"; benefit: string }
+  /**
+   * Sets one of the company's bought servers' hardware slider, on-prem: 0 to the configured top (1.5 = 150%), from the
+   * next day played.
+   */
+  | { type: "setPerformance"; id: number; performance: number };
 
 export interface NewGameParams {
   companyName: string;

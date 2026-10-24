@@ -1,7 +1,8 @@
-import { CUSTOMER_TYPE_IDS, type CustomerTypeId, type FeatureConfig, type GameConfig, type ModelId } from "./config.ts";
+import { CUSTOMER_TYPE_IDS, type CustomerTypeId, type FeatureConfig, type GameConfig, type ModelId, type TierNumber } from "./config.ts";
 import { count, pounds, risen, type Finance } from "./finance.ts";
 import { staffOutput } from "./staff.ts";
 import { SimError, type FeatureProgress, type GameState, type LogEntry } from "./state.ts";
+import { featureTier, isUnlocked, lockedMessage } from "./tiers.ts";
 
 export type FeatureStatus = "notStarted" | FeatureProgress["status"];
 
@@ -14,6 +15,10 @@ export interface FeatureView extends FeatureConfig {
   daysLeft: number | null;
   /** On SaaS, the one-off fee to set it up as an add-on, on top of its per-user price. */
   addonSetupFee: number;
+  /** The tier it's in. */
+  tier: TierNumber;
+  /** Its tier is unlocked, so it can be built or bought. */
+  unlocked: boolean;
 }
 
 /** Features and add-ons: building them in developer-days, buying them on SaaS, and billing the add-ons. */
@@ -35,6 +40,13 @@ export function createFeatures(config: GameConfig, finance: Finance) {
    */
   const featureOutput = (state: GameState) => staffOutput(config, state, "developers") * (1 - state.optimisationShare);
 
+  /** Refuses a feature whose tier isn't unlocked yet. One already started or active is never refused. */
+  function refuseLocked(state: GameState, feature: FeatureConfig) {
+    if (!isUnlocked(config, state, feature.id)) {
+      throw new SimError("locked", lockedMessage(config, feature.name, featureTier(feature)));
+    }
+  }
+
   /** The feature being built, if any. Only one is built at a time. */
   function currentBuild(state: GameState): FeatureConfig | undefined {
     return featureList(state).find((f) => state.features[f.id]?.status === "building");
@@ -49,6 +61,7 @@ export function createFeatures(config: GameConfig, finance: Finance) {
     }
     const feature = featureList(state).find((f) => f.id === id);
     if (!feature) throw new SimError("unknown_feature", "Pick a feature from your product's list.");
+    refuseLocked(state, feature);
     if (state.mvp.doneDay === null) {
       throw new SimError("mvp_first", `Your developers are building the MVP. ${feature.name} can be started once it's done.`);
     }
@@ -69,6 +82,7 @@ export function createFeatures(config: GameConfig, finance: Finance) {
     const feature = featureList(state).find((f) => f.id === id);
     if (!feature) throw new SimError("unknown_feature", "Pick a feature from your product's list.");
     if (isActive(state, id)) throw new SimError("addon_active", `${feature.name} is already active.`);
+    refuseLocked(state, feature);
     const needed = config.addons.minConfigDevelopers;
     if (staffOutput(config, state, "developers") < needed) {
       throw new SimError(
@@ -122,7 +136,15 @@ export function createFeatures(config: GameConfig, finance: Finance) {
       const { status, progress } = state.features[f.id] ?? { status: "notStarted" as const, progress: 0 };
       const work = featureOutput(state);
       const daysLeft = status === "building" && work > 0 && state.model !== "saas" ? Math.ceil((f.devDays - progress) / work) : null;
-      return { ...f, status, progress, daysLeft, addonSetupFee: setupFee(state, f) };
+      return {
+        ...f,
+        status,
+        progress,
+        daysLeft,
+        addonSetupFee: setupFee(state, f),
+        tier: featureTier(f),
+        unlocked: isUnlocked(config, state, f.id),
+      };
     });
   }
 

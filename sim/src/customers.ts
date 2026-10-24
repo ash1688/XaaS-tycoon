@@ -61,7 +61,7 @@ export function createCustomers(
    * current model. Holidays move it like load.
    */
   function baseDemand(
-    state: Pick<GameState, "productType" | "startDate" | "model" | "optimisationDays">,
+    state: Pick<GameState, "productType" | "startDate" | "model" | "optimisationDays" | "benefits">,
     users: number,
     day: number,
   ): UnitDemand {

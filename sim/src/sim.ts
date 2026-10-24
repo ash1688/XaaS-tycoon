@@ -1,4 +1,5 @@
 import { createApi, type ApiView } from "./api.ts";
+import { createBenefits, managedAutoscaling, type BenefitView } from "./benefits.ts";
 import { createCalendar, isIsoDate, type CalendarView } from "./calendar.ts";
 import {
   allowedDifficulties,
@@ -21,6 +22,7 @@ import { createEncounters, type DangerView } from "./encounters.ts";
 import { createEvents, type EventView, type FeatureGapView } from "./events.ts";
 import { createFeatures, type FeatureView } from "./features.ts";
 import { createFinance, noSpend, pounds } from "./finance.ts";
+import { hardwareDay, setPerformance } from "./hardware.ts";
 import { createInfrastructure, type ProviderView } from "./infrastructure.ts";
 import { createInvestors, type InvestorsView } from "./investors.ts";
 import { createIpo, type IpoView } from "./ipo.ts";
@@ -59,12 +61,16 @@ import {
   type UnitDemand,
 } from "./state.ts";
 import { createSummary, type GameSummary } from "./summary.ts";
+import { createTiers, featureTier, isUnlocked, type TierStatusView } from "./tiers.ts";
 import { createModeration, type ModerationView } from "./moderation.ts";
 import { createSupport } from "./support.ts";
 
 // The sim's one public interface is createSim. Its modules are internal; only the types and helpers the server and
 // web client need are re-exported here.
 export type { ApiView } from "./api.ts";
+export type { BenefitView } from "./benefits.ts";
+export type { HardwareRisk } from "./hardware.ts";
+export type { TierConditionView, TierItemKind, TierItemView, TierStatusView } from "./tiers.ts";
 export type { CalendarView, GameDate, HolidayView } from "./calendar.ts";
 export { dayOfDate, gameDate } from "./calendar.ts";
 export type { ConversionDriver, ConversionDriverId, ConversionView } from "./conversion.ts";
@@ -175,6 +181,7 @@ export {
   type Shareholder,
   type Spend,
   type StaffCut,
+  type TierReached,
   type UnitDemand,
   type WaveEffect,
 } from "./state.ts";
@@ -405,6 +412,19 @@ export interface Sim {
    * (RP) banked, and RP a day at today's researchers.
    */
   research(state: GameState): ResearchView;
+  /**
+   * Tiers 1–4: whether each is available, the condition that opens it with how far the company has got, and the
+   * product features and model benefits in it. Tier 1 is open from the start; each later tier opens on its condition,
+   * in order, and stays open.
+   */
+  tiers(state: GameState): TierStatusView[];
+  /**
+   * Every model's benefits, in config order: each one's tier, fees and whether it's unlocked, on the company's model
+   * and on.
+   */
+  benefits(state: GameState): BenefitView[];
+  /** What the model benefits that are on cost a month. */
+  monthlyBenefitCost(state: GameState): number;
   /** The migration under way, or null. */
   migration(state: GameState): MigrationView | null;
   /**
@@ -485,7 +505,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const servers = createServers(config, finance, racks);
   const infra = createInfrastructure(config, customers, events, servers);
   const staff = createStaff(config, finance);
-  const migration = createMigration(config, infra, features, events, servers);
+  const benefits = createBenefits(config, finance);
+  const migration = createMigration(config, infra, features, events, servers, benefits);
   const summary = createSummary(config, infra);
   const loan = createLoan(config, finance);
   const launch = createLaunch(config, servers, pricing);
@@ -493,6 +514,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const api = createApi(config, features, finance, infra.apiuOn);
   const encounters = createEncounters(config, servers);
   const ipo = createIpo(config, finance, shares, servers, (s) => runway(s).dailyNet);
+  const tiers = createTiers(config, { ipoReady: (s) => ipo.ipoView(s).ready });
   /** The MVP at today's developers. */
   const mvpView = (state: GameState) => mvpStatus(config, { ...state, output: staffOutput(config, state, "developers") });
   const pauses = createPauses(config, {
@@ -573,6 +595,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       optimisationShare: 0,
       optimisationDays: 0,
       researchPoints: 0,
+      tiers: [],
+      benefits: [],
+      // The hardware slider has its own too, so overheating doesn't change the rest of the game.
+      hardwareRng: seedRng(seed ^ 0x4a7d),
       ...support.startingSupport(),
       ...moderation.startingModeration(),
       ...conversion.startingConversion(),
@@ -729,6 +755,12 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
         return servers.setApiInstances(state, action.count);
       case "repayLoan":
         return loan.repayLoan(state);
+      case "buyBenefit":
+        return benefits.buyBenefit(state, action.benefit);
+      case "cancelBenefit":
+        return benefits.cancelBenefit(state, action.benefit);
+      case "setPerformance":
+        return setPerformance(config, state, action.id, action.performance);
       default:
         throw new SimError("unknown_action", "That action isn't recognised.");
     }
@@ -754,6 +786,9 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
 
     // Today's load against capacity, then growth, which slows on an outage day.
     const served = infra.serveLoad(state, day, today);
+    // On-prem, the servers that served today wear with their hardware slider, and any pushed past 100% may overheat
+    // or crash from tomorrow.
+    const hardware = hardwareDay(config, state, day, (s) => `${s.size} ${config.servers.types[s.type].name.toLowerCase()}`);
     // Over the launch ramp the arriving users are the growth: normal growth takes over after it.
     const organic = customers.grow(state, day, served.hoursDown, served.rng);
     const grown = ramping ? { ...organic, users: state.users, paidUsers: state.paidUsers } : organic;
@@ -821,6 +856,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       ...recorded.entries,
       // The outage first, then who it drove away.
       ...(served.outage ? [served.outage] : []),
+      ...hardware.entries,
       ...(ramping ? [] : organic.entries),
       ...market.entries,
       ...wave.entries,
@@ -834,6 +870,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       ...(live ? infra.infrastructureEntries(state, state.model, state.users) : []),
       ...migration.migrationCharges(state),
       ...features.addonEntries(state),
+      ...benefits.benefitEntries(state),
       ...staff.staffEntries(state),
       ...served.charges,
       ...events.costEntries(today),
@@ -859,6 +896,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       features: build.features,
       optimisationDays,
       researchPoints,
+      servers: hardware.servers,
+      hardwareRng: hardware.hardwareRng,
       events: recorded.records,
       ticketsToday: care.ticketsToday,
       burstTickets: care.burstTickets,
@@ -878,8 +917,11 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       rivalRng: market.rivalRng,
       rivalJoins: market.rivalJoins,
     };
+    // Managed autoscaling sets tomorrow's instances to today's demand.
+    const scaled = autoscaleInstances(played);
+    entries.push(...scaled.entries);
     // The danger meter rises with the day's risks, on the model the day was played on.
-    const risen: GameState = { ...played, ...encounters.riseDay(played, live, served.overloaded) };
+    const risen: GameState = { ...scaled.state, ...encounters.riseDay(scaled.state, live, served.overloaded) };
     entries.push(...encounters.warningEntries(played, risen));
     // The migration moves on after the day is played and billed, so a model switch takes effect from tomorrow.
     const migrated = migration.migrationDay(risen);
@@ -891,7 +933,26 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       joined: (ramping ? 0 : organic.arrived) + wave.joined + (users - wave.users),
       left: (ramping ? 0 : organic.lost.reduce((sum, l) => sum + l.users, 0)) + (wave.left?.users ?? 0),
     });
-    return { state: funded.state, log: [{ day, entries: [...settled.entries, ...funded.entries] }] };
+    // Then any tier whose condition is now met opens, for good.
+    const opened = tiers.tiersDay(funded.state);
+    const final: GameState =
+      opened.tiers.length > funded.state.tiers.length ? { ...funded.state, tiers: opened.tiers } : funded.state;
+    return { state: final, log: [{ day, entries: [...settled.entries, ...funded.entries, ...opened.entries] }] };
+  }
+
+  /**
+   * Managed autoscaling (a PaaS model benefit): after the day, the platform sets the app instance count to the day's
+   * CU demand plus its headroom, within the platform's limits, serving from tomorrow.
+   */
+  function autoscaleInstances(state: GameState): { state: GameState; entries: LogEntry[] } {
+    const scaling = managedAutoscaling(config, state, state.model);
+    const platform = servers.managed(state);
+    if (!scaling || !platform || platform.instanceUnits <= 0) return { state, entries: [] };
+    const wanted = Math.ceil((state.demand.cu * (1 + scaling.headroom)) / platform.instanceUnits);
+    const target = Math.min(platform.maxInstances, Math.max(1, wanted));
+    if (target === platform.instances) return { state, entries: [] };
+    const text = `Managed autoscaling: ${platform.instances} → ${target} app instances for tomorrow.`;
+    return { state: servers.setInstances(state, target), entries: [{ text, cashDelta: 0 }] };
   }
 
   function runway(state: GameState): RunwayView {
@@ -900,6 +961,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       ...(state.launchDay !== null ? infra.infrastructureEntries(state, state.model, state.users) : []),
       ...migration.newSetupEntries(state),
       ...features.addonEntries(state),
+      ...benefits.benefitEntries(state),
       ...staff.staffEntries(state),
     ];
     const repayment = loan.dailyRepayment(state);
@@ -947,8 +1009,13 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   function developersIdle(state: GameState): string | null {
     if (staffOutput(config, state, "developers") <= 0 || state.mvp.doneDay === null) return null;
     if (state.optimisationShare >= 1) return null;
-    const list = config.productTypes[state.productType].features;
+    // Only the features whose tier is unlocked can be built or bought.
+    const all = config.productTypes[state.productType].features;
+    const list = all.filter((f) => isUnlocked(config, state, f.id));
     const allOn = list.every((f) => ["built", "addon"].includes(state.features[f.id]?.status ?? ""));
+    const locked = all.filter((f) => !isUnlocked(config, state, f.id));
+    const sofar = locked.length ? "unlocked so far " : "";
+    const later = locked.length ? ` The rest open with tier ${Math.min(...locked.map(featureTier))} and above.` : "";
     const optimising = state.optimisationShare > 0;
     const spare = optimising
       ? `the ${Math.round(100 * (1 - state.optimisationShare))}% of your developers' time not on optimisation goes spare`
@@ -958,14 +1025,14 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       const needed = config.addons.minConfigDevelopers;
       const setUp = needed > 0 ? ` Setting up an add-on needs the work of ${needed} developer${needed === 1 ? "" : "s"}.` : "";
       return allOn
-        ? `On SaaS the provider builds the features, and every add-on is on: ${spare}.${slider}`
+        ? `On SaaS the provider builds the features, and every add-on ${sofar}is on: ${spare}.${slider}${later}`
         : optimising
           ? `On SaaS the provider builds the features: ${spare} between add-ons.${setUp}`
           : `On SaaS the provider builds the features: your developers only set up add-ons, and sit idle in between.${setUp}${slider}`;
     }
     if (features.currentBuild(state)) return null;
     return allOn
-      ? `Every feature is built: ${spare}.${slider}`
+      ? `Every feature ${sofar}is built: ${spare}.${slider}${later}`
       : `Nothing is being built: ${spare} until you start a feature.${slider}`;
   }
 
@@ -1048,6 +1115,9 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       const state = load(s);
       return researchView(config, state, staffOutput(config, state, "researchers"));
     },
+    tiers: (s) => tiers.tiersView(load(s)),
+    benefits: (s) => benefits.benefits(load(s)),
+    monthlyBenefitCost: (s) => benefits.monthlyBenefitCost(load(s)),
     migration: (s) => migration.migration(load(s)),
     migrationQuote: (s, target) => migration.migrationQuote(load(s), target),
     events: (s) => events.events(load(s)),

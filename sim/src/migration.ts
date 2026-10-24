@@ -6,6 +6,7 @@ import {
   type ModelId,
   type RackSize,
 } from "./config.ts";
+import type { Benefits } from "./benefits.ts";
 import type { Events } from "./events.ts";
 import type { Features } from "./features.ts";
 import type { Infrastructure } from "./infrastructure.ts";
@@ -96,6 +97,11 @@ export interface MigrationQuote {
    * each takes to rebuild. Empty unless leaving SaaS. These are today's; any bought before you leave go too.
    */
   lostAddons: LostAddon[];
+  /**
+   * The model benefits on now, which a migration loses with no refund: their tiers stay unlocked, so the new model's
+   * own can be bought straight away. These are today's; any bought before you leave go too.
+   */
+  lostBenefits: { id: string; name: string }[];
   /** Cash left once it's all paid, before any income: today's cash less the total. Below 0, it can't be paid. */
   cashLeft: number;
   /**
@@ -131,6 +137,7 @@ export function createMigration(
   features: Features,
   events: Events,
   servers: Servers,
+  benefits: Benefits,
 ) {
   /**
    * A setup in words: "1 medium app server, 1 medium database", or on a managed platform "2 app instances, 1 small
@@ -219,6 +226,7 @@ export function createMigration(
     const tidy = (n: number) => Math.round(n * 100) / 100;
     const { chance, minDays, maxDays } = config.migration.overrun;
     const lostAddons = features.addonsLeftBehind(state, to).map(({ id, name, devDays }) => ({ id, name, devDays }));
+    const lostBenefits = benefits.benefitsLostTo(state, to).map(({ id, name }) => ({ id, name }));
     const total = upfrontCost + doubleBilling + proRata + exitPenalty - sellBack;
     const cashLeft = state.cash - total;
     const staffDaily = dailyStaffCost(config, state);
@@ -261,6 +269,7 @@ export function createMigration(
       total,
       overrun: { chance, minDays, maxDays },
       lostAddons,
+      lostBenefits,
       cashLeft,
       warning,
     };
@@ -395,6 +404,15 @@ export function createMigration(
       const text =
         `Vendor lock-in: your add-ons stayed with the SaaS provider (${names}). ` +
         `Rebuild them in developer-days to get them back: ${devDays} in all.`;
+      entries.push({ text, cashDelta: 0, kind: "migration" });
+    }
+    // Model benefits belong to the model being left, so they go with it: billing stops, with no refund. The tiers they
+    // were in stay unlocked, so the new model's benefits can be bought straight away.
+    const lostBenefits = benefits.benefitsLostTo(state, m.to);
+    if (lostBenefits.length) {
+      switched.benefits = [];
+      const names = lostBenefits.map((b) => b.name).join(", ");
+      const text = `Model benefits lost: ${names} stayed with ${left.name}, with no refund. Your tiers are still unlocked, so this model's own benefits can be bought on Infrastructure straight away.`;
       entries.push({ text, cashDelta: 0, kind: "migration" });
     }
     // Off the model a feature gap is tied to, you can build what you like, so the gap closes.

@@ -379,20 +379,20 @@ function scaleManaged(sim: Sim, state: GameState, strategy: Strategy): GameState
 }
 
 /**
- * Features: on SaaS buys add-ons, cheapest set-up first, whenever one leaves a month of running costs in the bank;
- * elsewhere the developers build the product's features one after another, cheapest first.
+ * Features whose tier is unlocked: on SaaS buys add-ons, cheapest set-up first, whenever one leaves a month of running
+ * costs in the bank; elsewhere the developers build the product's features one after another, cheapest first.
  */
 function buildFeatures(sim: Sim, state: GameState): GameState {
   const features = sim.features(state);
   if (state.model === "saas") {
     const month = sim.dailyStaffCost(state) * 30 + sim.monthlyInfrastructureCost(state) + sim.monthlyAddonCost(state);
     return features
-      .filter((f) => f.status === "notStarted")
+      .filter((f) => f.status === "notStarted" && f.unlocked)
       .sort((a, b) => a.addonSetupFee - b.addonSetupFee)
       .reduce((s, f) => (s.cash - f.addonSetupFee >= month ? tryAction(sim, s, { type: "buyAddon", feature: f.id }) : s), state);
   }
   if (features.some((f) => f.status === "building")) return state;
-  const next = features.filter((f) => f.status === "notStarted").sort((a, b) => a.devDays - b.devDays)[0];
+  const next = features.filter((f) => f.status === "notStarted" && f.unlocked).sort((a, b) => a.devDays - b.devDays)[0];
   return next ? tryAction(sim, state, { type: "buildFeature", feature: next.id }) : state;
 }
 

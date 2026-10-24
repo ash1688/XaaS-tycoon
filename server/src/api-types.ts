@@ -24,6 +24,8 @@ import type {
   MvpView,
   OptimisationView,
   ResearchView,
+  TierStatusView,
+  BenefitView,
   LoanQuote,
   LoanView,
   ManagedView,
@@ -172,6 +174,8 @@ export interface MetaView {
   /** On servers: app servers from which load balancers are needed, and the most of database demand caches can take. */
   loadBalancerFrom: number;
   cacheableShare: number;
+  /** On-prem, the top of each server's hardware slider: 1.5 = 150%. */
+  maxPerformance: number;
   /** A migration's phases in order, and how long each takes before any overrun. */
   migrationPhases: { id: MigrationPhase; name: string; days: number }[];
   /**
@@ -261,6 +265,15 @@ export interface CompanyView {
    * research points banked and RP a day.
    */
   research: ResearchView;
+  /**
+   * Tiers 1–4: whether each is open, the condition that opens it with how far the company has got, and the product
+   * features and model benefits in it.
+   */
+  tiers: TierStatusView[];
+  /** Every model's benefits: tier, fees, whether unlocked, on the company's model and on. */
+  benefits: BenefitView[];
+  /** What the model benefits that are on cost a month. */
+  monthlyBenefitCost: number;
   /** Every user, paying or free. No users until launch. */
   users: number;
   /** Of the users, those who pay. */

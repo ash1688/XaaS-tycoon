@@ -137,7 +137,8 @@ describe("the MVP", () => {
 
   it("is the developers' only job until it's done: features wait, and they're never idle", () => {
     const state = begin("iaas");
-    const feature = defaultConfig.productTypes.ecommerce.features[0]!.id;
+    // A tier 1 feature, open from the start, so only the MVP holds it up.
+    const feature = defaultConfig.productTypes.ecommerce.features.find((f) => (f.tier ?? 1) === 1)!.id;
     expect(refusal(() => act(state, { type: "buildFeature", feature }))).toBe("mvp_first");
     expect(sim.staff(state).find((p) => p.pool === "developers")!.idle).toBeNull();
     const done = playTo(state, 11);

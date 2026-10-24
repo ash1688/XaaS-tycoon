@@ -8,7 +8,9 @@ import {
   type ServerSize,
   type ServerType,
 } from "./config.ts";
+import { powerSaving, rentSaving } from "./benefits.ts";
 import { count, pounds, risen, type Finance } from "./finance.ts";
+import { crashedOn, hardwareRisk, hasSlider, overheatedOn, performanceOf, unitFactor, wearShare } from "./hardware.ts";
 import { demandPerUser } from "./optimisation.ts";
 import type { Racks } from "./racks.ts";
 import {
@@ -50,6 +52,18 @@ export interface ServerView {
   sellBack: number | null;
   /** The rack it's installed in, by id, on a model with racks (on-prem); null on any other. */
   rack: number | null;
+  /**
+   * The hardware slider, on a model with it (on-prem): the share of its normal capacity it runs at, which also scales
+   * its power and upkeep. Null on any other model.
+   */
+  performance: number | null;
+  /** On-prem, wear as a share of its lifespan (1 = worn out); null on any other model. */
+  wear: number | null;
+  /** On-prem, its daily chances of overheating and crashing at its slider and wear; null on any other model. */
+  risk: { overheat: number; crash: number } | null;
+  /** Days left down from a crash, or overheated, counting tomorrow: 0 when it isn't. */
+  crashedDays: number;
+  overheatedDays: number;
 }
 
 /**
@@ -436,11 +450,19 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
     return items;
   }
 
-  /** A server's monthly price on a model, after the provider's price rises. One the model doesn't price is free. */
+  /**
+   * A server's monthly price on a model, after the provider's price rises and any model benefit's saving (reserved
+   * instances off rent, hardware efficiency off power and upkeep). One the model doesn't price is free.
+   */
   function monthlyCost(state: GameState, model: ModelId, type: ServerType, size: ServerSize): number {
     const price = modelServers(model)?.monthlyCost[type]?.[size] ?? 0;
-    return risen(price, state.priceRises[model] ?? 1);
+    const saving = Math.min(1, powerSaving(config, state, model) + rentSaving(config, state, model));
+    return risen(price, state.priceRises[model] ?? 1) * (1 - saving);
   }
+
+  /** One server's monthly price: on a model with the hardware slider, its power and upkeep scale with the slider. */
+  const serverMonthlyCost = (state: GameState, model: ModelId, s: Server) =>
+    monthlyCost(state, model, s.type, s.size) * (hasSlider(config, model) ? performanceOf(s) : 1);
 
   /**
    * Rent for some days on a model's servers (or on one that buys them, power and upkeep on the kit that has arrived),
@@ -455,17 +477,23 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
     const entries: LogEntry[] = [];
     for (const type of SERVER_TYPES) {
       for (const size of SERVER_SIZES) {
-        const n = servers.filter((s) => s.type === type && s.size === size).length;
-        const price = monthlyCost(state, model, type, size);
-        if (n === 0 || price === 0) continue;
-        const text = managed
-          ? `${managedName(type)} (${size}): ${count.format(n)} × ${pounds(price)} a month`
-          : `${nameOf(type)} (${size}) ${what}: ${count.format(n)} × ${pounds(price)} a month`;
-        entries.push({
-          text,
-          cashDelta: -Math.round(n * price * share),
-          category: "infrastructure",
-        });
+        const of = servers.filter((s) => s.type === type && s.size === size);
+        // Servers at different hardware slider settings cost different amounts, so each setting has its own line.
+        const settings = [...new Set(of.map(performanceOf))].sort((a, b) => b - a);
+        for (const p of settings) {
+          const n = of.filter((s) => performanceOf(s) === p).length;
+          const price = serverMonthlyCost(state, model, { ...of[0]!, performance: p });
+          if (n === 0 || price === 0) continue;
+          const at = p === 1 ? "" : ` at ${Math.round(100 * p)}%`;
+          const text = managed
+            ? `${managedName(type)} (${size}): ${count.format(n)} × ${pounds(price)} a month`
+            : `${nameOf(type)} (${size}${at}) ${what}: ${count.format(n)} × ${pounds(price)} a month`;
+          entries.push({
+            text,
+            cashDelta: -Math.round(n * price * share),
+            category: "infrastructure",
+          });
+        }
       }
     }
     return entries;
@@ -474,7 +502,7 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
   const monthlyServerCost = (state: GameState) =>
     state.servers
       .filter((s) => inService(state.model, s, state.day))
-      .reduce((sum, s) => sum + monthlyCost(state, state.model, s.type, s.size), 0);
+      .reduce((sum, s) => sum + serverMonthlyCost(state, state.model, s), 0);
 
   /**
    * Ops staff some servers need on a model: the model's fixed number (the few PaaS and SaaS need to keep the service
@@ -791,8 +819,11 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
    */
   function capacityOn(state: GameState, day: number, factor: number): UnitCapacity {
     const ready = state.servers.filter((s) => s.readyDay < day);
+    // On-prem, each server's hardware slider scales its units, and overheating or a crash cuts them.
     const of = (type: ServerType, apiu = false) =>
-      ready.filter((s) => s.type === type && !!s.apiu === apiu).map((s) => unitsOn(state.model, s));
+      ready
+        .filter((s) => s.type === type && !!s.apiu === apiu)
+        .map((s) => unitsOn(state.model, s) * unitFactor(config, state.model, s, day));
     const sum = (units: number[]) => units.reduce((a, b) => a + b, 0);
     const apps = of("app").sort((a, b) => b - a);
     const balancers = of("loadBalancer");
@@ -837,7 +868,7 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
    */
   function usersSupported(
     cap: Pick<UnitCapacity, "cu" | "dbu" | "ch">,
-    state: Pick<GameState, "productType" | "model" | "optimisationDays">,
+    state: Pick<GameState, "productType" | "model" | "optimisationDays" | "benefits">,
   ): number {
     const { cuPerUser, dbuPerUser } = demandPerUser(config, state, state.model);
     const share = config.servers.cacheableShare;
@@ -852,6 +883,9 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
   function servers(state: GameState): ServerView[] {
     const bought = buys(state.model);
     const managed = !!managedOf(state.model);
+    const slider = hasSlider(config, state.model);
+    /** Days from tomorrow up to and including `until`. */
+    const daysTo = (until: number | undefined) => Math.max(0, (until ?? 0) - state.day);
     return state.servers.map((s) => ({
       id: s.id,
       type: s.type,
@@ -862,10 +896,15 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
       daysLeft: Math.max(0, s.readyDay - state.day),
       units: unitsOn(state.model, s),
       apiu: !!s.apiu,
-      monthlyCost: monthlyCost(state, state.model, s.type, s.size),
+      monthlyCost: serverMonthlyCost(state, state.model, s),
       paid: bought ? (s.paid ?? 0) : null,
       sellBack: bought ? sellBackValue(state.model, s) : null,
       rack: s.rack ?? null,
+      performance: slider ? performanceOf(s) : null,
+      wear: slider ? Math.round(wearShare(config, s) * 1000) / 1000 : null,
+      risk: slider ? hardwareRisk(config, state, s) : null,
+      crashedDays: crashedOn(s, state.day + 1) ? daysTo(s.crashedUntil) : 0,
+      overheatedDays: overheatedOn(s, state.day + 1) ? daysTo(s.overheatedUntil) : 0,
     }));
   }
 

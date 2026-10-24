@@ -90,12 +90,16 @@ _Avoid_: Science, research credits, XP
 A small, medium or large frame that holds on-prem servers, measured in rack units. Only on-prem companies have them.
 _Avoid_: Cabinet, server room
 
+**Hardware slider**:
+On-prem only: each server runs at 0–150% of its normal capacity. Below 100% it costs less to run and wears slower; above, it risks overheating or a crash and wears faster.
+_Avoid_: Overclocking, performance slider (the developer slider is something else)
+
 **Rack unit (U)**:
 One slot in a rack. Each server size takes a set number of them.
 _Avoid_: SU, slot
 
 **Tier**:
-A level of benefits a company unlocks by meeting conditions. Each holds product features and model benefits.
+A level of benefits, 1 to 4. Tier 1 is open from the start; each later tier becomes available once its condition is met, in order, and stays available. Each holds product features and model benefits, each with a stable id; for now every item in an available tier is unlocked.
 _Avoid_: Level, plan (there are no pricing plans)
 
 **Product feature**:
@@ -103,7 +107,7 @@ A benefit that belongs to the product, such as messaging or checkout. Survives a
 _Avoid_: Add-on (an add-on is a product feature bought from a SaaS provider)
 
 **Model benefit**:
-A benefit that belongs to the deployment model, such as on-prem optimisation or a PaaS CDN. Lost on migration.
+A benefit that belongs to the deployment model, such as on-prem hardware efficiency or a PaaS CDN, bought with a set-up fee and billed monthly. Lost on migration, though its tier stays unlocked.
 _Avoid_: Upgrade, perk
 
 ### Customers

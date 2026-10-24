@@ -1,4 +1,5 @@
 import type { GameConfig, ModelId, ProductTypeId } from "./config.ts";
+import { autoscaling, eventHours, outageHours, powerSaving } from "./benefits.ts";
 import type { Customers } from "./customers.ts";
 import type { EventToday, Events } from "./events.ts";
 import { count, pounds, risen } from "./finance.ts";
@@ -71,9 +72,14 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     return demand;
   }
 
+  /** A model's power and cooling a day, after any model benefit's saving (hardware efficiency). */
+  const dailyPower = (state: GameState, modelId: ModelId) =>
+    config.models[modelId].powerAndCooling * (1 - powerSaving(config, state, modelId));
+
   /** A model's power and cooling for some days, as its own charge (power). Not raised by provider price rises. */
-  function powerEntries(modelId: ModelId, days = 1): LogEntry[] {
-    const { name, powerAndCooling } = config.models[modelId];
+  function powerEntries(state: GameState, modelId: ModelId, days = 1): LogEntry[] {
+    const { name } = config.models[modelId];
+    const powerAndCooling = dailyPower(state, modelId);
     if (powerAndCooling <= 0) return [];
     const text = `${name} power and cooling (${pounds(powerAndCooling)} a day)`;
     return [{ text, cashDelta: -Math.round(powerAndCooling * days), category: "power" }];
@@ -120,7 +126,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
         category: "infrastructure",
       });
     }
-    return [...entries, ...powerEntries(modelId, days), ...servers.serverEntries(state, modelId, days)];
+    return [...entries, ...powerEntries(state, modelId, days), ...servers.serverEntries(state, modelId, days)];
   }
 
   /** What a day of a model's running costs comes to, on the given users. */
@@ -129,7 +135,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
 
   function monthlyInfrastructureCost(state: GameState): number {
     const { monthlyCost, monthlyCostPerUser } = modelPrices(state, state.model);
-    const power = config.models[state.model].powerAndCooling * config.billing.daysPerMonth;
+    const power = dailyPower(state, state.model) * config.billing.daysPerMonth;
     return Math.round(monthlyCost + state.users * monthlyCostPerUser + power + servers.monthlyServerCost(state));
   }
 
@@ -247,12 +253,17 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
       unitMultiplier *= event.load.unitMultiplier ?? event.load.multiplier;
     }
     const demand: UnitDemand = { cu: tidy(base.cu * unitMultiplier), dbu: tidy(base.dbu * unitMultiplier) };
-    const eventHours = today.reduce((sum, t) => sum + (t.outcome.downtimeHours ?? 0), 0);
+    // A provider support plan shortens its outages; managed monitoring shortens every outage.
+    const fromEvents = today.reduce(
+      (sum, t) => sum + Math.ceil((t.outcome.downtimeHours ?? 0) * eventHours(config, state, state.model, t.event.id)),
+      0,
+    );
+    const shorter = (hours: number) => Math.min(24, Math.ceil(hours * outageHours(config, state, state.model)));
     const eventCause = () => today.find((t) => t.outcome.downtimeHours)!.event.name;
 
     if (servers.hasServers(state.model)) {
       const served = serveUnits(state, day, demand, today);
-      const hoursDown = Math.min(24, overloadHours(served.ratio) + eventHours);
+      const hoursDown = shorter(overloadHours(served.ratio) + fromEvents);
       let outage: LogEntry | undefined;
       if (hoursDown > 0) {
         const cause = served.overloaded ? served.cause : eventCause();
@@ -264,7 +275,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     // With no capacity limit, the load always fits: only an event takes the service down.
     const cap = baseCapacity(state);
     const overloaded = load > cap;
-    const hoursDown = Math.min(24, (overloaded ? overloadHours(load / cap) : 0) + eventHours);
+    const hoursDown = shorter((overloaded ? overloadHours(load / cap) : 0) + fromEvents);
     const charges: LogEntry[] = [];
     let outage: LogEntry | undefined;
     if (hoursDown > 0) {
@@ -299,11 +310,25 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
       }
       return { ratio: 0, overloaded: false, charges, cause: "" };
     }
-    const tier = served.binding === "cu" ? "compute (CU)" : "the database (DBU)";
-    const cause = Number.isFinite(served.ratio)
-      ? `${tier} hit ${Math.round(100 * served.ratio)}% of capacity`
+    // Autoscaling (a model benefit) starts extra VMs for what's over capacity, up to its most, charged by the unit.
+    const scaling = autoscaling(config, state, state.model);
+    let afterScaling = served;
+    if (scaling && served.ratio > 1) {
+      const cu = Math.min(Math.max(0, demand.cu - cap.cu), cap.cu * scaling.most);
+      const dbu = Math.min(Math.max(0, served.dbuAfterCache - cap.dbu), cap.dbu * scaling.most);
+      const cost = Math.round((cu + dbu) * scaling.pricePerUnit);
+      if (cost > 0) {
+        const extra = [cu > 0 && `${count.format(Math.ceil(cu))} CU`, dbu > 0 && `${count.format(Math.ceil(dbu))} DBU`];
+        const text = `Autoscaling: extra VMs for ${extra.filter(Boolean).join(" and ")} over capacity`;
+        charges.push({ text, cashDelta: -cost, category: "infrastructure" });
+      }
+      afterScaling = servers.serve({ ...cap, cu: cap.cu + cu, dbu: cap.dbu + dbu }, demand);
+    }
+    const tier = afterScaling.binding === "cu" ? "compute (CU)" : "the database (DBU)";
+    const cause = Number.isFinite(afterScaling.ratio)
+      ? `${tier} hit ${Math.round(100 * afterScaling.ratio)}% of capacity${afterScaling === served ? "" : ", even with autoscaling"}`
       : `${tier} had no capacity`;
-    return { ratio: served.ratio, overloaded: served.ratio > 1, charges, cause };
+    return { ratio: afterScaling.ratio, overloaded: afterScaling.ratio > 1, charges, cause };
   }
 
   return {

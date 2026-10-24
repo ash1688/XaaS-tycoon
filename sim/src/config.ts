@@ -401,6 +401,11 @@ export interface FeatureConfig {
   devDays: number;
   /** Once active, the day's growth is multiplied by this (1.1 = 10% faster). */
   growthMultiplier: number;
+  /**
+   * The tier it's in: it can only be built or bought once that tier is unlocked (see TiersConfig). Left out, it's in
+   * tier 1, open from the start.
+   */
+  tier?: TierNumber;
   /** On SaaS, the add-on's price per user per month, billed a day at a time like the model's per-user fee. */
   addonPricePerUser: number;
   /**
@@ -1057,6 +1062,96 @@ export interface OptimisationConfig {
   cap: Record<ModelId, number>;
 }
 
+/** The tiers benefits are grouped in. Tier 1 is open from the start; each later tier opens on its condition. */
+export const TIER_NUMBERS = [1, 2, 3, 4] as const;
+export type TierNumber = (typeof TIER_NUMBERS)[number];
+
+/**
+ * What a model benefit does while it's on, on its own model. Each is optional, and several on one model add up (a
+ * saving) or multiply (a multiplier).
+ */
+export interface ModelBenefitEffects {
+  /** On-prem: the share taken off power and cooling and every server's power and upkeep (0.2 = 20% off). */
+  powerSaving?: number;
+  /** On-prem: the hardware slider's chance of overheating or crashing is multiplied by this (0.5 = halved). */
+  sliderRisk?: number;
+  /** The share taken off every server's rent (0.3 = 30% off): reserved instances. */
+  rentSaving?: number;
+  /**
+   * Extra VMs cover CU and DBU demand over capacity, up to `most` × the servers' own, each unit over charged at
+   * pricePerUnit for the day: a traffic spike costs money rather than an outage.
+   */
+  autoscaling?: { pricePerUnit: number; most: number };
+  /**
+   * The platform sets the app instance count each night to the day's CU demand plus `headroom` (0.25 = a quarter
+   * more), within the platform's limits: the student no longer has to.
+   */
+  managedAutoscaling?: { headroom: number };
+  /** Hours down in any outage are multiplied by this, rounded up (0.5 = half as long). */
+  outageHours?: number;
+  /** CU demand is multiplied by this (0.75 = a quarter less): a CDN serving content in front of the app. */
+  cuDemand?: number;
+  /** Hours down from these events are multiplied by `multiplier`, rounded up: a provider support plan. */
+  eventHours?: { events: string[]; multiplier: number };
+}
+
+/**
+ * A benefit that belongs to a deployment model, such as reserved instances on IaaS or a CDN on PaaS. It's in a tier,
+ * like a product feature, and once that tier is unlocked it can be bought on its model: a set-up fee at once, then a
+ * monthly fee, billed a day at a time. It's lost on a migration, with no refund.
+ */
+export interface ModelBenefitConfig {
+  /** Unique across every benefit and every product's features: it names the item in a tier. Saved in game state. */
+  id: string;
+  model: ModelId;
+  tier: TierNumber;
+  name: string;
+  /** One line on what it does. */
+  blurb: string;
+  /** Paid once when it's bought. */
+  setupFee: number;
+  /** Billed a day's share at a time while it's on, as infrastructure. */
+  monthlyFee: number;
+  effects: ModelBenefitEffects;
+}
+
+/**
+ * Tiers: the benefits a company can have are grouped in tiers 1–4, each holding product features (see
+ * FeatureConfig.tier) and model benefits. A tier is available once its condition is met, and stays available. Tiers
+ * open in order: a tier can't be available before the one below it. Every item in an available tier is unlocked.
+ */
+export interface TiersConfig {
+  /** Tier 2 opens at this many users, paying or free. (A CTO will meet it too, once the C-suite exists.) */
+  tier2: { users: number };
+  /** Tier 3 opens once the last `days` days played averaged this much income a day and this uptime %. */
+  tier3: { dailyIncome: number; uptime: number; days: number };
+  /** Tier 4 opens on an angel deal taken or every IPO condition met. It has no numbers of its own. */
+  benefits: ModelBenefitConfig[];
+}
+
+/**
+ * The hardware slider (on-prem only): each bought server runs at 0–maxPerformance of its normal capacity. Below 100%
+ * it gives less but costs less to run and wears slower; above, it gives more, with a daily chance of overheating
+ * (capacity cut for some days) or a crash (no capacity for some days), and it wears faster.
+ */
+export interface HardwareConfig {
+  /** The slider's top: 1.5 = 150%. */
+  maxPerformance: number;
+  /**
+   * At the top of the slider, the daily chance of overheating; between 100% and the top it's this × x², where x is
+   * how far there is from 100% to the top (0 to 1). While overheated a server gives `capacity` of its usual units.
+   */
+  overheat: { chance: number; days: number; capacity: number };
+  /** The same for a crash: no units for `days` days, while ops fix it. */
+  crash: { chance: number; days: number };
+  /**
+   * A server builds up wear each day it's in service: slider². Past `lifespan`, it has an extra daily chance of a
+   * crash, even at 100% or below: `wornCrashChance` × (wear − lifespan) ÷ lifespan.
+   */
+  lifespan: number;
+  wornCrashChance: number;
+}
+
 /**
  * A new company has no users, no servers and an MVP to build (see MvpConfig). Its first users arrive at the end of the
  * first day its MVP is done and it has capacity to serve them: servers ready by the end of that day, so rented VMs the
@@ -1438,6 +1533,8 @@ export interface GameConfig {
   mvp: MvpConfig;
   optimisation: OptimisationConfig;
   research: ResearchConfig;
+  tiers: TiersConfig;
+  hardware: HardwareConfig;
   models: Record<ModelId, ModelConfig>;
   productTypes: Record<ProductTypeId, ProductTypeConfig>;
   customerTypes: Record<CustomerTypeId, CustomerTypeConfig>;
@@ -1500,6 +1597,102 @@ export const defaultConfig: GameConfig = {
   optimisation: { k: 60, cap: { onprem: 0.5, iaas: 0.35, paas: 0.35, saas: 0.35 } },
   // Placeholder for the balance pass.
   research: { pointsPerPerson: 2 },
+  // Conditions and benefits signed off for #123; every number is a placeholder for the balance pass.
+  tiers: {
+    tier2: { users: 5_000 },
+    tier3: { dailyIncome: 2_000, uptime: 99, days: 30 },
+    benefits: [
+      {
+        id: "hardwareEfficiency1",
+        model: "onprem",
+        tier: 2,
+        name: "Hardware efficiency I",
+        blurb: "Better cooling and power supplies: 20% off power and cooling, and off every server's power and upkeep.",
+        setupFee: 2_000,
+        monthlyFee: 150,
+        effects: { powerSaving: 0.2 },
+      },
+      {
+        id: "hardwareEfficiency2",
+        model: "onprem",
+        tier: 4,
+        name: "Hardware efficiency II",
+        blurb: "Liquid cooling: another 20% off power and upkeep, and pushing servers past 100% is half as risky.",
+        setupFee: 5_000,
+        monthlyFee: 300,
+        effects: { powerSaving: 0.2, sliderRisk: 0.5 },
+      },
+      {
+        id: "reservedInstances",
+        model: "iaas",
+        tier: 2,
+        name: "Reserved instances",
+        blurb: "Commit to your VMs for longer and the provider takes 30% off their rent.",
+        setupFee: 2_000,
+        monthlyFee: 0,
+        effects: { rentSaving: 0.3 },
+      },
+      {
+        id: "iaasAutoscaling",
+        model: "iaas",
+        tier: 3,
+        name: "Autoscaling",
+        blurb: "Extra VMs start when traffic spikes past your servers, up to half as much again, paid by the unit.",
+        setupFee: 1_000,
+        monthlyFee: 200,
+        effects: { autoscaling: { pricePerUnit: 12, most: 0.5 } },
+      },
+      {
+        id: "managedMonitoring",
+        model: "paas",
+        tier: 2,
+        name: "Managed monitoring",
+        blurb: "The platform warns before things break: outages last half as long.",
+        setupFee: 500,
+        monthlyFee: 300,
+        effects: { outageHours: 0.5 },
+      },
+      {
+        id: "paasAutoscaling",
+        model: "paas",
+        tier: 3,
+        name: "Managed autoscaling",
+        blurb: "The platform sets your instance count each night to the day's demand plus a quarter.",
+        setupFee: 1_000,
+        monthlyFee: 300,
+        effects: { managedAutoscaling: { headroom: 0.25 } },
+      },
+      {
+        id: "cdn",
+        model: "paas",
+        tier: 4,
+        name: "CDN",
+        blurb: "A content delivery network serves pages and media in front of your app: a quarter less CU.",
+        setupFee: 1_500,
+        monthlyFee: 800,
+        effects: { cuDemand: 0.75 },
+      },
+      {
+        id: "premiumSupport",
+        model: "saas",
+        tier: 3,
+        name: "Premium support plan",
+        blurb: "Your provider puts you first in a crisis: its outages last half as long for you.",
+        setupFee: 500,
+        monthlyFee: 500,
+        effects: { eventHours: { events: ["providerOutage"], multiplier: 0.5 } },
+      },
+    ],
+  },
+  // Placeholders for the balance pass: 150% risks overheating 12% of days and crashing 4%; a server wears out after two
+  // years at 100%.
+  hardware: {
+    maxPerformance: 1.5,
+    overheat: { chance: 0.12, days: 3, capacity: 0.5 },
+    crash: { chance: 0.04, days: 2 },
+    lifespan: 730,
+    wornCrashChance: 0.02,
+  },
   models: {
     onprem: {
       name: "Own servers (on-prem)",
@@ -1660,6 +1853,7 @@ export const defaultConfig: GameConfig = {
           name: "One-click checkout",
           blurb: "Customers pay without filling in a long form.",
           devDays: 20,
+          tier: 3,
           growthMultiplier: 1.15,
           addonPricePerUser: 0.04,
           appeal: { businesses: 1.5 },
@@ -1669,6 +1863,7 @@ export const defaultConfig: GameConfig = {
           name: "Product reviews",
           blurb: "Shoppers trust what other customers say.",
           devDays: 12,
+          tier: 2,
           growthMultiplier: 1.1,
           addonPricePerUser: 0.025,
           appeal: { professionals: 1.5 },
@@ -1678,6 +1873,7 @@ export const defaultConfig: GameConfig = {
           name: "Recommendations",
           blurb: "Suggests products each shopper is likely to want.",
           devDays: 30,
+          tier: 4,
           growthMultiplier: 1.2,
           addonPricePerUser: 0.05,
           appeal: { casual: 1.5 },
@@ -1687,6 +1883,7 @@ export const defaultConfig: GameConfig = {
           name: "Wishlists",
           blurb: "Shoppers save items and come back for them.",
           devDays: 10,
+          tier: 1,
           growthMultiplier: 1.05,
           addonPricePerUser: 0.015,
           appeal: { enthusiasts: 1.5 },
@@ -1738,6 +1935,7 @@ export const defaultConfig: GameConfig = {
           name: "Direct messages",
           blurb: "Users chat privately with friends.",
           devDays: 20,
+          tier: 3,
           growthMultiplier: 1.15,
           addonPricePerUser: 0.08,
           appeal: { casual: 1.5 },
@@ -1747,6 +1945,7 @@ export const defaultConfig: GameConfig = {
           name: "Photo sharing",
           blurb: "Users post photos to their feed.",
           devDays: 16,
+          tier: 2,
           growthMultiplier: 1.12,
           addonPricePerUser: 0.06,
           appeal: { enthusiasts: 1.5 },
@@ -1756,6 +1955,7 @@ export const defaultConfig: GameConfig = {
           name: "Groups",
           blurb: "People with shared interests gather in one place.",
           devDays: 24,
+          tier: 4,
           growthMultiplier: 1.15,
           addonPricePerUser: 0.08,
           appeal: { professionals: 1.5 },
@@ -1765,6 +1965,7 @@ export const defaultConfig: GameConfig = {
           name: "Notifications",
           blurb: "Brings users back when something happens.",
           devDays: 10,
+          tier: 1,
           growthMultiplier: 1.05,
           addonPricePerUser: 0.03,
           appeal: { businesses: 1.5 },
@@ -1808,6 +2009,7 @@ export const defaultConfig: GameConfig = {
           name: "HD playback",
           blurb: "Videos play in sharp high definition.",
           devDays: 20,
+          tier: 2,
           growthMultiplier: 1.12,
           addonPricePerUser: 0.14,
           appeal: { enthusiasts: 1.5 },
@@ -1817,6 +2019,7 @@ export const defaultConfig: GameConfig = {
           name: "Comments",
           blurb: "Viewers talk about what they watched.",
           devDays: 10,
+          tier: 1,
           growthMultiplier: 1.05,
           addonPricePerUser: 0.07,
           appeal: { casual: 1.5 },
@@ -1826,6 +2029,7 @@ export const defaultConfig: GameConfig = {
           name: "Recommendations",
           blurb: "Suggests the next video to keep viewers watching.",
           devDays: 30,
+          tier: 3,
           growthMultiplier: 1.2,
           addonPricePerUser: 0.2,
           appeal: { casual: 1.5 },
@@ -1835,6 +2039,7 @@ export const defaultConfig: GameConfig = {
           name: "Live streaming",
           blurb: "Creators broadcast live to their followers.",
           devDays: 36,
+          tier: 4,
           growthMultiplier: 1.2,
           addonPricePerUser: 0.2,
           appeal: { professionals: 1.5, businesses: 1.5 },
@@ -1880,6 +2085,7 @@ export const defaultConfig: GameConfig = {
           name: "Invoices and payment links",
           blurb: "Businesses send a link and get paid.",
           devDays: 12,
+          tier: 1,
           growthMultiplier: 1.08,
           addonPricePerUser: 0.15,
         },
@@ -1888,6 +2094,7 @@ export const defaultConfig: GameConfig = {
           name: "Fraud checks",
           blurb: "Stops stolen cards before the money moves.",
           devDays: 24,
+          tier: 3,
           growthMultiplier: 1.15,
           addonPricePerUser: 0.3,
         },
@@ -1896,6 +2103,7 @@ export const defaultConfig: GameConfig = {
           name: "Instant payouts",
           blurb: "Businesses get their money the same day.",
           devDays: 20,
+          tier: 2,
           growthMultiplier: 1.12,
           addonPricePerUser: 0.25,
         },
@@ -1904,6 +2112,7 @@ export const defaultConfig: GameConfig = {
           name: "Subscription billing",
           blurb: "Charges customers every month without them lifting a finger.",
           devDays: 30,
+          tier: 4,
           growthMultiplier: 1.2,
           addonPricePerUser: 0.35,
         },
@@ -1962,6 +2171,7 @@ export const defaultConfig: GameConfig = {
           name: "Long memory",
           blurb: "Remembers past conversations, so users needn't repeat themselves.",
           devDays: 16,
+          tier: 1,
           growthMultiplier: 1.1,
           addonPricePerUser: 0.2,
         },
@@ -1970,6 +2180,7 @@ export const defaultConfig: GameConfig = {
           name: "Document reader",
           blurb: "Users upload files and ask questions about them.",
           devDays: 20,
+          tier: 2,
           growthMultiplier: 1.12,
           addonPricePerUser: 0.25,
         },
@@ -1978,6 +2189,7 @@ export const defaultConfig: GameConfig = {
           name: "Voice chat",
           blurb: "Users talk to the assistant out loud.",
           devDays: 24,
+          tier: 3,
           growthMultiplier: 1.12,
           addonPricePerUser: 0.3,
         },
@@ -1986,6 +2198,7 @@ export const defaultConfig: GameConfig = {
           name: "Image maker",
           blurb: "Draws pictures from a description.",
           devDays: 30,
+          tier: 4,
           growthMultiplier: 1.2,
           addonPricePerUser: 0.4,
         },
@@ -2033,6 +2246,7 @@ export const defaultConfig: GameConfig = {
           name: "Achievements",
           blurb: "Players earn badges for what they do in games.",
           devDays: 10,
+          tier: 1,
           growthMultiplier: 1.05,
           addonPricePerUser: 0.05,
         },
@@ -2041,6 +2255,7 @@ export const defaultConfig: GameConfig = {
           name: "Party chat",
           blurb: "Friends talk to each other while they play.",
           devDays: 18,
+          tier: 3,
           growthMultiplier: 1.12,
           addonPricePerUser: 0.1,
         },
@@ -2049,6 +2264,7 @@ export const defaultConfig: GameConfig = {
           name: "Cloud saves",
           blurb: "Players pick up their game on any device.",
           devDays: 14,
+          tier: 2,
           growthMultiplier: 1.08,
           addonPricePerUser: 0.08,
         },
@@ -2057,6 +2273,7 @@ export const defaultConfig: GameConfig = {
           name: "Game streaming",
           blurb: "Play big games on a phone or an old laptop: your servers run them.",
           devDays: 34,
+          tier: 4,
           growthMultiplier: 1.2,
           addonPricePerUser: 0.25,
         },
