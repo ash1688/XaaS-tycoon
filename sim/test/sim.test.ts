@@ -1051,6 +1051,22 @@ describe("features", () => {
     );
   });
 
+  it("says when developers have nothing to do: nothing being built, or on SaaS, where they only set up add-ons", () => {
+    const idle = (state: GameState) => sim.staff(state).find((p) => p.pool === "developers")!.idle;
+    expect(idle(startOn())).toMatch(/Nothing is being built/);
+    expect(idle(sim.applyAction(startOn(), build("checkout")))).toBeNull();
+    expect(idle(startOn("iaas", 0))).toBeNull();
+    expect(idle(startOn("saas"))).toMatch(/^On SaaS the provider builds the features: your developers only set up add-ons/);
+    const allOn = (state: GameState, status: "built" | "addon"): GameState => ({
+      ...state,
+      features: Object.fromEntries(features.map((f) => [f.id, { status, progress: 0 }])),
+    });
+    expect(idle(allOn(startOn("saas"), "addon"))).toMatch(/every add-on is on: your developers have nothing to do/);
+    expect(idle(allOn(startOn(), "built"))).toBe("Every feature is built: your developers have nothing to do.");
+    // Only developers can sit idle like this.
+    expect(sim.staff(startOn()).filter((p) => p.pool !== "developers").every((p) => p.idle === null)).toBe(true);
+  });
+
   it("starts a build without moving time on or touching cash", () => {
     const state = sim.applyAction(startOn(), build("checkout"));
     expect(state).toMatchObject({ day: 1, cash: 1000 });
@@ -5119,7 +5135,7 @@ describe("encounters", () => {
       expect(threshold).toBeLessThanOrEqual(64);
     }
     expect(begin(s, "paas").encounterList).toEqual(state.encounterList);
-    expect(s.danger(state)).toEqual({ meter: 0, max: 64, rise: 0, dailyRise: 1, risks: [] });
+    expect(s.danger(state)).toEqual({ meter: 0, max: 64, rise: 0, dailyRise: 1, risks: [], warning: null });
   });
 
   it("creeps on a well-run day and rises faster with risky play: unpatched servers, overload, low satisfaction", () => {
@@ -5180,6 +5196,36 @@ describe("encounters", () => {
     expect(fired.dangerMeter).toBe(1);
     expect(s.events(fired).map((e) => e.id)).toEqual(["patch"]);
     expect(fired.encounterList).toEqual([{ event: "patch", threshold: 5 }]);
+  });
+
+  it("warns of an event with a warning about its days ahead, once, and pauses time for it", () => {
+    const warned: EventConfig = { ...patch, warning: { days: 7, text: "Patch coming." } };
+    const s = withEncounters({ thresholdMin: 20, thresholdMax: 20 }, warned);
+    const start = begin(s, "paas");
+    // The meter is 13 at the end of day 14: seven well-run days from 20, so the warning comes that day. It fires on 22.
+    const { log } = s.advance(start, 22);
+    const warnings = log.filter((d) => d.entries.some((e) => e.kind === "danger" && e.text === "Warning: Patch coming."));
+    expect(warnings.map((d) => d.day)).toEqual([14]);
+    expect(eventDays(log)).toEqual([22]);
+    // The game starts on day 1, so advancing 13 days plays to the end of day 14.
+    expect(s.danger(s.advance(start, 12).state).warning).toBeNull();
+    expect(s.danger(s.advance(start, 13).state).warning).toEqual({ event: "patch", name: "OS security patch", text: "Patch coming." });
+    expect(s.danger(s.advance(start, 20).state).warning).not.toBeNull();
+    // Once it fires the new list starts from 0, out of the warning's reach.
+    expect(s.danger(s.advance(start, 21).state).warning).toBeNull();
+    const paused = s.tick(s.advance(start, 12).state);
+    expect(paused.pauses).toContainEqual({ kind: "alert", id: "warning-patch", text: "Warning: OS security patch may be coming" });
+    expect(s.tick(s.advance(start, 13).state).pauses.some((p) => p.id === "warning-patch")).toBe(false);
+    // Without a warning, the same event is a surprise.
+    const quiet = withEncounters({ thresholdMin: 20, thresholdMax: 20 }, patch);
+    expect(quiet.advance(quiet.newGame({ companyName: "Acme", productType: "social", model: "paas", seed: 42 }), 22).log.some((d) => d.entries.some((e) => e.text.startsWith("Warning:")))).toBe(false);
+  });
+
+  it("warns of a traffic spike a week ahead, by default", () => {
+    const spike = defaultConfig.events.find((e) => e.id === "trafficSpike")!;
+    expect(spike.warning?.days).toBe(7);
+    // On-prem kit arrives in fewer days than the warning gives.
+    expect(spike.warning!.days).toBeGreaterThan(defaultConfig.models.onprem.servers!.readyDays!);
   });
 
   it("fires the lowest threshold first, then rolls a new list", () => {
@@ -6149,6 +6195,36 @@ describe("price waves and the price lock", () => {
     expect(preview.total.upgraded).toBeGreaterThan(0);
     expect(preview.total.joined).toBeGreaterThan(0);
     expect(preview.total).toMatchObject({ left: 0, toFree: 0, tickets: 0 });
+  });
+
+  it("previews a rise's ticket burst against today's support, and whether support clears it (#163)", () => {
+    // No support staff: every backlash ticket waits, and the preview's backlog matches the game's after the wave.
+    const start = begin();
+    const preview = s.pricePreview(start, 45);
+    const { tickets } = preview;
+    expect(tickets.tickets).toBe(preview.total.tickets);
+    expect(tickets.tickets).toBeGreaterThan(0);
+    expect(tickets.peakDay).toBe(Math.max(...preview.days.map((d) => d.tickets)));
+    expect(tickets).toMatchObject({ clearance: 0, usualTickets: 0, canClear: false, waitingAfter: tickets.tickets, peakWaiting: tickets.tickets });
+    const { state } = daily(s, s.applyAction(start, setPrice(45)), preview.days.length);
+    expect(state.backlog).toBe(tickets.waitingAfter);
+
+    // Support that clears more than the busiest day: none wait.
+    const staffed = s.applyAction(start, { type: "hire", pool: "support", count: Math.ceil(tickets.peakDay / 10) });
+    expect(s.pricePreview(staffed, 45).tickets).toMatchObject({ canClear: true, peakWaiting: 0, waitingAfter: 0 });
+
+    // Support that clears some each day falls behind on the busy days but catches up by the end.
+    const some = s.applyAction(start, { type: "hire", pool: "support", count: Math.ceil(tickets.tickets / preview.days.length / 10) });
+    const behind = s.pricePreview(some, 45).tickets;
+    expect(behind.canClear).toBe(false);
+    expect(behind.peakWaiting).toBeGreaterThan(0);
+    expect(behind.peakWaiting).toBeLessThan(tickets.tickets);
+    expect(behind.waitingAfter).toBeLessThan(behind.peakWaiting);
+
+    // A cut brings no burst.
+    expect(s.pricePreview(start, 20).tickets).toMatchObject({ tickets: 0, peakDay: 0, canClear: true });
+    // Nor does today's price.
+    expect(s.pricePreview(start, start.price).tickets).toMatchObject({ tickets: 0, canClear: true });
   });
 
   it("scales the wave with the size of the change against the fair price: a small tweak barely registers", () => {

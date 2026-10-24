@@ -649,7 +649,7 @@ const alerts = computed(() => {
         </template>
       </OverviewCard>
 
-      <OverviewCard v-if="!game.over" title="Danger meter" :tone="danger?.risks.length ? 'warn' : undefined">
+      <OverviewCard v-if="!game.over" title="Danger meter" :tone="danger?.risks.length || danger?.warning ? 'warn' : undefined">
         <div v-if="danger" data-testid="danger-card">
           <p class="overview-value" data-testid="danger-rise">
             +{{ danger.rise }} <small>on day {{ game.company.day }}</small>
@@ -667,13 +667,17 @@ const alerts = computed(() => {
             <template v-else-if="danger.rise">Creeping: a well-run day.</template>
             <template v-else>Still until launch: nothing can go wrong yet.</template>
           </p>
+          <p v-if="danger.warning" class="warn-text" data-testid="danger-warning">
+            <strong>Warning:</strong> {{ danger.warning.text }}
+          </p>
         </div>
         <template #detail>
           <p>
             Trouble builds up. The danger meter rises every day after launch, and when it reaches a hidden threshold a
             random event happens: a traffic spike, an OS patch, a provider outage or price rise, or a feature your
             platform can't provide. Then it drops back to 0 and starts again. You won't know which event is next, or
-            when, but how you run the company decides how fast it comes, and makes some events more likely.
+            when, but how you run the company decides how fast it comes, and makes some events more likely. The one
+            exception is a traffic spike: you get a tip-off about a week before, time to add capacity.
           </p>
           <p v-if="danger" data-testid="danger-detail">
             A well-run day adds {{ danger.dailyRise }}.<template v-if="danger.risks.length">

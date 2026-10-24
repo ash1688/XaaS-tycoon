@@ -8,9 +8,10 @@ const quiet: GameConfig = {
   ...defaultConfig,
   events: [],
   allowedGameLengths: { "180-days": 1, "until-ipo": 1, "1-year": 0, career: 0 },
-  // Small thresholds, so a company made ready below clears them comfortably.
+  // Small thresholds and a short trading history, so a company made ready below clears them comfortably.
   ipo: {
     ...defaultConfig.ipo,
+    minTradingDays: 20,
     products: {
       ...defaultConfig.ipo.products,
       social: { users: 1_000, annualRevenue: 100_000, payingUsers: 500 },
@@ -79,10 +80,11 @@ const met = (s: Sim, state: GameState) => Object.fromEntries(s.ipo(state).condit
 const coldAt = (chance: number) => createSim({ ...quiet, ipo: { ...quiet.ipo, coldChance: { min: chance, max: chance } } });
 
 describe("the readiness checklist", () => {
-  it("lists the seven conditions, none met by a new company, and refuses to apply", () => {
+  it("lists the eight conditions, none met by a new company, and refuses to apply", () => {
     const state = begin();
     const ipo = sim.ipo(state);
     expect(ipo.conditions.map((c) => c.id)).toEqual([
+      "trading",
       "usersAndRevenue",
       "uptime",
       "costs",
@@ -92,7 +94,7 @@ describe("the readiness checklist", () => {
       "payingUsers",
     ]);
     expect(ipo).toMatchObject({ status: "not-ready", ready: false, canApply: false, offer: null, result: null });
-    expect(ipo.refusal).toMatch(/Not ready to float yet: users and revenue/);
+    expect(ipo.refusal).toMatch(/Not ready to float yet: trading history, users and revenue/);
     expect(refusal(() => sim.applyAction(state, { type: "applyForIpo" }))).toBe("ipo_not_ready");
   });
 
@@ -105,7 +107,7 @@ describe("the readiness checklist", () => {
       ["usersAndRevenue", { ...state, users: 999 }],
       ["usersAndRevenue", lastDays(state, 60, { income: 200 })],
       ["uptime", lastDays(state, 3, { hoursDown: 3 })],
-      ["costs", lastDays(state, 1, { infrastructure: 5_000 })],
+      ["costs", lastDays(state, 2, { infrastructure: 5_000 })],
       ["satisfaction", lastDays(state, RECORD, { satisfaction: 60 })],
       ["payingUsers", { ...state, paidUsers: 499 }],
       ["profit", { ...lastDays(state, RECORD, { staff: 2_000 }), price: 0.01 }],
@@ -117,6 +119,32 @@ describe("the readiness checklist", () => {
       expect(sim.ipo(s)).toMatchObject({ status: "not-ready", canApply: false });
       expect(refusal(() => sim.applyAction(s, { type: "applyForIpo" }))).toBe("ipo_not_ready");
     }
+  });
+
+  it("needs a trading history: days traded since the launch, however good the record", () => {
+    const state = ready();
+    const traded = state.day - state.launchDay! + 1;
+    const longer = createSim({ ...quiet, ipo: { ...quiet.ipo, minTradingDays: traded + 1 } });
+    expect(Object.entries(met(longer, state)).filter(([, ok]) => !ok).map(([k]) => k)).toEqual(["trading"]);
+    expect(longer.ipo(state).conditions[0]).toMatchObject({ met: false, now: `${traded} days traded`, comfort: 0 });
+    expect(refusal(() => longer.applyAction(state, { type: "applyForIpo" }))).toBe("ipo_not_ready");
+    const later = { ...state, day: state.day + 1, spendByDay: [...state.spendByDay, { ...state.spendByDay.at(-1)!, day: state.day + 1 }] };
+    expect(met(longer, later).trading).toBe(true);
+    expect(sim.ipo(state).conditions[0]!.comfort).toBe(1);
+  });
+
+  it("sets aside the costliest day, so a single one-off charge doesn't spoil predictable costs", () => {
+    const state = ready();
+    // A fraud bill (charged as infrastructure) and a severance payment (staff), each one day of the record.
+    for (const spike of [{ infrastructure: 4_000 }, { staff: 6_000 }]) {
+      const once = lastDays(state, 1, spike);
+      expect(met(sim, once).costs).toBe(true);
+      expect(sim.ipo(once).conditions.find((c) => c.id === "costs")!.needed).toMatch(/your costliest day set aside/);
+      const twice = { ...once, spendByDay: once.spendByDay.map((d) => (d.day === state.day - 10 ? { ...d, ...spike } : d)) };
+      expect(met(sim, twice).costs).toBe(false);
+    }
+    const strict = createSim({ ...quiet, ipo: { ...quiet.ipo, costDaysSetAside: 0 } });
+    expect(met(strict, lastDays(state, 1, { infrastructure: 4_000 })).costs).toBe(false);
   });
 
   it("counts a clear path to profit: losing money over the record but making it on a usual day now", () => {

@@ -3,7 +3,7 @@ import { computed } from "vue";
 import { useRouter } from "vue-router";
 import { useGame } from "../game";
 
-// The IPO readiness checklist on Finance: seven conditions turning green one by one, and Apply once all are. Applying
+// The IPO readiness checklist on Finance: eight conditions turning green one by one, and Apply once all are. Applying
 // rolls a hidden cold market (the IPO postponed); otherwise it's approved and the opening-bell page takes over.
 const game = useGame();
 const router = useRouter();

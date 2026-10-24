@@ -89,13 +89,16 @@ describe("negotiating friends and family's offer", () => {
     expect(later.newShares).toBe(standing.newShares);
   });
 
-  it("never walks away: even a greedy counter rolled low leaves an offer to accept, no worse than before", () => {
+  it("never walks away: even a greedy counter rolled low leaves an offer to accept, though a worse one", () => {
     for (let seed = 1; seed <= 20; seed++) {
       const state = begin(seed);
       const [opening] = ffTalks(state).offers;
       const after = counterFf(state, { amount: opening!.amount * 1.5 });
       expect(sim.funding(after).friendsAndFamilyOffer).not.toBeNull();
-      expect(ffTalks(after).offers[1]!.amount).toBeGreaterThanOrEqual(opening!.amount);
+      const [round] = ffTalks(after).rounds;
+      const amount = ffTalks(after).offers[1]!.amount;
+      if (round!.result === "low") expect(amount).toBeLessThan(opening!.amount);
+      else expect(amount).toBeGreaterThan(opening!.amount);
     }
   });
 
@@ -196,6 +199,37 @@ describe("rolls", () => {
       return n;
     };
     expect(highs(1.4)).toBeLessThan(highs(1.05));
+  });
+
+  it("can go against the student: a low roll makes the next offer worse than the one countered", () => {
+    expect(moves.low).toBeLessThan(0);
+    const negotiation = createNegotiation(quiet.negotiation);
+    const terms = [
+      { key: "amount", label: "the cash", better: "higher" as const, step: 100 },
+      { key: "days", label: "the condition's days", better: "lower" as const, step: 1, min: 1 },
+    ];
+    const talks = negotiation.open({ amount: 10_000, days: 30 });
+    const odds = negotiation.odds(talks, { amount: 11_000, days: 20 }, terms);
+    // A fifth of the distance the other way: £200 less, two days more.
+    expect(odds.outcomes.low).toEqual({ amount: 9_800, days: 32 });
+    // Even a modest counter can roll low: countering is a gamble, not a free try.
+    expect(odds.chances.low).toBeGreaterThan(0);
+    // A worse offer never leaves a term outside its bounds.
+    const share = [{ key: "share", label: "their share", better: "lower" as const, step: 0.001, min: 0.001, max: 0.99 }];
+    expect(negotiation.odds(negotiation.open({ share: 0.98 }), { share: 0.5 }, share).outcomes.low).toEqual({ share: 0.99 });
+  });
+
+  it("can make the grant's offer worse: less cash, or a longer condition", () => {
+    for (let seed = 1; seed <= 40; seed++) {
+      const state = begin(seed);
+      const opening = sim.funding(state).grantOffer!;
+      const after = counterGrant(state, { amount: opening.amount * 1.2 });
+      const talks = sim.funding(after).negotiations.grant!;
+      if (talks.rounds[0]!.result !== "low") continue;
+      expect(sim.funding(after).grantOffer!.amount).toBeLessThan(opening.amount);
+      return;
+    }
+    throw new Error("no low roll in 40 seeds");
   });
 
   it("take a bonus on top, which improves the odds", () => {

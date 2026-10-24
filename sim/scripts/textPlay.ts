@@ -35,6 +35,7 @@ import {
   type StaffGrade,
   type StaffPool,
   type Terms,
+  type TicketOutlook,
 } from "../src/index.ts";
 
 /** One row of the playtest log, as the staff dashboard exports it, so the classroom analysis runs on AI games too. */
@@ -92,7 +93,7 @@ const termsText = (funder: FunderId, t: Terms) =>
 
 /** A roll in words: "rolled 15 −6 for asking 20% = 9: middle, they moved 50% of the way". */
 const rollText = (r: NegotiationRound) =>
-  `rolled ${r.die}${r.penalty ? ` −${r.penalty} for asking ${pct(r.ask * 100)}` : ""}${r.bonus ? ` +${r.bonus} bonus` : ""} = ${r.total < 0 ? `−${-r.total}` : r.total}: ${r.result}, they moved ${pct(r.move * 100)} of the way`;
+  `rolled ${r.die}${r.penalty ? ` −${r.penalty} for asking ${pct(r.ask * 100)}` : ""}${r.bonus ? ` +${r.bonus} bonus` : ""} = ${r.total < 0 ? `−${-r.total}` : r.total}: ${r.result}, ${r.move < 0 ? `they dug in: the offer got worse by ${pct(-r.move * 100)} of what you asked` : `they moved ${pct(r.move * 100)} of the way`}`;
 
 /** Where a negotiation stands: offer 2 of 3, with a counter left, or the final offer. */
 const standing = (n: NegotiationView) =>
@@ -238,6 +239,10 @@ export function renderMarket(sim: Sim, state: GameState): string | null {
   return `market share: ${companies} | ${growthWords(m.growth)}${answer}`;
 }
 
+/** How full the market is: "market 82% full (of 20,000 users it can reach): growth runs at 18% of an empty market's". */
+export const reachText = (reach: { size: number; filled: number }) =>
+  `market ${pct(100 * reach.filled)} full (of ${reach.size.toLocaleString("en-GB")} users it can reach): growth runs at ${pct(100 * (1 - reach.filled))} of an empty market's`;
+
 /** What rivals do to growth, in words: "rivals slow your growth to 84%". */
 const growthWords = (growth: number) =>
   `rivals ${growth < 0.995 ? "slow" : growth > 1.005 ? "speed up" : "leave"} your growth ${growth < 0.995 || growth > 1.005 ? "to" : "at"} ${pct(100 * growth)}`;
@@ -291,8 +296,9 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const market = renderMarket(sim, state);
   if (market) lines.push(market);
   const conversion = sim.conversion(state);
+  const { reach } = sim.market(state);
   lines.push(
-    `users ${state.users.toLocaleString("en-GB")} (paid ${state.paidUsers.toLocaleString("en-GB")}, free ${(state.users - state.paidUsers).toLocaleString("en-GB")}) | converting ${(conversion.rate * 100).toFixed(2)}%/day`,
+    `users ${state.users.toLocaleString("en-GB")} (paid ${state.paidUsers.toLocaleString("en-GB")}, free ${(state.users - state.paidUsers).toLocaleString("en-GB")}) | converting ${(conversion.rate * 100).toFixed(2)}%/day | ${reachText(reach)}`,
   );
   lines.push(
     `satisfaction ${pct(state.satisfaction)} | uptime ${sim.uptime(state).toFixed(1)}% | tickets ${Math.round(sim.usualTickets(state))}/day vs ${Math.round(sim.dailyClearance(state))} cleared, backlog ${Math.round(state.backlog)}`,
@@ -400,6 +406,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
     `danger meter: ${danger.meter} (no event waits past ${danger.max}) | rose ${danger.rise} today (well-run day +${danger.dailyRise}${risks ? `, ${risks}` : ""})`,
   );
   for (const r of danger.risks) lines.push(`  ${r.label}: ${r.detail}`);
+  if (danger.warning) lines.push(`  WARNING: ${danger.warning.text}`);
   lines.push(`calendar: ${calendarLine(sim, state)}`);
   for (const e of sim.events(state)) lines.push(`event today: ${e.name}. ${e.responsibility} ${e.outcome}`);
   for (const g of sim.featureGaps(state)) lines.push(`feature gap: ${g.name}. ${g.detail}`);
@@ -577,7 +584,7 @@ function staffLines(sim: Sim, state: GameState): string[] {
       : "";
     lines.push(
       `  ${p.pool} ${p.headcount} (${grades})${agency} work ${p.output}${need} | pay junior/mid/senior ${pay}/day, ` +
-        `agency ${agencyPay}/day | severance ${severance} each${hiring}`,
+        `agency ${agencyPay}/day | severance ${severance} each${hiring}${p.idle ? ` | IDLE: ${p.idle}` : ""}`,
     );
   }
   return lines;
@@ -884,6 +891,21 @@ export interface Turn {
   rows: LogRow[];
 }
 
+/**
+ * The preview's ticket burst against today's support (#163): what the extra tickets come to and whether support clears
+ * them. Empty when the change brings none and nothing waits.
+ */
+function ticketsLine(t: TicketOutlook): string {
+  if (t.tickets === 0 && t.canClear) return "";
+  const support = `support clears ${t.clearance}/day, usual ${t.usualTickets}/day`;
+  const verdict = t.canClear
+    ? "support clears them as they come"
+    : t.waitingAfter === 0
+      ? `support falls behind: up to ${t.peakWaiting} extra waiting, cleared by the end`
+      : `support can't keep up: up to ${t.peakWaiting} extra waiting, ${t.waitingAfter} still waiting after`;
+  return `; +${t.tickets} tickets (busiest day +${t.peakDay}; ${support}): ${verdict}`;
+}
+
 /** Runs one parsed command that isn't an advance. A refused action is reported and logged, not thrown. */
 export function runCommand(sim: Sim, state: GameState, command: Command, who: Player): Turn {
   if (command.kind === "preview") {
@@ -899,6 +921,7 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
             ? `; reaction ${(100 * p.reaction).toFixed(1)}% of payers = ` +
               p.reactions.map((t) => `${t.id} ${(100 * t.reaction).toFixed(1)}% × ${pct(100 * t.share)}`).join(" + ")
             : "") +
+          ticketsLine(p.tickets) +
           (p.locked ? `; price locked ${p.lockDaysLeft} more days` : ""),
       ],
     };

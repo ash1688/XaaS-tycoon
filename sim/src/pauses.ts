@@ -1,4 +1,5 @@
 import type { CalendarView } from "./calendar.ts";
+import type { DangerView } from "./encounters.ts";
 import type { GameConfig } from "./config.ts";
 import type { EventView } from "./events.ts";
 import type { IpoView } from "./ipo.ts";
@@ -49,6 +50,7 @@ export interface PauseViews {
   funding(state: GameState): FundingView;
   calendar(state: GameState): CalendarView;
   ipo(state: GameState): IpoView;
+  danger(state: GameState): DangerView;
 }
 
 export function createPauses(config: GameConfig, views: PauseViews) {
@@ -96,6 +98,10 @@ export function createPauses(config: GameConfig, views: PauseViews) {
         add("calendar", `holiday-${h.id}`, `Holiday coming in ${h.daysUntil} days: ${h.name}, on ${h.start.text}`);
       }
     }
+
+    // A warning about the next random event (a traffic spike's tip-off), on the day it comes: time to get ready.
+    const warned = views.danger(after).warning;
+    if (warned && views.danger(before).warning?.event !== warned.event) add("alert", `warning-${warned.event}`, `Warning: ${warned.name} may be coming`);
 
     // Alerts: things getting worse that a decision can fix.
     const use = capacityUse(after);

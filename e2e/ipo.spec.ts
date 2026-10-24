@@ -12,6 +12,7 @@ const EASY_IPO = {
   "ipo.products.ecommerce.users": 0,
   "ipo.products.ecommerce.annualRevenue": 0,
   "ipo.products.ecommerce.payingUsers": 0,
+  "ipo.minTradingDays": 0,
   "ipo.recordDays": 2,
   "ipo.minUptime": 0,
   "ipo.minSatisfaction": 0,
@@ -56,7 +57,7 @@ test("float a company that's ready, ring the opening bell and watch the first da
   // Finance: the checklist, not all green yet, so Apply isn't allowed.
   await goTo(student, "Finance");
   const panel = student.getByTestId("ipo-panel");
-  await expect(panel.locator("li")).toHaveCount(7);
+  await expect(panel.locator("li")).toHaveCount(8);
   await expect(panel.getByTestId("ipo-status")).toHaveText("Not ready");
   await expect(panel.getByTestId("ipo-uptime")).toHaveAttribute("data-met", "false");
   await expect(panel.getByTestId("ipo-apply")).toBeDisabled();
@@ -65,7 +66,7 @@ test("float a company that's ready, ring the opening bell and watch the first da
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).toHaveText("2");
   await expect(panel.getByTestId("ipo-status")).toHaveText("Ready to apply");
-  for (const id of ["usersAndRevenue", "uptime", "costs", "security", "profit", "satisfaction", "payingUsers"]) {
+  for (const id of ["trading", "usersAndRevenue", "uptime", "costs", "security", "profit", "satisfaction", "payingUsers"]) {
     await expect(panel.getByTestId(`ipo-${id}`)).toHaveAttribute("data-met", "true");
   }
 

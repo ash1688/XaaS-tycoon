@@ -147,10 +147,12 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add(`ipo.products.${p}.annualRevenue`, "Money", "IPO", `Annual revenue needed (${name})`, "Annual revenue, as the valuation measures it, a company needs to float.", range(0, 100_000_000, 10_000));
     add(`ipo.products.${p}.payingUsers`, "Money", "IPO", `Paying users needed (${name})`, "The minimum paying customer base to float, so a few customers paying a lot can't.", range(0, 1_000_000, 100));
   }
+  add("ipo.minTradingDays", "Money", "IPO", "Trading history needed", "Days of trading since the launch a company needs before it can float.", range(0, 365, 1));
   add("ipo.recordDays", "Money", "IPO", "Records over", "Days the uptime, satisfaction, costs and profit records are measured over.", GAME_DAY);
   add("ipo.minUptime", "Money", "IPO", "Uptime record needed", "Uptime % over the record's days a company needs to float.", range(0, 100, 0.1));
   add("ipo.minSatisfaction", "Money", "IPO", "Satisfaction record needed", "Average satisfaction % over the record's days a company needs to float.", range(0, 100, 1));
   add("ipo.maxCostSwing", "Money", "IPO", "Most costs may vary", "Daily running costs over the record's days may vary by at most this (their standard deviation ÷ their mean; 0.25 = 25%). Big one-off purchases count against it.", range(0, 5, 0.01));
+  add("ipo.costDaysSetAside", "Money", "IPO", "Costliest days set aside", "The costliest days of the record left out when measuring how much costs vary, so one fraud bill or severance payment doesn't fail it.", range(0, 30, 1));
   add("ipo.comfortMargin", "Money", "IPO", "Comfortably ready at", "How far over a condition counts as comfortably ready (0.25 = 25% over), cutting the cold-market chance and helping the first day of trading.", range(0.01, 5, 0.01));
   add("ipo.coldChance.max", "Money", "IPO", "Cold-market chance, only just ready", "The chance applying meets a cold market when the company only just meets every condition.", SHARE);
   add("ipo.coldChance.min", "Money", "IPO", "Cold-market chance, comfortably ready", "The chance applying meets a cold market when the company is comfortably over every condition.", SHARE);
@@ -172,7 +174,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("negotiation.maxAsk", "Money", "Negotiation", "Most a counter can ask", "The most a counter can ask for in all, as a share of the offer (0.5 = 50% better terms).", range(0.05, 5, 0.05));
   add("negotiation.moves.high", "Money", "Negotiation", "High roll moves", "Share of the way from the offer to the counter the next offer moves on a high roll.", SHARE);
   add("negotiation.moves.middle", "Money", "Negotiation", "Middle roll moves", "Share of the way the next offer moves on a middle roll.", SHARE);
-  add("negotiation.moves.low", "Money", "Negotiation", "Low roll moves", "Share of the way the next offer moves on a low roll.", SHARE);
+  add("negotiation.moves.low", "Money", "Negotiation", "Low roll moves", "Share of the way the next offer moves on a low roll. Below 0 the offer gets worse instead: −0.2 moves it a fifth of the counter's distance the other way.", range(-1, 1, 0.01));
   add("rescue.breathingDays", "Money", "Rescue buyout", "Breathing space", "Days of losses the vulture VC's cash covers after the cost cuts, on top of what took cash below £0.", GAME_DAY);
   add("rescue.minCover", "Money", "Rescue buyout", "Least cover a day", "The breathing space counts at least this share of a day's running costs, even if the company is losing less.", SHARE);
   add("rescue.share", "Money", "Rescue buyout", "Share taken", "The vulture VC's share of the company once its new shares are issued (0.75 = 75%).", range(0.01, 0.99, 0.01));
@@ -548,6 +550,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
       }
       add(`${at}.encounter.maxTimes`, "Events", s, "Most times per game", "After firing this many times it no longer goes on the encounter list.", range(0, 20, 1));
       add(`${at}.encounter.fromDay`, "Events", s, "Earliest day", "It can't go on an encounter list rolled before this day.", GAME_DAY);
+      add(`${at}.warning.days`, "Events", s, "Warning days", "The student gets a warning when it's next and this many well-run days would bring it. 0 for no warning.", range(0, 30, 1));
       add(`${at}.encounter.followsWithinDays`, "Events", s, "Only within days of what it follows", `It can only fire within this many days of the event it follows (${event.encounter.follows?.join(", ")}).`, GAME_DAY);
     }
     event.schedule?.days.forEach((_, i) => {

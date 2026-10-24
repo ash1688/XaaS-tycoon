@@ -1,7 +1,7 @@
 import type { GameConfig } from "./config.ts";
 import { count } from "./finance.ts";
 import { staffOutput } from "./staff.ts";
-import type { GameState, LogEntry } from "./state.ts";
+import type { GameState, LogEntry, WaveEffect } from "./state.ts";
 
 /**
  * Extra tickets on top of the day's usual ones, with what caused them. Outages add one; price backlash (#46) adds its
@@ -11,6 +11,25 @@ export interface TicketBurst {
   /** What caused it, to finish "Ticket burst: 200 extra tickets after …". */
   cause: string;
   tickets: number;
+}
+
+/**
+ * What a price change's tickets would do at today's support, for the price preview (#163). Day by day the users raise
+ * their usual tickets plus the change's, support clears what it can and the rest waits, as in a day of support; the
+ * users change with the wave. Against the same days without the change, so only the change's tickets count as waiting.
+ */
+export interface TicketOutlook {
+  /** The change's extra tickets in all, and on its busiest day. */
+  tickets: number;
+  peakDay: number;
+  /** Tickets support can clear in a day, and the usual tickets the users raise today. */
+  clearance: number;
+  usualTickets: number;
+  /** The most of the change's tickets left waiting at the end of a day, and those still waiting once the wave ends. */
+  peakWaiting: number;
+  waitingAfter: number;
+  /** Support clears the change's tickets the day they come, so none wait. */
+  canClear: boolean;
 }
 
 /**
@@ -130,6 +149,34 @@ export function createSupport(config: GameConfig) {
     return { ticketsToday, burstTickets, clearedToday, backlog, satisfaction, entries };
   }
 
+  /** What the days of a price change (the preview's wave) would do to the backlog at today's support. */
+  function ticketOutlook(state: GameState, days: WaveEffect[]): TicketOutlook {
+    const clearance = dailyClearance(state);
+    const usual = usualTickets(state);
+    const work = (backlog: number, tickets: number) => Math.max(0, backlog + tickets - clearance);
+    let users = state.users;
+    let paidUsers = state.paidUsers;
+    let backlog = state.backlog;
+    let without = state.backlog;
+    let peakWaiting = 0;
+    for (const d of days) {
+      backlog = work(backlog, usualTickets({ ...state, users, paidUsers }) + d.tickets);
+      without = work(without, usual);
+      peakWaiting = Math.max(peakWaiting, Math.round(backlog - without));
+      users += d.joined - d.left;
+      paidUsers += d.joinedPaid + d.upgraded - d.left - d.toFree;
+    }
+    return {
+      tickets: days.reduce((sum, d) => sum + d.tickets, 0),
+      peakDay: Math.max(0, ...days.map((d) => d.tickets)),
+      clearance: Math.round(clearance),
+      usualTickets: usual,
+      peakWaiting,
+      waitingAfter: Math.max(0, Math.round(backlog - without)),
+      canClear: peakWaiting === 0,
+    };
+  }
+
   return {
     startingSupport,
     usualTickets,
@@ -139,6 +186,7 @@ export function createSupport(config: GameConfig) {
     satisfactionChurn,
     satisfactionPaidChurn,
     supportDay,
+    ticketOutlook,
   };
 }
 

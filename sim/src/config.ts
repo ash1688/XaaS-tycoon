@@ -999,6 +999,12 @@ export interface EventConfig {
   layer: LayerId;
   /** How it comes up on the encounter list, as a random event. Left out, it's never a random event. */
   encounter?: EncounterOdds;
+  /**
+   * A warning, when it's next on the encounter list and the danger meter would reach it within `days` well-run days:
+   * the student hears `text` that day, with time to get ready. Risky days fill the meter faster, so it can come sooner.
+   * Left out, the event is a surprise.
+   */
+  warning?: { days: number; text: string };
   /** Fixed days it fires on as well, outside the encounter system. */
   schedule?: EventSchedule;
   /** Days it lasts, from the day it fires. */
@@ -1176,9 +1182,10 @@ export interface IpoProductConfig {
 }
 
 /**
- * The IPO. The company can apply to float once it passes every condition of the readiness check: users and revenue,
- * an uptime record, predictable costs, a security audit, profitability, a satisfaction record and a minimum paying
- * customer base. No investor is needed. Records are measured over the last recordDays days played.
+ * The IPO. The company can apply to float once it passes every condition of the readiness check: a trading history of
+ * minTradingDays since the launch, users and revenue, an uptime record, predictable costs, a security audit,
+ * profitability, a satisfaction record and a minimum paying customer base. No investor is needed. Records are measured
+ * over the last recordDays days played; predictable costs leaves out the record's costDaysSetAside costliest days.
  *
  * Each condition also has a comfort, 0–1: how far over it the company is, reaching 1 at comfortMargin over (0.25 = 25%
  * over a "more than" threshold, or a quarter of the way from it to perfect). The comfort is their average.
@@ -1195,6 +1202,8 @@ export interface IpoProductConfig {
  */
 export interface IpoConfig {
   products: Record<ProductTypeId, IpoProductConfig>;
+  /** Days of trading since the launch a company needs before it can float. */
+  minTradingDays: number;
   recordDays: number;
   /** Uptime % over recordDays. */
   minUptime: number;
@@ -1202,6 +1211,8 @@ export interface IpoConfig {
   minSatisfaction: number;
   /** The most daily running costs over recordDays may vary: their standard deviation ÷ their mean. */
   maxCostSwing: number;
+  /** The costliest days of the record left out of the costs' swing, so a single one-off charge doesn't fail it. */
+  costDaysSetAside: number;
   comfortMargin: number;
   coldChance: { min: number; max: number };
   coldDelayDays: number;
@@ -1229,7 +1240,8 @@ export interface IpoConfig {
  * - The roll is the die, less greedPenalty × the distance (rounded to a whole pip), plus any bonus (a CFO, later).
  *   From highFrom the other side moves moves.high of the way to the counter; from middleFrom, moves.middle; below it,
  *   moves.low. So the further a counter asks, the worse its odds, and asking a lot pays less on average than asking a
- *   little more than nothing.
+ *   little more than nothing. A moves.low below 0 makes a low roll go against the student: the other side hardens and
+ *   the next offer is worse than the one countered, so a counter is a gamble, not a free try.
  * - The other side never walks away: its latest offer stands until the student accepts or declines it.
  */
 export interface NegotiationConfig {
@@ -1240,7 +1252,7 @@ export interface NegotiationConfig {
   greedPenalty: number;
   /** The most a counter can ask, in all, as a share of the offer (0.5 = 50%). */
   maxAsk: number;
-  /** Share of the way from the offer to the counter the next offer moves, on each kind of roll. */
+  /** Share of the way from the offer to the counter the next offer moves, on each kind of roll; below 0, away from it. */
   moves: { high: number; middle: number; low: number };
 }
 
@@ -2065,23 +2077,28 @@ export const defaultConfig: GameConfig = {
     friendsAndFamily: { amount: 15_000 },
     grant: { amount: 10_000, days: 60, minUptime: { onprem: 98, iaas: 98.5, paas: 98.5, saas: 99 } },
   },
-  // Set from the harness's sensible bot, which reaches these on PaaS and SaaS around days 180-270 and on-prem and IaaS
-  // later: in a 180-day game a float is rare. Users sit near each market's size; revenue and payers are what take time.
+  // Set from the harness's sensible bot (scripts/ipoSurvey.ts), which is never ready by day 180: it reaches these on PaaS
+  // and SaaS around days 190-250, and on IaaS and on-prem around days 220-340 (or not at all when its uptime slips).
+  // Users sit near each market's size. Payers are a floor well below a fair-priced company's (about 55-70% of the
+  // market), so a dearer company can still float; revenue is what takes time.
   ipo: {
     products: {
-      ecommerce: { users: 18_000, annualRevenue: 1_000_000, payingUsers: 16_000 },
-      social: { users: 36_000, annualRevenue: 1_250_000, payingUsers: 21_000 },
-      video: { users: 18_000, annualRevenue: 1_250_000, payingUsers: 12_000 },
+      ecommerce: { users: 18_000, annualRevenue: 1_170_000, payingUsers: 13_500 },
+      social: { users: 36_000, annualRevenue: 1_250_000, payingUsers: 17_000 },
+      video: { users: 18_000, annualRevenue: 1_300_000, payingUsers: 10_000 },
       // A small market of businesses, each worth about £30 a month: revenue comes from few payers.
-      payments: { users: 3_600, annualRevenue: 900_000, payingUsers: 2_400 },
+      payments: { users: 3_600, annualRevenue: 1_020_000, payingUsers: 2_200 },
       // Few users who pay well, and a big market of gamers at a small price.
-      assistant: { users: 7_200, annualRevenue: 700_000, payingUsers: 3_000 },
-      games: { users: 22_500, annualRevenue: 1_000_000, payingUsers: 11_000 },
+      assistant: { users: 7_200, annualRevenue: 1_150_000, payingUsers: 4_000 },
+      games: { users: 22_500, annualRevenue: 1_500_000, payingUsers: 13_500 },
     },
+    // About four months: strong play can't float before about day 120, and only just ready then.
+    minTradingDays: 120,
     recordDays: 30,
     minUptime: 99,
     minSatisfaction: 70,
     maxCostSwing: 0.25,
+    costDaysSetAside: 1,
     comfortMargin: 0.25,
     coldChance: { min: 0.05, max: 0.3 },
     coldDelayDays: 30,
@@ -2105,7 +2122,8 @@ export const defaultConfig: GameConfig = {
     middleFrom: 7,
     greedPenalty: 30,
     maxAsk: 0.5,
-    moves: { high: 0.8, middle: 0.5, low: 0.1 },
+    // A low roll hardens the other side: the next offer is a fifth of the counter's distance worse than the last.
+    moves: { high: 0.8, middle: 0.5, low: -0.2 },
   },
   // Placeholders from the design: about 30 days of breathing space for about 75% of the company. Buying it back costs
   // at least twice what the vulture VC put in.
@@ -2328,6 +2346,11 @@ export const defaultConfig: GameConfig = {
       layer: "runtime",
       // The commonest random event.
       encounter: { chance: 0.6 },
+      // A tip-off a week ahead: long enough to order on-prem kit (4 days) or rent VMs, if the student acts on it.
+      warning: {
+        days: 7,
+        text: "A big news site has been asking about your product. If they feature it, expect a flood of visitors within about a week: more than your servers can carry unless you add capacity first.",
+      },
       days: 2,
       // Triple the CU and DBU demand: more than a sensible setup carries, so only a model that scales stays up.
       load: { multiplier: 2, extra: 80_000, unitMultiplier: 3 },
@@ -2580,19 +2603,19 @@ export const defaultConfig: GameConfig = {
       effects: {
         onprem: {
           cost: { amount: 4_000, text: "Money clawed back by the banks, and their fees" },
-          detail: "You built your own checkout, so spotting fraud is your job, and nothing stopped them.",
+          detail: "Your own code takes the payments, so spotting fraud is your job, and nothing stopped them.",
         },
         iaas: {
           cost: { amount: 4_000, text: "Money clawed back by the banks, and their fees" },
-          detail: "You built your own checkout, so spotting fraud is your job, and nothing stopped them.",
+          detail: "Your own code takes the payments, so spotting fraud is your job, and nothing stopped them.",
         },
         paas: {
           cost: { amount: 4_000, text: "Money clawed back by the banks, and their fees" },
-          detail: "You built your own checkout on the platform, so spotting fraud is your job, and nothing stopped them.",
+          detail: "Your own code on the platform takes the payments, so spotting fraud is your job, and nothing stopped them.",
         },
         saas: {
           cost: { amount: 1_500, text: "Money clawed back by the banks, and their fees" },
-          detail: "The provider's checkout has its own fraud checks, which caught most of it. You lost what slipped through.",
+          detail: "The provider takes the payments and runs its own fraud checks, which caught most of it. You lost what slipped through.",
         },
       },
     },

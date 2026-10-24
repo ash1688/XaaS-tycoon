@@ -91,10 +91,13 @@ async function counter() {
 }
 
 const RESULT: Record<RollResult, string> = {
-  high: "a high roll: they moved most of the way",
-  middle: "a middle roll: they met you halfway",
-  low: "a low roll: they barely moved",
+  high: "a high roll",
+  middle: "a middle roll",
+  low: "a low roll",
 };
+/** What the roll did to the offer: towards the counter, or (a low roll, by default) away from it. */
+const moveText = (move: number) =>
+  move < 0 ? "they dug in: their offer got worse" : move >= 0.75 ? "they moved most of the way" : move >= 0.4 ? "they met you halfway" : "they barely moved";
 const percent = (n: number) => `${Math.round(n * 100)}%`;
 const signed = (n: number) => (n < 0 ? `−${-n}` : String(n));
 /** An offer's terms in words: friends and family's cash for their share, the grant's cash for its condition's days. */
@@ -266,7 +269,7 @@ async function answer(type: "acceptFunding" | "declineFunding") {
           <li v-for="(r, i) in talks.rounds" :key="i" data-testid="negotiation-round">
             You asked {{ termsText(r.counter) }}. Rolled {{ r.die }}<template v-if="r.penalty">
               − {{ r.penalty }} for asking {{ percent(r.ask) }}</template
-            ><template v-if="r.bonus"> + {{ r.bonus }} bonus</template> = {{ signed(r.total) }}: <strong>{{ RESULT[r.result] }}</strong>.
+            ><template v-if="r.bonus"> + {{ r.bonus }} bonus</template> = {{ signed(r.total) }}: <strong>{{ RESULT[r.result] }}: {{ moveText(r.move) }}</strong>.
             Offer {{ i + 2 }}: {{ termsText(talks.offers[i + 1]!) }}.
           </li>
         </ol>

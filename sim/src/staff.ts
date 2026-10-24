@@ -53,6 +53,8 @@ export interface StaffPoolView {
   /** Agency staff by grade. */
   agency: GradeView[];
   hiring: HireView[];
+  /** Why the pool has nothing to do, in a sentence, when it hasn't: developers with nothing to build. Null otherwise. */
+  idle: string | null;
 }
 
 /** A grade's pay in a pool, to the pound: permanent, or through an agency. */
@@ -272,6 +274,7 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
       hiring: state.hiring
         .filter((h) => h.pool === pool)
         .map(({ grade, count, agency, arrivesOn }) => ({ grade, count, agency, arrivesOn, daysLeft: arrivesOn - state.day })),
+      idle: null,
     }));
   }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createSim, defaultConfig, SimError, type DayLog, type EventConfig, type GameConfig, type GameState, type Sim } from "../src/index.ts";
+import { playDay, STRATEGIES } from "../scripts/harness.ts";
+import { createSim, defaultConfig, PRODUCT_TYPE_IDS, SimError, type DayLog, type EventConfig, type GameConfig, type GameState, type Sim } from "../src/index.ts";
 
 // Shares, valuation, the cap table, friends and family and the grant, through the sim's public interface.
 
@@ -524,6 +525,26 @@ describe("the grant", () => {
     const after = s2.advance(accept(s2, late), days + 2).state;
     expect(s2.funding(after).grant).toMatchObject({ status: "met", hoursDown: 0 });
   });
+
+  it("survives launch week on-prem, before more kit can arrive, even with a holiday in it, played tick by tick", () => {
+    // The default config, events and holidays included. Started a few days before Black Friday, Christmas and Easter,
+    // each lands in the first fortnight; the clock runs as the timed flow does, a tick at a time.
+    const full = createSim(defaultConfig);
+    const sensible = STRATEGIES.find((x) => x.id === "sensible")!;
+    for (const productType of PRODUCT_TYPE_IDS) {
+      for (const startDate of ["2026-11-21", "2026-12-19", "2026-03-31"]) {
+        let state = full.newGame({ companyName: "Acme", productType, model: "onprem", seed: 1, takeLoan: true, startDate });
+        state = accept(full, state);
+        // Before launch, the condition's days can't be known yet.
+        expect(full.funding(state).grant!.fromDay).toBeNull();
+        while (state.day < 21) state = full.tick(playDay(full, state, sensible)).state;
+        const grant = full.funding(state).grant!;
+        // Its condition only starts once the launch ramp is over, after the kit bought on day 1 has arrived.
+        expect(grant.fromDay).toBeGreaterThan(state.launchDay!);
+        expect([productType, startDate, grant.status]).toEqual([productType, startDate, "accepted"]);
+      }
+    }
+  }, 30_000);
 
   it("can be taken once, or declined for good", () => {
     const after = accept(sim, begin());

@@ -2,7 +2,7 @@ import type { Calendar } from "./calendar.ts";
 import { CUSTOMER_TYPE_IDS, type CustomerTypeId, type GameConfig, type ProductTypeId } from "./config.ts";
 import { count, pounds } from "./finance.ts";
 import { SimError, type GameState, type LogEntry, type PriceChange, type PriceWave, type WaveEffect } from "./state.ts";
-import type { TicketBurst } from "./support.ts";
+import type { Support, TicketBurst, TicketOutlook } from "./support.ts";
 
 /** What changing the price would do, before committing: the wave, its day-by-day shape and where income settles. */
 export interface PricePreview {
@@ -27,6 +27,8 @@ export interface PricePreview {
   paidUsers: number;
   /** The whole wave added up: paying users leaving and dropping to free, new users, upgrades, backlash tickets. */
   total: WaveEffect;
+  /** The wave's backlash tickets against today's support: whether it clears them or they wait (#163). */
+  tickets: TicketOutlook;
   /**
    * The price reaction to a rise: the share of paying users it loses, each customer type's reaction weighted by its
    * share of users. 0 for a cut or no change.
@@ -173,7 +175,7 @@ export const percent = (rate: number) => `${Math.round(rate * 10_000) / 100}%`;
  * Pricing and revenue: the monthly price, the income it brings from paying users, and how it compares with the
  * product's fair price, which sets how fast users grow and how many new users pay.
  */
-export function createPricing(config: GameConfig, calendar: Calendar) {
+export function createPricing(config: GameConfig, calendar: Calendar, support: Support) {
   /** The fair monthly price: on the payments app, the fair monthly fee. */
   const fairPrice = (productType: ProductTypeId) => config.productTypes[productType].pricing.fairPrice;
   const transactionsOf = (productType: ProductTypeId) => config.productTypes[productType].transactions;
@@ -461,6 +463,7 @@ export function createPricing(config: GameConfig, calendar: Calendar) {
       users,
       paidUsers,
       total,
+      tickets: support.ticketOutlook(state, days),
       reaction: weightedReaction(reactions),
       reactions,
       days,
