@@ -56,6 +56,7 @@ The image is a multi-stage build: production dependencies only, running as the `
 | `RATE_LIMIT_WINDOW_MINUTES` | No | The rate limit window. Default 15. A blocked IP gets back in when it ends. |
 | `GAME_FINAL_DAY` | No | Ends games after this many days instead of 180. Leave unset in production. |
 | `GAME_START_DATE` | No | Starts every new game on this date (`YYYY-MM-DD`) instead of a random date this year, for example `2026-11-01` to show Black Friday. Leave unset in production. The e2e tests use `2026-10-01`, a month with no holidays. |
+| `GAME_MVP` | No | `off` gives every product an MVP of no size, so games launch as soon as they can serve users. For tests and demos about play after the launch; leave unset in production. The e2e tests use it. |
 | `TIMED_FLOW` | No | `off` takes timed flow off the game page for every game, leaving Continue only. On unless set. |
 | `TIMED_FLOW_SECONDS` | No | Seconds a tick at normal speed with timed flow on. Default 15. |
 

@@ -316,6 +316,11 @@ export function renderStatus(sim: Sim, state: GameState): string {
   lines.push(`power and cooling ${money(sim.powerAndCooling(state.model))}/day`);
   lines.push(...staffLines(sim, state));
 
+  const mvp = sim.mvp(state);
+  if (!mvp.done) {
+    const due = mvp.launchDay === null ? "no developers to finish it" : `done by the end of day ${mvp.launchDay}`;
+    lines.push(`MVP: ${+mvp.progress.toFixed(1)}/${mvp.total} developer-days (${due}); no users until it's done`);
+  }
   const launch = sim.launch(state);
   if (launch.status !== "launched") {
     lines.push(

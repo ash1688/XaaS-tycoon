@@ -1,20 +1,22 @@
 import type { GameConfig } from "./config.ts";
 import { count } from "./finance.ts";
+import { mvpDoneBy, mvpStatus } from "./mvp.ts";
 import type { Pricing } from "./pricing.ts";
 import type { Servers } from "./servers.ts";
+import { staffOutput } from "./staff.ts";
 import type { GameState, LogEntry } from "./state.ts";
 
 /** Where the company is with its launch, for the Home card. */
 export interface LaunchView {
   /**
-   * "waiting" while nothing it has set up could serve users; "upcoming" once something will, but isn't ready yet (VMs
-   * being set up, kit on order); "launching" while its first users trickle in over the ramp; "launched" once the
+   * "waiting" while nothing it has set up could serve users, or there are no developers to finish the MVP; "upcoming"
+   * once both will be ready, but aren't yet (the MVP being built, VMs being set up, kit on order); "launching" while its first users trickle in over the ramp; "launched" once the
    * ramp is over and normal growth has taken over.
    */
   status: "waiting" | "upcoming" | "launching" | "launched";
   /**
-   * The first day users arrived or, with the setup it has now, will arrive: the first day it's ready by. Null while
-   * nothing it has could serve users.
+   * The first day users arrived or, with the setup and developers it has now, will arrive: the first day the MVP is
+   * done and servers are ready by. Null while nothing it has could serve users, or nobody is building the MVP.
    */
   day: number | null;
   /** Days from the day just played to that day: null once users have started arriving, or with nothing set up. */
@@ -37,9 +39,10 @@ export interface LaunchView {
 }
 
 /**
- * Launch: a new company has no users and no servers. Its first users start arriving at the end of the first day it
- * has capacity to serve them, and trickle in over the launch ramp (see LaunchConfig). Before that nothing is running,
- * so there are no users, income, tickets or events, but staff, running costs and loan repayments are still charged.
+ * Launch: a new company has no users, no servers and an MVP to build (see Mvp). Its first users start arriving at the
+ * end of the first day its MVP is done and it has capacity to serve them, and trickle in over the launch ramp (see
+ * LaunchConfig). Before that nothing is running, so there are no users, income, tickets, events or hosting bills, but
+ * staff and loan repayments are still charged.
  */
 export function createLaunch(config: GameConfig, servers: Servers, pricing: Pricing) {
   // A ramp whose shares add up to nothing brings everyone on the first day.
@@ -61,8 +64,9 @@ export function createLaunch(config: GameConfig, servers: Servers, pricing: Pric
     return servers.usersSupported(servers.capacityOn(state, day + 1, 1), state.productType) > 0;
   }
 
-  /** Whether the company's first users arrive at the end of `day`: not launched yet, and ready by then. */
-  const launchesOn = (state: GameState, day: number) => state.launchDay === null && readyBy(state, day);
+  /** Whether the company's first users arrive at the end of `day`: not launched yet, its MVP done and ready by then. */
+  const launchesOn = (state: GameState, day: number) =>
+    state.launchDay === null && mvpDoneBy(state.mvp, day) && readyBy(state, day);
 
   /** Which ramp day `day` is, from 1, for a company launching on it or already launched; 0 if it isn't one. */
   function rampDayOn(state: GameState, day: number): number {
@@ -73,12 +77,15 @@ export function createLaunch(config: GameConfig, servers: Servers, pricing: Pric
   }
 
   /**
-   * The day the company's first users arrived or, with the servers it has now, will: the first day from the next one
-   * played that it's ready by. Null while nothing it has could serve users.
+   * The day the company's first users arrived or, with the servers and developers it has now, will: the first day
+   * from the next one played that its MVP is done and it's ready by. Null while nothing it has could serve users, or
+   * there are no developers to finish the MVP.
    */
   function launchDayFor(state: GameState): number | null {
     if (state.launchDay !== null) return state.launchDay;
-    const first = state.day + 1;
+    const mvpDay = mvpStatus(config, { ...state, output: staffOutput(config, state, "developers") }).launchDay;
+    if (mvpDay === null) return null;
+    const first = Math.max(state.day + 1, mvpDay);
     const days = [first, ...state.servers.map((s) => s.readyDay).filter((d) => d > first)].sort((a, b) => a - b);
     return days.find((d) => readyBy(state, d)) ?? null;
   }

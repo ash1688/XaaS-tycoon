@@ -104,6 +104,8 @@ const sim = createSim({
     },
   },
   launch: { rampShares: [1] },
+  // No MVP to build, so a company launches as soon as it can serve users: the sim tests the MVP.
+  mvp: { ...defaultConfig.mvp, baseDevDays: { ecommerce: 0, social: 0, video: 0, payments: 0, assistant: 0, games: 0 } },
   // Seeds are random here, so migrations never overrun.
   migration: { ...defaultConfig.migration, overrun: { ...defaultConfig.migration.overrun, chance: 0 } },
   // No starting staff, so continue charges only the model's running cost unless a test hires someone.

@@ -5,6 +5,7 @@ import type { EventView } from "./events.ts";
 import type { InvestorsView } from "./investors.ts";
 import type { IpoView } from "./ipo.ts";
 import type { LaunchView } from "./launch.ts";
+import type { MvpView } from "./mvp.ts";
 import type { MigrationView } from "./migration.ts";
 import type { ServerView, UnitsView } from "./servers.ts";
 import type { FundingView } from "./shares.ts";
@@ -46,6 +47,7 @@ export interface PauseViews {
   runwayDays(state: GameState): number | null;
   features(state: GameState): { id: string; name: string; status: string }[];
   launch(state: GameState): LaunchView;
+  mvp(state: GameState): MvpView;
   migration(state: GameState): MigrationView | null;
   servers(state: GameState): ServerView[];
   funding(state: GameState): FundingView;
@@ -158,7 +160,8 @@ export function createPauses(config: GameConfig, views: PauseViews) {
       add("lowCash", "low-cash", left === 0 ? "Cash runs out tomorrow" : `Cash runs out in about ${left} day${left === 1 ? "" : "s"}`);
     }
 
-    // Something finished: a feature built, the launch, servers ready, a migration step.
+    // Something finished: the MVP, a feature built, the launch, servers ready, a migration step.
+    if (views.mvp(after).done && !views.mvp(before).done) add("finished", "mvp", "Your MVP is done");
     const building = new Set(views.features(before).filter((f) => f.status === "building").map((f) => f.id));
     for (const f of views.features(after)) {
       if (building.has(f.id) && f.status !== "building") add("finished", `feature-${f.id}`, `${f.name} is built`);

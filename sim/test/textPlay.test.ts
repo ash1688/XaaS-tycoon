@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createSim, defaultConfig, SimError, type GameState } from "../src/index.ts";
+import { createSim, defaultConfig, SimError, type GameConfig, type GameState } from "../src/index.ts";
 import { advanceUntil, parseCommand, renderCommands, renderStatus, renderSummary, runCommand, runScript } from "../scripts/textPlay.ts";
 
-const sim = createSim({ ...defaultConfig, finalDay: 40 });
+/** No MVP to build, so a game launches as soon as it has somewhere to serve users: the MVP has its own tests. */
+const NO_MVP: GameConfig["mvp"] = { ...defaultConfig.mvp, baseDevDays: { ecommerce: 0, social: 0, video: 0, payments: 0, assistant: 0, games: 0 } };
+const sim = createSim({ ...defaultConfig, mvp: NO_MVP, finalDay: 40 });
 const who = { player: "test", playstyle: "average-joe" };
 const start = (): GameState =>
   sim.newGame({ companyName: "Test Co", productType: "social", model: "paas", seed: 3, takeLoan: true });
@@ -194,7 +196,7 @@ describe("advanceUntil", () => {
 
   it("stops for viral growth, and shows whose job it is to carry the new users", () => {
     const viral = defaultConfig.events.find((e) => e.id === "viralGrowth")!;
-    const s = createSim({ ...defaultConfig, finalDay: 40, events: [{ ...viral, encounter: undefined, schedule: { type: "fixed", days: [10] } }] });
+    const s = createSim({ ...defaultConfig, mvp: NO_MVP, finalDay: 40, events: [{ ...viral, encounter: undefined, schedule: { type: "fixed", days: [10] } }] });
     const begun = s.newGame({ companyName: "Test Co", productType: "social", model: "paas", seed: 3, takeLoan: true });
     let state = runCommand(s, begun, parseCommand("instances 3"), who).state;
     state = runCommand(s, state, parseCommand("managed database medium"), who).state;
@@ -235,6 +237,7 @@ describe("advanceUntil", () => {
     // No moderation, as on main before moderators: this is about something else.
     const careers = createSim({
       ...defaultConfig,
+      mvp: NO_MVP,
       allowedGameLengths: { "180-days": 0, "until-ipo": 0, "1-year": 0, career: 1 },
       productTypes: { ...defaultConfig.productTypes, social: { ...defaultConfig.productTypes.social, moderation: undefined } },
     });
@@ -462,7 +465,7 @@ describe("shares and funding", () => {
   });
 
   it("stops time when the grant's condition ends", () => {
-    const short = createSim({ ...defaultConfig, finalDay: 40, funding: { ...defaultConfig.funding, grant: { ...defaultConfig.funding.grant, days: 5 } } });
+    const short = createSim({ ...defaultConfig, mvp: NO_MVP, finalDay: 40, funding: { ...defaultConfig.funding, grant: { ...defaultConfig.funding.grant, days: 5 } } });
     const state = short.applyAction(
       short.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 }),
       { type: "acceptFunding", funder: "grant" },
@@ -837,7 +840,7 @@ describe("rivals", () => {
 });
 
 describe("the payments app", () => {
-  const full = createSim();
+  const full = createSim({ ...defaultConfig, mvp: NO_MVP });
   const pay = (): GameState =>
     full.advance(full.newGame({ companyName: "Pay Co", productType: "payments", model: "saas", seed: 3 }), 20).state;
   const runFull = (state: GameState, text: string) => {

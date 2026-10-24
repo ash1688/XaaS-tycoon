@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { createSim, defaultConfig, MODEL_IDS, PRODUCT_TYPE_IDS, type GameConfig, type GameState, type ProductTypeId } from "../src/index.ts";
 
 // The AI assistant and games network (#118), through the sim's public interface on the default config.
-const sim = createSim();
+/** No MVP to build, so a game launches as soon as it has somewhere to serve users: the MVP has its own tests. */
+const NO_MVP: GameConfig["mvp"] = { ...defaultConfig.mvp, baseDevDays: { ecommerce: 0, social: 0, video: 0, payments: 0, assistant: 0, games: 0 } };
+const sim = createSim({ ...defaultConfig, mvp: NO_MVP });
 const { assistant, games } = defaultConfig.productTypes;
 const start = (productType: ProductTypeId, model = "saas", s = sim) =>
   s.newGame({ companyName: "Product Co", productType, model, seed: 4, takeLoan: model === "onprem" });
@@ -95,6 +97,7 @@ describe("games network", () => {
     // Without load variation or random events, a day's load is users × load per user, doubled in a launch.
     const steady: GameConfig = {
       ...defaultConfig,
+      mvp: NO_MVP,
       events: [],
       productTypes: { ...defaultConfig.productTypes, games: { ...games, growth: { ...games.growth, loadNoise: 0 } } },
     };

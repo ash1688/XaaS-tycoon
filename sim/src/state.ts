@@ -30,7 +30,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 38;
+export const GAME_STATE_VERSION = 39;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -113,6 +113,13 @@ export interface Loan {
  * Moving onto SaaS keeps built features: they're your own work, and stay active. A build under way pauses, since on
  * SaaS developers configure add-ons rather than build; it keeps its progress and carries on if you leave SaaS.
  */
+/** The MVP every game opens with: developer-days done, and the day it was finished (see MvpConfig). */
+export interface MvpProgress {
+  progress: number;
+  /** Null until it's done. Users can arrive from the end of this day. */
+  doneDay: number | null;
+}
+
 export interface FeatureProgress {
   status: "building" | "built" | "addon";
   /** Developer-days of work done so far. Equals the feature's cost once built; 0 for an add-on. */
@@ -574,6 +581,8 @@ export interface GameState {
    * then, when it has no users (see LaunchConfig).
    */
   launchDay: number | null;
+  /** The MVP: no users arrive until it's done. */
+  mvp: MvpProgress;
   /**
    * The launch total: users who trickle in over the launch ramp, drawn from the product's range when the game starts.
    * Kept from the student: the screens show only those who have joined.

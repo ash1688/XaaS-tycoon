@@ -45,7 +45,9 @@ export default defineConfig({
       url: `http://localhost:${PORT}/api/meta`,
       reuseExistingServer: false,
       timeout: 120_000,
-      env: { ...serverEnv, PORT: String(PORT) },
+      // No MVP, so a game launches as soon as it can serve users: the specs here are about what comes after. The timed
+      // server below keeps the MVP; the sim tests cover it.
+      env: { ...serverEnv, PORT: String(PORT), GAME_MVP: "off" },
     },
     {
       command: "npx tsx server/src/index.ts",

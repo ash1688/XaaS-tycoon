@@ -1019,14 +1019,32 @@ export interface EventConfig {
 }
 
 /**
- * A new company has no users and no servers. Its first users arrive at the end of the first day it has capacity to
- * serve them: servers ready by the end of that day, so rented VMs the day after they're rented, bought kit when it
- * arrives, a platform's instances and database at once. A model with no capacity limit (SaaS) is ready on day 1.
+ * The MVP: every game opens with one to build before launch, measured in developer-days. Its size is the product's
+ * base × the model's share of the stack the company builds itself:
+ *
+ *   size = baseDevDays[product] × modelShare[model]
+ *
+ * Developers' output goes into it until it's done (see Mvp), and no users arrive until then, while staff are paid
+ * from the first day played. Hosting bills start at go-live, the first day users arrive. A size of 0 is done at once.
+ */
+export interface MvpConfig {
+  /** Developer-days an MVP takes on a model that builds the whole stack (on-prem), for each product. */
+  baseDevDays: Record<ProductTypeId, number>;
+  /** The share of the base each model builds: all of it on-prem, only the storefront and payments on SaaS. */
+  modelShare: Record<ModelId, number>;
+}
+
+/**
+ * A new company has no users, no servers and an MVP to build (see MvpConfig). Its first users arrive at the end of the
+ * first day its MVP is done and it has capacity to serve them: servers ready by the end of that day, so rented VMs the
+ * day after they're rented, bought kit when it arrives, a platform's instances and database at once. A model with no
+ * capacity limit (SaaS) is ready as soon as its MVP is.
  * From then the game's launch users (see GrowthProfile.launchUsersMin) trickle in over the ramp, a share each day,
  * each day's split paid and free like any new users. Normal growth takes over after it.
  *
  * Before the first users arrive there's nothing running: no users, no income, no tickets and no scripted events, so no
- * outages. Staff, running costs and loan repayments are still charged, so a company that's slow to set up loses money.
+ * outages, and no hosting bills: those start at go-live. Staff and loan repayments are still charged, so a company
+ * that's slow to launch loses money.
  */
 export interface LaunchConfig {
   /**
@@ -1394,6 +1412,7 @@ export interface GameConfig {
   allowedDifficulties: Record<DifficultyId, number>;
   maxCompanyNameLength: number;
   launch: LaunchConfig;
+  mvp: MvpConfig;
   models: Record<ModelId, ModelConfig>;
   productTypes: Record<ProductTypeId, ProductTypeConfig>;
   customerTypes: Record<CustomerTypeId, CustomerTypeConfig>;
@@ -1442,9 +1461,15 @@ export const defaultConfig: GameConfig = {
   // Normal only, so a class plays the same game unless the teacher opens up the others.
   allowedDifficulties: { easy: 0, normal: 1, hard: 0 },
   maxCompanyNameLength: 40,
-  // Users trickle in over 3 days, building up. SaaS starts on day 1; a platform set up or VMs rented on day 1 start on
-  // day 2; on-prem kit bought on day 1 arrives on day 5, so it starts a few days after the cloud models.
+  // Users trickle in over 3 days, building up, from the day the MVP is done and servers are ready. On-prem kit bought on
+  // day 1 arrives on day 5, well inside the MVP, so its delivery overlaps the build.
   launch: { rampShares: [0.2, 0.3, 0.5] },
+  // Placeholders for the balance pass: the starting two developers (2 developer-days a day) finish on-prem in 11–15
+  // days played, SaaS in 4–6.
+  mvp: {
+    baseDevDays: { ecommerce: 22, social: 28, video: 30, payments: 26, assistant: 24, games: 26 },
+    modelShare: { onprem: 1, iaas: 0.85, paas: 0.65, saas: 0.4 },
+  },
   models: {
     onprem: {
       name: "Own servers (on-prem)",

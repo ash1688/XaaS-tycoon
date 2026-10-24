@@ -38,6 +38,14 @@ _Avoid_: Turn, round
 The slow change in the world over a long game: inflation, cheaper hardware and server wear.
 _Avoid_: Eras, ageing
 
+**MVP**:
+The first version of the product, which every game opens with the developers building, measured in developer-days. No users arrive until it's done: launch is the first day it's done and servers can serve them.
+_Avoid_: Prototype, beta
+
+**Go-live**:
+The launch day: the first day users arrive. Hosting bills start from it.
+_Avoid_: Release, ship date
+
 ### People
 
 **C-suite**:
