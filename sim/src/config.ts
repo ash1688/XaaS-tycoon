@@ -1367,7 +1367,7 @@ export const defaultConfig: GameConfig = {
       blurb: "Buy and run your own kit.",
       comparison: { upfrontCost: "High", monthlyCost: "Low–medium", opsNeeded: "High", control: "Full" },
       // The server room: networking and fit-out. It comes with a medium rack (bought on top, with its cabling); the
-      // servers are bought on top too: a first app server and database of a size that leaves room to grow (£2,200 for
+      // servers are bought on top too: a first app server and database of a size that leaves room to grow (£1,430 for
       // large ones) make on-prem by far the dearest to start.
       upfrontCost: 2_500,
       // The premises and bandwidth. Power and cooling, and each server's power and upkeep, are on top.
@@ -1376,19 +1376,19 @@ export const defaultConfig: GameConfig = {
       powerAndCooling: 25,
       monthlyCostPerUser: 0,
       exitPenalty: 0,
-      // A server costs about five weeks' rent of the same VM and a tenth of that rent a month to run, so it pays for
-      // itself in under two months. That makes on-prem the cheapest at scale for a product with steady, heavy load
+      // A server costs about three to four weeks' rent of the same VM and a tenth of that rent a month to run, so it
+      // pays for itself in about a month. That makes on-prem the cheapest at scale for a product with steady, heavy load
       // (video). But you buy for your peak, days ahead: a spiky shop or a fast-growing social network pays for kit
       // that sits idle, and a traffic spike melts it. Selling one back gets 40% of what you paid. Kit you rack, power
       // and patch yourself needs a little more ops than a VM, and patching it takes two people.
       servers: {
         purchase: {
           price: {
-            app: { small: 400, medium: 550, large: 1_000, massive: 1_400 },
-            database: { small: 450, medium: 700, large: 1_200, massive: 1_650 },
-            cache: { small: 150, medium: 250, large: 400, massive: 550 },
-            loadBalancer: { small: 250, medium: 400, large: 550, massive: 750 },
-            api: { small: 400, medium: 550, large: 1_000, massive: 1_400 },
+            app: { small: 260, medium: 360, large: 650, massive: 910 },
+            database: { small: 290, medium: 460, large: 780, massive: 1_070 },
+            cache: { small: 100, medium: 160, large: 260, massive: 360 },
+            loadBalancer: { small: 160, medium: 260, large: 360, massive: 490 },
+            api: { small: 260, medium: 360, large: 650, massive: 910 },
           },
           sellBackShare: 0.4,
           // Placeholder: per server or rack bought.
@@ -1450,16 +1450,16 @@ export const defaultConfig: GameConfig = {
       // A small, fixed team to deploy and keep the service running, however many instances: the platform runs them.
       opsNeeded: 1,
       exitPenalty: 4_000,
-      // A unit costs about twice as much as on IaaS (an instance is £90 a CU, a medium VM £45): the provider's ops are in
+      // A unit costs about two and a half times as much as on IaaS (an instance is £112.50 a CU, a medium VM £45): the provider's ops are in
       // the price. That's the trade: one ops person however big you get, and scaling that's instant, so a company that
       // only scales once it's full (as most students do) loses least here; but the dearest bill for one that plans
       // ahead. A managed database or cache doubles its units with each size, so one is enough for any product's market.
       servers: {
         monthlyCost: {
-          app: { medium: 900 },
-          api: { medium: 900 },
-          database: { small: 900, medium: 2_000, large: 3_800, massive: 7_200 },
-          cache: { small: 300, medium: 650, large: 1_200, massive: 2_200 },
+          app: { medium: 1_125 },
+          api: { medium: 1_125 },
+          database: { small: 1_125, medium: 2_500, large: 4_750, massive: 9_000 },
+          cache: { small: 375, medium: 810, large: 1_500, massive: 2_750 },
         },
         managed: {
           instanceSize: "medium",
@@ -1491,11 +1491,13 @@ export const defaultConfig: GameConfig = {
     ecommerce: {
       name: "E-commerce platform",
       profile: "Huge Black Friday and Christmas rushes",
+      // A small start that grows fast to the market: early weeks lose money on every model, so the cloud doesn't pay its
+      // way much before own kit does (day 45–65 on all four).
       growth: {
-        launchUsersMin: 2_500,
-        launchUsersMax: 7_500,
+        launchUsersMin: 800,
+        launchUsersMax: 2_000,
         marketSize: 20_000,
-        dailyGrowth: 0.03,
+        dailyGrowth: 0.058,
         growthNoise: 0.5,
         loadPerUser: 2,
         loadNoise: 0.1,
@@ -1506,7 +1508,7 @@ export const defaultConfig: GameConfig = {
       // Shoppers mostly pay: a shop's free tier is browsing without an account.
       // Shops sell to businesses as well as shoppers, so it's the most upmarket mix.
       pricing: {
-        fairPrice: 5,
+        fairPrice: 6,
         freeShare: 0.3,
         conversionRate: 0.0012,
         customerMix: { casual: 0.35, enthusiasts: 0.25, professionals: 0.2, businesses: 0.2 },
@@ -1577,7 +1579,7 @@ export const defaultConfig: GameConfig = {
         loadNoise: 0.05,
       },
       // Feeds and friends lists: light on both, but there are a lot of users.
-      demand: { cuPerUser: 0.0015, dbuPerUser: 0.0015, perUserFeeMultiplier: 1 },
+      demand: { cuPerUser: 0.0012, dbuPerUser: 0.0012, perUserFeeMultiplier: 1 },
       // Mostly free, like most social networks: a few pay for extras. A third pay at the start, so the slow ramp to the
       // market pays its way on any model, own kit included.
       // Mostly casual users, as in the design's worked example.
@@ -1648,8 +1650,9 @@ export const defaultConfig: GameConfig = {
         loadPerUser: 4,
         loadNoise: 0.15,
       },
-      // Encoding and streaming: compute-heavy, with a light database. Its big, steady server bill is where owning kit pays.
-      demand: { cuPerUser: 0.004, dbuPerUser: 0.002, perUserFeeMultiplier: 1 },
+      // Encoding and streaming: compute-heavy, with a light database. Its big, steady server bill is where owning kit pays,
+      // and a SaaS platform charges four times its usual fee for a viewer streaming all evening.
+      demand: { cuPerUser: 0.004, dbuPerUser: 0.002, perUserFeeMultiplier: 4 },
       // Viewers, a good share of keen fans and some creators who earn from it.
       pricing: {
         fairPrice: 9,
@@ -1865,8 +1868,8 @@ export const defaultConfig: GameConfig = {
       name: "Games network",
       profile: "Huge launch-day and holiday spikes; a subscription for online play",
       growth: {
-        launchUsersMin: 500,
-        launchUsersMax: 1_000,
+        launchUsersMin: 700,
+        launchUsersMax: 1_400,
         marketSize: 25_000,
         dailyGrowth: 0.085,
         growthNoise: 0.2,
