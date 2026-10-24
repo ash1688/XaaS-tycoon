@@ -30,6 +30,7 @@ export type ValuationDriverId =
   | "uptime"
   | "multipleFloor"
   | "payingUsers"
+  | "falling"
   | "netCash"
   | "minimum"
   | "liquidation";
@@ -59,8 +60,8 @@ export interface ValuationView {
   /** Recent uptime %, as free-to-paid conversion measures it. */
   recentUptime: number;
   /**
-   * Revenue first, then growth, satisfaction, uptime, paying users, net cash and any top-up to the minimum, or for a
-   * liquidated company what takes it to nothing.
+   * Revenue first, then growth, satisfaction, uptime, paying users, what holds it down while the company is falling,
+   * net cash and any top-up to the minimum, or for a liquidated company what takes it to nothing.
    */
   drivers: ValuationDriver[];
 }
@@ -186,6 +187,11 @@ const FUNDER_NAMES: Record<FunderId, string> = { friendsAndFamily: "Friends and 
 const percent = (share: number) => `${Math.round(share * 1000) / 10}%`;
 const round1 = (n: number) => Math.round(n * 10) / 10;
 const multipleText = (m: number) => `${m >= 0 ? "+" : "−"}${Math.abs(Math.round(m * 100) / 100)}×`;
+/** "Paying users", "Paying users and income", "Paying users, income and satisfaction". */
+const sentence = (things: string[]) => {
+  const text = things.length > 1 ? `${things.slice(0, -1).join(", ")} and ${things.at(-1)}` : (things[0] ?? "");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+};
 
 /**
  * Shares, valuation, the cap table, and the funders on the Finance page from day 1: friends and family, who buy new
@@ -258,7 +264,9 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
    * Growth in paying users: their average over the last averageDays days against their average over the averageDays
    * days to growthDays ago. Only days after the end of the launch ramp count, and growth is scaled by the share of
    * those earlier days that do, so it builds up from nothing over the weeks after launch rather than counting the
-   * launch rush.
+   * launch rush. A rise only counts above the best the company had done by then (its highest averageDays average of
+   * paying users, from the end of the ramp to growthDays ago), so winning back users lost in a crash isn't growth; a
+   * fall counts from the average then.
    */
   function growthIn(state: GameState): number {
     if (state.launchDay === null) return 0;
@@ -269,10 +277,26 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
     if (!now.length || !then.length) return 0;
     const before = mean(then, (d) => d.paidUsers);
     const share = Math.min(1, then.length / v.averageDays);
-    return (share * (mean(now, (d) => d.paidUsers) - before)) / Math.max(before, v.growthBaseUsers);
+    const users = mean(now, (d) => d.paidUsers);
+    if (users <= before) return (share * (users - before)) / Math.max(before, v.growthBaseUsers);
+    const best = bestAverageUsers(daysBetween(state, rampEnd, thenTo));
+    return (share * Math.max(0, users - best)) / Math.max(best, v.growthBaseUsers);
   }
 
-  function valuation(state: GameState): ValuationView {
+  /** The highest average of paying users over averageDays days played (fewer at the start) ending on any of `days`. */
+  function bestAverageUsers(days: DaySpend[]): number {
+    let best = 0;
+    let sum = 0;
+    for (let i = 0; i < days.length; i++) {
+      sum += days[i]!.paidUsers;
+      if (i >= v.averageDays) sum -= days[i - v.averageDays]!.paidUsers;
+      best = Math.max(best, sum / Math.min(i + 1, v.averageDays));
+    }
+    return best;
+  }
+
+  /** The business's part of the valuation on the state's day: revenue at its multiple, and the paying users. */
+  function business(state: GameState) {
     const annualRevenue = Math.round(averageIncome(state) * DAYS_PER_YEAR);
     const { paidUsers, satisfaction, monthlyPerUser } = recent(state);
     const growth = growthIn(state);
@@ -299,7 +323,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
         id: "growth",
         label: "Growth",
         amount: part(growthM),
-        detail: `Paying users over the last ${v.averageDays} days ${growth >= 0 ? "up" : "down"} ${percent(Math.abs(growth))} on the ${v.averageDays} days to ${v.growthDays} days ago (counting from the end of the launch): ${multipleText(growthM)} revenue`,
+        detail: `Paying users over the last ${v.averageDays} days ${growth >= 0 ? "up" : "down"} ${percent(Math.abs(growth))} on the ${v.averageDays} days to ${v.growthDays} days ago (counting from the end of the launch, and a rise only above the best ${v.averageDays} days before then): ${multipleText(growthM)} revenue`,
       },
       {
         id: "satisfaction",
@@ -342,6 +366,100 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
           ? `${count.format(users)} lately × ${pounds(perUser)}: ${pounds(v.valuePerPayingUser)} each at the fair price of ${pounds(fair)} a month, but they paid ${pounds(monthlyPerUser!)}`
           : `${count.format(users)} lately × ${pounds(perUser)}`,
     });
+    return { annualRevenue, multiple, growth, recentUptime, drivers, value: drivers.reduce((sum, d) => sum + d.amount, 0) };
+  }
+
+  /** The state as it was at the end of the day of `spendByDay`'s last record, as far as business() needs it. */
+  function asOf(state: GameState, spendByDay: DaySpend[]): GameState {
+    const last = spendByDay.at(-1)!;
+    return {
+      ...state,
+      day: last.day,
+      spendByDay,
+      paidUsers: last.paidUsers,
+      satisfaction: last.satisfaction,
+      recentHoursDown: spendByDay.slice(-uptimeDays).map((d) => d.hoursDown),
+    };
+  }
+
+  /**
+   * What's falling on `day`: income averaged over the last fallDays days below the fallDays before; paying users so,
+   * or the day's below their average over the fallDays before, so a sudden crash counts at once; or the day's
+   * satisfaction below goodSatisfaction and below its average over the fallDays before. Nothing until there are two
+   * whole periods to compare.
+   */
+  function fallingOn(state: GameState, day: number): string[] {
+    const f = Math.max(1, v.fallDays);
+    const now = daysBetween(state, day - f + 1, day);
+    const before = daysBetween(state, day - 2 * f + 1, day - f);
+    if (now.length < f || before.length < f) return [];
+    const down = (value: (d: DaySpend) => number) => mean(now, value) < mean(before, value);
+    const falling: string[] = [];
+    const today = now.at(-1)!;
+    const lastWeek = daysBetween(state, day - f, day - 1);
+    if (down((d) => d.paidUsers) || today.paidUsers < mean(lastWeek, (d) => d.paidUsers)) falling.push("paying users");
+    if (down((d) => d.income)) falling.push("income");
+    const satisfaction = today.satisfaction;
+    if (satisfaction < v.goodSatisfaction && satisfaction < mean(lastWeek, (d) => d.satisfaction)) falling.push("satisfaction");
+    return falling;
+  }
+
+  /** The business's worth at the end of a day, and what it was held to. */
+  interface Held {
+    worth: number;
+    held: number;
+  }
+
+  // Each day played's Held, by that day's record. A game's records carry over from one day's state to the next, so
+  // each day's is worked out once.
+  const heldOn = new WeakMap<DaySpend, Held>();
+
+  /**
+   * The business's worth, held. On a day with anything falling it's at most the day before's. On a day with nothing
+   * falling it gains whatever the worth gained since the day before, and closes 1/fallDays of any gap left below the
+   * worth by days that were. So the averages catching up with a rise, or winning back what a crash lost, can't lift it
+   * while the company is getting worse, and once it stops it catches up over about fallDays days rather than at once.
+   */
+  function held(worth: number, falling: boolean, before: Held | null): number {
+    if (before === null) return worth;
+    if (falling) return Math.min(worth, before.held);
+    const gained = Math.max(0, worth - before.worth);
+    return Math.min(worth, before.held + gained + (before.worth - before.held) / Math.max(1, v.fallDays));
+  }
+
+  /** The Held at the end of the last day played before today, or null before any. */
+  function heldBefore(state: GameState): Held | null {
+    const days = state.spendByDay;
+    let i = days.length - 1;
+    while (i >= 0 && days[i]!.day >= state.day) i--;
+    if (i < 0) return null;
+    // Back to the last day already worked out, then forward from there.
+    let from = i;
+    while (from >= 0 && !heldOn.has(days[from]!)) from--;
+    let before = from >= 0 ? heldOn.get(days[from]!)! : null;
+    for (let j = from + 1; j <= i; j++) {
+      const upTo = days.slice(0, j + 1);
+      const worth = business(asOf(state, upTo)).value;
+      before = { worth, held: held(worth, fallingOn(state, days[j]!.day).length > 0, before) };
+      heldOn.set(days[j]!, before);
+    }
+    return before;
+  }
+
+  function valuation(state: GameState): ValuationView {
+    const { annualRevenue, multiple, growth, recentUptime, drivers, value: worth } = business(state);
+    const falling = fallingOn(state, state.day);
+    const heldWorth = Math.round(held(worth, falling.length > 0, heldBefore(state)));
+    if (heldWorth < worth) {
+      drivers.push({
+        id: "falling",
+        label: falling.length ? "Falling" : "Catching up",
+        amount: heldWorth - worth,
+        detail: falling.length
+          ? `${sentence(falling)} down on the ${v.fallDays} days before: while anything's falling the business can't gain value`
+          : `Nothing's falling now, so the business is catching up on what it couldn't gain while it was, over about ${v.fallDays} days`,
+      });
+    }
     // Cash counts, less what's still owed on a loan: a company is worth at least what's in the bank.
     const owed = loanOwed(state.loan);
     drivers.push({
@@ -407,9 +525,14 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
     let amount: number, newShares: number, value: number, sharePrice: number;
     if (negotiating) {
       // The share they'd own after is what's been negotiated, so the new shares are share ÷ (1 − share) of those now.
+      // It was agreed against what the company was worth then: if it's worth less now, so its opening offer would
+      // buy a bigger share, theirs rises in step, so terms struck before a fall can't sell a sinking company dear.
       const terms = negotiator.latest(negotiating);
       amount = terms.amount!;
-      newShares = Math.max(1, Math.round((terms.share! * shares) / (1 - terms.share!)));
+      const opening = negotiating.offers[0]!.share!;
+      const openingNow = f.friendsAndFamily.amount / (valuation(state).valuation + f.friendsAndFamily.amount);
+      const share = Math.max(terms.share!, (terms.share! * openingNow) / opening);
+      newShares = Math.max(1, Math.round((share * shares) / (1 - share)));
       sharePrice = amount / newShares;
       value = Math.round(sharePrice * shares);
     } else {

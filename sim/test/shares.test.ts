@@ -228,6 +228,129 @@ describe("valuation", () => {
     expect(revenueParts.reduce((sum, d) => sum + d.amount, 0)).toBe(Math.round(v.annualRevenue * quiet.valuation.minMultiple));
   });
 
+  describe("while the company is falling (#162)", () => {
+    const LONG = 120;
+    /** A company played LONG days, each day's paying users, income a day, and satisfaction from `day`. */
+    const history = (day: (n: number) => { paidUsers: number; income: number; satisfaction?: number }): GameState => {
+      const played = sim.advance(begin(), LONG - 1).state;
+      return {
+        ...played,
+        spendByDay: played.spendByDay.map((d) => ({ ...d, satisfaction: 100, hoursDown: 0, ...day(d.day) })),
+      };
+    };
+    /** The state as it was at the end of `day`, the cash unchanged. */
+    const on = (state: GameState, day: number): GameState => {
+      const spendByDay = state.spendByDay.filter((d) => d.day <= day);
+      const last = spendByDay.at(-1)!;
+      return { ...state, day, spendByDay, paidUsers: last.paidUsers, satisfaction: last.satisfaction, recentHoursDown: [0] };
+    };
+    const valuations = (state: GameState, from: number, to: number) =>
+      Array.from({ length: to - from + 1 }, (_, i) => sim.valuation(on(state, from + i)));
+
+    it("never rises while paying users fall, though income per user went up and the averages are catching up", () => {
+      // 2,000 payers at £10 to day 60; then a price rise to £30 on which they drift away, 20 a day.
+      const state = history((n) => {
+        const paidUsers = n <= 60 ? 2_000 : 2_000 - 20 * (n - 60);
+        return { paidUsers, income: (paidUsers * (n <= 60 ? 10 : 30)) / 30 };
+      });
+      const falling = valuations(state, 68, 100);
+      for (let i = 1; i < falling.length; i++) {
+        expect(falling[i]!.valuation).toBeLessThanOrEqual(falling[i - 1]!.valuation);
+        expect(falling[i]!.drivers.reduce((sum, d) => sum + d.amount, 0)).toBe(falling[i]!.valuation);
+      }
+      expect(falling.at(-1)!.drivers.find((d) => d.id === "falling")).toMatchObject({ label: "Falling" });
+      expect(falling.at(-1)!.drivers.find((d) => d.id === "falling")!.detail).toMatch(/^Paying users.* down on the 7 days before/);
+      // Friends and family's offer is priced on it, so it isn't inflated either.
+      expect(sim.funding(on(state, 100)).friendsAndFamilyOffer!.valuation).toBe(falling.at(-1)!.valuation);
+    });
+
+    it("doesn't rise the day after a sudden crash in paying users, though a dear price lifts income", () => {
+      // 1,000 payers growing 10 a day at £10; on day 100 a price of £50 halves them, then halves them again.
+      const users = (n: number) => (n < 100 ? 1_000 + 10 * n : (1_000 + 10 * 99) / 2 ** (n - 99));
+      const state = history((n) => ({ paidUsers: users(n), income: (users(n) * (n < 100 ? 10 : 50)) / 30 }));
+      const days = valuations(state, 99, 104);
+      for (let i = 1; i < days.length; i++) expect(days[i]!.valuation).toBeLessThanOrEqual(days[i - 1]!.valuation);
+    });
+
+    it("prices friends and family's countered terms up if the company's worth less by the time they're taken", () => {
+      const state = history((n) => {
+        const paidUsers = n <= 60 ? 5_000 : Math.max(0, 5_000 - 200 * (n - 60));
+        return { paidUsers, income: (paidUsers * 10) / 30 };
+      });
+      const opening = sim.funding(on(state, 60)).friendsAndFamilyOffer!.theirShare;
+      const terms = { share: Math.round(opening * 800) / 1000 };
+      const countered = sim.applyAction(on(state, 60), { type: "counterFunding", funder: "friendsAndFamily", terms });
+      const agreed = sim.funding(countered).friendsAndFamilyOffer!;
+      // The same terms, 40 days on, once the company has sunk.
+      const later = { ...on(state, 100), funding: countered.funding, negotiationRng: countered.negotiationRng };
+      const offer = sim.funding(later).friendsAndFamilyOffer!;
+      expect(sim.valuation(later).valuation).toBeLessThan(sim.valuation(on(state, 60)).valuation / 2);
+      expect(offer.amount).toBe(agreed.amount);
+      expect(offer.theirShare).toBeGreaterThan(agreed.theirShare * 2);
+      // Still the better terms the counter won, but on what the company's worth now.
+      expect(offer.valuation).toBeLessThanOrEqual(((sim.valuation(later).valuation + agreed.amount) * opening) / terms.share);
+      // Taking it gives them what the offer said.
+      const taken = sim.applyAction(later, { type: "acceptFunding", funder: "friendsAndFamily" });
+      expect(sim.capTable(taken).rows.find((r) => r.id === "friendsAndFamily")!.share).toBeCloseTo(offer.theirShare, 4);
+      // And a company worth more than when they agreed keeps the terms it agreed.
+      const same = sim.funding({ ...on(state, 60), funding: countered.funding }).friendsAndFamilyOffer!;
+      expect(same.theirShare).toBeCloseTo(agreed.theirShare, 6);
+    });
+
+    it("never rises while satisfaction falls below the line", () => {
+      const state = history((n) => ({ paidUsers: 2_000 + 10 * n, income: ((2_000 + 10 * n) * 10) / 30, satisfaction: n <= 80 ? 95 : 95 - 3 * (n - 80) }));
+      const falling = valuations(state, 90, 110);
+      for (let i = 1; i < falling.length; i++) expect(falling[i]!.valuation).toBeLessThanOrEqual(falling[i - 1]!.valuation);
+    });
+
+    it("doesn't count winning back users lost in a crash as growth, only going past the best before", () => {
+      // 2,000 payers, a crash to 200 from day 50 to 75, then back to 2,000 from day 76.
+      const crash = (n: number, after: number) => (n < 50 ? 2_000 : n <= 75 ? 200 : after);
+      const back = history((n) => ({ paidUsers: crash(n, 2_000), income: (crash(n, 2_000) * 10) / 30 }));
+      expect(sim.valuation(on(back, 105)).growth).toBe(0);
+      expect(sim.valuation(on(back, 105)).drivers.find((d) => d.id === "growth")!.amount).toBe(0);
+      const past = history((n) => ({ paidUsers: crash(n, 3_000), income: (crash(n, 3_000) * 10) / 30 }));
+      expect(sim.valuation(on(past, 105)).growth).toBeCloseTo(0.5, 1);
+    });
+
+    it("catches up over about a week once nothing is falling, not all at once", () => {
+      // The price rise as above, but the payers stop leaving on day 80.
+      const users = (n: number) => (n <= 60 ? 2_000 : 2_000 - 20 * (Math.min(n, 80) - 60));
+      const state = history((n) => ({ paidUsers: users(n), income: (users(n) * (n <= 60 ? 10 : 30)) / 30 }));
+      const gap = (v: ReturnType<Sim["valuation"]>) => -(v.drivers.find((d) => d.id === "falling")?.amount ?? 0);
+      // Falling until the last leaver is out of the week before as well: a week's average against the week before's.
+      expect(sim.valuation(on(state, 92)).drivers.find((d) => d.id === "falling")).toMatchObject({ label: "Falling" });
+      const days = valuations(state, 93, 119);
+      expect(days[0]!.drivers.find((d) => d.id === "falling")).toMatchObject({ label: "Catching up" });
+      expect(gap(days[0]!)).toBeGreaterThan(0);
+      for (let i = 1; i < days.length; i++) {
+        expect(days[i]!.valuation).toBeGreaterThanOrEqual(days[i - 1]!.valuation);
+        // No day takes back more than about a seventh of what's left.
+        expect(days[i]!.valuation - days[i - 1]!.valuation).toBeLessThan(gap(days[i - 1]!) / 3 + 5_000);
+      }
+      expect(gap(days.at(-1)!)).toBeLessThan(gap(days[0]!) / 5);
+    });
+
+    it("holds nothing back from a company that isn't falling", () => {
+      const state = history((n) => ({ paidUsers: 1_000 + 20 * n, income: ((1_000 + 20 * n) * 10) / 30 }));
+      for (const v of valuations(state, 30, 119)) expect(v.drivers.map((d) => d.id)).not.toContain("falling");
+    });
+
+    it("doesn't price the vulture VC's buy-back up while the rescued company is falling", () => {
+      const state = history((n) => {
+        const paidUsers = n <= 60 ? 2_000 : 2_000 - 20 * (n - 60);
+        return { paidUsers, income: (paidUsers * (n <= 60 ? 10 : 30)) / 30 };
+      });
+      const rescued = (day: number): GameState => ({
+        ...on(state, day),
+        shareholders: [...state.shareholders, { id: "vulture", shares: 30_000, day: 65 }],
+        rescue: { day: 65, amount: 1_000, losses: 0, shares: 30_000, share: 0.75, cuts: [], hiresCancelled: 0, savedPerDay: 0, severance: 0, boughtBack: null } as unknown as GameState["rescue"],
+      });
+      const prices = Array.from({ length: 30 }, (_, i) => sim.rescue(rescued(70 + i))!.buyBackPrice!);
+      for (let i = 1; i < prices.length; i++) expect(prices[i]).toBeLessThanOrEqual(prices[i - 1]!);
+    });
+  });
+
   it("counts a rush of paying users slowly but losing them at once", () => {
     const state = trading(begin(), 2_000, 10);
     const each = quiet.valuation.valuePerPayingUser;

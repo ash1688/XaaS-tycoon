@@ -1123,8 +1123,16 @@ export interface SharesConfig {
  *            + growthMultiple × growth, between −maxGrowthPenalty and +maxGrowthMultiple
  *            − satisfactionPenalty × (goodSatisfaction − satisfaction) ÷ goodSatisfaction, below goodSatisfaction
  *            − uptimePenaltyPerPoint × (goodUptime − recent uptime %), below goodUptime, at most maxUptimePenalty
- *   valuation = max(minimum, annual revenue × max(minMultiple, multiple) + paying users × valuePerPayingUser
- *                            + cash − the loan's money borrowed still to pay back)
+ *   business = annual revenue × max(minMultiple, multiple) + paying users × valuePerPayingUser, held (below)
+ *   valuation = max(minimum, business + cash − the loan's money borrowed still to pay back)
+ *
+ * Growth only counts a rise above the best the company had done by growthDays ago (its highest averageDays average
+ * of paying users since the ramp), so winning back users lost in a crash isn't growth; a fall counts from the average
+ * then. And a falling company can't gain value: on a day when paying users or income averaged over the last fallDays
+ * days are below the fallDays before, or satisfaction is below goodSatisfaction and its average over the fallDays
+ * before, the business is held to at most the day before's. On a day with nothing falling it gains whatever the
+ * formula gained since the day before, plus 1/fallDays of any gap left by days that were, so it catches up over
+ * about fallDays days. Friends and family's price and the vulture VC's buy-back follow it.
  *
  * A liquidated company is worth nothing, whatever the minimum. Recent uptime is over ConversionConfig's uptimeDays.
  * Share price = valuation ÷ shares in issue.

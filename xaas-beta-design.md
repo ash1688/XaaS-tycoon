@@ -126,6 +126,7 @@ When starting a company, the student chooses how many shares it has, from **10,0
 What the company is worth. It sets how many shares a funding round costs, the rescue buyout and the final score. The student sees it live on the Finance page, with what's pushing it up or down.
 
 - **Formula valuation:** (annual revenue × a multiple) + (paying users × a value per user), never below a minimum of about £50k. The multiple rises with growth and falls with poor satisfaction or uptime. Counting paying users means price-gouging can't inflate the valuation.
+- **A falling company can't gain value (#162).** While paying users or income are down on the week before, or satisfaction drops below the good line, the business (everything but cash) can't be worth more than it was the day before; once nothing is falling it catches up over about a week. Growth only counts above the company's best before, so winning back users lost in a crash isn't growth. Friends and family's price and the vulture VC's buy-back follow the same valuation.
 - **Investor valuation:** the first investor after friends and family sets their own figure for what the company is worth. From then on the valuation starts from that figure and moves up or down with the formula's changes (if the formula valuation rises 10%, so does the company's).
 - A student who never takes an investor beyond friends and family is valued by the formula throughout. Friends and family buy shares at the formula valuation.
 
