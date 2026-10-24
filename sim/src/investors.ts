@@ -129,6 +129,12 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
   const angelTargetHit = (state: GameState) =>
     state.launchDay !== null && state.day - state.launchDay >= angel.target.days && incomeOver(state, angel.target.days) >= angel.target.dailyRevenue;
 
+  /**
+   * Too late in the game for an angel: fewer days left than their target runs for, so it couldn't run its course. None
+   * approaches then, so a target can't be squeezed into the last days and met with a final flourish.
+   */
+  const tooLate = (state: GameState) => state.finalDay !== null && state.day + angel.targetDays > state.finalDay;
+
   /** An investor approaches: their opening offer values the business at a premium over the formula's. */
   function approach(state: GameState, round: RoundId): { state: GameState; entries: LogEntry[] } {
     let rng = state.investorRng;
@@ -278,7 +284,7 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
       negotiation: negotiationView(state),
       angel: angelView(state),
       declined: i.declined,
-      anotherComing: i.declined.length > 0 && !i.approach && !i.angel && i.nextApproachDay !== null,
+      anotherComing: i.declined.length > 0 && !i.approach && !i.angel && i.nextApproachDay !== null && !tooLate(state),
       valuation: i.valuation,
     };
   }
@@ -450,7 +456,7 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
     if (i.nextApproachDay === null && angelTargetHit(s)) {
       s = { ...s, investors: { ...i, nextApproachDay: s.day + c.approachDays } };
     }
-    if (s.investors.nextApproachDay !== null && s.day >= s.investors.nextApproachDay) {
+    if (s.investors.nextApproachDay !== null && s.day >= s.investors.nextApproachDay && !tooLate(s)) {
       const came = approach(s, "angel");
       return { state: came.state, entries: [...settled.entries, ...came.entries] };
     }

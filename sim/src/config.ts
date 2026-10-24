@@ -1304,7 +1304,7 @@ export interface InvestorsConfig {
  * The angel investor.
  *
  * - Hidden target: income earned a day, averaged over target.days days played since the launch, reaches
- *   target.dailyRevenue: the first steady revenue.
+ *   target.dailyRevenue: the first steady revenue. No angel approaches with fewer than targetDays days left in the game.
  * - Their offer: they value the business (the valuation less net cash, before the minimum) at a premium over the
  *   formula, drawn from premium.min to premium.max, plus net cash at face value: that's the valuation before their cash.
  *   They ask for a share of the company after, drawn from share.min to share.max, and put in the cash that buys it at

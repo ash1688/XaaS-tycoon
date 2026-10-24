@@ -4,8 +4,10 @@ import { E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
 // The angel investor: the approach and its notification, the offer with its target on Finance, negotiating and
 // accepting it (the valuation it sets, friends and family and the grant closing), and declining one for another.
 
-// A hidden target any launched company hits on its first day of income, so an angel approaches within days.
+// A hidden target any launched company hits on its first day of income, so an angel approaches within days, and a
+// target short enough for an angel to come in a 30-day game.
 const EARLY_ANGEL = {
+  "investors.angel.targetDays": 10,
   "investors.approachDays": 1,
   "investors.retryDays": 2,
   "investors.angel.target.dailyRevenue": 100,

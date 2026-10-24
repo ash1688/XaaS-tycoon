@@ -80,6 +80,15 @@ describe("the angel's approach", () => {
     expect(refusal(() => s.applyAction(state, { type: "acceptInvestor" }))).toBe("no_approach");
   });
 
+  it("doesn't come with fewer days left in the game than their target runs for", () => {
+    // The first angel comes around day 28 on this game: with 40 days in all, too late for a 30-day target.
+    const s = createSim({ ...quiet, finalDay: 40 });
+    const { state, log } = playUntil(s, begin(s), () => false, 60);
+    expect(state.status).toBe("finished");
+    expect(log.flatMap((d) => d.entries).some((e) => e.text.includes("angel investor"))).toBe(false);
+    expect(s.investors(state)).toMatchObject({ offer: null, angel: null, anotherComing: false });
+  });
+
   it("opens at a premium on the formula's business for a fifth of the company or so, cash counted at face value", () => {
     for (const seed of [1, 2, 3]) {
       const { state } = untilApproach(sim, seed);
