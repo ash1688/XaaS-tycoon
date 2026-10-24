@@ -3,7 +3,9 @@ import { createSim, defaultConfig, SimError, type DayLog, type GameConfig, type 
 
 // Paid APIs (#117), through the sim's public interface on the default config: buying one, calls against APIU, the
 // income they earn and lose, traffic growth, app servers switched to APIU, PaaS API instances and the SaaS fee.
-const sim = createSim();
+/** No MVP to build, so a game launches as soon as it has somewhere to serve users: the MVP has its own tests. */
+const NO_MVP: GameConfig["mvp"] = { ...defaultConfig.mvp, baseDevDays: { ecommerce: 0, social: 0, video: 0, payments: 0, assistant: 0, games: 0 } };
+const sim = createSim({ ...defaultConfig, mvp: NO_MVP });
 const { pricePerCall, callsPerApiu, startingCalls, outageDrop, slowDays, saasFeePerCall } = defaultConfig.api;
 const shopApi = defaultConfig.productTypes.ecommerce.api!;
 

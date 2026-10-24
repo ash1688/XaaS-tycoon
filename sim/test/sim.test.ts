@@ -127,6 +127,15 @@ function noWaves() {
   };
 }
 
+/** An MVP of no size: a game launches as soon as it has somewhere to serve users, as the tests here were written for. */
+const NO_MVP: GameConfig["mvp"] = {
+  ...defaultConfig.mvp,
+  baseDevDays: { ecommerce: 0, social: 0, video: 0, payments: 0, assistant: 0, games: 0 },
+};
+
+/** The default config with no MVP to build: the MVP and its launch gate have their own tests (mvp.test.ts). */
+const withoutMvp: GameConfig = { ...defaultConfig, mvp: NO_MVP };
+
 const config: GameConfig = {
   startingCash: 1000,
   finalDay: 180,
@@ -136,6 +145,8 @@ const config: GameConfig = {
   maxCompanyNameLength: 20,
   // Launches in full on day 1, as the game starts, with the starter setups below in place: the launch tests set their own.
   launch: { rampShares: [1] },
+  // No MVP to build, so it launches as the game starts: the MVP has its own tests (mvp.test.ts).
+  mvp: NO_MVP,
   // Capacity far above any load here, so outages only happen where a test lowers it.
   // No upfront or per-user costs, so each model costs a flat monthly ÷ 30 a day unless a test adds them.
   models: {
@@ -297,7 +308,7 @@ const smallestLaunch = (base: GameConfig): GameConfig => ({
 // The default numbers with the starting cash they had before the bank loan, for tests of how the defaults play: they
 // check the mechanics, not whether the money lasts, which the balance pass (#55) settles. Every game draws the smallest
 // launch total, so a test's first setup carries it whatever the seed.
-const roomyDefaults: GameConfig = smallestLaunch({ ...defaultConfig, startingCash: 250_000 });
+const roomyDefaults: GameConfig = smallestLaunch({ ...withoutMvp, startingCash: 250_000 });
 
 /**
  * A first setup on the default config, as a student might set it up on day 1: a medium app server and database on
@@ -541,7 +552,7 @@ describe("launch", () => {
     expect(Math.abs(dear.paidUsers - 1_050)).toBeLessThanOrEqual(5);
   });
 
-  it("has no users, income, tickets or outages before the first users arrive, while staff, running costs and the loan are charged", () => {
+  it("has no users, income, tickets, outages or hosting bills before the first users arrive, while staff and the loan are charged", () => {
     // A provider outage and a broken patch on days 2 and 3, before anything is running: neither touches the company.
     const s = createSim({
       ...roomyDefaults,
@@ -558,13 +569,14 @@ describe("launch", () => {
     expect(entries.filter((e) => e.kind === "outage" || e.kind === "event" || e.kind === "income")).toEqual([]);
     const charged = (category: string) => entries.some((e) => e.category === category && e.cashDelta < 0);
     expect(charged("staff")).toBe(true);
-    expect(charged("infrastructure")).toBe(true);
+    // Hosting bills start at go-live.
+    expect(charged("infrastructure")).toBe(false);
     expect(charged("debt")).toBe(true);
     expect(state.cash).toBeLessThan(start.cash);
   });
 
   it("draws each game's launch total from the product's range, the same for the same seed, and never shows it", () => {
-    const s = createSim({ ...defaultConfig, startingCash: 250_000 });
+    const s = createSim({ ...withoutMvp, startingCash: 250_000 });
     const totals = PRODUCT_TYPE_IDS.flatMap((p) =>
       Array.from({ length: 20 }, (_, seed) => {
         const state = s.newGame({ companyName: "Acme", productType: p, model: "saas", seed });
@@ -776,7 +788,7 @@ describe("staff", () => {
   });
 
   it("needs no more ops on IaaS's first VMs than on-prem, and a few on PaaS and SaaS, by default", () => {
-    const s = createSim(smallestLaunch(defaultConfig));
+    const s = createSim(smallestLaunch(withoutMvp));
     const first = (m: ModelId) => launched(s, s.newGame({ companyName: "Acme", productType: "social", model: m, seed: 1 }));
     const needed = MODEL_IDS.map((m) => s.opsNeededNow(first(m)));
     expect(needed[1]).toBeLessThanOrEqual(needed[0]!);
@@ -1724,7 +1736,7 @@ describe("servers on IaaS", () => {
   });
 
   it("starts with no VMs by default, and a medium app server and database launch every product with room to grow", () => {
-    const s = createSim(smallestLaunch(defaultConfig));
+    const s = createSim(smallestLaunch(withoutMvp));
     expect(s.opsNeeded("iaas")).toBe(0);
     for (const p of PRODUCT_TYPE_IDS) {
       expect(s.newGame({ companyName: "Acme", productType: p, model: "iaas", seed: 1 }).servers).toEqual([]);
@@ -1987,7 +1999,7 @@ describe("servers on-prem", () => {
   });
 
   it("by default, charges the server room up front and the first kit when it's bought, launching when it arrives", () => {
-    const s = createSim(smallestLaunch(defaultConfig));
+    const s = createSim(smallestLaunch(withoutMvp));
     const { onprem } = defaultConfig.models;
     // The model's upfront cost is the server room, which comes with a medium rack (£500) and its cabling (£50). There's
     // no kit until the company buys some, so nothing is charged twice.
@@ -2346,7 +2358,7 @@ describe("PaaS and SaaS leave on-prem and IaaS alone", () => {
 });
 
 describe("default PaaS and SaaS", () => {
-  const s = createSim(smallestLaunch(defaultConfig));
+  const s = createSim(smallestLaunch(withoutMvp));
   const { paas, iaas, saas } = defaultConfig.models;
   const perUnit = (price: number | undefined, units: number) => price! / units;
 
@@ -3698,7 +3710,7 @@ describe("default config", () => {
   });
 
   it("makes on-prem's server room and first kit the dearest start by far, and only SaaS charge per user", () => {
-    const s = createSim(smallestLaunch(defaultConfig));
+    const s = createSim(smallestLaunch(withoutMvp));
     // Everything paid by the end of day 1 with a first setup: the model's upfront cost and, on-prem, the first kit.
     const upfront = (m: (typeof MODEL_IDS)[number]) =>
       defaultConfig.startingCash - setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: m, seed: 1 })).cash;
@@ -4267,7 +4279,7 @@ describe("migration with servers", () => {
   const { onprem, iaas, paas, saas } = defaultConfig.models;
   const units = sizes(10, 15, 20, 25);
   const calm: GameConfig = {
-    ...defaultConfig,
+    ...withoutMvp,
     startingCash: 10_000_000,
     models: {
       onprem: {
@@ -6809,7 +6821,7 @@ describe("alpha patch: pricing exploits and balance", () => {
 
   describe("on-prem start", () => {
     it("leaves a company without the loan cash for a month after its first kit, which arrives in 4 days", () => {
-      const sm = createSim(smallestLaunch(defaultConfig));
+      const sm = createSim(smallestLaunch(withoutMvp));
       for (const p of PRODUCT_TYPE_IDS) {
         const set = setUp(sm, sm.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1 }));
         const daily = sm.dailyStaffCost(set) + sm.monthlyInfrastructureCost(set) / 30;
@@ -6999,13 +7011,17 @@ describe("racks, cabling, power and cooling", () => {
   });
 
   describe("power and cooling", () => {
+    /** A company whose first users arrived on day 1: live, so billed for hosting. */
+    const live = (state: GameState): GameState => ({ ...state, launchDay: 1 });
+
     it("is a fixed daily cost on every model, on-prem's the highest and SaaS's the least", () => {
       const daily = MODEL_IDS.map((m) => sim.powerAndCooling(m));
       expect(daily).toEqual(MODEL_IDS.map((m) => defaultConfig.models[m].powerAndCooling));
       expect([...daily].sort((a, b) => b - a)).toEqual(daily);
       expect(new Set(daily).size).toBe(MODEL_IDS.length);
       for (const model of MODEL_IDS) {
-        const { state, log } = sim.advance(begin(model), 5);
+        // Billed from go-live, like every hosting bill: this company's first users have arrived.
+        const { state, log } = sim.advance(live(begin(model)), 5);
         const power = log.flatMap((d) => d.entries.filter((e) => e.category === "power"));
         expect(power, model).toHaveLength(5);
         expect(power[0]!.text).toBe(`${defaultConfig.models[model].name} power and cooling (£${sim.powerAndCooling(model)} a day)`);
@@ -7016,7 +7032,7 @@ describe("racks, cabling, power and cooling", () => {
     });
 
     it("is billed for both models during a migration, like the rest of the bill", () => {
-      const moving = sim.applyAction(sim.advance(begin("iaas"), 3).state, { type: "startMigration", model: "paas" });
+      const moving = sim.applyAction(sim.advance(live(begin("iaas")), 3).state, { type: "startMigration", model: "paas" });
       const { log } = sim.advance(moving);
       expect(log[0]!.entries.filter((e) => e.category === "power").map((e) => -e.cashDelta)).toEqual([
         sim.powerAndCooling("iaas"),

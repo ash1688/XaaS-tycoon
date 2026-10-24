@@ -21,6 +21,7 @@ import type {
   GameSummary,
   IpoView,
   LaunchView,
+  MvpView,
   LoanQuote,
   LoanView,
   ManagedView,
@@ -244,6 +245,8 @@ export interface CompanyView {
    * users (and of them those paying), whether the model has servers to set up, and whether they are.
    */
   launch: LaunchView;
+  /** The MVP every game opens with: developer-days done of its total, and the day it'll be done at today's developers. */
+  mvp: MvpView;
   /** Every user, paying or free. No users until launch. */
   users: number;
   /** Of the users, those who pay. */

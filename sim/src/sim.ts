@@ -26,6 +26,7 @@ import { createInvestors, type InvestorsView } from "./investors.ts";
 import { createIpo, type IpoView } from "./ipo.ts";
 import { createLaunch, type LaunchView } from "./launch.ts";
 import { createLoan, type LoanQuote, type LoanView } from "./loan.ts";
+import { mvpDay, mvpStatus, startingMvp, type MvpView } from "./mvp.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
 import { createCustomerMix } from "./mix.ts";
 import { isNameAllowed } from "./nameFilter.ts";
@@ -72,6 +73,7 @@ export type { ProviderView } from "./infrastructure.ts";
 export type { AngelView, InvestorOffer, InvestorsView } from "./investors.ts";
 export type { FloatPreview, IpoCondition, IpoConditionId, IpoOffer, IpoStatus, IpoView } from "./ipo.ts";
 export type { LaunchView } from "./launch.ts";
+export type { MvpView } from "./mvp.ts";
 export type { LoanQuote, LoanView } from "./loan.ts";
 export type { LostAddon, MigrationQuote, MigrationView, SetupRack } from "./migration.ts";
 export { LOW_CASH_DAYS, type PauseKind, type PauseReason, type TickResult } from "./pauses.ts";
@@ -384,6 +386,11 @@ export interface Sim {
    * launched; the day they started (or will start) arriving, and the launch total.
    */
   launch(state: GameState): LaunchView;
+  /**
+   * The MVP every game opens with: developer-days done of its total, whether it's done, and the day it will be at
+   * today's developers. Users can arrive from the end of that day, once there are servers to serve them (see launch).
+   */
+  mvp(state: GameState): MvpView;
   /** The migration under way, or null. */
   migration(state: GameState): MigrationView | null;
   /**
@@ -472,6 +479,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const api = createApi(config, features, finance, infra.apiuOn);
   const encounters = createEncounters(config, servers);
   const ipo = createIpo(config, finance, shares, servers, (s) => runway(s).dailyNet);
+  /** The MVP at today's developers. */
+  const mvpView = (state: GameState) => mvpStatus(config, { ...state, output: staffOutput(config, state, "developers") });
   const pauses = createPauses(config, {
     events: events.events,
     units: infra.units,
@@ -479,6 +488,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     runwayDays: (s) => runway(s).days,
     features: features.features,
     launch: launch.launchView,
+    mvp: mvpView,
     migration: migration.migration,
     servers: servers.servers,
     funding: shares.funding,
@@ -545,6 +555,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       rng: seedRng(seed),
       ...staff.startingStaff({ productType }),
       ...customers.startingCustomers(productType, seed),
+      mvp: startingMvp(config, productType, model),
       ...support.startingSupport(),
       ...moderation.startingModeration(),
       ...conversion.startingConversion(),
@@ -591,7 +602,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       );
     }
     // Day 1 is played as the game starts. A company that can serve users already (SaaS, or a config's starter setup)
-    // gets the first of its launch ramp at once, with the load they bring.
+    // with no MVP to build (a config can make it no size) gets the first of its launch ramp at once, with the load they
+    // bring.
     const launched = launch.arrive(borrowed.state, 1);
     const { users } = launched.state;
     const started: GameState = {
@@ -707,7 +719,9 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const day = yesterday.day + 1;
     // Hires due today start first, so they work and are paid today.
     const arrivals = staff.arrive(yesterday, day);
-    const start = arrivals.state;
+    // Until the MVP is done, all of the developers' work goes into it. Done today, users can arrive at the end of it.
+    const building = mvpDay(config, { ...arrivals.state, output: staffOutput(config, arrivals.state, "developers"), day });
+    const start: GameState = { ...arrivals.state, mvp: building.mvp };
 
     // Events on today: a random one fires if the danger meter has reached the next threshold on the encounter list.
     // A price rise or feature gap from today counts from today's bill and growth. Before the first users arrive
@@ -778,6 +792,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       ...calendar.dayEntries(state, day),
       ...check.entries,
       ...arrivals.entries,
+      ...building.entries,
       ...launched.entries,
       ...recorded.entries,
       // The outage first, then who it drove away.
@@ -791,7 +806,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       ...build.entries,
       ...pricing.incomeEntries(state, wave.refused + (ramping ? 0 : organic.pricedOut), day, served.hoursDown),
       ...calls.entries,
-      ...infra.infrastructureEntries(state, state.model, state.users),
+      // Hosting bills start at go-live: before the first users arrive there's nothing running to pay for.
+      ...(live ? infra.infrastructureEntries(state, state.model, state.users) : []),
       ...migration.migrationCharges(state),
       ...features.addonEntries(state),
       ...staff.staffEntries(state),
@@ -855,7 +871,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   function runway(state: GameState): RunwayView {
     // Charged the same way a day played charges them, so the rounding matches.
     const charges = [
-      ...infra.infrastructureEntries(state, state.model, state.users),
+      ...(state.launchDay !== null ? infra.infrastructureEntries(state, state.model, state.users) : []),
       ...migration.newSetupEntries(state),
       ...features.addonEntries(state),
       ...staff.staffEntries(state),
@@ -902,7 +918,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
    * only set up add-ons; on the other models, nothing is being built.
    */
   function developersIdle(state: GameState): string | null {
-    if (staffOutput(config, state, "developers") <= 0) return null;
+    if (staffOutput(config, state, "developers") <= 0 || state.mvp.doneDay === null) return null;
     const list = config.productTypes[state.productType].features;
     const allOn = list.every((f) => ["built", "addon"].includes(state.features[f.id]?.status ?? ""));
     if (state.model === "saas") {
@@ -980,6 +996,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     investors: (s) => investors.investors(load(s)),
     investorCounterOdds: (s, terms) => investors.counterOdds(load(s), terms),
     launch: (s) => launch.launchView(load(s)),
+    mvp: (s) => mvpView(load(s)),
     migration: (s) => migration.migration(load(s)),
     migrationQuote: (s, target) => migration.migrationQuote(load(s), target),
     events: (s) => events.events(load(s)),

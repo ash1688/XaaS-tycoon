@@ -259,6 +259,13 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add(`${t}.payday.multiplier`, "Money", product.name, "Payday: payments multiplier", "Payments, and the load they bring, are multiplied by this on payday; the other days are lowered so a month averages out.", MULTIPLIER);
   }
   for (const p of PRODUCT_TYPE_IDS) {
+    const name = base.productTypes[p]?.name ?? p;
+    add(`mvp.baseDevDays.${p}`, "People", "MVP", `Base size (${name})`, "Developer-days the MVP takes on-prem, before any users arrive. Each model builds its share of it. 0 launches as soon as there are servers.", range(0, 365, 1));
+  }
+  for (const m of MODEL_IDS) {
+    add(`mvp.modelShare.${m}`, "People", "MVP", `Share built (${MODEL_LABELS[m]})`, "The share of the base MVP size a company on this model builds: on SaaS only the storefront and payments.", range(0, 2, 0.05));
+  }
+  for (const p of PRODUCT_TYPE_IDS) {
     for (const f of base.productTypes[p]?.features ?? []) {
       const at = `productTypes.${p}.features.${f.id}`;
       const s = base.productTypes[p].name;

@@ -43,6 +43,9 @@ export function createFeatures(config: GameConfig, finance: Finance) {
     }
     const feature = featureList(state).find((f) => f.id === id);
     if (!feature) throw new SimError("unknown_feature", "Pick a feature from your product's list.");
+    if (state.mvp.doneDay === null) {
+      throw new SimError("mvp_first", `Your developers are building the MVP. ${feature.name} can be started once it's done.`);
+    }
     const existing = state.features[id];
     if (isActive(state, id)) throw new SimError("feature_built", `${feature.name} is already built.`);
     if (existing) throw new SimError("feature_building", `${feature.name} is already being built.`);

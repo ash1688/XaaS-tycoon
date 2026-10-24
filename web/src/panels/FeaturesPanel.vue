@@ -12,6 +12,10 @@ const pulls = (appeal?: Partial<Record<string, number>>) => {
   const names = Object.keys(appeal ?? {}).map((id) => types.find((t) => t.id === id)?.name.toLowerCase() ?? id);
   return names.length ? ` · pulls in ${namesList(names)}` : "";
 };
+// The MVP every game opens with: shown, with the launch day it gives, until it's done.
+const mvp = computed(() => (game.company && !game.company.mvp.done ? game.company.mvp : null));
+const launchDay = computed(() => game.company?.launch.day ?? null);
+
 // Built features, or add-ons bought on SaaS.
 const activeCount = computed(
   () => game.company?.features.filter((f) => f.status === "built" || f.status === "addon").length ?? 0,
@@ -25,6 +29,40 @@ const activeCount = computed(
       <span class="muted">
         {{ activeCount }} of {{ game.company.features.length }} {{ game.onSaas ? "active" : "built" }}
       </span>
+    </div>
+    <div v-if="mvp" class="mvp" data-testid="mvp">
+      <strong id="mvp-heading">MVP</strong>
+      <p class="muted">
+        Before anyone can use your product, your developers build a minimum viable product{{
+          game.onSaas ? ": on SaaS, the storefront, payment gateways and the like" : ""
+        }}. All their work goes into it, and no users arrive until it's done.
+      </p>
+      <div
+        class="meter"
+        role="progressbar"
+        aria-labelledby="mvp-heading"
+        aria-valuemin="0"
+        :aria-valuemax="mvp.total"
+        :aria-valuenow="mvp.progress"
+        :aria-valuetext="`${mvp.progress} of ${mvp.total} developer-days`"
+      >
+        <div class="meter-fill building" :style="{ width: `${(100 * mvp.progress) / mvp.total}%` }"></div>
+      </div>
+      <p class="muted" data-testid="mvp-progress">
+        {{ formatCount(mvp.progress) }} of {{ formatCount(mvp.total) }} developer-days.
+        <template v-if="mvp.daysLeft !== null">
+          {{ mvp.daysLeft }} day{{ mvp.daysLeft === 1 ? "" : "s" }} left with {{ game.company.developers }}
+          developer{{ game.company.developers === 1 ? "" : "s" }}: more developers finish it sooner.
+        </template>
+        <strong v-else class="warn-text">No developers: hire some to build it.</strong>
+      </p>
+      <p data-testid="mvp-launch-day">
+        <template v-if="launchDay !== null">Estimated launch: <strong>day {{ launchDay }}</strong>.</template>
+        <template v-else-if="mvp.launchDay !== null">
+          Done by day {{ mvp.launchDay }}. You launch once it's done and your servers are ready.
+        </template>
+        <template v-else>Estimated launch: not until someone builds it.</template>
+      </p>
     </div>
     <template v-if="game.onSaas">
       <p class="features-note" data-testid="features-saas-note">
@@ -95,9 +133,15 @@ const activeCount = computed(
           <button
             v-else-if="feature.status === 'notStarted' && !game.onSaas"
             class="ghost"
-            :disabled="game.busy || game.over || !!game.building"
+            :disabled="game.busy || game.over || !!game.building || !!mvp"
             :aria-label="`Build ${feature.name}`"
-            :title="game.building ? `Your developers are busy building ${game.building.name}` : undefined"
+            :title="
+              mvp
+                ? 'Your developers are building the MVP first'
+                : game.building
+                  ? `Your developers are busy building ${game.building.name}`
+                  : undefined
+            "
             @click="game.act({ type: 'buildFeature', feature: feature.id })"
           >
             Build
