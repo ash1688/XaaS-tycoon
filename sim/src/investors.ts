@@ -7,6 +7,7 @@ import type { NegotiationView, Shares } from "./shares.ts";
 import {
   SimError,
   type AngelDeal,
+  type AngelTarget,
   type Approach,
   type GameState,
   type InvestorValuation,
@@ -46,8 +47,8 @@ export interface InvestorOffer {
   sharesAfter: number;
   yourShareBefore: number;
   yourShareAfter: number;
-  /** Their target if accepted today: income averaged over `days` days reaching dailyRevenue by byDay. */
-  target: { dailyRevenue: number; days: number; byDay: number };
+  /** Their target if accepted today: income and paying users gained, both by byDay. */
+  target: AngelTarget;
   /** The target and what happens if it's missed, in words; then what else accepting does. */
   condition: string;
   ifMissed: string;
@@ -58,6 +59,8 @@ export interface InvestorOffer {
 export interface AngelView extends AngelDeal {
   /** Income averaged over the target's days, today. */
   dailyRevenue: number;
+  /** Paying users gained since accepting, as the target measures it: their average over the last week, less the start. */
+  usersGained: number;
   /** Days left to hit the target: 0 once it's met or missed. */
   daysLeft: number;
 }
@@ -103,6 +106,8 @@ const ANGEL_NAMES = [
 const ROUND_NAMES: Record<RoundId, string> = { angel: "angel investor" };
 const percent = (share: number) => `${Math.round(share * 1000) / 10}%`;
 const roundTo = (n: number, step: number) => Math.round(n / step) * step;
+/** Days paying users are averaged over for users gained, so a sudden rush (or loss) counts slowly. */
+const USERS_AVERAGE_DAYS = 7;
 /** The most of the company an offer can come to, however far the business falls. */
 const MAX_SHARE = 0.9;
 
@@ -200,15 +205,36 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
     };
   }
 
+  /** Paying users gained a day lately: over the last target.days days played, none if they fell. */
+  function usersPace(state: GameState): number {
+    const then = state.spendByDay.filter((d) => d.day <= state.day - angel.target.days).at(-1);
+    return Math.max(0, (state.paidUsers - (then?.paidUsers ?? 0)) / angel.target.days);
+  }
+
   /**
-   * The angel's target if their offer were accepted today. It's due by the game's last day at the latest, and then
-   * asks for growth in step with the days left, so a late angel's target still counts.
+   * The angel's target if their offer were accepted today: income at targetGrowth × today's, and paying users gained
+   * at the company's recent pace, so it suits a small company and a big one alike. It's due by the game's last day at
+   * the latest, and then asks for growth in step with the days left.
    */
-  function angelTarget(state: GameState) {
+  function angelTarget(state: GameState): AngelTarget {
     const now = Math.max(angel.target.dailyRevenue, incomeOver(state, angel.target.days));
     const byDay = Math.min(state.day + angel.targetDays, state.finalDay ?? Infinity);
-    const growth = 1 + ((angel.targetGrowth - 1) * (byDay - state.day)) / angel.targetDays;
-    return { dailyRevenue: Math.ceil((growth * now) / 50) * 50, days: angel.target.days, byDay };
+    const share = (byDay - state.day) / angel.targetDays;
+    const growth = 1 + (angel.targetGrowth - 1) * share;
+    const users = Math.max(angel.minUsersGained, angel.usersPace * usersPace(state) * angel.targetDays) * share;
+    return {
+      dailyRevenue: Math.ceil((growth * now) / 50) * 50,
+      days: angel.target.days,
+      usersGained: Math.ceil(users / 10) * 10,
+      byDay,
+    };
+  }
+
+  /** Paying users gained since the deal: their average over the days played since (the last week at most), less the start. */
+  function usersGained(state: GameState, deal: AngelDeal): number {
+    const since = state.spendByDay.filter((d) => d.day > deal.day).slice(-USERS_AVERAGE_DAYS);
+    if (!since.length) return 0;
+    return Math.round(since.reduce((sum, d) => sum + d.paidUsers, 0) / since.length - deal.paidUsersAtStart);
   }
 
   function offer(state: GameState): InvestorOffer | null {
@@ -241,8 +267,8 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
       yourShareBefore: yours / inIssue,
       yourShareAfter: yours / sharesAfter,
       target,
-      condition: `Grow income to ${pounds(target.dailyRevenue)} a day, averaged over ${target.days} day${target.days === 1 ? "" : "s"}, by day ${target.byDay}: ${target.byDay - state.day} days after you accept${target.byDay - state.day < angel.targetDays ? ", the game's last day" : ""}.`,
-      ifMissed: `Miss it and ${a.investor} takes extra equity: new shares raise their share of the company by ${Math.round(angel.missShare * 100)} points, diluting you.`,
+      condition: `By day ${target.byDay} (${target.byDay - state.day} days after you accept${target.byDay - state.day < angel.targetDays ? ", the game's last day" : ""}), both at once: grow income to ${pounds(target.dailyRevenue)} a day, averaged over ${target.days} day${target.days === 1 ? "" : "s"}, and gain ${count.format(target.usersGained)} paying users from the day you accept, averaged over a week and net of any you lose.`,
+      ifMissed: `Miss either and ${a.investor} takes extra equity: new shares raise their share of the company by ${Math.round(angel.missShare * 100)} points, diluting you.`,
       effects: [
         `The company's valuation becomes theirs, ${pounds(Math.round(preMoney + amount))} with their cash, and moves in step with the formula from then on.`,
         closing.length
@@ -258,6 +284,7 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
     return {
       ...deal,
       dailyRevenue: Math.round(incomeOver(state, deal.target.days)),
+      usersGained: usersGained(state, deal),
       daysLeft: deal.status === "running" ? Math.max(0, deal.target.byDay - state.day) : 0,
     };
   }
@@ -349,6 +376,7 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
       share: o.theirShare,
       valuation: o.valuation,
       target: o.target,
+      paidUsersAtStart: state.paidUsers,
       status: "running",
       settledDay: null,
       extraShares: 0,
@@ -380,18 +408,23 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
     };
   }
 
-  /** The angel's target on a day played: met once income averages enough, or missed on its last day, for extra equity. */
+  /**
+   * The angel's target on a day played: met once income and users gained are both enough on the same day, or missed on
+   * its last day, for extra equity.
+   */
   function angelDay(state: GameState): { state: GameState; entries: LogEntry[] } {
     const deal = state.investors.angel;
     if (!deal || deal.status !== "running") return { state, entries: [] };
     const income = incomeOver(state, deal.target.days);
-    if (income >= deal.target.dailyRevenue) {
+    const gained = usersGained(state, deal);
+    const t = deal.target;
+    if (income >= t.dailyRevenue && gained >= t.usersGained) {
       const met: AngelDeal = { ...deal, status: "met", settledDay: state.day };
       return {
         state: { ...state, investors: { ...state.investors, angel: met } },
         entries: [
           {
-            text: `${deal.investor}'s target met: income averaged ${pounds(Math.round(income))} a day over ${deal.target.days} days, over the ${pounds(deal.target.dailyRevenue)} they asked for.`,
+            text: `${deal.investor}'s target met: income averaged ${pounds(Math.round(income))} a day over ${t.days} days (they asked for ${pounds(t.dailyRevenue)}), and you gained ${count.format(gained)} paying users (they asked for ${count.format(t.usersGained)}).`,
             cashDelta: 0,
             kind: "funding",
           },
@@ -414,7 +447,7 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
       },
       entries: [
         {
-          text: `${deal.investor}'s target missed: income averaged ${pounds(Math.round(income))} a day, short of the ${pounds(deal.target.dailyRevenue)} asked for by day ${deal.target.byDay}. They took ${count.format(extra)} new shares, ${percent(after)} of the company now. You own ${percent(yours / (inIssue + extra))}.`,
+          text: `${deal.investor}'s target missed by day ${t.byDay}: income averaged ${pounds(Math.round(income))} a day (they asked for ${pounds(t.dailyRevenue)}) and you gained ${count.format(gained)} paying users (they asked for ${count.format(t.usersGained)}). They took ${count.format(extra)} new shares, ${percent(after)} of the company now. You own ${percent(yours / (inIssue + extra))}.`,
           cashDelta: 0,
           kind: "funding",
         },

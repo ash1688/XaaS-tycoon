@@ -546,10 +546,10 @@ function investorsStatus(sim: Sim, state: GameState): string | null {
   }
   const a = i.angel;
   if (a) {
-    const target = `${money(a.target.dailyRevenue)}/day over ${a.target.days} days by day ${a.target.byDay}`;
+    const target = `${money(a.target.dailyRevenue)}/day over ${a.target.days} days and +${a.target.usersGained.toLocaleString("en-GB")} paying users by day ${a.target.byDay}`;
     const how =
       a.status === "running"
-        ? `target ${target}: ${money(a.dailyRevenue)}/day now, ${a.daysLeft} days left`
+        ? `target ${target}: ${money(a.dailyRevenue)}/day and +${a.usersGained.toLocaleString("en-GB")} users gained of ${a.target.usersGained.toLocaleString("en-GB")} now, ${a.daysLeft} days left`
         : a.status === "met"
           ? `target ${target} met on day ${a.settledDay}`
           : `target ${target} missed on day ${a.settledDay}: they took ${a.extraShares.toLocaleString("en-GB")} extra shares`;
@@ -1076,7 +1076,7 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
       state: current,
       rows,
       lines: [
-        `acceptInvestor: done. ${a.investor} put in ${money(a.amount)} for ${stake(a.share)}; valuation now ${money(sim.valuation(current).valuation)}. Target: ${money(a.target.dailyRevenue)}/day over ${a.target.days} days by day ${a.target.byDay}.`,
+        `acceptInvestor: done. ${a.investor} put in ${money(a.amount)} for ${stake(a.share)}; valuation now ${money(sim.valuation(current).valuation)}. Target, both by day ${a.target.byDay}: ${money(a.target.dailyRevenue)}/day over ${a.target.days} days, and +${a.target.usersGained.toLocaleString("en-GB")} paying users gained from today.`,
       ],
     };
   }

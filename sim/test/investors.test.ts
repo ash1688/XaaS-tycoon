@@ -44,6 +44,15 @@ const approached = (s: Sim) => (state: GameState) => s.investors(state).offer !=
 /** A game played until the first angel approaches. */
 const untilApproach = (s: Sim = sim, seed = 42) => playUntil(s, begin(s, seed), approached(s));
 
+/** Paying users gained a day over the target's days: the pace the angel's users target is set from. */
+const pace = (state: GameState) => {
+  const then = state.spendByDay.filter((d) => d.day <= state.day - angel.target.days).at(-1)!;
+  return Math.max(0, (state.paidUsers - then.paidUsers) / angel.target.days);
+};
+/** The users target for `days` of the target's days. */
+const usersTarget = (state: GameState, days = angel.targetDays) =>
+  Math.ceil((Math.max(angel.minUsersGained, angel.usersPace * pace(state) * angel.targetDays) * days) / angel.targetDays / 10) * 10;
+
 /** The business the formula values: every driver but an investor's, net cash and the minimum. */
 const formulaBusiness = (s: Sim, state: GameState) =>
   s
@@ -110,11 +119,14 @@ describe("the angel's approach", () => {
     const { state } = untilApproach();
     const offer = sim.investors(state).offer!;
     const expected = Math.ceil((angel.targetGrowth * Math.max(angel.target.dailyRevenue, incomeOver(state, angel.target.days))) / 50) * 50;
-    expect(offer.target).toEqual({ dailyRevenue: expected, days: angel.target.days, byDay: state.day + angel.targetDays });
+    const users = usersTarget(state);
+    // Sized from the company's recent growth: three quarters of its pace of paying users, kept up for the 30 days.
+    expect(users).toBeGreaterThan(angel.minUsersGained);
+    expect(offer.target).toEqual({ dailyRevenue: expected, days: angel.target.days, usersGained: users, byDay: state.day + angel.targetDays });
     expect(offer.condition).toBe(
-      `Grow income to £${expected.toLocaleString("en-GB")} a day, averaged over ${angel.target.days} days, by day ${state.day + angel.targetDays}: ${angel.targetDays} days after you accept.`,
+      `By day ${state.day + angel.targetDays} (${angel.targetDays} days after you accept), both at once: grow income to £${expected.toLocaleString("en-GB")} a day, averaged over ${angel.target.days} days, and gain ${users.toLocaleString("en-GB")} paying users from the day you accept, averaged over a week and net of any you lose.`,
     );
-    expect(offer.ifMissed).toMatch(new RegExp(`^Miss it and ${offer.investor} takes extra equity: new shares raise their share of the company by 5 points`));
+    expect(offer.ifMissed).toMatch(new RegExp(`^Miss either and ${offer.investor} takes extra equity: new shares raise their share of the company by 5 points`));
     expect(offer.effects.join(" ")).toMatch(/valuation becomes theirs.*moves in step with the formula.*Friends and family and grants close for good: friends and family's offer and the grant's offer will be gone/);
     // Where accepting would leave the student.
     expect(offer.sharesAfter).toBe(offer.sharesInIssue + offer.newShares);
@@ -273,8 +285,13 @@ describe("the angel's offer over time", () => {
     const offer = sim.investors(late).offer!;
     const now = Math.max(angel.target.dailyRevenue, incomeOver(late, angel.target.days));
     const growth = 1 + ((angel.targetGrowth - 1) * 6) / angel.targetDays;
-    expect(offer.target).toEqual({ dailyRevenue: Math.ceil((growth * now) / 50) * 50, days: angel.target.days, byDay: late.day + 6 });
-    expect(offer.condition).toMatch(/: 6 days after you accept, the game's last day\.$/);
+    expect(offer.target).toEqual({
+      dailyRevenue: Math.ceil((growth * now) / 50) * 50,
+      days: angel.target.days,
+      usersGained: usersTarget(late, 6),
+      byDay: late.day + 6,
+    });
+    expect(offer.condition).toMatch(/^By day \d+ \(6 days after you accept, the game's last day\), both at once/);
     // Accepted, it's settled on the last day: met or missed, never left hanging.
     const accepted = sim.applyAction(late, { type: "acceptInvestor" });
     const done = sim.advance(accepted, 6).state;
@@ -341,6 +358,29 @@ describe("negotiating the angel's offer", () => {
 });
 
 describe("the angel's target", () => {
+  it("counts paying users gained from the day it's accepted, from nothing, net of any lost", () => {
+    const { state } = untilApproach();
+    const after = sim.applyAction(state, { type: "acceptInvestor" });
+    expect(sim.investors(after).angel).toMatchObject({ paidUsersAtStart: state.paidUsers, usersGained: 0 });
+    // Users bought with a price cut and lost again don't count: half the payers gone is a loss, not a gain.
+    const played = sim.advance(after, 3).state;
+    const lost: GameState = {
+      ...played,
+      spendByDay: played.spendByDay.map((d) => (d.day > after.day ? { ...d, paidUsers: Math.round(state.paidUsers / 2) } : d)),
+    };
+    expect(sim.investors(lost).angel!.usersGained).toBe(Math.round(state.paidUsers / 2) - state.paidUsers);
+  });
+
+  it("isn't met by income alone: the users gained must be there on the same day", () => {
+    const s = createSim({ ...quiet, investors: { ...quiet.investors, angel: { ...angel, targetGrowth: 1, minUsersGained: 100_000 } } });
+    const { state } = untilApproach(s);
+    const after = s.applyAction(state, { type: "acceptInvestor" });
+    const { state: done } = playUntil(s, after, (x) => s.investors(x).angel!.status !== "running");
+    const deal = s.investors(done).angel!;
+    expect(deal.status).toBe("missed");
+    expect(incomeOver(done, deal.target.days)).toBeGreaterThanOrEqual(deal.target.dailyRevenue);
+  });
+
   it("is met once income averages what they asked for, with a pause", () => {
     const { state } = untilApproach();
     const after = sim.applyAction(state, { type: "acceptInvestor" });
@@ -350,6 +390,9 @@ describe("the angel's target", () => {
     expect(deal).toMatchObject({ status: "met", settledDay: done.day, extraShares: 0, daysLeft: 0 });
     expect(done.day).toBeLessThanOrEqual(target.byDay);
     expect(incomeOver(done, target.days)).toBeGreaterThanOrEqual(target.dailyRevenue);
+    expect(deal.usersGained).toBeGreaterThanOrEqual(target.usersGained);
+    const since = done.spendByDay.filter((d) => d.day > after.day).slice(-7);
+    expect(deal.usersGained).toBe(Math.round(since.reduce((sum, d) => sum + d.paidUsers, 0) / since.length - after.paidUsers));
     expect(log.at(-1)!.entries.map((e) => e.text)).toContainEqual(expect.stringMatching(new RegExp(`^${deal.investor}'s target met`)));
     expect(pauses).toContainEqual({ day: done.day, reason: expect.objectContaining({ kind: "finished", id: "angel-target" }) });
     expect(sim.capTable(done).rows.find((r) => r.id === "angel")!.shares).toBe(deal.shares);

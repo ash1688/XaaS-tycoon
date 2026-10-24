@@ -88,7 +88,7 @@ npm run -s play -- summary <game>
   you accept or decline it. `odds ff ...` (same terms as `counter`) shows the odds and what each roll would bring.
 - An **angel investor** may approach you (time stops when they do, and `look` shows them under `investors`). `angel`
   shows their offer in full: their cash for a share of the company, the valuation it puts on the company, their target
-  and what happens if you miss it. `counter angel amount 30000 share 15` and `odds angel ...` negotiate it the same
+  (income and paying users gained, both within a few weeks) and what happens if you miss it. `counter angel amount 30000 share 15` and `odds angel ...` negotiate it the same
   way as friends and family. `accept angel` takes it: the cash arrives, your valuation becomes theirs and moves with
   the company's performance from then on, and friends and family and the grant close for good. `decline angel` turns
   them down, and another angel approaches a few days later. An offer stands for a few days only (`look` shows when

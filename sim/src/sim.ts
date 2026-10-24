@@ -132,6 +132,7 @@ export {
   type Action,
   type AdvanceResult,
   type AngelDeal,
+  type AngelTarget,
   type ApiState,
   type Approach,
   type DayLog,

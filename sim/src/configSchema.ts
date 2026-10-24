@@ -195,6 +195,8 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("investors.angel.declinePremium", "Money", "Angel investor", "Premium lost per decline", "Each angel you decline takes this off the next angel's most premium (never below the least).", range(0, 1, 0.05));
   add("investors.angel.declineShare", "Money", "Angel investor", "Share added per decline", "Each angel you decline adds this to the least share the next angel asks for (never above the most).", range(0, 0.2, 0.01));
   add("investors.angel.targetGrowth", "Money", "Angel investor", "Target growth", "The angel's target: income a day this many times what it was when you accepted (or the hidden target, if more).", MULTIPLIER);
+  add("investors.angel.usersPace", "Money", "Angel investor", "Users target pace", "The angel's users target: paying users gained at this many times the company's recent pace (over the days averaged), kept up for the target's days.", MULTIPLIER);
+  add("investors.angel.minUsersGained", "Money", "Angel investor", "Least users target", "The angel's users target is never fewer than this many paying users gained.", range(0, 100_000, 10));
   add("investors.angel.targetDays", "Money", "Angel investor", "Days to hit the target", "Days after accepting the angel has to hit their target.", GAME_DAY);
   add("investors.angel.missShare", "Money", "Angel investor", "Extra share if missed", "Missing the target gives the angel new shares, taking their share of the company up by this (0.05 = five points).", range(0, 0.5, 0.01));
 

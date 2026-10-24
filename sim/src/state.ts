@@ -218,8 +218,10 @@ export interface Approach {
 }
 
 /**
- * The angel's deal once accepted: what they put in and got, and their target, income averaged over `days` days
- * reaching dailyRevenue by byDay. "running" until it's "met", or "missed" on byDay, when they took extraShares.
+ * The angel's deal once accepted: what they put in and got, and their target, both by byDay: income averaged over
+ * `days` days reaching dailyRevenue, and paying users gained since accepting (from paidUsersAtStart, measured on their
+ * average over the last week) reaching usersGained. "running" until both hold on the same day ("met"), or "missed" on
+ * byDay, when they took extraShares.
  */
 export interface AngelDeal {
   investor: string;
@@ -229,11 +231,23 @@ export interface AngelDeal {
   /** Their share of the company then, 0–1, and the valuation it was struck at, their cash included. */
   share: number;
   valuation: number;
-  target: { dailyRevenue: number; days: number; byDay: number };
+  target: AngelTarget;
+  /** Paying users the day it was accepted: users gained count from here. */
+  paidUsersAtStart: number;
   status: "running" | "met" | "missed";
   /** The day it was met or missed; null while it runs. */
   settledDay: number | null;
   extraShares: number;
+}
+
+/** An angel's target: both parts must hold on the same day, by byDay. */
+export interface AngelTarget {
+  dailyRevenue: number;
+  /** Days the income is averaged over. */
+  days: number;
+  /** Paying users gained since accepting, net of any lost. */
+  usersGained: number;
+  byDay: number;
 }
 
 /**

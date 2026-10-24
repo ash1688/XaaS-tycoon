@@ -16,9 +16,10 @@ const offer = computed(() => investors.value?.offer ?? null);
 const talks = computed(() => investors.value?.negotiation ?? null);
 const angel = computed(() => investors.value?.angel ?? null);
 const lastDeclined = computed(() => investors.value?.declined.at(-1) ?? null);
-const targetPercent = computed(() =>
-  angel.value ? Math.min(100, Math.round((100 * angel.value.dailyRevenue) / angel.value.target.dailyRevenue)) : 0,
-);
+/** How far along each part of the angel's target is, 0–100. */
+const percentOf = (now: number, target: number) => (target > 0 ? Math.max(0, Math.min(100, Math.round((100 * now) / target))) : 100);
+const incomePercent = computed(() => (angel.value ? percentOf(angel.value.dailyRevenue, angel.value.target.dailyRevenue) : 0));
+const usersPercent = computed(() => (angel.value ? percentOf(angel.value.usersGained, angel.value.target.usersGained) : 0));
 /** How long the offer stands: it lapses unanswered after its last day, as if declined. */
 const standsText = (daysLeft: number, lastDay: number) =>
   `The offer stands for ${days(daysLeft)} more: unanswered after day ${lastDay}, it lapses, which counts as declining it.`;
@@ -91,21 +92,38 @@ async function answer(type: "acceptInvestor" | "declineInvestor") {
         </p>
         <template v-if="angel.status === 'running'">
           <p data-testid="angel-target">
-            Their target: income of {{ formatCash(angel.target.dailyRevenue) }} a day, averaged over
-            {{ days(angel.target.days) }}, by day {{ angel.target.byDay }}. You're at {{ formatCash(angel.dailyRevenue) }}
-            a day, with {{ days(angel.daysLeft) }} to go.
+            Their target, both at once by day {{ angel.target.byDay }} ({{ days(angel.daysLeft) }} to go):
+          </p>
+          <p data-testid="angel-target-income">
+            Income of {{ formatCash(angel.target.dailyRevenue) }} a day, averaged over {{ days(angel.target.days) }}: you're
+            at {{ formatCash(angel.dailyRevenue) }}.
           </p>
           <div
             class="loan-bar"
             role="progressbar"
-            :aria-valuenow="targetPercent"
+            :aria-valuenow="incomePercent"
             aria-valuemin="0"
             aria-valuemax="100"
-            :aria-label="`${targetPercent}% of the way to the angel's target`"
+            :aria-label="`${incomePercent}% of the way to the angel's income target`"
           >
-            <span :style="{ width: `${targetPercent}%` }"></span>
+            <span :style="{ width: `${incomePercent}%` }"></span>
           </div>
-          <p class="muted">Miss it and they take extra shares, diluting you.</p>
+          <p data-testid="angel-target-users">
+            Paying users gained since you accepted:
+            <strong>{{ angel.usersGained.toLocaleString("en-GB") }} of {{ angel.target.usersGained.toLocaleString("en-GB") }}</strong>,
+            averaged over a week and net of any you lose.
+          </p>
+          <div
+            class="loan-bar"
+            role="progressbar"
+            :aria-valuenow="usersPercent"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            :aria-label="`${usersPercent}% of the way to the angel's users target`"
+          >
+            <span :style="{ width: `${usersPercent}%` }"></span>
+          </div>
+          <p class="muted">Miss either and they take extra shares, diluting you.</p>
         </template>
         <p v-else-if="angel.status === 'met'">Target met on day {{ angel.settledDay }}.</p>
         <p v-else class="error" data-testid="angel-missed">

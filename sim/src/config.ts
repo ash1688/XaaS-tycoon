@@ -1310,9 +1310,14 @@ export interface InvestorsConfig {
  *   They ask for a share of the company after, drawn from share.min to share.max, and put in the cash that buys it at
  *   that valuation, to the nearest £500, from minAmount to maxAmount (for less of the company if that caps it). All of it is paid up front. Each angel declined makes
  *   the next less generous: declinePremium off the most premium, declineShare on the least share.
- * - Their target, set on accepting: income averaged over target.days days reaching targetGrowth × what it was when
- *   accepted (or × target.dailyRevenue, if that's more), within targetDays, or by the game's last day if sooner, when
- *   the growth asked for shrinks in step with the days left. Missing it costs extra equity: new shares
+ * - Their target, set on accepting, has two parts that must hold on the same day within targetDays (or by the game's
+ *   last day if sooner, when what's asked for shrinks in step with the days left):
+ *   - income averaged over target.days days reaching targetGrowth × what it was when accepted (or × target.dailyRevenue,
+ *     if that's more);
+ *   - paying users gained since accepting (their average over the last week, less those there on the day): usersPace ×
+ *     the company's recent pace (paying users gained over the last target.days days, a day) × targetDays, rounded to
+ *     10 and at least minUsersGained. Net of any lost, so users bought with a price cut and lost again don't count.
+ *   Missing it costs extra equity: new shares
  *   take their share of the company up by missShare (0.05 = five points).
  * - Their valuation: on accepting, the business is worth what their terms say, as a multiple of the formula's business;
  *   from then on the valuation is that multiple × the formula's business, plus net cash, never below the minimum.
@@ -1327,6 +1332,8 @@ export interface AngelConfig {
   declinePremium: number;
   declineShare: number;
   targetGrowth: number;
+  usersPace: number;
+  minUsersGained: number;
   targetDays: number;
   missShare: number;
 }
@@ -2184,8 +2191,8 @@ export const defaultConfig: GameConfig = {
   rescue: { breathingDays: 30, minCover: 0.25, share: 0.75, staffCut: 0.25, buyBackPremium: 1.5, minReturn: 2 },
   // The angel approaches about three weeks after launch on sensible play, once income has averaged £500 a day for a
   // fortnight: a company worth about £60-130k, so a fifth of it costs the angel about £15-35k. Sensible play makes its
-  // short-term target (1.75 times that income within 30 days) in 70 of 72 harness games, with a median 18 days to
-  // spare; a company that stalls doesn't. Its offer stands for 3 days played, so it can't be held open.
+  // short-term target in 69 of 72 harness games, with a median 12 days to spare: 1.75 times that income and three
+  // quarters of its recent pace of paying users kept up, both within 30 days. A company that stalls doesn't. Its offer stands for 3 days played, so it can't be held open.
   investors: {
     approachDays: 3,
     retryDays: 5,
@@ -2200,6 +2207,8 @@ export const defaultConfig: GameConfig = {
       declinePremium: 0.1,
       declineShare: 0.02,
       targetGrowth: 1.75,
+      usersPace: 0.75,
+      minUsersGained: 100,
       targetDays: 30,
       missShare: 0.05,
     },
