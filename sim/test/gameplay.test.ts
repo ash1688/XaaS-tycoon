@@ -29,6 +29,15 @@ function withoutLookahead(units: ReturnType<Sim["units"]>) {
   return rest;
 }
 
+/**
+ * The price preview without its ticket outlook, added for the price modal after these hashes were taken (#163): it
+ * plays no part in the game, so the hashes stay those of the games themselves.
+ */
+function withoutTicketOutlook(preview: ReturnType<Sim["pricePreview"]>) {
+  const { tickets: _, ...rest } = preview;
+  return rest;
+}
+
 /** Plays one game to the end like the harness, keeping what a player would have seen on the way. */
 function fingerprint(model: GameState["model"], productType: GameState["productType"], strategy: (typeof STRATEGIES)[number]) {
   const takeLoan = strategy.loan === "always" || (strategy.loan === "onprem" && model === "onprem");
@@ -48,7 +57,7 @@ function fingerprint(model: GameState["model"], productType: GameState["productT
     // Every 30 days, the quotes and views a student's page asks for.
     if (state.day % 30 === 0) {
       seen.push(
-        sim.pricePreview(state, Math.round(state.price * 1.25 * 100) / 100),
+        withoutTicketOutlook(sim.pricePreview(state, Math.round(state.price * 1.25 * 100) / 100)),
         quoteOrRefusal(state, state.model === "saas" ? "iaas" : "saas"),
         sim.loanQuote(state),
         withoutLookahead(sim.units(state)),

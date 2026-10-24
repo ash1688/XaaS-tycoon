@@ -92,6 +92,18 @@ describe("runCommand", () => {
     expect(turn.rows).toEqual([]);
   });
 
+  it("previews a rise's ticket burst and whether support clears it (#163)", () => {
+    // A company with users to react: 400 of 1,000 paying.
+    const state: GameState = { ...start(), users: 1000, paidUsers: 400 };
+    const p = sim.pricePreview(state, state.price * 2);
+    expect(p.tickets.tickets).toBeGreaterThan(0);
+    const line = run(state, `preview ${state.price * 2}`).lines[0]!;
+    expect(line).toContain(`; +${p.tickets.tickets} tickets (busiest day +${p.tickets.peakDay}; support clears ${p.tickets.clearance}/day`);
+    expect(line).toMatch(/: support (clears them as they come|falls behind: up to \d+ extra waiting, cleared by the end|can't keep up: up to \d+ extra waiting, \d+ still waiting after)/);
+    // A cut brings no burst, so says nothing about tickets.
+    expect(run(state, `preview ${state.price / 2}`).lines[0]).not.toContain("tickets");
+  });
+
   it("shows the customer mix with thresholds, and a rise's reaction by customer type", () => {
     const state = advanceUntil(sim, run(start(), "instances 2").state, 20, who).state;
     expect(renderStatus(sim, state)).toMatch(

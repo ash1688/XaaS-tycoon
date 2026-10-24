@@ -23,15 +23,15 @@ test("on IaaS, renting an app server and a load balancer grows the CU capacity b
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
-  // Home's capacity card shows the tightest tier: compute, 6 of 10 CU (the database is as full).
-  await expect(student.getByTestId("home-tightest")).toContainText("CU 60%");
+  // Home's capacity card shows the tightest tier: compute, 4.8 of 10 CU (the database is as full).
+  await expect(student.getByTestId("home-tightest")).toContainText("CU 48%");
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Infrastructure", exact: true }).click();
 
   // The first setup: a medium app server (10 CU) and a medium database (10 DBU), and one app server needs no load
   // balancer.
   const cu = student.getByRole("meter", { name: /^Compute \(CU\)/ });
   await expect(cu).toHaveAttribute("aria-valuemax", "10");
-  await expect(student.getByTestId("tier-cu-figures")).toHaveText("6 / 10 CU");
+  await expect(student.getByTestId("tier-cu-figures")).toHaveText("4.8 / 10 CU");
   const servers = student.getByTestId("servers-panel");
   await expect(servers.locator('[data-server="app-medium"]')).toContainText("App server · medium × 1");
   await expect(servers.locator('[data-server="database-medium"]')).toContainText("10 DBU");

@@ -112,6 +112,24 @@ const verdict = computed(() => {
       : `${formatCount(p.total.joined)} new users join and ${formatCount(p.total.upgraded)} free users start paying.`;
   return `At ${priceLabel(p.price, p.rate)} you'd make ${income} once the wave settles. ${users}`;
 });
+// The rise's ticket burst against today's support (#163): what it comes to and whether support clears it. On a cut,
+// only when the new users bring more tickets than support clears.
+const ticketVerdict = computed(() => {
+  const p = preview.value;
+  if (!p || p.direction === "none") return "";
+  const t = p.tickets;
+  if (t.tickets === 0 && t.canClear) return "";
+  const burst =
+    t.tickets > 0
+      ? `The rise brings about ${formatCount(t.tickets)} extra support tickets, up to ${formatCount(t.peakDay)} in a day. `
+      : "The new users bring more support tickets than your team clears. ";
+  if (t.canClear) return `${burst}Your support team clears ${formatCount(t.clearance)} a day, so it can keep up.`;
+  const team = t.clearance === 0 ? "You have no support team" : `Your support team clears ${formatCount(t.clearance)} a day`;
+  if (t.waitingAfter === 0) {
+    return `${burst}${team}, so up to ${formatCount(t.peakWaiting)} wait at once and satisfaction dips until they're cleared.`;
+  }
+  return `${burst}${team}, so ${formatCount(t.waitingAfter)} are still waiting when the wave ends. Satisfaction falls and paying users leave. Hire support first.`;
+});
 /** A share as a percentage to one place: 0.2318 → "23.2%". */
 const sharePercent = (share: number) => `${(100 * share).toFixed(1).replace(/\.0$/, "")}%`;
 /** A customer type's name, lower case, from the company's mix. */
@@ -351,6 +369,9 @@ async function save() {
             <span v-if="previewing" class="muted">· updating…</span>
           </h3>
           <p :class="['price-verdict', incomeChange < 0 ? 'neg' : 'pos']" data-testid="price-verdict">{{ verdict }}</p>
+          <p v-if="ticketVerdict" :class="['price-tickets', preview.tickets.canClear ? 'muted' : 'neg']" data-testid="preview-tickets">
+            {{ ticketVerdict }}
+          </p>
           <p v-if="tinyStep" class="muted" data-testid="price-tiny-step">
             That's a small change from {{ priceLabel(preview.currentPrice, preview.currentRate) }}, so the effect is small too. Try a bigger
             step to see the difference.
@@ -374,7 +395,10 @@ async function save() {
               </div>
               <div class="preview-figure">
                 <span class="label">Backlash tickets</span>
-                <strong>{{ formatCount(preview.total.tickets) }}</strong>
+                <strong :class="{ neg: !preview.tickets.canClear }" data-testid="preview-backlash">{{ formatCount(preview.total.tickets) }}</strong>
+                <small data-testid="preview-support">
+                  {{ preview.tickets.canClear ? "Support keeps up" : `${formatCount(preview.tickets.peakWaiting)} wait at most` }}
+                </small>
               </div>
             </template>
             <template v-else>

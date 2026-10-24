@@ -6197,6 +6197,36 @@ describe("price waves and the price lock", () => {
     expect(preview.total).toMatchObject({ left: 0, toFree: 0, tickets: 0 });
   });
 
+  it("previews a rise's ticket burst against today's support, and whether support clears it (#163)", () => {
+    // No support staff: every backlash ticket waits, and the preview's backlog matches the game's after the wave.
+    const start = begin();
+    const preview = s.pricePreview(start, 45);
+    const { tickets } = preview;
+    expect(tickets.tickets).toBe(preview.total.tickets);
+    expect(tickets.tickets).toBeGreaterThan(0);
+    expect(tickets.peakDay).toBe(Math.max(...preview.days.map((d) => d.tickets)));
+    expect(tickets).toMatchObject({ clearance: 0, usualTickets: 0, canClear: false, waitingAfter: tickets.tickets, peakWaiting: tickets.tickets });
+    const { state } = daily(s, s.applyAction(start, setPrice(45)), preview.days.length);
+    expect(state.backlog).toBe(tickets.waitingAfter);
+
+    // Support that clears more than the busiest day: none wait.
+    const staffed = s.applyAction(start, { type: "hire", pool: "support", count: Math.ceil(tickets.peakDay / 10) });
+    expect(s.pricePreview(staffed, 45).tickets).toMatchObject({ canClear: true, peakWaiting: 0, waitingAfter: 0 });
+
+    // Support that clears some each day falls behind on the busy days but catches up by the end.
+    const some = s.applyAction(start, { type: "hire", pool: "support", count: Math.ceil(tickets.tickets / preview.days.length / 10) });
+    const behind = s.pricePreview(some, 45).tickets;
+    expect(behind.canClear).toBe(false);
+    expect(behind.peakWaiting).toBeGreaterThan(0);
+    expect(behind.peakWaiting).toBeLessThan(tickets.tickets);
+    expect(behind.waitingAfter).toBeLessThan(behind.peakWaiting);
+
+    // A cut brings no burst.
+    expect(s.pricePreview(start, 20).tickets).toMatchObject({ tickets: 0, peakDay: 0, canClear: true });
+    // Nor does today's price.
+    expect(s.pricePreview(start, start.price).tickets).toMatchObject({ tickets: 0, canClear: true });
+  });
+
   it("scales the wave with the size of the change against the fair price: a small tweak barely registers", () => {
     const start = begin();
     const affected = (price: number) => {

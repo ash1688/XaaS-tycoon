@@ -220,6 +220,23 @@ fieldset > p {
   gap: 0.6rem;
 }
 
+/* The product picker: six products as a 3 × 2 grid, two columns on narrow screens and one on a phone. */
+.choices-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 40rem) {
+  .choices-3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 26rem) {
+  .choices-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
 .choice {
   display: flex;
   flex-direction: column;
@@ -2991,6 +3008,10 @@ body.modal-open {
 
 .price-verdict.neg {
   color: var(--neg);
+}
+
+.price-tickets {
+  margin: 0;
 }
 
 .price-compare td button {
