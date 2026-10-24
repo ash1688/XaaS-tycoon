@@ -23,7 +23,7 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: "/", component: HomeView },
-    { path: "/play/:code", component: CompaniesView, props: true },
+    { path: "/play/:code", component: CompaniesView, props: true, meta: { roomy: true } },
     {
       // The game shell loads the company once; each page is a child route, so it can be bookmarked.
       path: "/play/:code/:id",

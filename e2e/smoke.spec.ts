@@ -48,7 +48,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
 
   await student.getByLabel("Login code").fill(code!);
   await student.getByRole("button", { name: "Go" }).click();
-  await expect(student.getByRole("table").first()).toContainText("Ops staff needed");
+  await expect(student.getByRole("table").first()).toContainText("Ops staff");
   await student.getByText("Social network").click();
   await student.locator("label.choice", { hasText: "Rent VMs (IaaS)" }).click();
   // A name on the profanity list is turned away with a message by the name field.

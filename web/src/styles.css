@@ -128,6 +128,11 @@ h2 {
   max-width: 1400px;
 }
 
+/* Pages with side-by-side cards, such as the new-company form: wider than the plain column, narrower than the game. */
+.page.roomy {
+  max-width: 1120px;
+}
+
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -4029,6 +4034,8 @@ select:disabled {
 .bell-reasons {
   margin: 0.25rem 0 1rem;
   padding-left: 1.2rem;
+}
+
 /* Negotiating a funder's offer, in its review modal. */
 .negotiation {
   margin-top: 1rem;
@@ -4128,4 +4135,74 @@ select:disabled {
   border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 0.85rem;
+}
+
+/* The new-company form: four cards, two by two, stacking into one column on narrow screens. */
+.new-company-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* Every row as tall as its tallest card, so all four cards are the same size. */
+  grid-auto-rows: 1fr;
+  gap: 1rem;
+}
+
+.new-company-grid > .card {
+  margin-bottom: 0;
+  padding: 1.1rem 1.25rem;
+  gap: 0.45rem;
+}
+
+/* Tighter choice cards and tables inside the four cards, to keep them short. */
+.new-company-grid .choice {
+  padding: 0.5rem 0.65rem;
+}
+
+.new-company-grid .choice .muted {
+  font-size: 0.85rem;
+}
+
+.new-company-grid .choices {
+  gap: 0.45rem;
+}
+
+.new-company-grid .compare {
+  font-size: 0.82rem;
+}
+
+.new-company-grid .compare th,
+.new-company-grid .compare td {
+  padding: 0.3rem 0.4rem;
+}
+
+.new-company-grid fieldset > p {
+  margin: 0 0 0.35rem;
+}
+
+.choices-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.loan-details summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 0.9rem;
+}
+
+.new-company-grid h3 {
+  margin: 0;
+}
+
+.new-company-grid > .card > fieldset:first-child {
+  margin-top: 0;
+}
+
+.new-company-grid > .card > fieldset:first-child > legend {
+  font-size: 1.17em;
+}
+
+@media (max-width: 56rem) {
+  .new-company-grid {
+    grid-template-columns: 1fr;
+    grid-auto-rows: auto;
+  }
 }

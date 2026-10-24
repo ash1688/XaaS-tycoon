@@ -19,6 +19,8 @@ test("start without a loan, take one later on worse terms, see the debt on Finan
 
   // The new-game form shows the loan's terms before choosing: £35,000 at 10%, £38,500 over its 120-day term, rounded
   // up to £321 a day. The term is the same whatever the game's length, so it runs past this short game's end.
+  // The terms sit behind a "Loan terms" toggle, to keep the form short.
+  await student.getByTestId("loan-details").getByText("Loan terms").click();
   const terms = student.getByTestId("loan-terms");
   await expect(terms.getByTestId("loan-amount")).toHaveText("£35,000");
   await expect(terms.getByTestId("loan-daily")).toHaveText("£321");
