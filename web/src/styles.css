@@ -3004,6 +3004,10 @@ body.modal-open {
   color: var(--neg);
 }
 
+.price-tickets {
+  margin: 0;
+}
+
 .price-compare td button {
   padding: 0.15rem 0.6rem;
   font-size: 0.85rem;

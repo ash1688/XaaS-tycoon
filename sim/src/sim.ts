@@ -78,6 +78,7 @@ export type { RackOption, RackView, RacksView } from "./racks.ts";
 export type { CounterOdds, NegotiationRound, RollResult, TermSpec, Terms } from "./negotiation.ts";
 export { MAX_OFFERS, ROLL_RESULTS } from "./negotiation.ts";
 export type { RescueView } from "./rescue.ts";
+export type { TicketOutlook } from "./support.ts";
 export type { MarketCompanyView, MarketView, TypeContestView } from "./rivals.ts";
 export type { CustomerMixView, CustomerTypeView, PaymentsView, PricePreview, PriceWaveView, TypeReaction } from "./pricing.ts";
 export { percent } from "./pricing.ts";
@@ -435,8 +436,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const calendar = createCalendar(config);
   const finance = createFinance(config);
   const features = createFeatures(config, finance);
-  const pricing = createPricing(config, calendar);
   const support = createSupport(config);
+  const pricing = createPricing(config, calendar, support);
   const moderation = createModeration(config);
   const rivals = createRivals(config, features, pricing);
   const customers = createCustomers(config, features, events, pricing, support, calendar, rivals);
