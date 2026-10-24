@@ -173,158 +173,166 @@ async function start() {
       </p>
     </section>
 
-    <section v-else class="card">
-      <h2>Start a new company</h2>
-      <form @submit.prevent="start" class="stack">
-        <label for="name">Company name</label>
-        <input
-          id="name"
-          v-model="name"
-          :maxlength="meta.maxCompanyNameLength"
-          autocomplete="off"
-          :aria-invalid="!!nameError"
-          :aria-describedby="nameError ? 'name-error' : undefined"
-          @input="nameError = ''"
-        />
-        <p v-if="nameError" id="name-error" class="error" role="alert">{{ nameError }}</p>
-
-        <fieldset>
-          <legend>What are you building?</legend>
-          <p class="muted">You build one product for the whole game.</p>
-          <div class="choices choices-3">
-            <label v-for="p in meta.productTypes" :key="p.id" class="choice" :class="{ on: productType === p.id }">
-              <input type="radio" name="productType" :value="p.id" v-model="productType" />
-              <strong>{{ p.name }}</strong>
-              <span class="muted">{{ p.profile }}</span>
-            </label>
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>How will you deploy it?</legend>
-          <p class="muted">You can change this later by migrating.</p>
-          <div class="table-scroll">
-            <table class="compare">
-              <thead>
-                <tr>
-                  <th scope="col">Model</th>
-                  <th scope="col">Upfront cost</th>
-                  <th scope="col">Monthly cost</th>
-                  <th scope="col">Ops staff needed</th>
-                  <th scope="col">Control</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="m in meta.models" :key="m.id" :class="{ on: model === m.id }">
-                  <th scope="row">{{ m.name }}</th>
-                  <td>
-                    {{ m.comparison.upfrontCost }}
-                    <span class="muted price">{{ formatCash(m.upfrontCost) }}</span>
-                  </td>
-                  <td>
-                    {{ m.comparison.monthlyCost }}
-                    <span class="muted price">
-                      {{ formatCash(m.monthlyCost) }}<template v-if="m.monthlyCostPerUser">
-                        + {{ formatPrice(m.monthlyCostPerUser * feeMultiplier) }}/user</template
-                      >
-                    </span>
-                  </td>
-                  <td>{{ m.comparison.opsNeeded }}</td>
-                  <td>{{ m.comparison.control }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="choices">
-            <label v-for="m in meta.models" :key="m.id" class="choice" :class="{ on: model === m.id }">
-              <input type="radio" name="model" :value="m.id" v-model="model" />
-              <strong>{{ m.name }}</strong>
-              <span class="muted">{{ m.blurb }}</span>
-            </label>
-          </div>
-        </fieldset>
-
-        <fieldset data-testid="game-lengths">
-          <legend>How long will you play?</legend>
-          <p class="muted">The game ends on its last day, or sooner if you float on the stock market, it goes into liquidation or your teacher ends it.</p>
-          <div class="choices">
-            <label v-for="l in meta.gameLengths" :key="l.id" class="choice" :class="{ on: gameLength === l.id }">
-              <input type="radio" name="gameLength" :value="l.id" v-model="gameLength" />
-              <strong>{{ l.name }}</strong>
-              <span class="muted">{{
-                l.finalDay === null ? "Ends only when you float" : `Ends on day ${l.finalDay.toLocaleString("en-GB")}`
-              }}</span>
-            </label>
-          </div>
-        </fieldset>
-
-        <fieldset data-testid="difficulties">
-          <legend>How hard?</legend>
-          <div class="choices">
-            <label v-for="d in meta.difficulties" :key="d.id" class="choice" :class="{ on: difficulty === d.id }">
-              <input type="radio" name="difficulty" :value="d.id" v-model="difficulty" />
-              <strong>{{ d.name }}</strong>
-              <span class="muted">{{ d.blurb }} Starting cash {{ formatCash(d.startingCash) }}.</span>
-            </label>
-          </div>
-        </fieldset>
-
-        <fieldset>
-          <legend>Shares</legend>
-          <p class="muted">
-            How many shares your company has. You own all of them to start with. Friends and family and investors buy new
-            shares, so you own less of the company: a share of what it's worth is your score.
-          </p>
-          <label for="shares">Shares in issue</label>
+    <section v-else aria-labelledby="new-company-heading">
+      <h2 id="new-company-heading">Start a new company</h2>
+      <form @submit.prevent="start" class="new-company-grid">
+        <!-- Four cards, two by two: who you are, what you build, where it runs, and how the game is set up. -->
+        <div class="card stack" data-testid="card-company">
+          <h3>Your company</h3>
+          <label for="name">Company name</label>
           <input
-            id="shares"
-            v-model.number="shares"
-            type="number"
-            :min="meta.shares.min"
-            :max="meta.shares.max"
-            step="1000"
-            inputmode="numeric"
-            data-testid="shares"
+            id="name"
+            v-model="name"
+            :maxlength="meta.maxCompanyNameLength"
+            autocomplete="off"
+            :aria-invalid="!!nameError"
+            :aria-describedby="nameError ? 'name-error' : undefined"
+            @input="nameError = ''"
           />
-          <small v-if="!sharesOk" class="error" role="alert" data-testid="shares-error">
-            Pick a whole number from {{ meta.shares.min.toLocaleString("en-GB") }} to
-            {{ meta.shares.max.toLocaleString("en-GB") }}.
-          </small>
-          <small v-else class="muted">
-            From {{ meta.shares.min.toLocaleString("en-GB") }} to {{ meta.shares.max.toLocaleString("en-GB") }}.
-          </small>
-        </fieldset>
+          <p v-if="nameError" id="name-error" class="error" role="alert">{{ nameError }}</p>
 
-        <fieldset>
-          <legend>Bank loan</legend>
-          <p class="muted">
-            You start with {{ formatCash(ownCash) }} of your own. You can borrow more from the bank now, on its
-            best terms, or later at a higher rate over a shorter term. One loan at a time: pay it off, early if you like, and
-            you can take another.
-          </p>
-          <label :class="['loan-option', { on: takeLoan }]">
-            <input v-model="takeLoan" type="checkbox" data-testid="take-loan" />
-            <span>
-              <strong>Take a bank loan of {{ formatCash(meta.startLoan.amount) }}</strong>
-              <span class="muted">
-                {{ formatCash(meta.startLoan.dailyRepayment) }} a day until day {{ meta.startLoan.lastDay }}
+          <fieldset>
+            <legend>Shares</legend>
+            <p class="muted">You own them all to start with. Investors buy new ones, and your share of the company is your score.</p>
+            <label for="shares">Shares in issue</label>
+            <input
+              id="shares"
+              v-model.number="shares"
+              type="number"
+              :min="meta.shares.min"
+              :max="meta.shares.max"
+              step="1000"
+              inputmode="numeric"
+              data-testid="shares"
+            />
+            <small v-if="!sharesOk" class="error" role="alert" data-testid="shares-error">
+              Pick a whole number from {{ meta.shares.min.toLocaleString("en-GB") }} to
+              {{ meta.shares.max.toLocaleString("en-GB") }}.
+            </small>
+            <small v-else class="muted">
+              From {{ meta.shares.min.toLocaleString("en-GB") }} to {{ meta.shares.max.toLocaleString("en-GB") }}.
+            </small>
+          </fieldset>
+
+          <fieldset>
+            <legend>Bank loan</legend>
+            <p class="muted">
+              Your own cash is {{ formatCash(ownCash) }}. Borrow now on the bank's best terms, or later for more. One loan at a time.
+            </p>
+            <label :class="['loan-option', { on: takeLoan }]">
+              <input v-model="takeLoan" type="checkbox" data-testid="take-loan" />
+              <span>
+                <strong>Take a bank loan of {{ formatCash(meta.startLoan.amount) }}</strong>
+                <span class="muted">
+                  {{ formatCash(meta.startLoan.dailyRepayment) }} a day until day {{ meta.startLoan.lastDay }}
+                </span>
               </span>
-            </span>
-          </label>
-          <LoanTerms :quote="meta.startLoan" />
-        </fieldset>
+            </label>
+            <details class="loan-details" data-testid="loan-details">
+              <summary>Loan terms</summary>
+              <LoanTerms :quote="meta.startLoan" />
+            </details>
+          </fieldset>
+        </div>
 
-        <p class="muted" data-testid="start-cash">
-          You start with {{ formatCash(startCash) }}<template v-if="takeLoan"
-            >, {{ formatCash(meta.startLoan.amount) }} of it borrowed</template
-          >.
-        </p>
-        <p v-if="cantAfford" class="error" role="alert" data-testid="cant-afford">
-          {{ chosenModel!.name }} costs {{ formatCash(chosenModel!.upfrontCost) }} up front: more than you'd start with.
-          {{ takeLoan ? "Pick" : "Take the bank loan, or pick" }} a model that costs less to start.
-        </p>
-        <p v-if="formError" class="error" role="alert">{{ formError }}</p>
-        <button type="submit" :disabled="!canStart">Start company</button>
+        <div class="card stack" data-testid="card-product">
+          <fieldset>
+            <legend>What are you building?</legend>
+            <p class="muted">You build one product for the whole game.</p>
+            <div class="choices choices-3">
+              <label v-for="p in meta.productTypes" :key="p.id" class="choice" :class="{ on: productType === p.id }">
+                <input type="radio" name="productType" :value="p.id" v-model="productType" />
+                <strong>{{ p.name }}</strong>
+                <span class="muted">{{ p.profile }}</span>
+              </label>
+            </div>
+          </fieldset>
+        </div>
+
+        <div class="card stack" data-testid="card-deploy">
+          <fieldset>
+            <legend>How will you deploy it?</legend>
+            <p class="muted">You can change this later by migrating.</p>
+            <div class="table-scroll">
+              <table class="compare">
+                <thead>
+                  <tr>
+                    <th scope="col">Model</th>
+                    <th scope="col">Upfront</th>
+                    <th scope="col">Monthly</th>
+                    <th scope="col">Ops staff</th>
+                    <th scope="col">Control</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="m in meta.models" :key="m.id" :class="{ on: model === m.id }">
+                    <th scope="row">{{ m.name }}</th>
+                    <td>
+                      {{ m.comparison.upfrontCost }}
+                      <span class="muted price">{{ formatCash(m.upfrontCost) }}</span>
+                    </td>
+                    <td>
+                      {{ m.comparison.monthlyCost }}
+                      <span class="muted price">
+                        {{ formatCash(m.monthlyCost) }}<template v-if="m.monthlyCostPerUser">
+                          + {{ formatPrice(m.monthlyCostPerUser * feeMultiplier) }}/user</template
+                        >
+                      </span>
+                    </td>
+                    <td>{{ m.comparison.opsNeeded }}</td>
+                    <td>{{ m.comparison.control }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="choices choices-2">
+              <label v-for="m in meta.models" :key="m.id" class="choice" :class="{ on: model === m.id }" :title="m.blurb">
+                <input type="radio" name="model" :value="m.id" v-model="model" />
+                <strong>{{ m.name }}</strong>
+              </label>
+            </div>
+          </fieldset>
+        </div>
+
+        <div class="card stack" data-testid="card-settings">
+          <h3>Game settings</h3>
+          <fieldset data-testid="game-lengths">
+            <legend>How long will you play?</legend>
+            <p class="muted">The game ends on its last day, or sooner if you float on the stock market, it goes into liquidation or your teacher ends it.</p>
+            <div class="choices">
+              <label v-for="l in meta.gameLengths" :key="l.id" class="choice" :class="{ on: gameLength === l.id }">
+                <input type="radio" name="gameLength" :value="l.id" v-model="gameLength" />
+                <strong>{{ l.name }}</strong>
+                <span class="muted">{{
+                  l.finalDay === null ? "Ends only when you float" : `Ends on day ${l.finalDay.toLocaleString("en-GB")}`
+                }}</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset data-testid="difficulties">
+            <legend>How hard?</legend>
+            <div class="choices">
+              <label v-for="d in meta.difficulties" :key="d.id" class="choice" :class="{ on: difficulty === d.id }">
+                <input type="radio" name="difficulty" :value="d.id" v-model="difficulty" />
+                <strong>{{ d.name }}</strong>
+                <span class="muted">{{ d.blurb }} Starting cash {{ formatCash(d.startingCash) }}.</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <p class="muted" data-testid="start-cash">
+            You start with {{ formatCash(startCash) }}<template v-if="takeLoan"
+              >, {{ formatCash(meta.startLoan.amount) }} of it borrowed</template
+            >.
+          </p>
+          <p v-if="cantAfford" class="error" role="alert" data-testid="cant-afford">
+            {{ chosenModel!.name }} costs {{ formatCash(chosenModel!.upfrontCost) }} up front: more than you'd start with.
+            {{ takeLoan ? "Pick" : "Take the bank loan, or pick" }} a model that costs less to start.
+          </p>
+          <p v-if="formError" class="error" role="alert">{{ formError }}</p>
+          <button type="submit" :disabled="!canStart">Start company</button>
+        </div>
       </form>
     </section>
 
