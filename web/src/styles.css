@@ -4029,6 +4029,8 @@ select:disabled {
 .bell-reasons {
   margin: 0.25rem 0 1rem;
   padding-left: 1.2rem;
+}
+
 /* Negotiating a funder's offer, in its review modal. */
 .negotiation {
   margin-top: 1rem;
