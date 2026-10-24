@@ -24,21 +24,22 @@ test("migrating from IaaS to PaaS quotes the new setup item by item, then shows 
   await panel.locator("label.choice", { hasText: "Deploy to a platform (PaaS)" }).click();
   await student.getByRole("button", { name: "Plan migration" }).click();
 
-  // 4,000 social users need 6 CU and 6 DBU; with a quarter more room, one instance and a small managed database.
+  // 4,000 social users need 4.8 CU and 4.8 DBU; with a quarter more room (6 of each), one instance and a small
+  // managed database.
   const setup = student.getByTestId("quote-setup");
-  await expect(setup).toContainText("sized to today's demand (7.5 CU, 7.5 DBU) with 25% room to grow");
+  await expect(setup).toContainText("sized to today's demand (6 CU, 6 DBU) with 25% room to grow");
   await expect(setup.locator("tbody tr")).toHaveCount(2);
   await expect(setup.locator('[data-setup-item="app-medium"]')).toContainText("1 × app instance");
   await expect(setup.locator('[data-setup-item="app-medium"]')).toContainText("10 CU each");
-  await expect(setup.locator('[data-setup-item="app-medium"]')).toContainText("£900");
+  await expect(setup.locator('[data-setup-item="app-medium"]')).toContainText("£1,125");
   await expect(setup.locator('[data-setup-item="database-small"]')).toContainText("1 × small managed database");
-  await expect(setup.locator('[data-setup-item="database-small"]')).toContainText("£900");
+  await expect(setup.locator('[data-setup-item="database-small"]')).toContainText("£1,125");
   // Rented, so nothing up front: only a monthly column.
   await expect(setup.getByRole("columnheader", { name: "Up front" })).toHaveCount(0);
-  await expect(student.getByTestId("quote-setup-monthly")).toHaveText("£1,800");
-  // Its £1,800 a month is in the double billing, with the platform's £1,300 and £6 a day of power and cooling: £109 a
+  await expect(student.getByTestId("quote-setup-monthly")).toHaveText("£2,250");
+  // Its £2,250 a month is in the double billing, with the platform's £1,300 and £6 a day of power and cooling: £109 a
   // day for 14 days.
-  await expect(student.getByTestId("quote-double")).toHaveText("£1,526");
+  await expect(student.getByTestId("quote-double")).toHaveText("£1,750");
   await expect(student.getByTestId("quote-ops")).toHaveText("1");
 
   await student.getByRole("button", { name: "Start migration" }).click();
@@ -53,7 +54,7 @@ test("migrating from IaaS to PaaS quotes the new setup item by item, then shows 
   await expect(next).toContainText("Next: Deploy to a platform (PaaS)");
   await expect(next.locator('[data-setup-item="app-medium"]')).toContainText("1 × app instance");
   await expect(next.locator('[data-setup-item="database-small"]')).toContainText("Ready for the switch");
-  await expect(student.getByTestId("new-setup-monthly")).toHaveText("£1,800");
+  await expect(student.getByTestId("new-setup-monthly")).toHaveText("£2,250");
 
   // Day 1 of the move bills both.
   await student.getByRole("button", { name: "Continue" }).click();
@@ -61,6 +62,6 @@ test("migrating from IaaS to PaaS quotes the new setup item by item, then shows 
   await student.getByRole("button", { name: "Day log" }).click();
   const log = student.getByRole("dialog", { name: "Day log" }).getByTestId("day-log");
   await expect(log).toContainText("App server (medium) rent: 1 × £450 a month");
-  await expect(log).toContainText("Double billing: App instance (medium): 1 × £900 a month");
-  await expect(log).toContainText("Double billing: Managed database (small): 1 × £900 a month");
+  await expect(log).toContainText("Double billing: App instance (medium): 1 × £1,125 a month");
+  await expect(log).toContainText("Double billing: Managed database (small): 1 × £1,125 a month");
 });
