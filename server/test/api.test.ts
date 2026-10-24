@@ -1866,10 +1866,10 @@ describe("the angel investor", () => {
   it("lets an unanswered offer lapse after its days, as a decline, pausing time", async () => {
     const { url, result } = await approached();
     const offer = result.company.investors.offer!;
-    expect(offer).toMatchObject({ daysLeft: angelSim.config.investors.offerDays, lastDay: result.company.day + angelSim.config.investors.offerDays });
+    expect(offer).toMatchObject({ daysLeft: angelSim.config.investors.offerDays, lastDay: result.company.day + angelSim.config.investors.offerDays - 1 });
     let last: ContinueResult = result;
     while (last.company.investors.offer) last = (await angelApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
-    expect(last.company.day).toBe(offer.lastDay);
+    expect(last.company.day).toBe(offer.lastDay + 1);
     expect(last.company.investors).toMatchObject({ anotherComing: true, declined: [{ investor: offer.investor, lapsed: true }] });
     expect(last.pauses).toContainEqual(expect.objectContaining({ kind: "alert", id: "lapsed-angel" }));
   });

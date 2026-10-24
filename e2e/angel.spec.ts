@@ -74,7 +74,7 @@ test("an angel approaches with a notification; their offer shows its target, and
   // The offer, with its target and what missing it costs, before it's accepted.
   const panel = student.getByTestId("investor-panel");
   await expect(panel.getByTestId("angel-offer")).toContainText("wants to invest");
-  await expect(panel.getByTestId("angel-days-left")).toContainText(/The offer stands for 3 days more: unanswered after day \d+, it lapses/);
+  await expect(panel.getByTestId("angel-days-left")).toContainText(/Answer by day \d+ \(3 days left\): unanswered, it lapses/);
   await panel.getByTestId("angel-review").click();
   const modal = student.getByRole("dialog", { name: "Angel investor's offer" });
   await expect(modal.getByTestId("angel-condition")).toContainText(/^By day \d+ \(10 days after you accept\), both at once: grow income to £[\d,]+ a day, averaged over 1 day, and gain [\d,]+ users net from the day you accept/);

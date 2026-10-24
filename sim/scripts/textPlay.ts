@@ -549,7 +549,7 @@ function investorsStatus(sim: Sim, state: GameState): string | null {
     const target = `${money(a.target.dailyRevenue)}/day over ${a.target.days} days and +${a.target.netUsers.toLocaleString("en-GB")} net users by day ${a.target.byDay}`;
     const how =
       a.status === "running"
-        ? `target ${target}: ${money(a.dailyRevenue)}/day, and users +${a.usersGained.toLocaleString("en-GB")} gained −${a.usersLost.toLocaleString("en-GB")} lost = ${a.netUsers.toLocaleString("en-GB")} net of ${a.target.netUsers.toLocaleString("en-GB")}, ${a.daysLeft} days left`
+        ? `target ${target}: ${money(a.dailyRevenue)}/day over the last ${a.target.days} days, and users +${a.usersGained.toLocaleString("en-GB")} gained −${a.usersLost.toLocaleString("en-GB")} lost = ${a.netUsers.toLocaleString("en-GB")} net of ${a.target.netUsers.toLocaleString("en-GB")}, ${a.daysLeft} days left`
         : a.status === "met"
           ? `target ${target} met on day ${a.settledDay}`
           : `target ${target} missed on day ${a.settledDay}: they took ${a.extraShares.toLocaleString("en-GB")} extra shares`;
@@ -562,9 +562,9 @@ function investorsStatus(sim: Sim, state: GameState): string | null {
   return null;
 }
 
-/** How long an investor's offer stands: "lapses unanswered after day 34 (2 days left)". */
+/** How long an investor's offer stands: "answer by day 35 (2 days left) or it lapses". */
 const standsText = (daysLeft: number, lastDay: number) =>
-  `lapses unanswered after day ${lastDay} (${daysLeft} day${daysLeft === 1 ? "" : "s"} left), counting as a decline`;
+  `answer by day ${lastDay} (${daysLeft === 1 ? "today is the last day" : `${daysLeft} days left`}) or it lapses, counting as a decline`;
 
 /** The angel's open offer in full, or their deal. */
 function angelLines(sim: Sim, state: GameState): string[] {

@@ -29,10 +29,13 @@ export interface UserFlows {
 export interface InvestorOffer {
   round: RoundId;
   investor: string;
-  /** The day they approached, and the last day played it stands for: unanswered by the end of it, it lapses. */
+  /**
+   * The day they approached, and the last day it can be answered on (the day shown): unanswered then, it lapses as the
+   * next day is played.
+   */
   day: number;
   lastDay: number;
-  /** Days played before it lapses: 1 means it lapses at the end of the next day played. */
+  /** Days it can still be answered on, today included: 1 means today is the last. */
   daysLeft: number;
   amount: number;
   /**
@@ -225,7 +228,9 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
     const byDay = Math.min(state.day + angel.targetDays, state.finalDay ?? Infinity);
     const share = (byDay - state.day) / angel.targetDays;
     const growth = 1 + (angel.targetGrowth - 1) * share;
-    const users = Math.max(angel.minUsersGained, angel.usersPace * usersPace(state) * angel.targetDays) * share;
+    // Never more than a share of the users the market still has room for, so a fast start can't set one beyond reach.
+    const room = Math.max(0, config.productTypes[state.productType].growth.marketSize - state.users);
+    const users = Math.min(angel.usersRoomShare * room, Math.max(angel.minUsersGained, angel.usersPace * usersPace(state) * angel.targetDays) * share);
     return {
       dailyRevenue: Math.ceil((growth * now) / 50) * 50,
       days: angel.target.days,
@@ -252,7 +257,7 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
       round: a.round,
       investor: a.investor,
       day: a.day,
-      lastDay: a.day + c.offerDays,
+      lastDay: a.day + c.offerDays - 1,
       daysLeft: a.day + c.offerDays - state.day,
       amount,
       theirShare: newShares / sharesAfter,

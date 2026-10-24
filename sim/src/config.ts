@@ -1316,7 +1316,8 @@ export interface InvestorsConfig {
  *     if that's more);
  *   - net users since accepting, free and paying: users gained less users lost, reaching usersPace × the company's
  *     recent pace (users gained net over the last target.days days, a day) × targetDays, rounded to 10 and at least
- *     minUsersGained. Users bought with a price cut and lost again count against it.
+ *     minUsersGained, but at most usersRoomShare of the users the market still has room for. Users bought with a
+ *     price cut and lost again count against it.
  *   Missing it costs extra equity: new shares
  *   take their share of the company up by missShare (0.05 = five points).
  * - Their valuation: on accepting, the business is worth what their terms say, as a multiple of the formula's business;
@@ -1334,6 +1335,8 @@ export interface AngelConfig {
   targetGrowth: number;
   usersPace: number;
   minUsersGained: number;
+  /** The users target is at most this share of the users the market still has room for. */
+  usersRoomShare: number;
   targetDays: number;
   missShare: number;
 }
@@ -2210,6 +2213,7 @@ export const defaultConfig: GameConfig = {
       targetGrowth: 1.75,
       usersPace: 0.75,
       minUsersGained: 100,
+      usersRoomShare: 0.5,
       targetDays: 30,
       missShare: 0.05,
     },

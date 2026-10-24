@@ -22,7 +22,7 @@ const incomePercent = computed(() => (angel.value ? percentOf(angel.value.dailyR
 const usersPercent = computed(() => (angel.value ? percentOf(angel.value.netUsers, angel.value.target.netUsers) : 0));
 /** How long the offer stands: it lapses unanswered after its last day, as if declined. */
 const standsText = (daysLeft: number, lastDay: number) =>
-  `The offer stands for ${days(daysLeft)} more: unanswered after day ${lastDay}, it lapses, which counts as declining it.`;
+  `Answer by day ${lastDay} (${daysLeft === 1 ? "today is the last day" : `${days(daysLeft)} left`}): unanswered, it lapses, which counts as declining it.`;
 const TARGET_STATUS = { running: "Target running", met: "Target met", missed: "Target missed" } as const;
 
 const reviewing = ref(false);

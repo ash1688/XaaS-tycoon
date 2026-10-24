@@ -50,8 +50,11 @@ const pace = (state: GameState) => {
   return Math.max(0, (state.users - then.users) / angel.target.days);
 };
 /** The users target for `days` of the target's days. */
-const usersTarget = (state: GameState, days = angel.targetDays) =>
-  Math.ceil((Math.max(angel.minUsersGained, angel.usersPace * pace(state) * angel.targetDays) * days) / angel.targetDays / 10) * 10;
+const usersTarget = (state: GameState, days = angel.targetDays) => {
+  const room = quiet.productTypes[state.productType].growth.marketSize - state.users;
+  const paced = (Math.max(angel.minUsersGained, angel.usersPace * pace(state) * angel.targetDays) * days) / angel.targetDays;
+  return Math.ceil(Math.min(angel.usersRoomShare * room, paced) / 10) * 10;
+};
 
 /** The business the formula values: every driver but an investor's, net cash and the minimum. */
 const formulaBusiness = (s: Sim, state: GameState) =>
@@ -238,7 +241,7 @@ describe("an angel's offer lapsing", () => {
 
   it("stands for its days, counting down, and can be accepted on the last", () => {
     const { state } = untilApproach();
-    expect(sim.investors(state).offer).toMatchObject({ lastDay: state.day + OFFER_DAYS, daysLeft: OFFER_DAYS });
+    expect(sim.investors(state).offer).toMatchObject({ lastDay: state.day + OFFER_DAYS - 1, daysLeft: OFFER_DAYS });
     const lastDay = sim.advance(state, OFFER_DAYS - 1).state;
     expect(sim.investors(lastDay).offer).toMatchObject({ daysLeft: 1 });
     const after = sim.applyAction(lastDay, { type: "acceptInvestor" });
@@ -249,11 +252,12 @@ describe("an angel's offer lapsing", () => {
     const { state } = untilApproach();
     const offer = sim.investors(state).offer!;
     const { state: lapsed, log, pauses } = playUntil(sim, state, (s) => !sim.investors(s).offer);
-    expect(lapsed.day).toBe(offer.lastDay);
+    // Unanswered on its last day, it's gone as the next is played.
+    expect(lapsed.day).toBe(offer.lastDay + 1);
     expect(sim.investors(lapsed)).toMatchObject({
       offer: null,
       anotherComing: true,
-      declined: [{ round: "angel", investor: offer.investor, day: offer.lastDay, lapsed: true }],
+      declined: [{ round: "angel", investor: offer.investor, day: offer.lastDay + 1, lapsed: true }],
     });
     expect(log.at(-1)!.entries.map((e) => e.text)).toContainEqual(
       `${offer.investor}'s offer lapsed: you didn't accept it within ${OFFER_DAYS} days, so it counts as declined. Another angel investor will approach in a few days, on less generous terms.`,
@@ -374,6 +378,14 @@ describe("the angel's target", () => {
     expect(deal.netUsers).toBe(played.users - state.users);
   });
 
+  it("never asks for more users than half the room left in the market", () => {
+    const { state } = untilApproach();
+    const marketSize = quiet.productTypes[state.productType].growth.marketSize;
+    // A company most of the way to filling its market, growing fast.
+    const crowded: GameState = { ...state, users: marketSize - 2_000 };
+    expect(sim.investors(crowded).offer!.target.netUsers).toBe(1_000);
+  });
+
   it("is net: with a target of 1,000, gaining 1,200 and losing 100 passes; gaining 1,200 and losing 300 fails", () => {
     const { state } = untilApproach();
     const accepted = sim.applyAction(state, { type: "acceptInvestor" });
@@ -398,7 +410,7 @@ describe("the angel's target", () => {
   });
 
   it("isn't met by income alone: the users gained must be there on the same day", () => {
-    const s = createSim({ ...quiet, investors: { ...quiet.investors, angel: { ...angel, targetGrowth: 1, minUsersGained: 100_000 } } });
+    const s = createSim({ ...quiet, investors: { ...quiet.investors, angel: { ...angel, targetGrowth: 1, minUsersGained: 100_000, usersRoomShare: 1 } } });
     const { state } = untilApproach(s);
     const after = s.applyAction(state, { type: "acceptInvestor" });
     const { state: done } = playUntil(s, after, (x) => s.investors(x).angel!.status !== "running");
