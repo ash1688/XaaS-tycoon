@@ -234,6 +234,26 @@ In the game, launches and releases use made-up names, not real ones.
 - **Permanent staff** get a **severance payout** when let go, so cutting them has a cost.
 - **Staff you let go can join a rival.**
 - **Hire and let go by number:** a number box next to each pool, so hiring 25 staff is one entry, not 25 clicks.
+- **Researchers and marketers** are two more pools, which unlock when the **first angel approaches**, whether or not the student takes the money. They're **permanent hires only** (no agency staff), with the same grades, lead times and severance as other pools, and start at 0. Both are flagged as **idle** on the staff page when they have nothing to do: researchers once there's nothing left to unlock, marketers when not running a campaign.
+  - **Researchers** earn **research points (RP)** each day (e.g. 2 RP per mid, scaled by grade), spent on unlocks (see Tiered features and add-ons). Research is an investment phase: once it's done, the student lets the team go.
+  - **Marketers** carry out the student's marketing campaigns, one campaign each (see Competitors and marketing).
+  - A **Research page** and a **Marketing page** appear at the same moment, so the company growing up shows in the navigation. *Pay and output are placeholders.*
+
+## Developers: MVP and optimisation
+
+**The MVP.** A company starts by building an MVP, measured in dev-days. **No users arrive until it's done**, while salaries are paid from day 1, so the opening is an early-game cash burn.
+
+- The size comes from the product type (social bigger than e-commerce), then scales by how much of the stack the model owns: **on-prem 100%, IaaS 85%, PaaS 65%, SaaS 40%**. With the starting two developers that's at most about 10–15 days on-prem. On SaaS the MVP is setting up the storefront, linking payment gateways and so on.
+- Hiring more developers (or agency developers) finishes it sooner, so the first hiring decision matters.
+- Launch users ramp in when the MVP completes, as they do now. Hosting bills start at go-live; on-prem kit can be ordered during the MVP so its delivery overlaps the build.
+- The features panel shows MVP progress (dev-days done of the total) and an estimated launch day.
+
+**The developer slider.** After launch, a slider splits developer time between **features** and **optimisation**, on every model.
+
+- **Optimisation** permanently cuts what the product needs per user: fewer CU and DBU on on-prem and IaaS, fewer instances on PaaS, a lower per-user platform fee on SaaS.
+- **Diminishing returns:** the first optimisation work gives quick gains and later work less, up to a cap of about **50% on-prem** (hardware costs the most, so tuning pays most) and **about 35%** on the other models.
+- **It's code**, so it survives a migration, capped at the new model's maximum.
+- Early on, features drive growth; once the company is big, a few percent off a large server bill is worth more than another feature. *Sizes, shares and caps are placeholders.*
 
 ## C-suite
 
@@ -259,7 +279,7 @@ A leadership team the student hires one role at a time. Each role gives a lastin
 | CEO | **The student**, as founder-CEO. Not hired. |
 | CFO | Better investor terms and negotiation rolls, cheaper loans, cost forecasts, the IPO's predictable-costs check |
 | COO | Everyday running costs and staff productivity |
-| CTO | Faster feature builds; unlocks higher feature tiers |
+| CTO | Faster feature builds; meets the tier 2 condition and boosts research |
 | CIO | Cheaper, faster migrations and better infrastructure decisions |
 | Legal counsel | Lawsuits and the IPO compliance audit |
 | CISO | Patching and security breaches |
@@ -328,6 +348,9 @@ In the alpha every feature and add-on was available from day 1, and SaaS student
 | 3 | Revenue and uptime targets (e.g. £2k a day and 99% uptime over 30 days) |
 | 4 | A funding round or IPO readiness |
 
+- **A condition makes a tier available; research unlocks what's in it.** Once a tier's condition is met, each feature and model benefit in it has its own **research point (RP) price**, and the student unlocks them in any order with RP earned by researchers. Unlocking is separate from building (dev-days) or buying (cash).
+- **Tier 1 needs no RP**, since researchers only arrive with the first angel.
+- **Unused RP bank with no cap**, so the student can save up while waiting for the next tier's condition. *RP prices are placeholders.*
 - This applies to **built features and SaaS add-ons alike**, so every model has something to work towards.
 - **SaaS gets add-ons for every product**, including the new AI and games-network products.
 - Higher tiers give bigger benefits but cost more, so each new tier is a decision, not an automatic purchase.
@@ -336,7 +359,7 @@ In the alpha every feature and add-on was available from day 1, and SaaS student
 
 | Model | Example benefits |
 |---|---|
-| On-prem | **Optimisation:** developers tune the product to need fewer CU and DBU per user, so the same kit serves more users. Also better cooling and power efficiency. |
+| On-prem | **Hardware efficiency:** better cooling and power efficiency. (Developers tuning the product to need fewer CU and DBU per user is now the developer slider, on every model.) |
 | IaaS | **Reserved instances** (cheaper VMs if you commit for longer), **autoscaling** for traffic spikes |
 | PaaS | **Managed autoscaling**, a **CDN** that takes load off the app, managed monitoring that warns before outages |
 | SaaS | Provider add-ons such as integrations, analytics and a **premium support plan** that shortens provider outages |
@@ -346,9 +369,9 @@ The lesson: the more of the stack you own, the more you can optimise it yourself
 **Tiers and migration:**
 
 - Each tier holds both kinds of benefit: **product features** (e.g. messaging) and **model benefits** (e.g. a CDN on PaaS).
-- Tiers are **unlocked per company**, so an unlocked tier applies to whichever model the company is on now or moves to.
+- Tiers and their **RP unlocks are per company**, so an unlocked item applies to whichever model the company is on now or moves to.
 - **Product features survive a migration**; the code moves with the product.
-- **Model benefits are lost on migration**, with no refund. The new model's benefits can be bought straight away, up to the tier already unlocked. Losing them is part of what migrating costs.
+- **Model benefits are lost on migration**, with no refund. Their RP unlocks are kept, so the new model's benefits can be bought straight away, up to the tier already unlocked. Losing them is part of what migrating costs.
 
 **Hardware tuning (on-prem only).** Each on-prem server has a performance slider from **0 to 150%**.
 
@@ -403,6 +426,8 @@ Products that would have one in real life (AI assistant, payments app, e-commerc
   - The **Customers page** shows market share as a pie.
   - Rivals never go bankrupt or IPO. They're market pressure, not opponents in a race.
 - **Marketing campaigns** as a growth lever, so customer growth feels less random. The student picks a **customer type**, a **budget** and a **length** (e.g. professionals, £5k, 30 days), and the campaign brings extra new users of that type over its length.
+  - **Marketers run them:** campaigns unlock with marketers at the first angel approach, and each marketer runs one campaign at a time. Headcount decides how many campaigns run and how good they are (marketer grade scales users per pound); budget decides how big each is.
+  - **Users are added directly**, about (budget ÷ length) ÷ the customer type's cost per user each day (e.g. casual users about £2, businesses £15+), on top of normal growth, so a campaign works even for a small company. Market saturation still slows it. *Costs are placeholders.*
   - **Diminishing returns:** running two campaigns for the same type at once brings fewer users per pound.
   - **A CMO** makes every campaign more effective.
   - **Results as it runs:** spend, users brought in and cost per user, teaching cost per acquisition.
@@ -501,6 +526,6 @@ A lightweight way for an AI to play the game, so balance and exploits can be tes
 
 - **Running it:** start a batch of AI playtesters, for example one per playstyle, each playing its own game in parallel. Each hands back a **game summary**: how the game ended, the score, key moments (first profit, investors taken, rescues, events), what it tried and anything that felt broken or exploitable. The summaries are then presented side by side, alongside the logs.
 - Playstyles can be combined with any product, model, game length and difficulty, and run in batches with fixed random seeds so results can be repeated.
-- **Average Joe matters most for balance:** if typical students can't break even, the game is too hard. **Min-maxer matters most for exploits:** anything it finds, students will too.
+- **Average Joe matters most for balance:** if typical students can't break even, the game is too hard. With the MVP's early burn, the target is careful play breaking even around **day 60–75**, and no later than about **day 90** (it was day 45–65 in the alpha). **Min-maxer matters most for exploits:** anything it finds, students will too.
 
 This sits alongside the existing scripted balance harness (`sim/scripts/harness.ts`), which plays thousands of rule-based games quickly. The scripted bots measure balance at volume; the AI playstyles bring judgement, and find what the scripts weren't written to look for.
