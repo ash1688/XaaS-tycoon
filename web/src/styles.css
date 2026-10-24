@@ -930,6 +930,12 @@ fieldset > p {
   font-size: 0.9rem;
 }
 
+/* Developers with nothing to do: said plainly, as they still cost their pay. */
+.staff-info .idle-note {
+  font-size: 0.9rem;
+  color: var(--warn);
+}
+
 .counter {
   display: flex;
   align-items: center;

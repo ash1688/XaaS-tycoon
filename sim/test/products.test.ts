@@ -130,3 +130,13 @@ describe("games network", () => {
     expect(state.paidUsers / state.users).toBeLessThan(0.6);
   });
 });
+
+describe("theft or fraud", () => {
+  it("says nothing of a checkout, which social, the AI assistant and others don't have", () => {
+    const fraud = defaultConfig.events.find((e) => e.id === "fraud")!;
+    for (const effect of Object.values(fraud.effects)) {
+      expect(effect!.detail).not.toMatch(/checkout/i);
+      expect(effect!.detail).toMatch(/payments/);
+    }
+  });
+});

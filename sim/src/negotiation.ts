@@ -16,6 +16,8 @@ export interface TermSpec {
   step: number;
   /** The least a counter can ask for, on a term where lower is better: a share above nothing, at least a day. */
   min?: number;
+  /** The most a term can be, if a low roll pushes it the student's way: a share below the whole company. */
+  max?: number;
 }
 
 export type RollResult = "high" | "middle" | "low";
@@ -134,14 +136,22 @@ export function createNegotiation(config: NegotiationConfig) {
     return "low";
   }
 
-  /** The offer `move` of the way from `offer` to `counter`, each term rounded to its step but never past the counter. */
+  /**
+   * The offer `move` of the way from `offer` to `counter`, each term rounded to its step but never past the counter. A
+   * move below 0 goes the other way: the other side hardens, and the next offer is worse than the last, but never
+   * outside a term's min and max (no cash below nothing).
+   */
   function between(offer: Terms, counter: Terms, move: number, specs: TermSpec[]): Terms {
     const next: Terms = { ...offer };
     for (const spec of specs) {
       const from = offer[spec.key]!;
       const to = counter[spec.key]!;
       const moved = roundTo(from + (to - from) * move, spec.step);
-      next[spec.key] = Math.min(Math.max(moved, Math.min(from, to)), Math.max(from, to));
+      const kept =
+        move >= 0
+          ? Math.min(Math.max(moved, Math.min(from, to)), Math.max(from, to))
+          : Math.min(Math.max(moved, spec.min ?? 0), spec.max ?? Infinity);
+      next[spec.key] = kept;
     }
     return next;
   }
