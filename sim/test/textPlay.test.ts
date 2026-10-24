@@ -402,7 +402,7 @@ describe("shares and funding", () => {
     expect(parseCommand("decline grant")).toMatchObject({ action: { type: "declineFunding", funder: "grant" } });
     expect(parseCommand("valuation")).toEqual({ kind: "valuation" });
     expect(parseCommand("funding")).toEqual({ kind: "funding" });
-    expect(() => parseCommand("accept angel")).toThrow(/ff \(friends and family\) or grant/);
+    expect(() => parseCommand("accept vc")).toThrow(/ff \(friends and family\), grant or angel/);
   });
 
   it("shows the valuation, cap table and open offers, and the commands to answer them", () => {
@@ -473,6 +473,84 @@ describe("shares and funding", () => {
     expect(turn.state.day).toBe(8);
     expect(turn.lines.at(-1)).toMatch(/^stopped on day 8: The grant( was withdrawn|'s condition is met)/);
     expect(turn.lines.join("\n")).toMatch(/day 8: Grant (condition met|withdrawn)/);
+  });
+});
+
+describe("the angel investor", () => {
+  // A low hidden target, so an angel approaches within days of the launch.
+  const early = createSim({
+    ...defaultConfig,
+    finalDay: 60,
+    investors: { ...defaultConfig.investors, angel: { ...defaultConfig.investors.angel, target: { dailyRevenue: 300, days: 3 } } },
+  });
+  const begin = () => early.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 });
+  const play = (state: GameState, text: string) => {
+    const command = parseCommand(text);
+    return command.kind === "next" ? advanceUntil(early, state, command.days, who) : runCommand(early, state, command, who);
+  };
+  /** Plays on until an angel approaches. */
+  const untilApproach = () => {
+    let turn = play(begin(), "next 30");
+    while (!early.investors(turn.state).offer) turn = play(turn.state, "next 30");
+    return turn;
+  };
+
+  it("reads the angel's commands", () => {
+    expect(parseCommand("angel")).toEqual({ kind: "angel" });
+    expect(parseCommand("accept angel")).toEqual({ kind: "action", action: { type: "acceptInvestor" }, times: 1 });
+    expect(parseCommand("decline angel")).toMatchObject({ action: { type: "declineInvestor" } });
+    expect(parseCommand("counter angel amount 30000 share 15")).toMatchObject({
+      action: { type: "counterInvestor", terms: { amount: 30_000, share: 0.15 } },
+    });
+    expect(parseCommand("odds angel share 15")).toEqual({ kind: "odds", funder: "angel", terms: { share: 0.15 } });
+  });
+
+  it("stops time when an angel approaches, and shows the offer with its target before it's accepted", () => {
+    expect(run(start(), "angel").lines).toEqual(["no angel investor has approached: they come to companies doing well"]);
+    const turn = untilApproach();
+    const offer = early.investors(turn.state).offer!;
+    expect(turn.lines.at(-1)).toMatch(new RegExp(`^stopped on day ${turn.state.day}: ${offer.investor}, an angel investor, wants to invest`));
+    expect(turn.lines.join("\n")).toMatch(new RegExp(`day ${turn.state.day}: An angel investor, ${offer.investor}, likes what Test Co is doing`));
+    expect(renderStatus(early, turn.state)).toMatch(new RegExp(`investors: ANGEL ${offer.investor} approached on day ${turn.state.day}: offer 1 of 3`));
+    expect(renderCommands(early, turn.state)).toMatch(/accept angel \| decline angel/);
+    expect(renderCommands(early, turn.state)).toMatch(/counter angel \[amount <£>\] \[share <%>\]/);
+    const shown = play(turn.state, "angel").lines.join("\n");
+    expect(shown).toContain(`target: ${offer.condition}`);
+    expect(shown).toContain(`if missed: ${offer.ifMissed}`);
+    expect(shown).toMatch(/accepting: Friends and family and grants close for good/);
+    expect(shown).toContain(`offer: answer by day ${offer.lastDay} (${offer.daysLeft} days left) or it lapses, counting as a decline`);
+    expect(renderStatus(early, turn.state)).toContain(`answer by day ${turn.state.day + 2} (3 days left) or it lapses`);
+  });
+
+  it("negotiates and accepts the angel, closing friends and family and the grant", () => {
+    const turn = untilApproach();
+    const offer = early.investors(turn.state).offer!;
+    const share = Math.round(offer.theirShare * 900) / 10;
+    expect(play(turn.state, `odds angel share ${share}`).lines[0]).toMatch(/^counter £[\d,]+ for [\d.]+% asks 10% better/);
+    const countered = play(turn.state, `counter angel share ${share}`);
+    expect(countered.rows[0]).toMatchObject({ type: "counterInvestor", ok: true });
+    expect(countered.lines[0]).toMatch(/Offer 2: .*\(1 counter left\)/);
+    const accepted = play(countered.state, "accept angel");
+    expect(accepted.rows[0]).toMatchObject({ type: "acceptInvestor", ok: true });
+    expect(accepted.lines[0]).toMatch(new RegExp(`^acceptInvestor: done. ${offer.investor} put in £[\\d,]+ for [\\d.]+%; valuation now £`));
+    const status = renderStatus(early, accepted.state);
+    expect(status).toMatch(/funding: friends and family closed on day \d+ \(you took an angel\) \| grant closed on day/);
+    expect(status).toMatch(new RegExp(`investors: angel ${offer.investor} put in .* target £[\\d,]+/day over 3 days and \\+[\\d,]+ net users by day \\d+: £[\\d,]+/day over the last 3 days, and users \\+[\\d,]+ gained −[\\d,]+ lost = -?[\\d,]+ net of [\\d,]+, \\d+ days left`));
+    expect(status).toMatch(/\(angel\) [\d.]+%/);
+    expect(play(accepted.state, "funding").lines).toEqual([
+      `friends and family: closed on day ${accepted.state.day}, when you took on your angel`,
+      `grant: closed on day ${accepted.state.day}, when you took on your angel`,
+    ]);
+    expect(play(accepted.state, "accept ff").lines[0]).toMatch(/refused: Friends and family's offer closed when you took on your angel/);
+  });
+
+  it("declines the angel, and another approaches a few days later", () => {
+    const turn = untilApproach();
+    const declined = play(turn.state, "decline angel");
+    expect(renderStatus(early, declined.state)).toMatch(/investors: you declined .*: another angel approaches in a few days/);
+    const next = play(declined.state, "next 30");
+    expect(next.state.day).toBe(turn.state.day + defaultConfig.investors.retryDays);
+    expect(next.lines.at(-1)).toMatch(/an angel investor, wants to invest/);
   });
 });
 
@@ -571,8 +649,13 @@ describe("the IPO checklist over time", () => {
   it("stops time when the company is no longer ready", () => {
     const s = createSim({
       ...defaultConfig,
-      // No moderation, as on main before moderators: this is about something else.
+      // No moderation, as on main before moderators, and no angel, whose offer lapsing stops time: this is about
+      // something else.
       productTypes: { ...defaultConfig.productTypes, social: { ...defaultConfig.productTypes.social, moderation: undefined } },
+      investors: {
+        ...defaultConfig.investors,
+        angel: { ...defaultConfig.investors.angel, target: { ...defaultConfig.investors.angel.target, dailyRevenue: 1_000_000 } },
+      },
       // A provider outage on day 30 is the only event: it breaks the uptime record.
       events: [
         {

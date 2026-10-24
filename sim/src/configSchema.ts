@@ -181,6 +181,25 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("rescue.staffCut", "Money", "Rescue buyout", "Staff cut", "Share of each team let go in the forced cost cuts, rounded up, the dearest grades first. Ops are kept to what the servers need.", SHARE);
   add("rescue.buyBackPremium", "Money", "Rescue buyout", "Buy-back premium", "To sell its shares back, the vulture VC asks this many times its share of today's valuation, leaving out the company's cash.", MULTIPLIER);
   add("rescue.minReturn", "Money", "Rescue buyout", "Least buy-back price", "The vulture VC never sells its shares back for less than this many times the cash it put in.", MULTIPLIER);
+  add("investors.approachDays", "Money", "Investors", "Days to approach", "Days after the company first hits an investor's hidden target before they approach.", range(0, 60, 1));
+  add("investors.offerDays", "Money", "Investors", "Days an offer stands", "Days played an investor's offer stays open; unanswered by then it lapses, which counts as declining it.", range(1, 60, 1));
+  add("investors.retryDays", "Money", "Investors", "Days to the next", "Days after an investor is declined before a new one approaches.", range(0, 60, 1));
+  add("investors.angel.target.dailyRevenue", "Money", "Angel investor", "Hidden target: income a day", "The angel approaches once income, averaged over the days below, reaches this.", POUNDS);
+  add("investors.angel.target.days", "Money", "Angel investor", "Days averaged", "Days of income averaged for the hidden target, and for the angel's own target once accepted.", GAME_DAY);
+  add("investors.angel.premium.min", "Money", "Angel investor", "Least premium", "The least the angel values the business at, as a multiple of the formula's (cash counts at face value).", MULTIPLIER);
+  add("investors.angel.premium.max", "Money", "Angel investor", "Most premium", "The most the angel values the business at, as a multiple of the formula's.", MULTIPLIER);
+  add("investors.angel.share.min", "Money", "Angel investor", "Least share asked", "The smallest share of the company the angel's opening offer asks for (0.15 = 15%).", range(0.01, 0.9, 0.01));
+  add("investors.angel.share.max", "Money", "Angel investor", "Most share asked", "The biggest share of the company the angel's opening offer asks for.", range(0.01, 0.9, 0.01));
+  add("investors.angel.minAmount", "Money", "Angel investor", "Least cash", "The angel's opening offer never puts in less than this.", POUNDS);
+  add("investors.angel.maxAmount", "Money", "Angel investor", "Most cash", "The angel's opening offer never puts in more than this: they ask for a smaller share instead.", POUNDS);
+  add("investors.angel.declinePremium", "Money", "Angel investor", "Premium lost per decline", "Each angel you decline takes this off the next angel's most premium (never below the least).", range(0, 1, 0.05));
+  add("investors.angel.declineShare", "Money", "Angel investor", "Share added per decline", "Each angel you decline adds this to the least share the next angel asks for (never above the most).", range(0, 0.2, 0.01));
+  add("investors.angel.targetGrowth", "Money", "Angel investor", "Target growth", "The angel's target: income a day this many times what it was when you accepted (or the hidden target, if more).", MULTIPLIER);
+  add("investors.angel.usersPace", "Money", "Angel investor", "Users target pace", "The angel's users target: paying users gained at this many times the company's recent pace (over the days averaged), kept up for the target's days.", MULTIPLIER);
+  add("investors.angel.minUsersGained", "Money", "Angel investor", "Least users target", "The angel's users target is never fewer than this many paying users gained.", range(0, 100_000, 10));
+  add("investors.angel.usersRoomShare", "Money", "Angel investor", "Users target room", "The angel's users target is at most this share of the users the market still has room for.", SHARE);
+  add("investors.angel.targetDays", "Money", "Angel investor", "Days to hit the target", "Days after accepting the angel has to hit their target.", GAME_DAY);
+  add("investors.angel.missShare", "Money", "Angel investor", "Extra share if missed", "Missing the target gives the angel new shares, taking their share of the company up by this (0.05 = five points).", range(0, 0.5, 0.01));
 
   add("billing.daysPerMonth", "Money", "", "Days in a billing month", "Monthly costs are charged a day at a time: the monthly cost ÷ this.", range(28, 31, 1));
   for (const m of MODEL_IDS) {
@@ -655,6 +674,8 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
     ["negotiation.moves.low", "negotiation.moves.middle", "A middle roll can't move less than a low one."],
     ["negotiation.moves.middle", "negotiation.moves.high", "A high roll can't move less than a middle one."],
     ["rivals.minPriceMultiple", "rivals.maxPriceMultiple", "A rival's highest price can't be below its lowest."],
+    ["investors.angel.premium.min", "investors.angel.premium.max", "The angel's most premium can't be below the least."],
+    ["investors.angel.share.min", "investors.angel.share.max", "The most share the angel asks can't be below the least."],
   ];
   if (GAME_LENGTH_IDS.every((l) => config.allowedGameLengths[l] !== 1)) {
     const changed = GAME_LENGTH_IDS.find((l) => `allowedGameLengths.${l}` in overrides) ?? GAME_LENGTH_IDS[0];

@@ -22,6 +22,7 @@ import { createEvents, type EventView, type FeatureGapView } from "./events.ts";
 import { createFeatures, type FeatureView } from "./features.ts";
 import { createFinance, noSpend, pounds } from "./finance.ts";
 import { createInfrastructure, type ProviderView } from "./infrastructure.ts";
+import { createInvestors, type InvestorsView } from "./investors.ts";
 import { createIpo, type IpoView } from "./ipo.ts";
 import { createLaunch, type LaunchView } from "./launch.ts";
 import { createLoan, type LoanQuote, type LoanView } from "./loan.ts";
@@ -68,6 +69,7 @@ export type { DangerRiskView, DangerView } from "./encounters.ts";
 export type { EventView, FeatureGapView } from "./events.ts";
 export type { FeatureStatus, FeatureView } from "./features.ts";
 export type { ProviderView } from "./infrastructure.ts";
+export type { AngelView, InvestorOffer, InvestorsView } from "./investors.ts";
 export type { FloatPreview, IpoCondition, IpoConditionId, IpoOffer, IpoStatus, IpoView } from "./ipo.ts";
 export type { LaunchView } from "./launch.ts";
 export type { LoanQuote, LoanView } from "./loan.ts";
@@ -125,10 +127,14 @@ export {
   isServerSize,
   isServerType,
   isStaffPool,
+  ROUND_IDS,
   SimError,
   type Action,
   type AdvanceResult,
+  type AngelDeal,
+  type AngelTarget,
   type ApiState,
+  type Approach,
   type DayLog,
   type DaySpend,
   type Encounter,
@@ -145,6 +151,8 @@ export {
   type IpoApplication,
   type IpoResult,
   type IpoState,
+  type InvestorValuation,
+  type Investors,
   type Loan,
   type LogEntry,
   type Migration,
@@ -154,6 +162,7 @@ export {
   type Rack,
   type Rescue,
   type RivalJoin,
+  type RoundId,
   type RivalState,
   type ScheduledEvent,
   type Server,
@@ -363,6 +372,14 @@ export interface Sim {
    */
   rescue(state: GameState): RescueView | null;
   /**
+   * The funding ladder: an investor's open approach with what accepting its offer now would do (the target, what
+   * missing it costs, and what else it changes), its negotiation, the angel's deal once accepted with how its target
+   * stands, and the valuation an investor set. The hidden targets that bring them stay hidden.
+   */
+  investors(state: GameState): InvestorsView;
+  /** What countering the open approach's offer with `terms` would do, as counterOdds does for a funder. */
+  investorCounterOdds(state: GameState, terms: Partial<Terms>): CounterOdds;
+  /**
    * Where the company is with its launch: waiting for capacity, its first users due, arriving over the ramp, or
    * launched; the day they started (or will start) arriving, and the launch total.
    */
@@ -465,11 +482,13 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     migration: migration.migration,
     servers: servers.servers,
     funding: shares.funding,
+    investors: (s) => investors.investors(s),
     calendar: calendar.calendar,
     ipo: ipo.ipoView,
     danger: encounters.danger,
   });
   const rescue = createRescue(config, finance, shares, (s) => runway(s), (s) => infra.opsNeededNow(s));
+  const investors = createInvestors(config, finance, shares);
 
   function newGame({
     companyName,
@@ -540,6 +559,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       migrations: 0,
       loan: null,
       ...owned,
+      investors: investors.startingInvestors(),
       ...ipo.startingIpo(),
       rescue: null,
       pastLoans: [],
@@ -548,6 +568,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       ...starting,
       // Negotiation rolls have their own too, so countering an offer doesn't change the rest of the game.
       negotiationRng: seedRng(seed ^ 0xd1ce),
+      // And investors theirs, so who approaches doesn't change the rest of the game either.
+      investorRng: seedRng(seed ^ 0xa4e1),
       events: [],
       priceRises: {},
       addonPriceRise: 1,
@@ -662,6 +684,12 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
         return shares.counterFunding(state, action.funder, action.terms);
       case "buyBack":
         return rescue.buyBack(state);
+      case "acceptInvestor":
+        return investors.acceptInvestor(state);
+      case "declineInvestor":
+        return investors.declineInvestor(state);
+      case "counterInvestor":
+        return investors.counterInvestor(state, action.terms);
       case "buyApi":
         return api.buyApi(state);
       case "switchServer":
@@ -816,7 +844,12 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     entries.push(...migrated.entries);
     // The first time cash runs out a vulture VC rescues the company; the second time is liquidation.
     const settled = finance.settle(migrated.state, day, entries, rescue.rescue);
-    return { state: settled.state, log: [{ day, entries: settled.entries }] };
+    // Last, the funding ladder: an angel's target, and an investor who approaches a company doing well.
+    const funded = investors.investorDay(settled.state, {
+      joined: (ramping ? 0 : organic.arrived) + wave.joined + (users - wave.users),
+      left: (ramping ? 0 : organic.lost.reduce((sum, l) => sum + l.users, 0)) + (wave.left?.users ?? 0),
+    });
+    return { state: funded.state, log: [{ day, entries: [...settled.entries, ...funded.entries] }] };
   }
 
   function runway(state: GameState): RunwayView {
@@ -944,6 +977,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     ipo: (s) => ipo.ipoView(load(s)),
     counterOdds: (s, funder, terms) => shares.counterOdds(load(s), funder, terms),
     rescue: (s) => rescue.rescueView(load(s)),
+    investors: (s) => investors.investors(load(s)),
+    investorCounterOdds: (s, terms) => investors.counterOdds(load(s), terms),
     launch: (s) => launch.launchView(load(s)),
     migration: (s) => migration.migration(load(s)),
     migrationQuote: (s, target) => migration.migrationQuote(load(s), target),

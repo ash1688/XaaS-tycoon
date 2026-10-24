@@ -1778,6 +1778,117 @@ describe("shares and funding", () => {
   });
 });
 
+describe("the angel investor", () => {
+  // A hidden target any launched company hits on its first day of income, so an angel approaches within days.
+  const angelSim = createSim({
+    ...defaultConfig,
+    events: [],
+    calendar: { ...defaultConfig.calendar, holidays: [] },
+    investors: {
+      ...defaultConfig.investors,
+      approachDays: 1,
+      angel: { ...defaultConfig.investors.angel, target: { dailyRevenue: 10, days: 1 } },
+    },
+  });
+  let angelApp: Awaited<ReturnType<typeof buildApp>>;
+
+  beforeAll(async () => {
+    angelApp = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), sim: angelSim });
+  });
+
+  afterAll(async () => {
+    await angelApp?.close();
+  });
+
+  /** A SaaS company played on until an angel approaches, with the pauses on the way. */
+  async function approached() {
+    const code = await newCode();
+    const created = await angelApp.inject({
+      method: "POST",
+      url: `/api/codes/${code}/companies`,
+      payload: { name: "Acme", productType: "social", model: "saas" },
+    });
+    const url = `/api/codes/${code}/companies/${created.json<CompanyView>().id}`;
+    const act = (payload: object) => angelApp.inject({ method: "POST", url: `${url}/actions`, payload });
+    expect(created.json<CompanyView>().investors).toMatchObject({ offer: null, angel: null, valuation: null });
+    let result: ContinueResult | undefined;
+    for (let i = 0; i < 10 && !result?.company.investors.offer; i++) {
+      result = (await angelApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    }
+    return { url, act, result: result! };
+  }
+
+  it("approaches with an offer showing its target and what missing it costs, pausing time", async () => {
+    const { result } = await approached();
+    const offer = result.company.investors.offer!;
+    expect(offer).toMatchObject({
+      round: "angel",
+      day: result.company.day,
+      condition: expect.stringMatching(/^By day \d+ \(\d+ days after you accept\), both at once: grow income to £[\d,]+ a day, averaged over 1 day, and gain [\d,]+ users net from the day you accept/),
+      target: { netUsers: expect.any(Number) },
+      ifMissed: expect.stringContaining("takes extra equity"),
+    });
+    expect(result.pauses).toContainEqual(expect.objectContaining({ kind: "offer", id: "offer-angel" }));
+    expect(result.log.at(-1)!.entries).toContainEqual(expect.objectContaining({ kind: "funding", text: expect.stringContaining("angel investor") }));
+    expect(result.company.investors.negotiation).toMatchObject({ countersLeft: 2, final: false });
+  });
+
+  it("negotiates and accepts the angel: their cash, their valuation, and friends and family closed", async () => {
+    const { url, act, result } = await approached();
+    const offer = result.company.investors.offer!;
+    const share = Math.round(offer.theirShare * 900) / 1000;
+    const odds = await angelApp.inject({ method: "GET", url: `${url}/investor-odds?share=${share}` });
+    expect(odds.statusCode).toBe(200);
+    expect(odds.json<CounterOddsView>()).toMatchObject({ counter: { amount: offer.amount, share } });
+    const greedy = await angelApp.inject({ method: "GET", url: `${url}/investor-odds?share=${offer.theirShare / 4}` });
+    expect(greedy.json()).toMatchObject({ error: "counter_too_far" });
+    expect((await angelApp.inject({ method: "GET", url: `${url}/investor-odds?days=5` })).statusCode).toBe(400);
+
+    const countered = (await act({ type: "counterInvestor", terms: { share } })).json<CompanyView>();
+    expect(countered.investors.negotiation).toMatchObject({ countersLeft: 1 });
+    expect((await act({ type: "counterInvestor" })).statusCode).toBe(400);
+    expect((await act({ type: "counterInvestor", terms: { days: 5 } })).statusCode).toBe(400);
+
+    const standing = countered.investors.offer!;
+    const accepted = (await act({ type: "acceptInvestor" })).json<CompanyView>();
+    expect(accepted.cash).toBe(countered.cash + standing.amount);
+    expect(accepted.capTable.rows[1]).toMatchObject({ id: "angel", name: `${standing.investor} (angel)`, shares: standing.newShares });
+    // Their figure, but never below the minimum: this company is barely a day old.
+    const figure = Math.max(angelSim.config.valuation.minimum, standing.valuation);
+    expect(Math.abs(accepted.valuation.valuation - figure)).toBeLessThanOrEqual(2);
+    expect(accepted.valuation.drivers.map((d) => d.id)).toContain("investor");
+    expect(accepted.investors).toMatchObject({ offer: null, angel: { investor: standing.investor, status: "running" } });
+    expect(accepted.funding).toMatchObject({ friendsAndFamilyOffer: null, grantOffer: null, closedDay: accepted.day });
+    expect((await act({ type: "acceptFunding", funder: "friendsAndFamily" })).json()).toMatchObject({ error: "funding_closed" });
+    expect((await act({ type: "acceptInvestor" })).json()).toMatchObject({ error: "no_approach" });
+  });
+
+  it("lets an unanswered offer lapse after its days, as a decline, pausing time", async () => {
+    const { url, result } = await approached();
+    const offer = result.company.investors.offer!;
+    expect(offer).toMatchObject({ daysLeft: angelSim.config.investors.offerDays, lastDay: result.company.day + angelSim.config.investors.offerDays - 1 });
+    let last: ContinueResult = result;
+    while (last.company.investors.offer) last = (await angelApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    expect(last.company.day).toBe(offer.lastDay + 1);
+    expect(last.company.investors).toMatchObject({ anotherComing: true, declined: [{ investor: offer.investor, lapsed: true }] });
+    expect(last.pauses).toContainEqual(expect.objectContaining({ kind: "alert", id: "lapsed-angel" }));
+  });
+
+  it("declines the angel, and another approaches a few days later", async () => {
+    const { url, act, result } = await approached();
+    const first = result.company.investors.offer!;
+    const declined = (await act({ type: "declineInvestor" })).json<CompanyView>();
+    expect(declined.investors).toMatchObject({ offer: null, anotherComing: true, declined: [{ investor: first.investor }] });
+    expect(declined.funding.friendsAndFamilyOffer).not.toBeNull();
+    let next: CompanyView = declined;
+    for (let i = 0; i < 10 && !next.investors.offer; i++) {
+      next = (await angelApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>().company;
+    }
+    expect(next.day).toBe(declined.day + angelSim.config.investors.retryDays);
+    expect(next.investors.offer!.investor).not.toBe(first.investor);
+  });
+});
+
 describe("the IPO", () => {
   // Thresholds anyone can meet after a couple of days, every user paying, and never a cold market.
   const EASY_IPO = {

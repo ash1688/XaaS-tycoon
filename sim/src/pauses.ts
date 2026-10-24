@@ -2,6 +2,7 @@ import type { CalendarView } from "./calendar.ts";
 import type { DangerView } from "./encounters.ts";
 import type { GameConfig } from "./config.ts";
 import type { EventView } from "./events.ts";
+import type { InvestorsView } from "./investors.ts";
 import type { IpoView } from "./ipo.ts";
 import type { LaunchView } from "./launch.ts";
 import type { MigrationView } from "./migration.ts";
@@ -48,6 +49,7 @@ export interface PauseViews {
   migration(state: GameState): MigrationView | null;
   servers(state: GameState): ServerView[];
   funding(state: GameState): FundingView;
+  investors(state: GameState): InvestorsView;
   calendar(state: GameState): CalendarView;
   ipo(state: GameState): IpoView;
   danger(state: GameState): DangerView;
@@ -129,6 +131,23 @@ export function createPauses(config: GameConfig, views: PauseViews) {
     const fundingAfter = views.funding(after);
     if (fundingAfter.friendsAndFamilyOffer && !fundingBefore.friendsAndFamilyOffer) add("offer", "offer-friendsAndFamily", "Friends and family have an offer");
     if (fundingAfter.grantOffer && !fundingBefore.grantOffer) add("offer", "offer-grant", "A grant is on offer");
+    // An investor approaching, and the angel's target met or missed.
+    const investorsBefore = views.investors(before);
+    const investorsAfter = views.investors(after);
+    const approached = investorsAfter.offer;
+    if (approached && (investorsBefore.offer?.investor !== approached.investor || investorsBefore.offer.day !== approached.day)) {
+      add("offer", `offer-${approached.round}`, `${approached.investor}, an angel investor, wants to invest: see Finance`);
+    }
+    const lapsed = investorsAfter.declined.at(-1);
+    if (lapsed?.lapsed && investorsAfter.declined.length > investorsBefore.declined.length) {
+      add("alert", `lapsed-${lapsed.round}`, `${lapsed.investor}'s offer lapsed unanswered: it counts as declined`);
+    }
+    const angelBefore = investorsBefore.angel?.status;
+    const angelAfter = investorsAfter.angel;
+    if (angelBefore === "running" && angelAfter?.status === "met") add("finished", "angel-target", `${angelAfter.investor}'s target is met`);
+    if (angelBefore === "running" && angelAfter?.status === "missed") {
+      add("alert", "angel-target", `${angelAfter.investor}'s target was missed: they took extra shares`);
+    }
 
     // Low cash: on the day the runway first gets short, and again on the last day before it runs out, as below £0 is a
     // rescue buyout, or liquidation after one.

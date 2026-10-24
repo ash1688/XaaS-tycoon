@@ -489,7 +489,8 @@ describe("the grant", () => {
     const { state, log } = s.advance(accept(s, begin(s)), UNTIL - 1);
     expect(state.day).toBe(UNTIL);
     expect(sim.funding(state).grant).toMatchObject({ status: "met", hoursDown: 6, daysLeft: 0, hoursLeft: 0 });
-    expect(fundingEntries(log)).toEqual([
+    // An angel investor approaching is a funding entry too.
+    expect(fundingEntries(log).filter((e) => e.text.startsWith("Grant"))).toEqual([
       expect.objectContaining({ cashDelta: 0, text: expect.stringMatching(/^Grant condition met: 6 hours down/) }),
     ]);
   });

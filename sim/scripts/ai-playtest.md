@@ -83,9 +83,16 @@ npm run -s play -- summary <game>
   them, once each. Either can be negotiated first: `counter ff amount 18000 share 18` asks friends and family for more
   cash and/or a smaller share (a percent), and `counter grant amount 11000 days 45` asks the grant for more cash and/or
   fewer days of its condition. A dice roll sets their next offer: a high roll moves most of the way to your counter, a
-  middle one halfway, a low one barely. You can counter twice; the third offer is final. The more you ask, the worse
+  middle one halfway, and a low one makes them dig in: their next offer is a little worse. You can counter twice; the third offer is final. The more you ask, the worse
   the odds, and a counter can ask at most 50% better terms in all. They never walk away: the latest offer stands until
   you accept or decline it. `odds ff ...` (same terms as `counter`) shows the odds and what each roll would bring.
+- An **angel investor** may approach you (time stops when they do, and `look` shows them under `investors`). `angel`
+  shows their offer in full: their cash for a share of the company, the valuation it puts on the company, their target
+  (income, and users gained less users lost, both within a few weeks) and what happens if you miss it. `counter angel amount 30000 share 15` and `odds angel ...` negotiate it the same
+  way as friends and family. `accept angel` takes it: the cash arrives, your valuation becomes theirs and moves with
+  the company's performance from then on, and friends and family and the grant close for good. `decline angel` turns
+  them down, and another angel approaches a few days later. An offer stands for a few days only (`look` shows when
+  it lapses); left unanswered, it lapses and counts as declining it.
 - The first time cash runs out, a **vulture VC rescues** the company: it puts in cash for the losses plus about 30
   days, takes most of the company in new shares, and forces cost cuts (staff let go, hires cancelled). Time stops
   when it happens. `rescue` shows the terms in full; `buyback` buys all its shares back from company cash, at the
