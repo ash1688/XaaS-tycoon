@@ -377,6 +377,7 @@ export async function buildApp(opts: AppOptions) {
       dailyStaffCost: sim.dailyStaffCost(state),
       launch: sim.launch(state),
       mvp: sim.mvp(state),
+      optimisation: sim.optimisation(state),
       users: state.users,
       paidUsers: state.paidUsers,
       freeUsers: state.users - state.paidUsers,
@@ -759,6 +760,7 @@ export async function buildApp(opts: AppOptions) {
                 "letGo",
                 "buildFeature",
                 "buyAddon",
+                "setOptimisation",
                 "moveStaff",
                 "startMigration",
                 "setPrice",
@@ -824,6 +826,8 @@ export async function buildApp(opts: AppOptions) {
             funder: { enum: [...FUNDER_IDS] },
             // ringBell: the float, as a share of the company after the IPO. The sim checks it's in the allowed range.
             float: { type: "number", minimum: 0, maximum: 1 },
+            // setOptimisation: the share of developer output on optimisation rather than features.
+            share: { type: "number", minimum: 0, maximum: 1 },
             // counterFunding and counterInvestor: the terms asked for. The sim checks they're the offer's and how far they ask.
             terms: { type: "object", properties: COUNTER_TERMS, additionalProperties: false },
           },
@@ -844,6 +848,7 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { const: "setApiInstances" } } }, then: { required: ["count"] } },
             { if: { properties: { type: { const: "switchServer" } } }, then: { required: ["id", "gives"] } },
             { if: { properties: { type: { const: "ringBell" } } }, then: { required: ["float"] } },
+            { if: { properties: { type: { const: "setOptimisation" } } }, then: { required: ["share"] } },
             {
               if: { properties: { type: { const: "setManagedService" } } },
               then: { required: ["service", "size"] },

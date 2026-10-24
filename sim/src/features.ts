@@ -29,6 +29,12 @@ export function createFeatures(config: GameConfig, finance: Finance) {
     return status === "built" || status === "addon";
   };
 
+  /**
+   * The developers' output going into features, in developer-days a day: what the developer slider leaves after
+   * optimisation (see Optimisation). A build can only be under way once the MVP is done.
+   */
+  const featureOutput = (state: GameState) => staffOutput(config, state, "developers") * (1 - state.optimisationShare);
+
   /** The feature being built, if any. Only one is built at a time. */
   function currentBuild(state: GameState): FeatureConfig | undefined {
     return featureList(state).find((f) => state.features[f.id]?.status === "building");
@@ -84,15 +90,19 @@ export function createFeatures(config: GameConfig, finance: Finance) {
   }
 
   /**
-   * A day's work on the current build: the developers' output, a developer-day for each mid. Logs progress, or completion. A build is
-   * paused on SaaS (it only gets there by migrating mid-build).
+   * A day's work on the current build: the developers' output, a developer-day for each mid, less the slider's share
+   * going into optimisation. Logs progress, or completion. A build is paused on SaaS (it only gets there by migrating
+   * mid-build).
    */
   function buildDay(state: GameState): { features: GameState["features"]; entries: LogEntry[] } {
     const feature = currentBuild(state);
     if (!feature || state.model === "saas") return { features: state.features, entries: [] };
-    const work = staffOutput(config, state, "developers");
+    const work = featureOutput(state);
     if (work === 0) {
-      const text = `${feature.name}: no developers, so no progress today.`;
+      const text =
+        staffOutput(config, state, "developers") > 0
+          ? `${feature.name}: your developers are all on optimisation, so no progress today.`
+          : `${feature.name}: no developers, so no progress today.`;
       return { features: state.features, entries: [{ text, cashDelta: 0, kind: "feature" }] };
     }
     const progress = Math.min(feature.devDays, Math.round((state.features[feature.id]!.progress + work) * 100) / 100);
@@ -110,7 +120,7 @@ export function createFeatures(config: GameConfig, finance: Finance) {
   function features(state: GameState): FeatureView[] {
     return featureList(state).map((f) => {
       const { status, progress } = state.features[f.id] ?? { status: "notStarted" as const, progress: 0 };
-      const work = staffOutput(config, state, "developers");
+      const work = featureOutput(state);
       const daysLeft = status === "building" && work > 0 && state.model !== "saas" ? Math.ceil((f.devDays - progress) / work) : null;
       return { ...f, status, progress, daysLeft, addonSetupFee: setupFee(state, f) };
     });

@@ -8,6 +8,7 @@ import type { Rivals } from "./rivals.ts";
 import { nextRandom, seedRng, vary } from "./rng.ts";
 import type { GameState, LogEntry, UnitDemand } from "./state.ts";
 import type { UsersLost } from "./mix.ts";
+import { demandPerUser } from "./optimisation.ts";
 import type { Support } from "./support.ts";
 
 /**
@@ -55,9 +56,16 @@ export function createCustomers(
     return users * config.productTypes[state.productType].growth.loadPerUser * busyMultiplier(state, day);
   }
 
-  /** CU and DBU demand from a product's users on a given day, before random variation. Holidays move it like load. */
-  function baseDemand(state: Pick<GameState, "productType" | "startDate">, users: number, day: number): UnitDemand {
-    const { cuPerUser, dbuPerUser } = config.productTypes[state.productType].demand;
+  /**
+   * CU and DBU demand from a product's users on a given day, before random variation, after optimisation on the
+   * current model. Holidays move it like load.
+   */
+  function baseDemand(
+    state: Pick<GameState, "productType" | "startDate" | "model" | "optimisationDays">,
+    users: number,
+    day: number,
+  ): UnitDemand {
+    const { cuPerUser, dbuPerUser } = demandPerUser(config, state, state.model);
     const busy = busyMultiplier(state, day);
     return { cu: users * cuPerUser * busy, dbu: users * dbuPerUser * busy };
   }

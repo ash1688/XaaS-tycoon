@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import { formatCash, formatCount, formatPrice } from "../api";
 import { namesList, useGame } from "../game";
 
@@ -15,6 +15,28 @@ const pulls = (appeal?: Partial<Record<string, number>>) => {
 // The MVP every game opens with: shown, with the launch day it gives, until it's done.
 const mvp = computed(() => (game.company && !game.company.mvp.done ? game.company.mvp : null));
 const launchDay = computed(() => game.company?.launch.day ?? null);
+
+// The developer slider, once the MVP is done: the share of developer time on optimisation, set when it's let go.
+const optimisation = computed(() => (game.company && !mvp.value ? game.company.optimisation : null));
+const sliderPercent = ref(0);
+watch(
+  () => game.company?.optimisation.share,
+  (share) => (sliderPercent.value = Math.round(100 * (share ?? 0))),
+  { immediate: true },
+);
+function setSlider() {
+  game.act({ type: "setOptimisation", share: sliderPercent.value / 100 });
+}
+/** A share as a percent, to a tenth under 10%: "4.2%", "31%". */
+const percent = (share: number) => `${+(100 * share).toFixed(100 * share < 10 ? 1 : 0)}%`;
+/** What optimisation cuts on the company's model. */
+const cuts = computed(() =>
+  game.onSaas
+    ? "your per-user platform fee"
+    : game.company?.model === "paas"
+      ? "the CU and DBU each user needs, so you need fewer app instances"
+      : "the CU and DBU each user needs, so the same servers (and ops) serve more users",
+);
 
 // Built features, or add-ons bought on SaaS.
 const activeCount = computed(
@@ -62,6 +84,49 @@ const activeCount = computed(
           Done by day {{ mvp.launchDay }}. You launch once it's done and your servers are ready.
         </template>
         <template v-else>Estimated launch: not until someone builds it.</template>
+      </p>
+    </div>
+    <div v-if="optimisation" class="optimisation" data-testid="optimisation">
+      <label for="optimisation-slider">
+        <strong>Developer time:</strong>
+        <span data-testid="optimisation-split">
+          {{ 100 - sliderPercent }}% features · {{ sliderPercent }}% optimisation
+        </span>
+      </label>
+      <input
+        id="optimisation-slider"
+        v-model.number="sliderPercent"
+        type="range"
+        min="0"
+        max="100"
+        step="5"
+        :disabled="game.busy || game.over"
+        :aria-valuetext="`${sliderPercent}% of developer time on optimisation`"
+        data-testid="optimisation-slider"
+        @change="setSlider"
+      />
+      <div class="optimisation-scale muted" aria-hidden="true">
+        <span>All features</span>
+        <span>All optimisation</span>
+      </div>
+      <p class="muted">Optimisation permanently cuts {{ cuts }}. The first work gains the most; later work less.</p>
+      <div
+        class="meter"
+        role="progressbar"
+        aria-label="Optimisation saving out of its cap"
+        aria-valuemin="0"
+        :aria-valuemax="optimisation.cap"
+        :aria-valuenow="optimisation.saving"
+        :aria-valuetext="`${percent(optimisation.saving)} saved of a most of ${percent(optimisation.cap)}`"
+      >
+        <div class="meter-fill ok" :style="{ width: `${optimisation.cap > 0 ? (100 * optimisation.saving) / optimisation.cap : 0}%` }"></div>
+      </div>
+      <p data-testid="optimisation-saving">
+        Saving <strong>{{ percent(optimisation.saving) }}</strong> of resource need per user, out of a most of
+        {{ percent(optimisation.cap) }} on {{ game.company.model === "onprem" ? "your own servers" : "this model" }}
+        ({{ formatCount(optimisation.days) }} developer-days so far{{
+          optimisation.output > 0 ? `, ${formatCount(optimisation.output)} a day` : ""
+        }}).
       </p>
     </div>
     <template v-if="game.onSaas">
@@ -167,6 +232,9 @@ const activeCount = computed(
             </template>
             <strong v-else-if="game.onSaas" class="muted" :data-testid="`feature-paused-${feature.id}`">
               Paused: on SaaS you buy add-ons instead. It carries on if you leave SaaS.
+            </strong>
+            <strong v-else-if="game.company.developers > 0" class="warn-text">
+              All developer time is on optimisation: move the slider to carry on.
             </strong>
             <strong v-else class="warn-text">No developers: hire some to carry on.</strong>
           </p>

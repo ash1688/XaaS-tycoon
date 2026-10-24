@@ -147,6 +147,7 @@ const config: GameConfig = {
   launch: { rampShares: [1] },
   // No MVP to build, so it launches as the game starts: the MVP has its own tests (mvp.test.ts).
   mvp: NO_MVP,
+  optimisation: defaultConfig.optimisation,
   // Capacity far above any load here, so outages only happen where a test lowers it.
   // No upfront or per-user costs, so each model costs a flat monthly ÷ 30 a day unless a test adds them.
   models: {
@@ -1075,7 +1076,9 @@ describe("features", () => {
       features: Object.fromEntries(features.map((f) => [f.id, { status, progress: 0 }])),
     });
     expect(idle(allOn(startOn("saas"), "addon"))).toMatch(/every add-on is on: your developers have nothing to do/);
-    expect(idle(allOn(startOn(), "built"))).toBe("Every feature is built: your developers have nothing to do.");
+    expect(idle(allOn(startOn(), "built"))).toBe(
+      "Every feature is built: your developers have nothing to do. Or move the slider to put them on optimisation.",
+    );
     // Only developers can sit idle like this.
     expect(sim.staff(startOn()).filter((p) => p.pool !== "developers").every((p) => p.idle === null)).toBe(true);
   });

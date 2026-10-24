@@ -182,7 +182,7 @@ export function createMigration(
   /** The migration as it would start, without checking it can be paid for. */
   function planMigration(state: GameState, model: string): GameState {
     const to = migrationTarget(state, model);
-    const setup = servers.setupFor(state, to, infra.usualDemand(state));
+    const setup = servers.setupFor(state, to, infra.usualDemand(state, to));
     const migration: Migration = {
       to,
       phase: MIGRATION_PHASES[0],
@@ -215,7 +215,7 @@ export function createMigration(
     const sellBack = servers.sellBackTotal(state);
     const setup = servers.setupItems(started, to, m.servers);
     const room = config.migration.setupHeadroom;
-    const usual = infra.usualDemand(state);
+    const usual = infra.usualDemand(state, to);
     const tidy = (n: number) => Math.round(n * 100) / 100;
     const { chance, minDays, maxDays } = config.migration.overrun;
     const lostAddons = features.addonsLeftBehind(state, to).map(({ id, name, devDays }) => ({ id, name, devDays }));

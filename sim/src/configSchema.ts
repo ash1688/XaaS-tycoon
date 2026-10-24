@@ -265,6 +265,10 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   for (const m of MODEL_IDS) {
     add(`mvp.modelShare.${m}`, "People", "MVP", `Share built (${MODEL_LABELS[m]})`, "The share of the base MVP size a company on this model builds: on SaaS only the storefront and payments.", range(0, 2, 0.05));
   }
+  add("optimisation.k", "People", "Optimisation", "Developer-days to 63% of the cap", "How fast optimisation pays off: the saving is cap × (1 − e^(−days ÷ this)), so after this many developer-days it's about 63% of the cap. Bigger is slower.", range(1, 1_000, 1));
+  for (const m of MODEL_IDS) {
+    add(`optimisation.cap.${m}`, "People", "Optimisation", `Most it saves (${MODEL_LABELS[m]})`, "The most optimisation can cut resource need per user on this model (0.5 = half): CU and DBU per user, PaaS instances, or the SaaS per-user fee. Kept through a migration, capped at the new model's.", range(0, 0.95, 0.05));
+  }
   for (const p of PRODUCT_TYPE_IDS) {
     for (const f of base.productTypes[p]?.features ?? []) {
       const at = `productTypes.${p}.features.${f.id}`;

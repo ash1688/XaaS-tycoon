@@ -2494,6 +2494,20 @@ describe("features", () => {
     expect(statusOf(res.json<CompanyView>())).toMatchObject({ status: "building", progress: 0 });
   });
 
+  it("sets the developer slider, builds up optimisation on continue and validates the share", async () => {
+    const { url, act } = await setup();
+    await act({ type: "hire", pool: "developers", count: 2 });
+    const set = await act({ type: "setOptimisation", share: 1 });
+    expect(set.statusCode).toBe(200);
+    expect(set.json<CompanyView>().optimisation).toMatchObject({ share: 1, days: 0, saving: 0, cap: defaultConfig.optimisation.cap.iaas, output: 2 });
+    const next = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    expect(next.company.optimisation.days).toBe(2);
+    expect(next.company.optimisation.saving).toBeGreaterThan(0);
+    for (const payload of [{ type: "setOptimisation" }, { type: "setOptimisation", share: 1.5 }, { type: "setOptimisation", share: -1 }]) {
+      expect((await act(payload)).statusCode).toBe(400);
+    }
+  });
+
   it("returns 404 for another code's company", async () => {
     const { company } = await setup();
     const other = await newCode();
