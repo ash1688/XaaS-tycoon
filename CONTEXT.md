@@ -61,7 +61,7 @@ The company's senior leaders. The student is the CEO; the others (CFO, CTO and s
 _Avoid_: Executives, leadership team, management
 
 **Staff**:
-The developers, ops, support and moderators hired and let go in bulk, as permanent or agency staff. Not the C-suite.
+The developers, ops, support, moderators and researchers hired and let go in bulk, as permanent or agency staff (researchers permanent only). Not the C-suite.
 _Avoid_: Employees, workers
 
 **Grade**:
@@ -75,6 +75,14 @@ _Avoid_: Contractors, temps (contract users are customers)
 **Permanent staff**:
 Staff employed directly, who are paid severance when let go.
 _Avoid_: Employees, full-time staff
+
+**Researcher**:
+A member of staff who earns research points. Researchers can be hired only once the first angel investor approaches, whether or not the student takes the money, and only as permanent staff.
+_Avoid_: Scientist, R&D staff
+
+**Research points (RP)**:
+What researchers earn each day, more for higher grades. They bank with no cap, to be spent unlocking items in a tier.
+_Avoid_: Science, research credits, XP
 
 ### Infrastructure
 

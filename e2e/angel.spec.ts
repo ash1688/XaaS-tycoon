@@ -2,7 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import { E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
 
 // The angel investor: the approach and its notification, the offer with its target on Finance, negotiating and
-// accepting it (the valuation it sets, friends and family and the grant closing), and declining one for another.
+// accepting it (the valuation it sets, friends and family and the grant closing), and declining one for another. The
+// first approach also opens researchers and the Research page, whatever the student makes of the angel.
 
 // A hidden target any launched company hits on its first day of income, so an angel approaches within days, and a
 // target short enough for an angel to come in a 30-day game.
@@ -28,9 +29,14 @@ const goTo = (page: Page, name: string) =>
   page.getByRole("navigation", { name: "Game" }).getByRole("link", { name, exact: true }).click();
 
 /** A SaaS social network on the early-angel preset, played on until an angel approaches. */
-async function startAndWaitForAngel(browser: import("@playwright/test").Browser, request: import("@playwright/test").APIRequestContext, name: string) {
+async function startAndWaitForAngel(
+  browser: import("@playwright/test").Browser,
+  request: import("@playwright/test").APIRequestContext,
+  name: string,
+  overrides: Record<string, number> = {},
+) {
   await request.post("/api/teacher/login", { data: { password: E2E_TEACHER_PASSWORD } });
-  const created = await request.post("/api/teacher/presets", { data: { name: "Early angel", overrides: EARLY_ANGEL } });
+  const created = await request.post("/api/teacher/presets", { data: { name: "Early angel", overrides: { ...EARLY_ANGEL, ...overrides } } });
   expect(created.ok()).toBe(true);
   preset = (await created.json()).id as string;
   expect((await request.post(`/api/teacher/presets/${preset}/activate`)).ok()).toBe(true);
@@ -46,6 +52,8 @@ async function startAndWaitForAngel(browser: import("@playwright/test").Browser,
   await goTo(student, "Finance");
   await expect(student.getByTestId("angel")).toContainText("Investors come to you");
   await expect(student.getByTestId("investor-note")).toBeHidden();
+  // Research opens only once an angel approaches.
+  await expect(student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Research", exact: true })).toBeHidden();
 
   const note = student.getByTestId("investor-note");
   for (let i = 0; i < 10 && !(await note.isVisible()); i++) {
@@ -134,4 +142,36 @@ test("declining an angel brings another a few days later", async ({ browser, req
   }
   await expect(note).toBeVisible();
   await expect(panel.getByTestId("angel-offer")).not.toContainText(first);
+});
+
+test("the first angel's approach opens researchers and the Research page, which stay open when the angel is declined", async ({
+  browser,
+  request,
+}) => {
+  // Mids start at once, so a researcher hired today earns RP on the next day played.
+  const student = await startAndWaitForAngel(browser, request, "Lab Ltd", { "staffGrades.mid.leadDays": 0 });
+  const panel = student.getByTestId("investor-panel");
+  await panel.getByTestId("angel-review").click();
+  await student.getByRole("dialog", { name: "Angel investor's offer" }).getByTestId("angel-decline").click();
+  await expect(panel.getByTestId("angel-coming")).toBeVisible();
+
+  await goTo(student, "Research");
+  await expect(student.getByTestId("research-points")).toHaveText("0 RP");
+  await expect(student.getByTestId("research-per-day")).toHaveText("0");
+
+  // People has a researchers row, permanent only.
+  await goTo(student, "People");
+  const row = student.locator('[data-pool="researchers"]');
+  await expect(row).toBeVisible();
+  await expect(row.getByTestId("researchers-permanent-only")).toContainText("Permanent hires only");
+  await expect(row.getByTestId("researchers-agency-pick")).toHaveCount(0);
+  await row.getByRole("button", { name: "Hire one mid researcher" }).click();
+  await expect(row.getByTestId("researchers-count")).toHaveText("1");
+
+  const day = Number(await student.getByTestId("day").textContent().then((t) => t!.trim().split(/\s/)[0]));
+  await student.getByRole("button", { name: "Continue" }).click();
+  await expect(student.getByTestId("day")).not.toHaveText(new RegExp(`^${day}\\b`));
+  await goTo(student, "Research");
+  await expect(student.getByTestId("research-per-day")).toHaveText("2");
+  await expect(student.getByTestId("research-points")).toHaveText("2 RP");
 });

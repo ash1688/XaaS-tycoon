@@ -5,7 +5,7 @@ import { formatCash, formatCount } from "../api";
 import { days, useGame } from "../game";
 import LetGoConfirm from "./LetGoConfirm.vue";
 
-// One team's quick hire: pick permanent or agency staff and a grade, then − and + let go or hire one of it. Letting go
+// One team's quick hire: pick permanent or agency staff (permanent only for researchers) and a grade, then − and + let go or hire one of it. Letting go
 // permanent staff asks first, showing their severance; agency staff go at once, with none. The count is the permanent
 // team; agency staff are listed apart under it, and hires still to start under that with the day they start, as they
 // cost and do nothing until then.
@@ -37,7 +37,7 @@ function letGo() {
 
 <template>
   <div v-if="view && info && current" class="grade-counter" :data-testid="`${pool}-grades`">
-    <div class="kind-pick" role="radiogroup" :aria-label="`Permanent or agency ${info.name.toLowerCase()}`">
+    <div v-if="view.agencyAllowed" class="kind-pick" role="radiogroup" :aria-label="`Permanent or agency ${info.name.toLowerCase()}`">
       <label :class="{ picked: !agency }">
         <input v-model="agency" type="radio" :name="`${id}-kind`" :value="false" :disabled="game.over" />
         Permanent
@@ -54,6 +54,7 @@ function letGo() {
         Agency
       </label>
     </div>
+    <p v-else class="muted" :data-testid="`${pool}-permanent-only`">Permanent hires only: no agency.</p>
     <div class="grade-pick" role="radiogroup" :aria-label="`Grade of ${info.name.toLowerCase()} to hire or let go`">
       <label v-for="g in grades" :key="g.grade" :class="{ picked: g.grade === picked }">
         <input v-model="picked" type="radio" :name="`${id}-grade`" :value="g.grade" :disabled="game.over" />

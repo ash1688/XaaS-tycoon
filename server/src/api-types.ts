@@ -23,6 +23,7 @@ import type {
   LaunchView,
   MvpView,
   OptimisationView,
+  ResearchView,
   LoanQuote,
   LoanView,
   ManagedView,
@@ -223,6 +224,8 @@ export interface CompanyView {
   support: number;
   /** Moderators: they handle reports on user content. Always 0 on a product without user content. */
   moderators: number;
+  /** Researchers: they earn research points. Always 0 until the first angel investor approaches. */
+  researchers: number;
   /**
    * Each pool by grade: who's on the team, their work a day in mids (what's measured against ops needed, a build's
    * developer-days and tickets cleared), and hires still to start.
@@ -253,6 +256,11 @@ export interface CompanyView {
    * the saving on resource need per user out of the current model's cap.
    */
   optimisation: OptimisationView;
+  /**
+   * Research: whether researchers and the Research page have opened (at the first angel investor's approach), the
+   * research points banked and RP a day.
+   */
+  research: ResearchView;
   /** Every user, paying or free. No users until launch. */
   users: number;
   /** Of the users, those who pay. */

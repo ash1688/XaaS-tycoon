@@ -34,6 +34,12 @@ const game = useGame();
             falls and users leave.
           </span>
         </li>
+        <li v-if="game.company.research.unlocked" data-testid="researchers-role">
+          <strong>Researchers</strong>
+          <span class="muted">
+            Earn research points each day, shown on Research. Permanent hires only: an agency can't supply them.
+          </span>
+        </li>
       </ul>
       <table class="compare ops-by-model">
         <caption class="muted">Ops staff each model needs</caption>
@@ -49,7 +55,12 @@ const game = useGame();
       </table>
       <p class="muted">
         Day rates for a mid:
-        {{ game.meta.staff.map((s) => `${s.name.toLowerCase()} ${formatCash(s.dayRate)}`).join(", ") }}.
+        {{
+          game.meta.staff
+            .filter((s) => game.company?.staff.some((p) => p.pool === s.id))
+            .map((s) => `${s.name.toLowerCase()} ${formatCash(s.dayRate)}`)
+            .join(", ")
+        }}.
       </p>
       <table class="compare grades-table" data-testid="grades">
         <caption class="muted">Grades, the same in every team</caption>

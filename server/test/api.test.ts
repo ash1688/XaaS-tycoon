@@ -114,6 +114,7 @@ const sim = createSim({
     ops: { ...defaultConfig.staff.ops, dayRate: 4, startingCount: 0 },
     support: { ...defaultConfig.staff.support, dayRate: 3, startingCount: 0 },
     moderators: { ...defaultConfig.staff.moderators, dayRate: 2, startingCount: 0 },
+    researchers: { ...defaultConfig.staff.researchers, dayRate: 5, startingCount: 0 },
   },
   // Mids (the default hire) and seniors start at once, so tests needn't wait; juniors wait 3 days, to test lead times.
   staffGrades: {
@@ -537,6 +538,17 @@ describe("staff actions", () => {
     expect(company.opsNeededOnceReady).toBe(company.opsNeeded);
     const played = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
     expect(played.company.cash).toBe(1000 - 45);
+  });
+
+  it("keeps researchers and research locked until the first angel approaches", async () => {
+    const { company, act } = await setup();
+    expect(company).toMatchObject({ researchers: 0, research: { unlocked: false, unlockedDay: null, points: 0, pointsPerDay: 0 } });
+    expect(company.staff.map((p) => p.pool)).not.toContain("researchers");
+    for (const payload of [{ type: "hire", pool: "researchers" }, { type: "hire", pool: "researchers", agency: true }]) {
+      const refused = await act(payload);
+      expect(refused.statusCode).toBe(400);
+      expect(refused.json()).toMatchObject({ error: "not_yet" });
+    }
   });
 
   it("hires moderators only on a product with user content, and shows its reports", async () => {
@@ -3260,6 +3272,7 @@ describe("meta", () => {
       ["ops", 4],
       ["support", 3],
       ["moderators", 2],
+      ["researchers", 5],
     ]);
     // On-prem's and IaaS's from their starter servers; PaaS's and SaaS's a small fixed number.
     expect(meta.models.map((m) => m.opsNeeded)).toEqual([2, 1, 1, 1]);
