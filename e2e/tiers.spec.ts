@@ -49,5 +49,5 @@ test("tiers lock later features and model benefits, and the on-prem hardware sli
     el.dispatchEvent(new Event("change", { bubbles: true }));
   });
   await expect(app).toContainText("at 150%");
-  await expect(app).toContainText("12% chance of overheating, 4.0% of a crash");
+  await expect(app).toContainText("12% chance of overheating, 4% of a crash");
 });

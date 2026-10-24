@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import postgres from "postgres";
 import { E2E_DATABASE_URL, E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { createCode, launch, pinLaunchUsers, withOnlyEncounter } from "./staff.ts";
+import { createCode, launch, openTiers, pinLaunchUsers, withOnlyEncounter } from "./staff.ts";
 
 // The game's pages are reached through its nav bar.
 const goTo = (page: Page, name: string) =>
@@ -112,7 +112,9 @@ test("teacher creates a code, student starts a game and presses Continue", async
     "Juniors: £90 each a day, 0.65× a mid's work, start 3 days after hiring, £1,260 severance each if let go.",
   );
 
-  // Features: IaaS builds them in developer-days, one at a time.
+  // Features: IaaS builds them in developer-days, one at a time. Every tier is opened, so any can be built.
+  await openTiers(game.split("/").at(-1)!);
+  await student.reload();
   await goTo(student, "Product");
   const features = student.getByTestId("features");
   await expect(features.locator('[data-feature="photos"]')).toHaveAttribute("data-status", "notStarted");
@@ -311,6 +313,8 @@ test("a SaaS company buys an add-on and pays for it per user", async ({ browser,
     data: { name: "Shopfront Ltd", productType: "social", model: "saas" },
   });
   const { id } = await created.json();
+  // Every tier open, so any add-on can be bought.
+  await openTiers(id);
   // SaaS needs nothing set up: the social network's 4,000 users arrive over days 1 to 3.
   await launch(request, code, id, "saas");
 
@@ -491,6 +495,8 @@ test("leaving SaaS warns that add-ons will be lost, then leaves them behind", as
     data: { name: "Locked In Ltd", productType: "social", model: "saas" },
   });
   const { id } = await created.json();
+  // Every tier open, so any add-on can be bought.
+  await openTiers(id);
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}/product`);
@@ -792,7 +798,7 @@ test("a company plays to the final day and sees its summary, again when reopened
   // Its pages are a read-only record.
   await goTo(elsewhere, "Product");
   await expect(elsewhere.getByTestId("read-only")).toBeVisible();
-  await expect(elsewhere.getByRole("button", { name: "Build Groups" })).toBeDisabled();
+  await expect(elsewhere.getByRole("button", { name: "Build Notifications" })).toBeDisabled();
 });
 
 test("a code runs up to 3 active companies; retiring one moves it to history and makes room", async ({ browser }) => {
