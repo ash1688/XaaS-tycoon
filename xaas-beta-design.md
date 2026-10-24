@@ -135,9 +135,10 @@ What the company is worth. It sets how many shares a funding round costs, the re
 
 To float, the company must pass a readiness check:
 
+- **Trading history:** about four months (120 days, configurable) of trading since the launch, so even strong play can't float before about day 120
 - **Users and revenue** above a threshold
 - **Uptime record**, e.g. 99% over the last 30 days
-- **Predictable costs.** Big spending swings count against you (capex vs opex discussion).
+- **Predictable costs.** Big spending swings count against you (capex vs opex discussion). The record's single costliest day is set aside, so one fraud bill or severance payment doesn't fail it.
 - **Security and compliance audit.** On IaaS you must have patched everything yourself; PaaS/SaaS providers cover more.
 - **Profitability**, or a clear path to it
 - **Customer satisfaction record**, e.g. above 70% over the last 30 days. In the alpha, satisfaction at 0% had no consequence: one student sat there for 143 days and still finished.

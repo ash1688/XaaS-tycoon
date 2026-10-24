@@ -147,10 +147,12 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add(`ipo.products.${p}.annualRevenue`, "Money", "IPO", `Annual revenue needed (${name})`, "Annual revenue, as the valuation measures it, a company needs to float.", range(0, 100_000_000, 10_000));
     add(`ipo.products.${p}.payingUsers`, "Money", "IPO", `Paying users needed (${name})`, "The minimum paying customer base to float, so a few customers paying a lot can't.", range(0, 1_000_000, 100));
   }
+  add("ipo.minTradingDays", "Money", "IPO", "Trading history needed", "Days of trading since the launch a company needs before it can float.", range(0, 365, 1));
   add("ipo.recordDays", "Money", "IPO", "Records over", "Days the uptime, satisfaction, costs and profit records are measured over.", GAME_DAY);
   add("ipo.minUptime", "Money", "IPO", "Uptime record needed", "Uptime % over the record's days a company needs to float.", range(0, 100, 0.1));
   add("ipo.minSatisfaction", "Money", "IPO", "Satisfaction record needed", "Average satisfaction % over the record's days a company needs to float.", range(0, 100, 1));
   add("ipo.maxCostSwing", "Money", "IPO", "Most costs may vary", "Daily running costs over the record's days may vary by at most this (their standard deviation ÷ their mean; 0.25 = 25%). Big one-off purchases count against it.", range(0, 5, 0.01));
+  add("ipo.costDaysSetAside", "Money", "IPO", "Costliest days set aside", "The costliest days of the record left out when measuring how much costs vary, so one fraud bill or severance payment doesn't fail it.", range(0, 30, 1));
   add("ipo.comfortMargin", "Money", "IPO", "Comfortably ready at", "How far over a condition counts as comfortably ready (0.25 = 25% over), cutting the cold-market chance and helping the first day of trading.", range(0.01, 5, 0.01));
   add("ipo.coldChance.max", "Money", "IPO", "Cold-market chance, only just ready", "The chance applying meets a cold market when the company only just meets every condition.", SHARE);
   add("ipo.coldChance.min", "Money", "IPO", "Cold-market chance, comfortably ready", "The chance applying meets a cold market when the company is comfortably over every condition.", SHARE);
