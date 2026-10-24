@@ -22,8 +22,8 @@ test("on PaaS, raising the instance count grows CU capacity at once, with manage
   request,
 }) => {
   const student = await newCompany(browser, request, "Platform Co", "paas");
-  // Home's capacity card shows the tightest tier: compute, 6 of 10 CU (the database is as full).
-  await expect(student.getByTestId("home-tightest")).toContainText("CU 60%");
+  // Home's capacity card shows the tightest tier: compute, 4.8 of 10 CU (the database is as full).
+  await expect(student.getByTestId("home-tightest")).toContainText("CU 48%");
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Infrastructure", exact: true }).click();
 
   // The first setup: one medium instance (10 CU) and a small managed database (10 DBU). The load balancer is built in.
@@ -41,7 +41,7 @@ test("on PaaS, raising the instance count grows CU capacity at once, with manage
   await platform.getByTestId("instances-up").click();
   await expect(platform.getByTestId("instances-value")).toHaveText("3");
   await expect(cu).toHaveAttribute("aria-valuemax", "30");
-  await expect(student.getByTestId("tier-cu-figures")).toHaveText("6 / 30 CU");
+  await expect(student.getByTestId("tier-cu-figures")).toHaveText("4.8 / 30 CU");
   await expect(platform.getByTestId("platform-note")).toContainText("you need just 1 ops");
 
   // A bigger managed database, at once too: the size dropdown resizes the one there is. It can't be removed, and there's
@@ -53,7 +53,7 @@ test("on PaaS, raising the instance count grows CU capacity at once, with manage
   await platform.getByTestId("managed-database-size").selectOption("medium");
   await expect(platform.getByTestId("managed-database-value")).toHaveText("1 medium");
   await expect(student.getByRole("meter", { name: /^Database \(DBU\)/ })).toHaveAttribute("aria-valuemax", "25");
-  await expect(platform.getByTestId("platform-cost")).toHaveText("£4,700");
+  await expect(platform.getByTestId("platform-cost")).toHaveText("£5,875");
 
   // Billed from the next day, in infrastructure: no load balancer line.
   await student.getByRole("button", { name: "Continue" }).click();
@@ -62,7 +62,7 @@ test("on PaaS, raising the instance count grows CU capacity at once, with manage
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Home", exact: true }).click();
   await student.getByRole("button", { name: "Day log" }).click();
   const log = student.getByRole("dialog", { name: "Day log" }).getByTestId("day-log");
-  await expect(log.locator('[data-category="infrastructure"]')).toContainText(["App instance (medium): 3 × £900 a month"]);
+  await expect(log.locator('[data-category="infrastructure"]')).toContainText(["App instance (medium): 3 × £1,125 a month"]);
   await expect(log).not.toContainText("Load balancer");
 });
 

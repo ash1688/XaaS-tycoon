@@ -389,10 +389,10 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
   // Default config: PaaS is £1,000 upfront and £109 a day (power and cooling included) with one instance and a small
   // managed database, sized for the users; IaaS £66 a day with its VMs, and £3,000 to leave.
   await expect(student.getByTestId("quote-upfront")).toHaveText("£1,000");
-  await expect(student.getByTestId("quote-double")).toHaveText("£1,526");
+  await expect(student.getByTestId("quote-double")).toHaveText("£1,750");
   await expect(student.getByTestId("quote-pro-rata")).toHaveText("£924");
   await expect(student.getByTestId("quote-exit")).toHaveText("£3,000");
-  await expect(student.getByTestId("quote-total")).toHaveText("£6,450");
+  await expect(student.getByTestId("quote-total")).toHaveText("£6,674");
   await expect(student.getByTestId("quote-overrun")).toContainText("chance of 2–5 extra days");
   // Nothing has started or been charged yet.
   const company = async () => (await request.get(`/api/codes/${code}/companies/${id}`)).json();
