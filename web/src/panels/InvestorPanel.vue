@@ -19,7 +19,7 @@ const lastDeclined = computed(() => investors.value?.declined.at(-1) ?? null);
 /** How far along each part of the angel's target is, 0–100. */
 const percentOf = (now: number, target: number) => (target > 0 ? Math.max(0, Math.min(100, Math.round((100 * now) / target))) : 100);
 const incomePercent = computed(() => (angel.value ? percentOf(angel.value.dailyRevenue, angel.value.target.dailyRevenue) : 0));
-const usersPercent = computed(() => (angel.value ? percentOf(angel.value.usersGained, angel.value.target.usersGained) : 0));
+const usersPercent = computed(() => (angel.value ? percentOf(angel.value.netUsers, angel.value.target.netUsers) : 0));
 /** How long the offer stands: it lapses unanswered after its last day, as if declined. */
 const standsText = (daysLeft: number, lastDay: number) =>
   `The offer stands for ${days(daysLeft)} more: unanswered after day ${lastDay}, it lapses, which counts as declining it.`;
@@ -109,9 +109,9 @@ async function answer(type: "acceptInvestor" | "declineInvestor") {
             <span :style="{ width: `${incomePercent}%` }"></span>
           </div>
           <p data-testid="angel-target-users">
-            Paying users gained since you accepted:
-            <strong>{{ angel.usersGained.toLocaleString("en-GB") }} of {{ angel.target.usersGained.toLocaleString("en-GB") }}</strong>,
-            averaged over a week and net of any you lose.
+            Users since you accepted, free and paying: {{ angel.usersGained.toLocaleString("en-GB") }} gained,
+            {{ angel.usersLost.toLocaleString("en-GB") }} lost, so
+            <strong>{{ angel.netUsers.toLocaleString("en-GB") }} net of {{ angel.target.netUsers.toLocaleString("en-GB") }}</strong>.
           </p>
           <div
             class="loan-bar"

@@ -44,10 +44,10 @@ const approached = (s: Sim) => (state: GameState) => s.investors(state).offer !=
 /** A game played until the first angel approaches. */
 const untilApproach = (s: Sim = sim, seed = 42) => playUntil(s, begin(s, seed), approached(s));
 
-/** Paying users gained a day over the target's days: the pace the angel's users target is set from. */
+/** Users gained a day, net, over the target's days: the pace the angel's users target is set from. */
 const pace = (state: GameState) => {
   const then = state.spendByDay.filter((d) => d.day <= state.day - angel.target.days).at(-1)!;
-  return Math.max(0, (state.paidUsers - then.paidUsers) / angel.target.days);
+  return Math.max(0, (state.users - then.users) / angel.target.days);
 };
 /** The users target for `days` of the target's days. */
 const usersTarget = (state: GameState, days = angel.targetDays) =>
@@ -120,11 +120,11 @@ describe("the angel's approach", () => {
     const offer = sim.investors(state).offer!;
     const expected = Math.ceil((angel.targetGrowth * Math.max(angel.target.dailyRevenue, incomeOver(state, angel.target.days))) / 50) * 50;
     const users = usersTarget(state);
-    // Sized from the company's recent growth: three quarters of its pace of paying users, kept up for the 30 days.
+    // Sized from the company's recent growth: its pace of users gained, kept up for the 30 days.
     expect(users).toBeGreaterThan(angel.minUsersGained);
-    expect(offer.target).toEqual({ dailyRevenue: expected, days: angel.target.days, usersGained: users, byDay: state.day + angel.targetDays });
+    expect(offer.target).toEqual({ dailyRevenue: expected, days: angel.target.days, netUsers: users, byDay: state.day + angel.targetDays });
     expect(offer.condition).toBe(
-      `By day ${state.day + angel.targetDays} (${angel.targetDays} days after you accept), both at once: grow income to £${expected.toLocaleString("en-GB")} a day, averaged over ${angel.target.days} days, and gain ${users.toLocaleString("en-GB")} paying users from the day you accept, averaged over a week and net of any you lose.`,
+      `By day ${state.day + angel.targetDays} (${angel.targetDays} days after you accept), both at once: grow income to £${expected.toLocaleString("en-GB")} a day, averaged over ${angel.target.days} days, and gain ${users.toLocaleString("en-GB")} users net from the day you accept: users who join, free or paying, less users who leave.`,
     );
     expect(offer.ifMissed).toMatch(new RegExp(`^Miss either and ${offer.investor} takes extra equity: new shares raise their share of the company by 5 points`));
     expect(offer.effects.join(" ")).toMatch(/valuation becomes theirs.*moves in step with the formula.*Friends and family and grants close for good: friends and family's offer and the grant's offer will be gone/);
@@ -288,7 +288,7 @@ describe("the angel's offer over time", () => {
     expect(offer.target).toEqual({
       dailyRevenue: Math.ceil((growth * now) / 50) * 50,
       days: angel.target.days,
-      usersGained: usersTarget(late, 6),
+      netUsers: usersTarget(late, 6),
       byDay: late.day + 6,
     });
     expect(offer.condition).toMatch(/^By day \d+ \(6 days after you accept, the game's last day\), both at once/);
@@ -358,17 +358,43 @@ describe("negotiating the angel's offer", () => {
 });
 
 describe("the angel's target", () => {
-  it("counts paying users gained from the day it's accepted, from nothing, net of any lost", () => {
+  it("counts users, free and paying, gained and lost from the day it's accepted, from nothing", () => {
     const { state } = untilApproach();
     const after = sim.applyAction(state, { type: "acceptInvestor" });
-    expect(sim.investors(after).angel).toMatchObject({ paidUsersAtStart: state.paidUsers, usersGained: 0 });
-    // Users bought with a price cut and lost again don't count: half the payers gone is a loss, not a gain.
-    const played = sim.advance(after, 3).state;
-    const lost: GameState = {
-      ...played,
-      spendByDay: played.spendByDay.map((d) => (d.day > after.day ? { ...d, paidUsers: Math.round(state.paidUsers / 2) } : d)),
-    };
-    expect(sim.investors(lost).angel!.usersGained).toBe(Math.round(state.paidUsers / 2) - state.paidUsers);
+    expect(sim.investors(after).angel).toMatchObject({ usersAtStart: state.users, usersGained: 0, usersLost: 0, netUsers: 0 });
+    // A price rise drives some away while new users keep coming.
+    const raised = sim.applyAction(after, { type: "setPrice", price: after.price * 1.5 });
+    const played = sim.advance(raised, 10).state;
+    const deal = sim.investors(played).angel!;
+    expect(deal.status).toBe("running");
+    expect(deal.usersGained).toBeGreaterThan(0);
+    expect(deal.usersLost).toBeGreaterThan(0);
+    // Net is every user who joined less every user who left: exactly how far users have moved since.
+    expect(deal.netUsers).toBe(deal.usersGained - deal.usersLost);
+    expect(deal.netUsers).toBe(played.users - state.users);
+  });
+
+  it("is net: with a target of 1,000, gaining 1,200 and losing 100 passes; gaining 1,200 and losing 300 fails", () => {
+    const { state } = untilApproach();
+    const accepted = sim.applyAction(state, { type: "acceptInvestor" });
+    // A target due tomorrow, all users and no income asked for, and the users the day brings measured first.
+    const due = (gained: number, lost: number): GameState => ({
+      ...accepted,
+      investors: {
+        ...accepted.investors,
+        angel: {
+          ...accepted.investors.angel!,
+          target: { ...accepted.investors.angel!.target, dailyRevenue: 0, netUsers: 1_000, byDay: accepted.day + 1 },
+          usersGained: gained,
+          usersLost: lost,
+        },
+      },
+    });
+    const day = sim.investors(sim.advance(due(0, 0), 1).state).angel!;
+    const ending = (gained: number, lost: number) =>
+      sim.investors(sim.advance(due(gained - day.usersGained, lost - day.usersLost), 1).state).angel!;
+    expect(ending(1_200, 100)).toMatchObject({ usersGained: 1_200, usersLost: 100, netUsers: 1_100, status: "met" });
+    expect(ending(1_200, 300)).toMatchObject({ usersGained: 1_200, usersLost: 300, netUsers: 900, status: "missed" });
   });
 
   it("isn't met by income alone: the users gained must be there on the same day", () => {
@@ -390,9 +416,8 @@ describe("the angel's target", () => {
     expect(deal).toMatchObject({ status: "met", settledDay: done.day, extraShares: 0, daysLeft: 0 });
     expect(done.day).toBeLessThanOrEqual(target.byDay);
     expect(incomeOver(done, target.days)).toBeGreaterThanOrEqual(target.dailyRevenue);
-    expect(deal.usersGained).toBeGreaterThanOrEqual(target.usersGained);
-    const since = done.spendByDay.filter((d) => d.day > after.day).slice(-7);
-    expect(deal.usersGained).toBe(Math.round(since.reduce((sum, d) => sum + d.paidUsers, 0) / since.length - after.paidUsers));
+    expect(deal.netUsers).toBeGreaterThanOrEqual(target.netUsers);
+    expect(deal.netUsers).toBe(done.users - after.users);
     expect(log.at(-1)!.entries.map((e) => e.text)).toContainEqual(expect.stringMatching(new RegExp(`^${deal.investor}'s target met`)));
     expect(pauses).toContainEqual({ day: done.day, reason: expect.objectContaining({ kind: "finished", id: "angel-target" }) });
     expect(sim.capTable(done).rows.find((r) => r.id === "angel")!.shares).toBe(deal.shares);

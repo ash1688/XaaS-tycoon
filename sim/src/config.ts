@@ -1314,9 +1314,9 @@ export interface InvestorsConfig {
  *   last day if sooner, when what's asked for shrinks in step with the days left):
  *   - income averaged over target.days days reaching targetGrowth × what it was when accepted (or × target.dailyRevenue,
  *     if that's more);
- *   - paying users gained since accepting (their average over the last week, less those there on the day): usersPace ×
- *     the company's recent pace (paying users gained over the last target.days days, a day) × targetDays, rounded to
- *     10 and at least minUsersGained. Net of any lost, so users bought with a price cut and lost again don't count.
+ *   - net users since accepting, free and paying: users gained less users lost, reaching usersPace × the company's
+ *     recent pace (users gained net over the last target.days days, a day) × targetDays, rounded to 10 and at least
+ *     minUsersGained. Users bought with a price cut and lost again count against it.
  *   Missing it costs extra equity: new shares
  *   take their share of the company up by missShare (0.05 = five points).
  * - Their valuation: on accepting, the business is worth what their terms say, as a multiple of the formula's business;
@@ -2191,8 +2191,9 @@ export const defaultConfig: GameConfig = {
   rescue: { breathingDays: 30, minCover: 0.25, share: 0.75, staffCut: 0.25, buyBackPremium: 1.5, minReturn: 2 },
   // The angel approaches about three weeks after launch on sensible play, once income has averaged £500 a day for a
   // fortnight: a company worth about £60-130k, so a fifth of it costs the angel about £15-35k. Sensible play makes its
-  // short-term target in 69 of 72 harness games, with a median 12 days to spare: 1.75 times that income and three
-  // quarters of its recent pace of paying users kept up, both within 30 days. A company that stalls doesn't. Its offer stands for 3 days played, so it can't be held open.
+  // short-term target in 70 of 72 harness games, with a median 14 days to spare: 1.75 times that income and, net of
+  // users lost, three quarters of its recent pace of users gained kept up, both within 30 days. A company that stalls
+  // doesn't. Its offer stands for 3 days played, so it can't be held open.
   investors: {
     approachDays: 3,
     retryDays: 5,

@@ -1824,8 +1824,8 @@ describe("the angel investor", () => {
     expect(offer).toMatchObject({
       round: "angel",
       day: result.company.day,
-      condition: expect.stringMatching(/^By day \d+ \(\d+ days after you accept\), both at once: grow income to £[\d,]+ a day, averaged over 1 day, and gain [\d,]+ paying users/),
-      target: { usersGained: expect.any(Number) },
+      condition: expect.stringMatching(/^By day \d+ \(\d+ days after you accept\), both at once: grow income to £[\d,]+ a day, averaged over 1 day, and gain [\d,]+ users net from the day you accept/),
+      target: { netUsers: expect.any(Number) },
       ifMissed: expect.stringContaining("takes extra equity"),
     });
     expect(result.pauses).toContainEqual(expect.objectContaining({ kind: "offer", id: "offer-angel" }));

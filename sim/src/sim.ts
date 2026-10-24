@@ -845,7 +845,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     // The first time cash runs out a vulture VC rescues the company; the second time is liquidation.
     const settled = finance.settle(migrated.state, day, entries, rescue.rescue);
     // Last, the funding ladder: an angel's target, and an investor who approaches a company doing well.
-    const funded = investors.investorDay(settled.state);
+    const funded = investors.investorDay(settled.state, {
+      joined: (ramping ? 0 : organic.arrived) + wave.joined + (users - wave.users),
+      left: (ramping ? 0 : organic.lost.reduce((sum, l) => sum + l.users, 0)) + (wave.left?.users ?? 0),
+    });
     return { state: funded.state, log: [{ day, entries: [...settled.entries, ...funded.entries] }] };
   }
 

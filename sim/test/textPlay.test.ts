@@ -535,7 +535,7 @@ describe("the angel investor", () => {
     expect(accepted.lines[0]).toMatch(new RegExp(`^acceptInvestor: done. ${offer.investor} put in £[\\d,]+ for [\\d.]+%; valuation now £`));
     const status = renderStatus(early, accepted.state);
     expect(status).toMatch(/funding: friends and family closed on day \d+ \(you took an angel\) \| grant closed on day/);
-    expect(status).toMatch(new RegExp(`investors: angel ${offer.investor} put in .* target £[\\d,]+/day over 3 days and \\+[\\d,]+ paying users by day \\d+: £[\\d,]+/day and \\+-?[\\d,]+ users gained of [\\d,]+ now`));
+    expect(status).toMatch(new RegExp(`investors: angel ${offer.investor} put in .* target £[\\d,]+/day over 3 days and \\+[\\d,]+ net users by day \\d+: £[\\d,]+/day, and users \\+[\\d,]+ gained −[\\d,]+ lost = -?[\\d,]+ net of [\\d,]+, \\d+ days left`));
     expect(status).toMatch(/\(angel\) [\d.]+%/);
     expect(play(accepted.state, "funding").lines).toEqual([
       `friends and family: closed on day ${accepted.state.day}, when you took on your angel`,

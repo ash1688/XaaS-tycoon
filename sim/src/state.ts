@@ -219,9 +219,9 @@ export interface Approach {
 
 /**
  * The angel's deal once accepted: what they put in and got, and their target, both by byDay: income averaged over
- * `days` days reaching dailyRevenue, and paying users gained since accepting (from paidUsersAtStart, measured on their
- * average over the last week) reaching usersGained. "running" until both hold on the same day ("met"), or "missed" on
- * byDay, when they took extraShares.
+ * `days` days reaching dailyRevenue, and net users (users gained less users lost since accepting, free and paying)
+ * reaching netUsers. "running" until both hold on the same day ("met"), or "missed" on byDay, when they took
+ * extraShares.
  */
 export interface AngelDeal {
   investor: string;
@@ -232,8 +232,10 @@ export interface AngelDeal {
   share: number;
   valuation: number;
   target: AngelTarget;
-  /** Paying users the day it was accepted: users gained count from here. */
-  paidUsersAtStart: number;
+  /** Users, free and paying, the day it was accepted; and every user who has joined and left since, by the days played. */
+  usersAtStart: number;
+  usersGained: number;
+  usersLost: number;
   status: "running" | "met" | "missed";
   /** The day it was met or missed; null while it runs. */
   settledDay: number | null;
@@ -245,8 +247,8 @@ export interface AngelTarget {
   dailyRevenue: number;
   /** Days the income is averaged over. */
   days: number;
-  /** Paying users gained since accepting, net of any lost. */
-  usersGained: number;
+  /** Users gained less users lost since accepting, free and paying. */
+  netUsers: number;
   byDay: number;
 }
 

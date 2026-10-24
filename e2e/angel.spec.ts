@@ -77,7 +77,7 @@ test("an angel approaches with a notification; their offer shows its target, and
   await expect(panel.getByTestId("angel-days-left")).toContainText(/The offer stands for 3 days more: unanswered after day \d+, it lapses/);
   await panel.getByTestId("angel-review").click();
   const modal = student.getByRole("dialog", { name: "Angel investor's offer" });
-  await expect(modal.getByTestId("angel-condition")).toContainText(/^By day \d+ \(10 days after you accept\), both at once: grow income to £[\d,]+ a day, averaged over 1 day, and gain [\d,]+ paying users/);
+  await expect(modal.getByTestId("angel-condition")).toContainText(/^By day \d+ \(10 days after you accept\), both at once: grow income to £[\d,]+ a day, averaged over 1 day, and gain [\d,]+ users net from the day you accept/);
   await expect(modal.getByTestId("angel-if-missed")).toContainText("takes extra equity");
   await expect(modal.getByTestId("angel-effects")).toContainText("Friends and family and grants close for good");
   await expect(modal.getByTestId("angel-valuation")).toContainText("before their cash");
@@ -99,7 +99,7 @@ test("an angel approaches with a notification; their offer shows its target, and
   await expect(modal).toBeHidden();
   await expect(panel.getByTestId("angel-deal")).toContainText(`${offer.investor} put in`);
   await expect(panel.getByTestId("angel-target")).toContainText("Their target, both at once by day");
-  await expect(panel.getByTestId("angel-target-users")).toContainText(/Paying users gained since you accepted: -?[\d,]+ of [\d,]+/);
+  await expect(panel.getByTestId("angel-target-users")).toContainText(/Users since you accepted, free and paying: [\d,]+ gained, [\d,]+ lost, so -?[\d,]+ net of [\d,]+/);
   await expect(student.getByTestId("investor-note")).toBeHidden();
   await expect(student.getByTestId("finance-badge")).toBeHidden();
   const after = await (await request.get(`/api/codes/${code}/companies/${id}`)).json();
