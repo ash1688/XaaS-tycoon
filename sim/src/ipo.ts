@@ -8,6 +8,7 @@ import { staffOutput } from "./staff.ts";
 import { SimError, type DaySpend, type GameState, type IpoApplication, type IpoResult, type LogEntry } from "./state.ts";
 
 export type IpoConditionId =
+  | "trading"
   | "usersAndRevenue"
   | "uptime"
   | "costs"
@@ -138,10 +139,15 @@ export function createIpo(
     const down = sum(days, (d) => d.hoursDown);
     const uptime = 100 * (1 - down / (n * HOURS_PER_DAY));
 
-    const costs = days.map(runningCosts);
-    const mean = sum(days, runningCosts) / n;
-    const sd = Math.sqrt(costs.reduce((s, x) => s + (x - mean) ** 2, 0) / n);
+    // The costliest days are set aside, so one fraud bill or severance payment doesn't spoil a steady record.
+    const setAside = Math.min(Math.max(0, Math.round(c.costDaysSetAside)), Math.max(0, days.length - 1));
+    const costs = days.map(runningCosts).sort((a, b) => a - b).slice(0, days.length - setAside);
+    const kept = Math.max(1, costs.length);
+    const mean = costs.reduce((s, x) => s + x, 0) / kept;
+    const sd = Math.sqrt(costs.reduce((s, x) => s + (x - mean) ** 2, 0) / kept);
     const swing = mean > 0 ? sd / mean : 0;
+    const setAsideText =
+      setAside === 0 ? "" : setAside === 1 ? ", your costliest day set aside" : `, your ${setAside} costliest days set aside`;
 
     const yours = layerOwner(state.model, "os") === "you";
     const opsNeeded = servers.opsNeeded(state);
@@ -164,6 +170,16 @@ export function createIpo(
       list.push(condition);
       comforts.push(condition.met ? comfort : 0);
     };
+    add(
+      {
+        id: "trading",
+        label: "Trading history",
+        met: traded >= c.minTradingDays,
+        needed: `${c.minTradingDays} days of trading since the launch: investors want a track record before they buy`,
+        now: `${traded} day${traded === 1 ? "" : "s"} traded`,
+      },
+      over(traded, c.minTradingDays),
+    );
     add(
       {
         id: "usersAndRevenue",
@@ -189,7 +205,7 @@ export function createIpo(
         id: "costs",
         label: "Predictable costs",
         met: hasRecord && swing <= c.maxCostSwing,
-        needed: `daily running costs over the last ${c.recordDays} days varying by no more than ${percent(c.maxCostSwing)}: big one-off purchases count against you`,
+        needed: `daily running costs over the last ${c.recordDays} days varying by no more than ${percent(c.maxCostSwing)}${setAsideText}: big one-off purchases count against you`,
         now: recorded(`Varying by ${percent(swing)} around ${pounds(mean)} a day`),
       },
       c.maxCostSwing <= 0 ? 1 : clamp01((c.maxCostSwing - swing) / (c.comfortMargin * c.maxCostSwing)),

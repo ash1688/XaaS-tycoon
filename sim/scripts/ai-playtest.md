@@ -90,7 +90,7 @@ npm run -s play -- summary <game>
   days, takes most of the company in new shares, and forces cost cuts (staff let go, hires cancelled). Time stops
   when it happens. `rescue` shows the terms in full; `buyback` buys all its shares back from company cash, at the
   price it sets (shown in `look`). Running out of cash a second time is **liquidation**, and the game ends.
-- `ipo` shows the IPO readiness checklist: seven conditions (users and revenue, an uptime record, predictable costs,
+- `ipo` shows the IPO readiness checklist: eight conditions (a trading history, users and revenue, an uptime record, predictable costs,
   a security audit, profitability, a satisfaction record and a paying customer base), each with where you stand and
   what's needed. The records need 30 days of trading since launch. Once every condition is met, `apply` applies to
   float: there's a small hidden chance of a cold market (postponed 30 days, satisfaction lost), less the more

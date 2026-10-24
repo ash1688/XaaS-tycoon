@@ -484,6 +484,7 @@ describe("the IPO", () => {
       allowedGameLengths: { "180-days": 1, "until-ipo": 1, "1-year": 0, career: 0 },
       ipo: {
         ...defaultConfig.ipo,
+        minTradingDays: 20,
         coldChance: { min: cold, max: cold },
         products: { ...defaultConfig.ipo.products, social: { users: 1_000, annualRevenue: 100_000, payingUsers: 500 } },
       },
@@ -516,12 +517,12 @@ describe("the IPO", () => {
   it("shows the checklist, and offers apply only once every condition is met", () => {
     const s = ipoSim(0);
     const state = start();
-    expect(renderStatus(sim, state)).toMatch(/ipo: 1\/7 readiness conditions met; still to meet: users and revenue, uptime record, predictable costs, profitability, satisfaction record, paying customer base$/m);
+    expect(renderStatus(sim, state)).toMatch(/ipo: 1\/8 readiness conditions met; still to meet: trading history, users and revenue, uptime record, predictable costs, profitability, satisfaction record, paying customer base$/m);
     expect(renderCommands(sim, state)).toMatch(/ipo {3}\(the IPO readiness checklist/);
     expect(renderCommands(sim, state)).not.toMatch(/apply/);
-    expect(run(state, "ipo").lines.join("\n")).toMatch(/\[ \] Users and revenue: .*\n.*\[ \] Uptime record: /);
+    expect(run(state, "ipo").lines.join("\n")).toMatch(/\[ \] Trading history: .*\n.*\[ \] Users and revenue: .*\n.*\[ \] Uptime record: /);
     const r = ready(s);
-    expect(renderStatus(s, r)).toMatch(/ipo: READY: all 7 conditions met, comfort \d+% \("apply" to float\)/);
+    expect(renderStatus(s, r)).toMatch(/ipo: READY: all 8 conditions met, comfort \d+% \("apply" to float\)/);
     expect(renderCommands(s, r)).toMatch(/apply {3}\(apply to float/);
     expect(play(s, r, "ipo").lines.join("\n")).toMatch(/\[x\] Paying customer base: 1,000, of 2,000 users in a market of about 40,000: .*\. Needs 500 paying users\. Comfort 100%\./);
   });
@@ -586,6 +587,7 @@ describe("the IPO checklist over time", () => {
       ],
       ipo: {
         ...defaultConfig.ipo,
+        minTradingDays: 0,
         recordDays: 2,
         minSatisfaction: 0,
         maxCostSwing: 5,

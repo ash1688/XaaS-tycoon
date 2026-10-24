@@ -1174,9 +1174,10 @@ export interface IpoProductConfig {
 }
 
 /**
- * The IPO. The company can apply to float once it passes every condition of the readiness check: users and revenue,
- * an uptime record, predictable costs, a security audit, profitability, a satisfaction record and a minimum paying
- * customer base. No investor is needed. Records are measured over the last recordDays days played.
+ * The IPO. The company can apply to float once it passes every condition of the readiness check: a trading history of
+ * minTradingDays since the launch, users and revenue, an uptime record, predictable costs, a security audit,
+ * profitability, a satisfaction record and a minimum paying customer base. No investor is needed. Records are measured
+ * over the last recordDays days played; predictable costs leaves out the record's costDaysSetAside costliest days.
  *
  * Each condition also has a comfort, 0–1: how far over it the company is, reaching 1 at comfortMargin over (0.25 = 25%
  * over a "more than" threshold, or a quarter of the way from it to perfect). The comfort is their average.
@@ -1193,6 +1194,8 @@ export interface IpoProductConfig {
  */
 export interface IpoConfig {
   products: Record<ProductTypeId, IpoProductConfig>;
+  /** Days of trading since the launch a company needs before it can float. */
+  minTradingDays: number;
   recordDays: number;
   /** Uptime % over recordDays. */
   minUptime: number;
@@ -1200,6 +1203,8 @@ export interface IpoConfig {
   minSatisfaction: number;
   /** The most daily running costs over recordDays may vary: their standard deviation ÷ their mean. */
   maxCostSwing: number;
+  /** The costliest days of the record left out of the costs' swing, so a single one-off charge doesn't fail it. */
+  costDaysSetAside: number;
   comfortMargin: number;
   coldChance: { min: number; max: number };
   coldDelayDays: number;
@@ -2064,23 +2069,28 @@ export const defaultConfig: GameConfig = {
     friendsAndFamily: { amount: 15_000 },
     grant: { amount: 10_000, days: 60, minUptime: { onprem: 98, iaas: 98.5, paas: 98.5, saas: 99 } },
   },
-  // Set from the harness's sensible bot, which reaches these on PaaS and SaaS around days 180-270 and on-prem and IaaS
-  // later: in a 180-day game a float is rare. Users sit near each market's size; revenue and payers are what take time.
+  // Set from the harness's sensible bot (scripts/ipoSurvey.ts), which is never ready by day 180: it reaches these on PaaS
+  // and SaaS around days 190-250, and on IaaS and on-prem around days 220-340 (or not at all when its uptime slips).
+  // Users sit near each market's size. Payers are a floor well below a fair-priced company's (about 55-70% of the
+  // market), so a dearer company can still float; revenue is what takes time.
   ipo: {
     products: {
-      ecommerce: { users: 18_000, annualRevenue: 1_000_000, payingUsers: 16_000 },
-      social: { users: 36_000, annualRevenue: 1_250_000, payingUsers: 21_000 },
-      video: { users: 18_000, annualRevenue: 1_250_000, payingUsers: 12_000 },
+      ecommerce: { users: 18_000, annualRevenue: 1_170_000, payingUsers: 13_500 },
+      social: { users: 36_000, annualRevenue: 1_250_000, payingUsers: 17_000 },
+      video: { users: 18_000, annualRevenue: 1_300_000, payingUsers: 10_000 },
       // A small market of businesses, each worth about £30 a month: revenue comes from few payers.
-      payments: { users: 3_600, annualRevenue: 900_000, payingUsers: 2_400 },
+      payments: { users: 3_600, annualRevenue: 1_020_000, payingUsers: 2_200 },
       // Few users who pay well, and a big market of gamers at a small price.
-      assistant: { users: 7_200, annualRevenue: 700_000, payingUsers: 3_000 },
-      games: { users: 22_500, annualRevenue: 1_000_000, payingUsers: 11_000 },
+      assistant: { users: 7_200, annualRevenue: 1_150_000, payingUsers: 4_000 },
+      games: { users: 22_500, annualRevenue: 1_500_000, payingUsers: 13_500 },
     },
+    // About four months: strong play can't float before about day 120, and only just ready then.
+    minTradingDays: 120,
     recordDays: 30,
     minUptime: 99,
     minSatisfaction: 70,
     maxCostSwing: 0.25,
+    costDaysSetAside: 1,
     comfortMargin: 0.25,
     coldChance: { min: 0.05, max: 0.3 },
     coldDelayDays: 30,
