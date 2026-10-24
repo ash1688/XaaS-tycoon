@@ -87,9 +87,12 @@ const stake = (share: number) => `${Math.round(share * 1000) / 10}%`;
 /** A share price, which can be under a penny with many shares. */
 const perShare = (n: number) => `£${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
 
-/** An offer's terms in words: friends and family's cash for their share, the grant's cash for its condition's days. */
-const termsText = (funder: FunderId, t: Terms) =>
-  funder === "friendsAndFamily" ? `${money(t.amount!)} for ${stake(t.share!)}` : `${money(t.amount!)} for ${t.days} days of uptime`;
+/** Who an offer is from: friends and family or the grant, or an investor who approached (the angel). */
+type Party = FunderId | "angel";
+
+/** An offer's terms in words: cash for their share, or the grant's cash for its condition's days. */
+const termsText = (party: Party, t: Terms) =>
+  party === "grant" ? `${money(t.amount!)} for ${t.days} days of uptime` : `${money(t.amount!)} for ${stake(t.share!)}`;
 
 /** A roll in words: "rolled 15 −6 for asking 20% = 9: middle, they moved 50% of the way". */
 const rollText = (r: NegotiationRound) =>
@@ -392,9 +395,11 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const valuation = sim.valuation(state);
   const table = sim.capTable(state);
   lines.push(
-    `${state.ipo.result ? `market value ${money(state.ipo.result.marketValue)} at the first day's close` : `valuation ${money(valuation.valuation)}`} | share price ${perShare(table.sharePrice)} | ${table.rows.map((r) => `${r.name.toLowerCase()} ${stake(r.share)}`).join(", ")} of ${table.sharesInIssue.toLocaleString("en-GB")} shares`,
+    `${state.ipo.result ? `market value ${money(state.ipo.result.marketValue)} at the first day's close` : `valuation ${money(valuation.valuation)}`} | share price ${perShare(table.sharePrice)} | ${table.rows.map((r) => `${r.id === "angel" ? r.name : r.name.toLowerCase()} ${stake(r.share)}`).join(", ")} of ${table.sharesInIssue.toLocaleString("en-GB")} shares`,
   );
   lines.push(`funding: ${fundingStatus(sim, state)}`);
+  const investors = investorsStatus(sim, state);
+  if (investors) lines.push(`investors: ${investors}`);
   lines.push(`ipo: ${ipoStatus(sim, state)}`);
   const rescue = rescueStatus(sim, state);
   if (rescue) lines.push(`rescue: ${rescue}`);
@@ -515,18 +520,63 @@ function calendarLines(sim: Sim, state: GameState): string[] {
 function fundingStatus(sim: Sim, state: GameState): string {
   const f = sim.funding(state);
   const n = f.negotiations;
+  const closed = `closed on day ${f.closedDay} (you took an angel)`;
   const ff = f.friendsAndFamilyOffer
     ? `${standing(n.friendsAndFamily!)} ${money(f.friendsAndFamilyOffer.amount)} for ${stake(f.friendsAndFamilyOffer.theirShare)}`
-    : f.friendsAndFamily!.status;
+    : (f.friendsAndFamily?.status ?? closed);
   const g = f.grant;
   const grant = f.grantOffer
     ? `${standing(n.grant!)} ${money(f.grantOffer.amount)} if uptime ≥ ${f.grantOffer.minUptime}% for ${f.grantOffer.days} days`
-    : g!.status === "accepted"
+    : !g
+      ? closed
+      : g.status === "accepted"
       ? g!.untilDay === null
         ? `${g!.maxHoursDown}h down allowed over ${g!.days} days, starting once the launch is over`
         : `${g!.hoursDown}h of ${g!.maxHoursDown}h down allowed used, ${state.day < g!.fromDay! ? `starting day ${g!.fromDay}, ` : ""}${g!.daysLeft} days left`
-      : g!.status;
+      : g.status;
   return `friends and family ${ff} | grant ${grant}`;
+}
+
+/** The angel in a line: an open approach, their deal and its target, or a new one coming. Null before any approach. */
+function investorsStatus(sim: Sim, state: GameState): string | null {
+  const i = sim.investors(state);
+  if (i.offer) {
+    const o = i.offer;
+    return `ANGEL ${o.investor} approached on day ${o.day}: ${standing(i.negotiation!)} ${money(o.amount)} for ${stake(o.theirShare)}, valuing the company at ${money(o.valuation)} with their cash ("angel" for the offer in full)`;
+  }
+  const a = i.angel;
+  if (a) {
+    const target = `${money(a.target.dailyRevenue)}/day over ${a.target.days} days by day ${a.target.byDay}`;
+    const how =
+      a.status === "running"
+        ? `target ${target}: ${money(a.dailyRevenue)}/day now, ${a.daysLeft} days left`
+        : a.status === "met"
+          ? `target ${target} met on day ${a.settledDay}`
+          : `target ${target} missed on day ${a.settledDay}: they took ${a.extraShares.toLocaleString("en-GB")} extra shares`;
+    return `angel ${a.investor} put in ${money(a.amount)} on day ${a.day} for ${stake(a.share)}; ${how}`;
+  }
+  if (i.anotherComing) return `you declined ${i.declined.at(-1)!.investor}: another angel approaches in a few days`;
+  return null;
+}
+
+/** The angel's open offer in full, or their deal. */
+function angelLines(sim: Sim, state: GameState): string[] {
+  const i = sim.investors(state);
+  const o = i.offer;
+  if (!o) {
+    const status = investorsStatus(sim, state);
+    return [status ? `angel: ${status}` : "no angel investor has approached: they come to companies doing well"];
+  }
+  return [
+    `angel ${o.investor} (accept angel | decline angel): ${money(o.amount)} for ${o.newShares.toLocaleString("en-GB")} new shares at ${perShare(o.sharePrice)}. ` +
+      `They value the company at ${money(o.preMoney)} before their cash (${o.multiple}× the formula's business, cash at face value; today's valuation is ${money(o.formulaValuation)}), ${money(o.valuation)} with it. ` +
+      `They'd own ${stake(o.theirShare)}; you'd go from ${stake(o.yourShareBefore)} to ${stake(o.yourShareAfter)}. Paid now, all of it.`,
+    `  target: ${o.condition}`,
+    `  if missed: ${o.ifMissed}`,
+    ...o.effects.map((e) => `  accepting: ${e}`),
+    `  negotiation: ${standing(i.negotiation!)}. If their offer stands while the business is worth less than when they approached, their share rises in step.`,
+    ...negotiationLines("angel", i.negotiation),
+  ];
 }
 
 /** The rescue buyout in a line, once it has happened: what the vulture VC put in and took, and its buy-back price. */
@@ -691,6 +741,16 @@ export function renderCommands(sim: Sim, state: GameState): string {
     const odds = countering.filter(Boolean).join("|");
     if (odds) lines.push(`  odds <${odds}> ...   (the same terms as counter: the odds on the roll and each offer it could bring; changes nothing)`);
   }
+  const investors = sim.investors(state);
+  if (investors.offer) {
+    const max = pct(sim.config.negotiation.maxAsk * 100);
+    lines.push(`  angel   (the angel's offer in full: the valuation it sets, its target and what missing it costs; changes nothing)`);
+    lines.push(`  accept angel | decline angel   (declining brings a new angel in a few days; accepting closes friends and family and grants)`);
+    if (investors.negotiation?.countersLeft) {
+      lines.push(`  counter angel [amount <£>] [share <%>]   (ask for more cash and/or a smaller share for them; up to ${max} better in all; the third offer is final)`);
+      lines.push(`  odds angel ...   (the same terms as counter: the odds on the roll and each offer it could bring; changes nothing)`);
+    }
+  } else if (investors.angel) lines.push(`  angel   (your angel's deal and how their target stands; changes nothing)`);
   const rescue = sim.rescue(state);
   if (rescue) lines.push(`  rescue   (the rescue buyout in full: cash, share taken, cuts, the buy-back price; changes nothing)`);
   if (rescue?.buyBackPrice) {
@@ -723,7 +783,8 @@ export type Command =
   | { kind: "market" }
   | { kind: "funding" }
   | { kind: "ipo" }
-  | { kind: "odds"; funder: FunderId; terms: Partial<Terms> }
+  | { kind: "odds"; funder: Party; terms: Partial<Terms> }
+  | { kind: "angel" }
   | { kind: "rescue" }
   | { kind: "calendar" }
   | { kind: "next"; days: number }
@@ -775,10 +836,11 @@ export function parseCommand(text: string): Command {
     return { ...(agency ? { agency } : {}), ...(grade ? { grade } : {}), count: count(grade ? rest[1] : rest[0]) };
   };
   const one = (action: Action): Command => ({ kind: "action", action, times: 1 });
-  const funder = (w: string | undefined): FunderId => {
+  const funder = (w: string | undefined): Party => {
     if (w === "ff" || w === "friends" || w === "friendsandfamily") return "friendsAndFamily";
     if (w === "grant") return "grant";
-    throw new SimError("bad_command", "Expected a funder: ff (friends and family) or grant.");
+    if (w === "angel") return "angel";
+    throw new SimError("bad_command", "Expected who the offer is from: ff (friends and family), grant or angel.");
   };
   // "amount 18000 share 18", in any order: a share is a percent; days are whole days.
   const terms = (rest: string[]): Partial<Terms> => {
@@ -843,18 +905,27 @@ export function parseCommand(text: string): Command {
       return { kind: "funding" };
     case "calendar":
       return { kind: "calendar" };
-    case "accept":
-      return one({ type: "acceptFunding", funder: funder(args[0]) });
-    case "decline":
-      return one({ type: "declineFunding", funder: funder(args[0]) });
+    case "accept": {
+      const from = funder(args[0]);
+      return one(from === "angel" ? { type: "acceptInvestor" } : { type: "acceptFunding", funder: from });
+    }
+    case "decline": {
+      const from = funder(args[0]);
+      return one(from === "angel" ? { type: "declineInvestor" } : { type: "declineFunding", funder: from });
+    }
+    case "angel":
+      return { kind: "angel" };
     case "ipo":
       return { kind: "ipo" };
     case "apply":
       return one({ type: "applyForIpo" });
     case "ring":
       return one({ type: "ringBell", float: number(args[0], "a float percentage, 15 to 40") / 100 });
-    case "counter":
-      return one({ type: "counterFunding", funder: funder(args[0]), terms: terms(args.slice(1)) });
+    case "counter": {
+      const from = funder(args[0]);
+      const asked = terms(args.slice(1));
+      return one(from === "angel" ? { type: "counterInvestor", terms: asked } : { type: "counterFunding", funder: from, terms: asked });
+    }
     case "odds":
       return { kind: "odds", funder: funder(args[0]), terms: terms(args.slice(1)) };
     case "buyapi":
@@ -943,7 +1014,12 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
   if (command.kind === "market") return { state, rows: [], lines: marketLines(sim, state) };
   if (command.kind === "funding") return { state, rows: [], lines: fundingLines(sim, state) };
   if (command.kind === "ipo") return { state, rows: [], lines: ipoLines(sim, state) };
-  if (command.kind === "odds") return { state, rows: [], lines: oddsLines(command.funder, sim.counterOdds(state, command.funder, command.terms)) };
+  if (command.kind === "odds") {
+    const odds =
+      command.funder === "angel" ? sim.investorCounterOdds(state, command.terms) : sim.counterOdds(state, command.funder, command.terms);
+    return { state, rows: [], lines: oddsLines(command.funder, odds) };
+  }
+  if (command.kind === "angel") return { state, rows: [], lines: angelLines(sim, state) };
   if (command.kind === "rescue") return { state, rows: [], lines: rescueLines(sim, state) };
   if (command.kind === "calendar") return { state, rows: [], lines: calendarLines(sim, state) };
   if (command.kind === "end") {
@@ -985,18 +1061,29 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
     return { state: current, rows, lines: [...bellLines(current.ipo.result!), `GAME OVER: floated on day ${current.day}`] };
   }
   if (command.action.type === "counterFunding") return { state: current, rows, lines: [counterLine(sim, current, command.action.funder)] };
+  if (command.action.type === "counterInvestor") return { state: current, rows, lines: [counterLine(sim, current, "angel")] };
+  if (command.action.type === "acceptInvestor") {
+    const a = sim.investors(current).angel!;
+    return {
+      state: current,
+      rows,
+      lines: [
+        `acceptInvestor: done. ${a.investor} put in ${money(a.amount)} for ${stake(a.share)}; valuation now ${money(sim.valuation(current).valuation)}. Target: ${money(a.target.dailyRevenue)}/day over ${a.target.days} days by day ${a.target.byDay}.`,
+      ],
+    };
+  }
   return { state: current, rows, lines: [`${command.action.type}${command.times > 1 ? ` ×${done}` : ""}: done${paid}`] };
 }
 
 /** What a counter's roll did, and the offer that stands now. */
-function counterLine(sim: Sim, state: GameState, funder: FunderId): string {
-  const n = sim.funding(state).negotiations[funder]!;
+function counterLine(sim: Sim, state: GameState, funder: Party): string {
+  const n = funder === "angel" ? sim.investors(state).negotiation! : sim.funding(state).negotiations[funder]!;
   const round = n.rounds.at(-1)!;
   return `counter ${termsText(funder, round.counter)}: ${rollText(round)}. Offer ${n.offers.length}: ${termsText(funder, n.offers.at(-1)!)}${n.final ? " (final: accept or decline)" : ` (${n.countersLeft} counter left)`}`;
 }
 
 /** A counter's odds, before it's made. */
-function oddsLines(funder: FunderId, o: CounterOdds): string[] {
+function oddsLines(funder: Party, o: CounterOdds): string[] {
   const chance = (x: number) => pct(x * 100);
   return [
     `counter ${termsText(funder, o.counter)} asks ${pct(o.ask * 100)} better (most ${pct(o.maxAsk * 100)}): −${o.penalty} on the roll${o.bonus ? `, +${o.bonus} bonus` : ""}`,
@@ -1007,7 +1094,7 @@ function oddsLines(funder: FunderId, o: CounterOdds): string[] {
 }
 
 /** A negotiation so far, if the student has countered: each offer and the roll that came after it. */
-function negotiationLines(funder: FunderId, n: NegotiationView | null): string[] {
+function negotiationLines(funder: Party, n: NegotiationView | null): string[] {
   if (!n?.rounds.length) return [];
   return n.rounds.map(
     (r, i) =>
@@ -1088,8 +1175,10 @@ function fundingLines(sim: Sim, state: GameState): string[] {
         `Negotiation: ${standing(f.negotiations.friendsAndFamily!)}.`,
       ...negotiationLines("friendsAndFamily", f.negotiations.friendsAndFamily),
     );
+  } else if (!f.friendsAndFamily) {
+    lines.push(`friends and family: closed on day ${f.closedDay}, when you took on your angel`);
   } else {
-    const t = f.friendsAndFamily!;
+    const t = f.friendsAndFamily;
     lines.push(`friends and family: ${t.status} on day ${t.day}${t.status === "accepted" ? `, ${money(t.amount)} for ${t.shares.toLocaleString("en-GB")} shares` : ""}`);
   }
   const g = f.grantOffer;
@@ -1099,8 +1188,9 @@ function fundingLines(sim: Sim, state: GameState): string[] {
       ...negotiationLines("grant", f.negotiations.grant),
     );
   }
+  else if (!f.grant) lines.push(`grant: closed on day ${f.closedDay}, when you took on your angel`);
   else {
-    const t = f.grant!;
+    const t = f.grant;
     lines.push(
       `grant: ${t.status === "declined" ? "declined" : "accepted"} on day ${t.day}` +
         (t.status === "met" ? `; condition met on day ${t.untilDay}` : "") +

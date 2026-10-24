@@ -15,6 +15,7 @@ import type {
   FeatureGapView,
   FeatureView,
   FundingView,
+  InvestorsView,
   DifficultyId,
   GameLengthId,
   GameSummary,
@@ -387,6 +388,12 @@ export interface CompanyView {
    */
   funding: FundingView;
   /**
+   * The funding ladder: an investor's open approach (the angel's) with what accepting its offer now would do, its
+   * target and what missing it costs, and its negotiation; the angel's deal once accepted with how its target stands;
+   * and the valuation an investor set. The hidden targets that bring them stay hidden.
+   */
+  investors: InvestorsView;
+  /**
    * The IPO: the readiness checklist condition by condition, whether the company can apply to float and why not, a
    * cold market's wait, once approved the offer with what each float would do, and once floated the first day of
    * trading.
@@ -453,6 +460,7 @@ export type PricePreviewView = PricePreview;
 
 /**
  * GET .../counter-odds?funder=&amount=&share=&days=: what countering a funder's open offer with those terms would do,
+ * and GET .../investor-odds?amount=&share= the same for an investor's open approach,
  * before it's made: how far it asks, the odds of a high, middle or low roll, and the next offer each would bring.
  * Changes nothing. Refused as the counter would be.
  */
@@ -678,8 +686,8 @@ export interface UiEventParams {
   prices?: number[];
   /** pricePreview and quote: whether the student went on to confirm it. */
   confirmed?: boolean;
-  /** quote: a migration, loan, friends and family or grant quote. */
-  kind?: "migration" | "loan" | "friendsAndFamily" | "grant";
+  /** quote: a migration, loan, friends and family, grant or angel investor quote. */
+  kind?: "migration" | "loan" | "friendsAndFamily" | "grant" | "angel";
   /** quote: the model a migration quote was for. */
   target?: ModelId;
   /** control: which one, such as "servers-app" or "staff-hire-ops". */
