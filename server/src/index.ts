@@ -39,6 +39,13 @@ if (startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
   process.exit(1);
 }
 
+// Optional: GAME_MVP=off gives every product an MVP of no size, so a game launches as soon as it can serve users. For
+// tests and demos that are about something after the launch.
+const mvpOff = process.env.GAME_MVP === "off";
+const mvp = mvpOff
+  ? { ...defaultConfig.mvp, baseDevDays: { ecommerce: 0, social: 0, video: 0, payments: 0, assistant: 0, games: 0 } }
+  : defaultConfig.mvp;
+
 // Timed flow: a tick every TIMED_FLOW_SECONDS at normal speed, with Pause and speeds. On unless TIMED_FLOW=off; the
 // teacher can also switch it off on the config page.
 const timedFlow = { enabled: process.env.TIMED_FLOW !== "off", seconds: DEFAULT_TIMED_FLOW_SECONDS };
@@ -84,7 +91,7 @@ const app = await buildApp({
   db,
   teacherPassword,
   sessionSecret,
-  sim: createSim({ ...defaultConfig, finalDay }),
+  sim: createSim({ ...defaultConfig, finalDay, mvp }),
   timedFlow,
   startDate,
   trustProxy,

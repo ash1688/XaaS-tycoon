@@ -71,14 +71,14 @@ const launchText = computed(() => {
   if (l.status === "launching") {
     return `${formatCount(l.arrived)} users have joined so far, more on the way. Then normal growth takes over.`;
   }
-  if (l.status === "upcoming") {
-    return `Your first users start arriving at the end of day ${l.day}, once your MVP is done and your servers are ready${ramp}.`;
-  }
+  // A config can make the MVP no size: then only the servers decide.
+  const ready = c.mvp.total > 0 ? "once your MVP is done and your servers are ready" : "when your servers are ready";
+  if (l.status === "upcoming") return `Your first users start arriving at the end of day ${l.day}, ${ready}${ramp}.`;
   if (c.mvp.launchDay === null) {
     return `Nobody is building your MVP. Your first users start arriving once it's done and your servers are ready${ramp}. Until then there's no income, but your staff are still paid.`;
   }
-  const delivery = game.buysServers ? ` Bought kit takes ${days(c.serverOptions[0]?.readyDays ?? 0)} to arrive, so order it while the MVP is built.` : "";
-  return `Nothing is set up to serve users yet. Your first users start arriving once your MVP is done and your servers are ready${ramp}. Until then there's no income, but your staff are still paid.${delivery}`;
+  const delivery = game.buysServers ? ` Bought kit takes ${days(c.serverOptions[0]?.readyDays ?? 0)} to arrive${c.mvp.done ? "" : ", so order it while the MVP is built"}.` : "";
+  return `Nothing is set up to serve users yet. Your first users start arriving ${ready}${ramp}. Until then there's no income, but your staff are still paid.${delivery}`;
 });
 // What to do before launch, each with the page that does it.
 const launchSteps = computed(() => {
@@ -86,15 +86,17 @@ const launchSteps = computed(() => {
   const l = c?.launch;
   if (!c || !l) return [];
   const steps: { id: string; text: string; done: boolean; page?: string; pageName?: string }[] = [];
-  steps.push({
-    id: "mvp",
-    text: c.mvp.done
-      ? "Build your MVP"
-      : `Build your MVP: ${formatCount(c.mvp.progress)} of ${formatCount(c.mvp.total)} developer-days done`,
-    done: c.mvp.done,
-    page: "product",
-    pageName: "Product",
-  });
+  // A config can make the MVP no size: then there's nothing to build.
+  if (c.mvp.total > 0)
+    steps.push({
+      id: "mvp",
+      text: c.mvp.done
+        ? "Build your MVP"
+        : `Build your MVP: ${formatCount(c.mvp.progress)} of ${formatCount(c.mvp.total)} developer-days done`,
+      done: c.mvp.done,
+      page: "product",
+      pageName: "Product",
+    });
   if (!l.needsServers) steps.push({ id: "servers", text: "Nothing to set up: the provider runs the servers", done: true });
   else
     steps.push({
