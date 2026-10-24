@@ -2823,14 +2823,14 @@ describe("encounters", () => {
 
   it("shows the danger meter rising, then the event it fires, then the meter back from 0", async () => {
     const code = await newCode();
-    // SaaS launches as the game starts, so the meter rises from day 2.
+    // SaaS launches as the game starts, so the meter rises from day 2. SaaS has no traffic-spike warning.
     const created = await encounterApp.inject({
       method: "POST",
       url: `/api/codes/${code}/companies`,
       payload: { name: "Acme", productType: "social", model: "saas" },
     });
     const url = `/api/codes/${code}/companies/${created.json<CompanyView>().id}`;
-    expect(created.json<CompanyView>().danger).toEqual({ meter: 0, max: 2, rise: 0, dailyRise: 1, risks: [] });
+    expect(created.json<CompanyView>().danger).toEqual({ meter: 0, max: 2, rise: 0, dailyRise: 1, risks: [], warning: null });
     const next = async () => (await encounterApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
 
     expect((await next()).company).toMatchObject({ day: 2, events: [], danger: { meter: 1, rise: 1, risks: [] } });
