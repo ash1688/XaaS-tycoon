@@ -30,6 +30,11 @@ export interface DangerView {
   dailyRise: number;
   /** The risks that made it climb faster on the day just played. */
   risks: DangerRiskView[];
+  /**
+   * A warning about the next event, when it has one and the meter would reach it within its warning's well-run days:
+   * the one time the list shows its hand. Null otherwise.
+   */
+  warning: { event: string; name: string; text: string } | null;
 }
 
 /** The situation an encounter list is rolled in, and the meter checked against. */
@@ -156,6 +161,25 @@ export function createEncounters(config: GameConfig, servers: Servers) {
     },
   };
 
+  /** The next event's warning, if it has one and the meter is within its days of it. */
+  function warning(state: GameState): DangerView["warning"] {
+    const next = state.encounterList.find((e) => {
+      const event = eventConfig(e.event);
+      return !!event && canHit(state, event, state.day + 1);
+    });
+    const event = next && eventConfig(next.event);
+    if (!next || !event?.warning?.days || state.dangerMeter <= 0) return null;
+    const within = state.dangerMeter + event.warning.days * encounters.dailyRise >= next.threshold;
+    return within ? { event: event.id, name: event.name, text: event.warning.text } : null;
+  }
+
+  /** A warning that came on today, for the day's log. */
+  function warningEntries(before: GameState, after: GameState): LogEntry[] {
+    const now = warning(after);
+    if (!now || warning(before)?.event === now.event) return [];
+    return [{ text: `Warning: ${now.text}`, cashDelta: 0, kind: "danger" }];
+  }
+
   function danger(state: GameState): DangerView {
     return {
       meter: state.dangerMeter,
@@ -164,10 +188,11 @@ export function createEncounters(config: GameConfig, servers: Servers) {
       rise: state.dangerMeter > 0 ? riseFor(state.dangerRisks) : 0,
       dailyRise: encounters.dailyRise,
       risks: state.dangerRisks.map((id) => ({ id, ...RISK_TEXT[id], rise: encounters.riskRise[id] })),
+      warning: warning(state),
     };
   }
 
-  return { startingEncounters, checkDay, riseDay, danger };
+  return { startingEncounters, checkDay, riseDay, warningEntries, danger };
 }
 
 export type Encounters = ReturnType<typeof createEncounters>;

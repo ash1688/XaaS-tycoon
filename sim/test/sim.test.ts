@@ -1051,6 +1051,22 @@ describe("features", () => {
     );
   });
 
+  it("says when developers have nothing to do: nothing being built, or on SaaS, where they only set up add-ons", () => {
+    const idle = (state: GameState) => sim.staff(state).find((p) => p.pool === "developers")!.idle;
+    expect(idle(startOn())).toMatch(/Nothing is being built/);
+    expect(idle(sim.applyAction(startOn(), build("checkout")))).toBeNull();
+    expect(idle(startOn("iaas", 0))).toBeNull();
+    expect(idle(startOn("saas"))).toMatch(/^On SaaS the provider builds the features: your developers only set up add-ons/);
+    const allOn = (state: GameState, status: "built" | "addon"): GameState => ({
+      ...state,
+      features: Object.fromEntries(features.map((f) => [f.id, { status, progress: 0 }])),
+    });
+    expect(idle(allOn(startOn("saas"), "addon"))).toMatch(/every add-on is on: your developers have nothing to do/);
+    expect(idle(allOn(startOn(), "built"))).toBe("Every feature is built: your developers have nothing to do.");
+    // Only developers can sit idle like this.
+    expect(sim.staff(startOn()).filter((p) => p.pool !== "developers").every((p) => p.idle === null)).toBe(true);
+  });
+
   it("starts a build without moving time on or touching cash", () => {
     const state = sim.applyAction(startOn(), build("checkout"));
     expect(state).toMatchObject({ day: 1, cash: 1000 });
@@ -5119,7 +5135,7 @@ describe("encounters", () => {
       expect(threshold).toBeLessThanOrEqual(64);
     }
     expect(begin(s, "paas").encounterList).toEqual(state.encounterList);
-    expect(s.danger(state)).toEqual({ meter: 0, max: 64, rise: 0, dailyRise: 1, risks: [] });
+    expect(s.danger(state)).toEqual({ meter: 0, max: 64, rise: 0, dailyRise: 1, risks: [], warning: null });
   });
 
   it("creeps on a well-run day and rises faster with risky play: unpatched servers, overload, low satisfaction", () => {
@@ -5180,6 +5196,36 @@ describe("encounters", () => {
     expect(fired.dangerMeter).toBe(1);
     expect(s.events(fired).map((e) => e.id)).toEqual(["patch"]);
     expect(fired.encounterList).toEqual([{ event: "patch", threshold: 5 }]);
+  });
+
+  it("warns of an event with a warning about its days ahead, once, and pauses time for it", () => {
+    const warned: EventConfig = { ...patch, warning: { days: 7, text: "Patch coming." } };
+    const s = withEncounters({ thresholdMin: 20, thresholdMax: 20 }, warned);
+    const start = begin(s, "paas");
+    // The meter is 13 at the end of day 14: seven well-run days from 20, so the warning comes that day. It fires on 22.
+    const { log } = s.advance(start, 22);
+    const warnings = log.filter((d) => d.entries.some((e) => e.kind === "danger" && e.text === "Warning: Patch coming."));
+    expect(warnings.map((d) => d.day)).toEqual([14]);
+    expect(eventDays(log)).toEqual([22]);
+    // The game starts on day 1, so advancing 13 days plays to the end of day 14.
+    expect(s.danger(s.advance(start, 12).state).warning).toBeNull();
+    expect(s.danger(s.advance(start, 13).state).warning).toEqual({ event: "patch", name: "OS security patch", text: "Patch coming." });
+    expect(s.danger(s.advance(start, 20).state).warning).not.toBeNull();
+    // Once it fires the new list starts from 0, out of the warning's reach.
+    expect(s.danger(s.advance(start, 21).state).warning).toBeNull();
+    const paused = s.tick(s.advance(start, 12).state);
+    expect(paused.pauses).toContainEqual({ kind: "alert", id: "warning-patch", text: "Warning: OS security patch may be coming" });
+    expect(s.tick(s.advance(start, 13).state).pauses.some((p) => p.id === "warning-patch")).toBe(false);
+    // Without a warning, the same event is a surprise.
+    const quiet = withEncounters({ thresholdMin: 20, thresholdMax: 20 }, patch);
+    expect(quiet.advance(quiet.newGame({ companyName: "Acme", productType: "social", model: "paas", seed: 42 }), 22).log.some((d) => d.entries.some((e) => e.text.startsWith("Warning:")))).toBe(false);
+  });
+
+  it("warns of a traffic spike a week ahead, by default", () => {
+    const spike = defaultConfig.events.find((e) => e.id === "trafficSpike")!;
+    expect(spike.warning?.days).toBe(7);
+    // On-prem kit arrives in fewer days than the warning gives.
+    expect(spike.warning!.days).toBeGreaterThan(defaultConfig.models.onprem.servers!.readyDays!);
   });
 
   it("fires the lowest threshold first, then rolls a new list", () => {

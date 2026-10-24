@@ -37,7 +37,7 @@ import { createRivals, type MarketView } from "./rivals.ts";
 import { seedRng } from "./rng.ts";
 import { createShares, type CapTableView, type FundingView, type ValuationView } from "./shares.ts";
 import { createServers, type ManagedView, type ServerOption, type ServerView, type UnitsView } from "./servers.ts";
-import { createStaff, type StaffPoolView } from "./staff.ts";
+import { createStaff, staffOutput, type StaffPoolView } from "./staff.ts";
 import {
   GAME_STATE_VERSION,
   isCurrentState,
@@ -467,6 +467,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     funding: shares.funding,
     calendar: calendar.calendar,
     ipo: ipo.ipoView,
+    danger: encounters.danger,
   });
   const rescue = createRescue(config, finance, shares, (s) => runway(s), (s) => infra.opsNeededNow(s));
 
@@ -809,6 +810,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     };
     // The danger meter rises with the day's risks, on the model the day was played on.
     const risen: GameState = { ...played, ...encounters.riseDay(played, live, served.overloaded) };
+    entries.push(...encounters.warningEntries(played, risen));
     // The migration moves on after the day is played and billed, so a model switch takes effect from tomorrow.
     const migrated = migration.migrationDay(risen);
     entries.push(...migrated.entries);
@@ -862,6 +864,31 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     return pauses.tick(loadUnheld(saved), advanceOneDay);
   }
 
+  /**
+   * Why developers on the team have nothing to do, if they haven't: on SaaS the provider builds the features, so they
+   * only set up add-ons; on the other models, nothing is being built.
+   */
+  function developersIdle(state: GameState): string | null {
+    if (staffOutput(config, state, "developers") <= 0) return null;
+    const list = config.productTypes[state.productType].features;
+    const allOn = list.every((f) => ["built", "addon"].includes(state.features[f.id]?.status ?? ""));
+    if (state.model === "saas") {
+      const needed = config.addons.minConfigDevelopers;
+      const setUp = needed > 0 ? ` Setting up an add-on needs the work of ${needed} developer${needed === 1 ? "" : "s"}.` : "";
+      return allOn
+        ? "On SaaS the provider builds the features, and every add-on is on: your developers have nothing to do."
+        : `On SaaS the provider builds the features: your developers only set up add-ons, and sit idle in between.${setUp}`;
+    }
+    if (features.currentBuild(state)) return null;
+    return allOn
+      ? "Every feature is built: your developers have nothing to do."
+      : "Nothing is being built: your developers have nothing to do until you start a feature.";
+  }
+
+  function staffWithIdle(state: GameState): StaffPoolView[] {
+    return staff.staffView(state).map((p) => (p.pool === "developers" ? { ...p, idle: developersIdle(state) } : p));
+  }
+
   function endGame(saved: GameState): GameState {
     const state = load(saved);
     return state.status === "playing" ? { ...state, status: "finished", endedByTeacher: true } : state;
@@ -882,7 +909,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     opsNeededNow: (s) => infra.opsNeededNow(load(s)),
     opsNeededOnceReady: (s) => servers.opsNeededOnceReady(load(s)),
     dailyStaffCost: (s) => staff.dailyStaffCost(load(s)),
-    staff: (s) => staff.staffView(load(s)),
+    staff: (s) => staffWithIdle(load(s)),
     monthlyInfrastructureCost: (s) => infra.monthlyInfrastructureCost(load(s)),
     monthlyAddonCost: (s) => features.monthlyAddonCost(load(s)),
     dailyIncome: (s) => pricing.dailyIncome(load(s)),

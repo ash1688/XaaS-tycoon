@@ -165,7 +165,7 @@ export interface FundingView {
 /** What friends and family's offer is negotiated on: their cash, and their share of the company after (0–1). */
 const FF_TERMS: TermSpec[] = [
   { key: "amount", label: "the cash", better: "higher", step: 100 },
-  { key: "share", label: "their share", better: "lower", step: 0.001, min: 0.001 },
+  { key: "share", label: "their share", better: "lower", step: 0.001, min: 0.001, max: 0.99 },
 ];
 /** And the grant's: its cash, and the days its uptime condition runs. */
 const GRANT_TERMS: TermSpec[] = [

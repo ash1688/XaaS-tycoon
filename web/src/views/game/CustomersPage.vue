@@ -17,6 +17,9 @@ const userChange = computed(() =>
 const paidPercent = computed(() =>
   game.company && game.company.users ? Math.round((100 * game.company.paidUsers) / game.company.users) : 0,
 );
+/** How much of the users the product can reach the company has: growth slows as it fills. */
+const reach = computed(() => game.company?.market.reach);
+const filledPercent = computed(() => Math.round(100 * (reach.value?.filled ?? 0)));
 const activeFeatures = computed(
   () => game.company?.features.filter((f) => f.status === "built" || f.status === "addon").length ?? 0,
 );
@@ -44,6 +47,11 @@ const activeFeatures = computed(
           <span class="value" data-testid="free-users">{{ formatCount(game.company.freeUsers) }}</span>
           <small>{{ 100 - paidPercent }}% of users</small>
         </div>
+        <div v-if="reach" class="stat">
+          <span class="label">Market reached</span>
+          <span class="value" data-testid="market-reached">{{ filledPercent }}%</span>
+          <small>of {{ formatCount(reach.size) }} users</small>
+        </div>
         <div class="stat">
           <span class="label">Uptime</span>
           <span class="value">{{ formatUptime(game.company.uptime) }}</span>
@@ -68,6 +76,12 @@ const activeFeatures = computed(
         Your users get {{ game.productName(game.company.productType).toLowerCase() }} as SaaS, whatever you run it on.
         They grow every day: each feature you add speeds that up, and outages, feature gaps and unhappy customers slow
         it down.
+      </p>
+      <p v-if="reach && filledPercent >= 70" class="wave-note" data-testid="market-filling">
+        <span class="badge">Market filling up</span>
+        You have {{ filledPercent }}% of the {{ formatCount(reach.size) }} users your product can reach, so new users
+        come at only {{ 100 - filledPercent }}% of the rate they would in an empty market. Features and holidays speed up
+        what's left, but they can't take you past the market's size.
       </p>
       <p v-if="game.company.priceWave && game.company.priceWave.day > 0" class="wave-note" data-testid="customers-wave">
         <span class="badge">Price {{ game.company.priceWave.direction }}</span>
