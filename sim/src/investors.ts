@@ -22,8 +22,11 @@ import {
 export interface InvestorOffer {
   round: RoundId;
   investor: string;
-  /** The day they approached. */
+  /** The day they approached, and the last day played it stands for: unanswered by the end of it, it lapses. */
   day: number;
+  lastDay: number;
+  /** Days played before it lapses: 1 means it lapses at the end of the next day played. */
+  daysLeft: number;
   amount: number;
   /**
    * Their share of the company after, 0–1: as offered, or more if the business is worth less now than when they
@@ -217,6 +220,8 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
       round: a.round,
       investor: a.investor,
       day: a.day,
+      lastDay: a.day + c.offerDays,
+      daysLeft: a.day + c.offerDays - state.day,
       amount,
       theirShare: newShares / sharesAfter,
       preMoney: Math.round(preMoney),
@@ -363,7 +368,7 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
       investors: {
         ...state.investors,
         approach: null,
-        declined: [...state.investors.declined, { round: a.round, investor: a.investor, day: state.day }],
+        declined: [...state.investors.declined, { round: a.round, investor: a.investor, day: state.day, lapsed: false }],
         nextApproachDay: state.day + c.retryDays,
       },
     };
@@ -421,7 +426,27 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
     const settled = angelDay(state);
     let s = settled.state;
     const i = s.investors;
-    if (s.status !== "playing" || i.angel || i.approach) return settled;
+    if (s.status !== "playing" || i.angel) return settled;
+    // An offer left unanswered lapses at the end of its last day, as if declined.
+    const a = i.approach;
+    if (a) {
+      if (s.day < a.day + c.offerDays) return settled;
+      const lapsed: GameState = {
+        ...s,
+        investors: {
+          ...i,
+          approach: null,
+          declined: [...i.declined, { round: a.round, investor: a.investor, day: s.day, lapsed: true }],
+          nextApproachDay: s.day + c.retryDays,
+        },
+      };
+      const entry: LogEntry = {
+        text: `${a.investor}'s offer lapsed: you didn't accept it within ${c.offerDays} days, so it counts as declined. Another ${ROUND_NAMES[a.round]} will approach in a few days, on less generous terms.`,
+        cashDelta: 0,
+        kind: "funding",
+      };
+      return { state: lapsed, entries: [...settled.entries, entry] };
+    }
     if (i.nextApproachDay === null && angelTargetHit(s)) {
       s = { ...s, investors: { ...i, nextApproachDay: s.day + c.approachDays } };
     }

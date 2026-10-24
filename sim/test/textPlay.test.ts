@@ -518,6 +518,8 @@ describe("the angel investor", () => {
     expect(shown).toContain(`target: ${offer.condition}`);
     expect(shown).toContain(`if missed: ${offer.ifMissed}`);
     expect(shown).toMatch(/accepting: Friends and family and grants close for good/);
+    expect(shown).toContain(`offer: lapses unanswered after day ${offer.lastDay} (${offer.daysLeft} days left), counting as a decline`);
+    expect(renderStatus(early, turn.state)).toContain(`lapses unanswered after day ${offer.lastDay} (3 days left)`);
   });
 
   it("negotiates and accepts the angel, closing friends and family and the grant", () => {
@@ -647,8 +649,13 @@ describe("the IPO checklist over time", () => {
   it("stops time when the company is no longer ready", () => {
     const s = createSim({
       ...defaultConfig,
-      // No moderation, as on main before moderators: this is about something else.
+      // No moderation, as on main before moderators, and no angel, whose offer lapsing stops time: this is about
+      // something else.
       productTypes: { ...defaultConfig.productTypes, social: { ...defaultConfig.productTypes.social, moderation: undefined } },
+      investors: {
+        ...defaultConfig.investors,
+        angel: { ...defaultConfig.investors.angel, target: { ...defaultConfig.investors.angel.target, dailyRevenue: 1_000_000 } },
+      },
       // A provider outage on day 30 is the only event: it breaks the uptime record.
       events: [
         {

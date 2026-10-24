@@ -255,7 +255,8 @@ export interface Investors {
   /** The day the next investor approaches: set when the hidden target is first hit, and again after a decline. */
   nextApproachDay: number | null;
   approach: Approach | null;
-  declined: { round: RoundId; investor: string; day: number }[];
+  /** Investors turned down, or whose offer lapsed unanswered: either brings a less generous one. */
+  declined: { round: RoundId; investor: string; day: number; lapsed: boolean }[];
   angel: AngelDeal | null;
   valuation: InvestorValuation | null;
 }

@@ -19,6 +19,9 @@ const lastDeclined = computed(() => investors.value?.declined.at(-1) ?? null);
 const targetPercent = computed(() =>
   angel.value ? Math.min(100, Math.round((100 * angel.value.dailyRevenue) / angel.value.target.dailyRevenue)) : 0,
 );
+/** How long the offer stands: it lapses unanswered after its last day, as if declined. */
+const standsText = (daysLeft: number, lastDay: number) =>
+  `The offer stands for ${days(daysLeft)} more: unanswered after day ${lastDay}, it lapses, which counts as declining it.`;
 const TARGET_STATUS = { running: "Target running", met: "Target met", missed: "Target missed" } as const;
 
 const reviewing = ref(false);
@@ -77,6 +80,7 @@ async function answer(type: "acceptInvestor" | "declineInvestor") {
           <strong>{{ formatCash(offer.amount) }}</strong> for <strong>{{ formatShare(offer.theirShare) }}</strong> of the
           company, with a target to hit.
         </p>
+        <p class="muted" data-testid="angel-days-left">{{ standsText(offer.daysLeft, offer.lastDay) }}</p>
         <button v-if="!game.over" data-testid="angel-review" @click="review">Review offer</button>
       </template>
       <template v-else-if="angel">
@@ -110,7 +114,11 @@ async function answer(type: "acceptInvestor" | "declineInvestor") {
         </p>
       </template>
       <p v-else-if="investors.anotherComing && lastDeclined" class="muted" data-testid="angel-coming">
-        You declined {{ lastDeclined.investor }} on day {{ lastDeclined.day }}. Another angel will approach in a few days.
+        <template v-if="lastDeclined.lapsed">
+          {{ lastDeclined.investor }}'s offer lapsed unanswered on day {{ lastDeclined.day }}, which counts as declining it.
+        </template>
+        <template v-else>You declined {{ lastDeclined.investor }} on day {{ lastDeclined.day }}.</template>
+        Another angel will approach in a few days, on less generous terms.
       </p>
       <p v-else class="muted">
         Investors come to you: an angel approaches once your company is doing well. You'll get a notification.
@@ -158,6 +166,7 @@ async function answer(type: "acceptInvestor" | "declineInvestor") {
             </tr>
           </tbody>
         </table>
+        <p class="muted" data-testid="angel-modal-days-left">{{ standsText(offer.daysLeft, offer.lastDay) }}</p>
         <ul class="muted" data-testid="angel-effects">
           <li v-for="e in offer.effects" :key="e">{{ e }}</li>
         </ul>

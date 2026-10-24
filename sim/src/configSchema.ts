@@ -182,6 +182,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("rescue.buyBackPremium", "Money", "Rescue buyout", "Buy-back premium", "To sell its shares back, the vulture VC asks this many times its share of today's valuation, leaving out the company's cash.", MULTIPLIER);
   add("rescue.minReturn", "Money", "Rescue buyout", "Least buy-back price", "The vulture VC never sells its shares back for less than this many times the cash it put in.", MULTIPLIER);
   add("investors.approachDays", "Money", "Investors", "Days to approach", "Days after the company first hits an investor's hidden target before they approach.", range(0, 60, 1));
+  add("investors.offerDays", "Money", "Investors", "Days an offer stands", "Days played an investor's offer stays open; unanswered by then it lapses, which counts as declining it.", range(1, 60, 1));
   add("investors.retryDays", "Money", "Investors", "Days to the next", "Days after an investor is declined before a new one approaches.", range(0, 60, 1));
   add("investors.angel.target.dailyRevenue", "Money", "Angel investor", "Hidden target: income a day", "The angel approaches once income, averaged over the days below, reaches this.", POUNDS);
   add("investors.angel.target.days", "Money", "Angel investor", "Days averaged", "Days of income averaged for the hidden target, and for the angel's own target once accepted.", GAME_DAY);

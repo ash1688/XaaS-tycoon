@@ -212,6 +212,41 @@ describe("declining for a better angel", () => {
   });
 });
 
+describe("an angel's offer lapsing", () => {
+  const OFFER_DAYS = quiet.investors.offerDays;
+
+  it("stands for its days, counting down, and can be accepted on the last", () => {
+    const { state } = untilApproach();
+    expect(sim.investors(state).offer).toMatchObject({ lastDay: state.day + OFFER_DAYS, daysLeft: OFFER_DAYS });
+    const lastDay = sim.advance(state, OFFER_DAYS - 1).state;
+    expect(sim.investors(lastDay).offer).toMatchObject({ daysLeft: 1 });
+    const after = sim.applyAction(lastDay, { type: "acceptInvestor" });
+    expect(sim.investors(after).angel).toMatchObject({ status: "running" });
+  });
+
+  it("lapses unanswered at the end of its last day, counting as a decline, with a pause", () => {
+    const { state } = untilApproach();
+    const offer = sim.investors(state).offer!;
+    const { state: lapsed, log, pauses } = playUntil(sim, state, (s) => !sim.investors(s).offer);
+    expect(lapsed.day).toBe(offer.lastDay);
+    expect(sim.investors(lapsed)).toMatchObject({
+      offer: null,
+      anotherComing: true,
+      declined: [{ round: "angel", investor: offer.investor, day: offer.lastDay, lapsed: true }],
+    });
+    expect(log.at(-1)!.entries.map((e) => e.text)).toContainEqual(
+      `${offer.investor}'s offer lapsed: you didn't accept it within ${OFFER_DAYS} days, so it counts as declined. Another angel investor will approach in a few days, on less generous terms.`,
+    );
+    expect(pauses).toContainEqual({ day: lapsed.day, reason: expect.objectContaining({ kind: "alert", id: "lapsed-angel" }) });
+    expect(refusal(() => sim.applyAction(lapsed, { type: "acceptInvestor" }))).toBe("no_approach");
+    // The next comes a few days later, on the decline penalty's terms.
+    const next = playUntil(sim, lapsed, approached(sim)).state;
+    expect(next.day).toBe(lapsed.day + quiet.investors.retryDays);
+    expect(sim.investors(next).offer!.multiple).toBeLessThanOrEqual(angel.premium.max - angel.declinePremium + 0.01);
+    expect(sim.investors(next).offer!.theirShare).toBeGreaterThan(angel.share.min + angel.declineShare - 0.01);
+  });
+});
+
 describe("the angel's offer over time", () => {
   it("prices cash at face value: money raised while it's open doesn't change their multiple", () => {
     const { state } = untilApproach();

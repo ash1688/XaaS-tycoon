@@ -1290,8 +1290,13 @@ export interface RescueConfig {
 export interface InvestorsConfig {
   /** Days after the hidden target is first hit before the investor approaches. */
   approachDays: number;
-  /** Days after declining an investor before a new one approaches. */
+  /** Days after declining an investor (or their offer lapsing) before a new one approaches. */
   retryDays: number;
+  /**
+   * Days played an offer stands for after the investor approaches: unanswered by the end of the last, it lapses, which
+   * counts as declining it.
+   */
+  offerDays: number;
   angel: AngelConfig;
 }
 
@@ -2179,10 +2184,12 @@ export const defaultConfig: GameConfig = {
   rescue: { breathingDays: 30, minCover: 0.25, share: 0.75, staffCut: 0.25, buyBackPremium: 1.5, minReturn: 2 },
   // The angel approaches about three weeks after launch on sensible play, once income has averaged £500 a day for a
   // fortnight: a company worth about £60-130k, so a fifth of it costs the angel about £15-35k. Sensible play makes its
-  // target (2.5 times that income within 60 days) with a few weeks to spare; a company that stalls doesn't.
+  // short-term target (1.75 times that income within 30 days) in 70 of 72 harness games, with a median 18 days to
+  // spare; a company that stalls doesn't. Its offer stands for 3 days played, so it can't be held open.
   investors: {
     approachDays: 3,
     retryDays: 5,
+    offerDays: 3,
     angel: {
       target: { dailyRevenue: 500, days: 14 },
       premium: { min: 1.1, max: 1.4 },
@@ -2192,8 +2199,8 @@ export const defaultConfig: GameConfig = {
       // Three declines and the next angel offers the least premium for at least 21%.
       declinePremium: 0.1,
       declineShare: 0.02,
-      targetGrowth: 2.5,
-      targetDays: 60,
+      targetGrowth: 1.75,
+      targetDays: 30,
       missShare: 0.05,
     },
   },

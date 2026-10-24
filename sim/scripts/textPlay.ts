@@ -542,7 +542,7 @@ function investorsStatus(sim: Sim, state: GameState): string | null {
   const i = sim.investors(state);
   if (i.offer) {
     const o = i.offer;
-    return `ANGEL ${o.investor} approached on day ${o.day}: ${standing(i.negotiation!)} ${money(o.amount)} for ${stake(o.theirShare)}, valuing the company at ${money(o.valuation)} with their cash ("angel" for the offer in full)`;
+    return `ANGEL ${o.investor} approached on day ${o.day}: ${standing(i.negotiation!)} ${money(o.amount)} for ${stake(o.theirShare)}, valuing the company at ${money(o.valuation)} with their cash; ${standsText(o.daysLeft, o.lastDay)} ("angel" for the offer in full)`;
   }
   const a = i.angel;
   if (a) {
@@ -555,9 +555,16 @@ function investorsStatus(sim: Sim, state: GameState): string | null {
           : `target ${target} missed on day ${a.settledDay}: they took ${a.extraShares.toLocaleString("en-GB")} extra shares`;
     return `angel ${a.investor} put in ${money(a.amount)} on day ${a.day} for ${stake(a.share)}; ${how}`;
   }
-  if (i.anotherComing) return `you declined ${i.declined.at(-1)!.investor}: another angel approaches in a few days`;
+  if (i.anotherComing) {
+    const last = i.declined.at(-1)!;
+    return `${last.lapsed ? `${last.investor}'s offer lapsed unanswered` : `you declined ${last.investor}`}: another angel approaches in a few days`;
+  }
   return null;
 }
+
+/** How long an investor's offer stands: "lapses unanswered after day 34 (2 days left)". */
+const standsText = (daysLeft: number, lastDay: number) =>
+  `lapses unanswered after day ${lastDay} (${daysLeft} day${daysLeft === 1 ? "" : "s"} left), counting as a decline`;
 
 /** The angel's open offer in full, or their deal. */
 function angelLines(sim: Sim, state: GameState): string[] {
@@ -574,6 +581,7 @@ function angelLines(sim: Sim, state: GameState): string[] {
     `  target: ${o.condition}`,
     `  if missed: ${o.ifMissed}`,
     ...o.effects.map((e) => `  accepting: ${e}`),
+    `  offer: ${standsText(o.daysLeft, o.lastDay)}`,
     `  negotiation: ${standing(i.negotiation!)}. If their offer stands while the business is worth less than when they approached, their share rises in step.`,
     ...negotiationLines("angel", i.negotiation),
   ];

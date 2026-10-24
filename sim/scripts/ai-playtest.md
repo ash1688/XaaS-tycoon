@@ -91,7 +91,8 @@ npm run -s play -- summary <game>
   and what happens if you miss it. `counter angel amount 30000 share 15` and `odds angel ...` negotiate it the same
   way as friends and family. `accept angel` takes it: the cash arrives, your valuation becomes theirs and moves with
   the company's performance from then on, and friends and family and the grant close for good. `decline angel` turns
-  them down, and another angel approaches a few days later.
+  them down, and another angel approaches a few days later. An offer stands for a few days only (`look` shows when
+  it lapses); left unanswered, it lapses and counts as declining it.
 - The first time cash runs out, a **vulture VC rescues** the company: it puts in cash for the losses plus about 30
   days, takes most of the company in new shares, and forces cost cuts (staff let go, hires cancelled). Time stops
   when it happens. `rescue` shows the terms in full; `buyback` buys all its shares back from company cash, at the

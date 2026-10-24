@@ -138,6 +138,10 @@ export function createPauses(config: GameConfig, views: PauseViews) {
     if (approached && (investorsBefore.offer?.investor !== approached.investor || investorsBefore.offer.day !== approached.day)) {
       add("offer", `offer-${approached.round}`, `${approached.investor}, an angel investor, wants to invest: see Finance`);
     }
+    const lapsed = investorsAfter.declined.at(-1);
+    if (lapsed?.lapsed && investorsAfter.declined.length > investorsBefore.declined.length) {
+      add("alert", `lapsed-${lapsed.round}`, `${lapsed.investor}'s offer lapsed unanswered: it counts as declined`);
+    }
     const angelBefore = investorsBefore.angel?.status;
     const angelAfter = investorsAfter.angel;
     if (angelBefore === "running" && angelAfter?.status === "met") add("finished", "angel-target", `${angelAfter.investor}'s target is met`);

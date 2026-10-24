@@ -166,7 +166,7 @@ async function closeMenu() {
       <p v-if="approach && !game.over" class="ipo-note investor-note" role="status" data-testid="investor-note">
         <span class="badge">Investor</span>
         {{ approach.investor }}, an angel investor, likes what you're doing and wants to invest
-        {{ formatCash(approach.amount) }}.
+        {{ formatCash(approach.amount) }}. Their offer lapses after day {{ approach.lastDay }}.
         <RouterLink v-if="!onFinance" :to="`${game.base}/finance`">See their offer on Finance</RouterLink>
         <template v-else>Their offer is below.</template>
       </p>
