@@ -263,6 +263,39 @@ describe("valuation", () => {
       expect(sim.funding(on(state, 100)).friendsAndFamilyOffer!.valuation).toBe(falling.at(-1)!.valuation);
     });
 
+    it("doesn't rise the day after a sudden crash in paying users, though a dear price lifts income", () => {
+      // 1,000 payers growing 10 a day at £10; on day 100 a price of £50 halves them, then halves them again.
+      const users = (n: number) => (n < 100 ? 1_000 + 10 * n : (1_000 + 10 * 99) / 2 ** (n - 99));
+      const state = history((n) => ({ paidUsers: users(n), income: (users(n) * (n < 100 ? 10 : 50)) / 30 }));
+      const days = valuations(state, 99, 104);
+      for (let i = 1; i < days.length; i++) expect(days[i]!.valuation).toBeLessThanOrEqual(days[i - 1]!.valuation);
+    });
+
+    it("prices friends and family's countered terms up if the company's worth less by the time they're taken", () => {
+      const state = history((n) => {
+        const paidUsers = n <= 60 ? 5_000 : Math.max(0, 5_000 - 200 * (n - 60));
+        return { paidUsers, income: (paidUsers * 10) / 30 };
+      });
+      const opening = sim.funding(on(state, 60)).friendsAndFamilyOffer!.theirShare;
+      const terms = { share: Math.round(opening * 800) / 1000 };
+      const countered = sim.applyAction(on(state, 60), { type: "counterFunding", funder: "friendsAndFamily", terms });
+      const agreed = sim.funding(countered).friendsAndFamilyOffer!;
+      // The same terms, 40 days on, once the company has sunk.
+      const later = { ...on(state, 100), funding: countered.funding, negotiationRng: countered.negotiationRng };
+      const offer = sim.funding(later).friendsAndFamilyOffer!;
+      expect(sim.valuation(later).valuation).toBeLessThan(sim.valuation(on(state, 60)).valuation / 2);
+      expect(offer.amount).toBe(agreed.amount);
+      expect(offer.theirShare).toBeGreaterThan(agreed.theirShare * 2);
+      // Still the better terms the counter won, but on what the company's worth now.
+      expect(offer.valuation).toBeLessThanOrEqual(((sim.valuation(later).valuation + agreed.amount) * opening) / terms.share);
+      // Taking it gives them what the offer said.
+      const taken = sim.applyAction(later, { type: "acceptFunding", funder: "friendsAndFamily" });
+      expect(sim.capTable(taken).rows.find((r) => r.id === "friendsAndFamily")!.share).toBeCloseTo(offer.theirShare, 4);
+      // And a company worth more than when they agreed keeps the terms it agreed.
+      const same = sim.funding({ ...on(state, 60), funding: countered.funding }).friendsAndFamilyOffer!;
+      expect(same.theirShare).toBeCloseTo(agreed.theirShare, 6);
+    });
+
     it("never rises while satisfaction falls below the line", () => {
       const state = history((n) => ({ paidUsers: 2_000 + 10 * n, income: ((2_000 + 10 * n) * 10) / 30, satisfaction: n <= 80 ? 95 : 95 - 3 * (n - 80) }));
       const falling = valuations(state, 90, 110);

@@ -383,9 +383,10 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
   }
 
   /**
-   * What's falling on `day`: paying users or income averaged over the last fallDays days below the fallDays before,
-   * or the day's satisfaction below goodSatisfaction and below its average over the fallDays before. Nothing until
-   * there are two whole periods to compare.
+   * What's falling on `day`: income averaged over the last fallDays days below the fallDays before; paying users so,
+   * or the day's below their average over the fallDays before, so a sudden crash counts at once; or the day's
+   * satisfaction below goodSatisfaction and below its average over the fallDays before. Nothing until there are two
+   * whole periods to compare.
    */
   function fallingOn(state: GameState, day: number): string[] {
     const f = Math.max(1, v.fallDays);
@@ -394,11 +395,12 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
     if (now.length < f || before.length < f) return [];
     const down = (value: (d: DaySpend) => number) => mean(now, value) < mean(before, value);
     const falling: string[] = [];
-    if (down((d) => d.paidUsers)) falling.push("paying users");
+    const today = now.at(-1)!;
+    const lastWeek = daysBetween(state, day - f, day - 1);
+    if (down((d) => d.paidUsers) || today.paidUsers < mean(lastWeek, (d) => d.paidUsers)) falling.push("paying users");
     if (down((d) => d.income)) falling.push("income");
-    const satisfaction = now.at(-1)!.satisfaction;
-    const lastWeek = mean(daysBetween(state, day - f, day - 1), (d) => d.satisfaction);
-    if (satisfaction < v.goodSatisfaction && satisfaction < lastWeek) falling.push("satisfaction");
+    const satisfaction = today.satisfaction;
+    if (satisfaction < v.goodSatisfaction && satisfaction < mean(lastWeek, (d) => d.satisfaction)) falling.push("satisfaction");
     return falling;
   }
 
@@ -523,9 +525,14 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
     let amount: number, newShares: number, value: number, sharePrice: number;
     if (negotiating) {
       // The share they'd own after is what's been negotiated, so the new shares are share ÷ (1 − share) of those now.
+      // It was agreed against what the company was worth then: if it's worth less now, so its opening offer would
+      // buy a bigger share, theirs rises in step, so terms struck before a fall can't sell a sinking company dear.
       const terms = negotiator.latest(negotiating);
       amount = terms.amount!;
-      newShares = Math.max(1, Math.round((terms.share! * shares) / (1 - terms.share!)));
+      const opening = negotiating.offers[0]!.share!;
+      const openingNow = f.friendsAndFamily.amount / (valuation(state).valuation + f.friendsAndFamily.amount);
+      const share = Math.max(terms.share!, (terms.share! * openingNow) / opening);
+      newShares = Math.max(1, Math.round((share * shares) / (1 - share)));
       sharePrice = amount / newShares;
       value = Math.round(sharePrice * shares);
     } else {
