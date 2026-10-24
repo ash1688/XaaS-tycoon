@@ -489,8 +489,9 @@ describe("launch", () => {
     const live = playTo(defaults, state, 6);
     expect(live).toMatchObject({ launchDay: 6, users: 800 });
     // The demand shown over the ramp is that of the users there now, for the servers to meet from tomorrow.
-    expect(live.demand).toEqual({ cu: 1.2, dbu: 1.2 });
-    expect(defaults.units(live)!.cu).toEqual({ demand: 1.2, capacity: 10 });
+    expect(live.demand).toEqual({ cu: 0.96, dbu: 0.96 });
+    // Shown to one decimal place.
+    expect(defaults.units(live)!.cu).toEqual({ demand: 1, capacity: 10 });
   });
 
   it("needs both compute and a database to start", () => {
@@ -530,10 +531,10 @@ describe("launch", () => {
       const st = setUp(defaults, fresh(defaults, "iaas", "ecommerce"));
       return price ? defaults.applyAction(st, { type: "setPrice", price }) : st;
     };
-    // A shop's paid share is 70% at its £5 fair price; at twice that, half as many pay. A free user or two may start
+    // A shop's paid share is 70% at its £6 fair price; at twice that, half as many pay. A free user or two may start
     // paying on the way, as on any day.
     const fair = playTo(defaults, setUpWithPrice(), 4);
-    const dear = playTo(defaults, setUpWithPrice(10), 4);
+    const dear = playTo(defaults, setUpWithPrice(12), 4);
     expect([fair.users, dear.users]).toEqual([3_000, 3_000]);
     expect(Math.abs(fair.paidUsers - 2_100)).toBeLessThanOrEqual(5);
     expect(Math.abs(dear.paidUsers - 1_050)).toBeLessThanOrEqual(5);
@@ -1981,9 +1982,9 @@ describe("servers on-prem", () => {
       expect(own.cash).toBe(defaultConfig.startingCash - 3_050);
       expect(own.servers).toEqual([]);
       expect(own.racks).toEqual([{ id: 1, size: "medium", paid: 500 }]);
-      // A large app server and database, £2,200 on day 1 (video's and the assistant's massive app server, £2,600), and
+      // A large app server and database, £1,430 on day 1 (video's and the assistant's massive app server, £1,690), and
       // £50 cabling each: starting cash covers them, leaving little to buy more with.
-      expect(setUp(s, own).cash).toBe(defaultConfig.startingCash - (COMPUTE_HEAVY.includes(p) ? 5_750 : 5_350));
+      expect(setUp(s, own).cash).toBe(defaultConfig.startingCash - (COMPUTE_HEAVY.includes(p) ? 4_840 : 4_580));
       const loaned = s.newGame({ companyName: "Acme", productType: p, model: "onprem", seed: 1, takeLoan: true });
       expect(loaned.cash).toBe(defaultConfig.startingCash + defaultConfig.loan.amount - 3_050);
       // The kit arrives on day 5, and the users with it.
@@ -1991,12 +1992,13 @@ describe("servers on-prem", () => {
       expect(state.launchDay, p).toBe(5);
       expect(s.units(withStaff(state, { ops: s.opsNeededNow(state) }))!.usersSupported, p).toBeGreaterThan(state.users * 2);
     }
-    // Every bought server sells back at a loss, and costs more up front than a month's rent of the same VM.
+    // Every bought server sells back at a loss, and costs most of a month's rent of the same VM up front (#160), so it
+    // pays for itself in about a month.
     const { purchase } = onprem.servers!;
     expect(purchase!.sellBackShare).toBeLessThan(1);
     for (const t of SERVER_TYPES) {
       for (const size of SERVER_SIZES) {
-        expect(purchase!.price[t][size]).toBeGreaterThan(defaultConfig.models.iaas.servers!.monthlyCost[t]![size]!);
+        expect(purchase!.price[t][size]).toBeGreaterThanOrEqual(0.8 * defaultConfig.models.iaas.servers!.monthlyCost[t]![size]!);
         expect(onprem.servers!.monthlyCost[t]![size]).toBeLessThan(defaultConfig.models.iaas.servers!.monthlyCost[t]![size]!);
       }
     }
@@ -6884,8 +6886,8 @@ describe("racks, cabling, power and cooling", () => {
     it("refuses a rack or server it can't pay for with its cabling", () => {
       const poor = { ...begin(), cash: 820 };
       expect(refusal(() => sim.applyAction(poor, { type: "buyRack", size: "large" }))).toBe("cant_afford");
-      expect(refusal(() => buy({ ...poor, cash: 420 }, "small"))).toBe("cant_afford");
-      expect(buy({ ...poor, cash: 450 }, "small").cash).toBe(0);
+      expect(refusal(() => buy({ ...poor, cash: 300 }, "small"))).toBe("cant_afford");
+      expect(buy({ ...poor, cash: 310 }, "small").cash).toBe(0);
     });
 
     it("sells back an empty rack at the sell-back share, but not one with servers in it", () => {

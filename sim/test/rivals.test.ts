@@ -20,6 +20,9 @@ const start = (s = sim, productType: ProductTypeId = "ecommerce"): GameState =>
 /** A SaaS company 20 days in: launched and growing. */
 const running = (s = sim, productType: ProductTypeId = "ecommerce") => s.advance(start(s, productType), 20).state;
 
+/** A price to the penny, as the rivals' prices are stored. */
+const pennies = (price: number) => Math.round(price * 100) / 100;
+
 const texts = (log: { entries: { text: string }[] }[]) => log.flatMap((d) => d.entries.map((e) => e.text));
 
 describe("rivals and market share", () => {
@@ -30,7 +33,7 @@ describe("rivals and market share", () => {
     const rivals = defaultConfig.productTypes.ecommerce.rivals;
     expect(market.companies.map((c) => c.id)).toEqual(["you", ...rivals.map((r) => r.id)]);
     expect(market.companies[0]).toMatchObject({ you: true, name: "Rival Co", price: fair });
-    rivals.forEach((r, i) => expect(market.companies[i + 1]).toMatchObject({ name: r.name, price: fair * r.priceStance }));
+    rivals.forEach((r, i) => expect(market.companies[i + 1]).toMatchObject({ name: r.name, price: pennies(fair * r.priceStance) }));
     expect(market.companies.reduce((sum, c) => sum + c.share, 0)).toBeCloseTo(1, 10);
     expect(market.reactionDays).toBe(defaultConfig.rivals.reactionDays);
     expect(market.nextReaction).toBeNull();
@@ -99,31 +102,31 @@ describe("rivals and market share", () => {
     const s = createSim(withRivals({ undercutChance: 0 }));
     const state = running(s);
     const fair = s.fairPrice(state);
-    const priced = s.applyAction(state, { type: "setPrice", price: 6 });
+    const priced = s.applyAction(state, { type: "setPrice", price: 7 });
     const reactsOn = state.day + 1 + defaultConfig.rivals.reactionDays;
-    expect(s.market(priced).nextReaction).toEqual({ day: reactsOn, price: 6 });
+    expect(s.market(priced).nextReaction).toEqual({ day: reactsOn, price: 7 });
 
     const waiting = s.advance(priced, reactsOn - priced.day - 1);
     expect(s.market(waiting.state).companies.slice(1).map((c) => c.price)).toEqual(
-      defaultConfig.productTypes.ecommerce.rivals.map((r) => fair * r.priceStance),
+      defaultConfig.productTypes.ecommerce.rivals.map((r) => pennies(fair * r.priceStance)),
     );
     expect(texts(waiting.log).some((t) => /answered your/.test(t))).toBe(false);
 
     const answered = s.advance(waiting.state, 1);
     expect(answered.state.day).toBe(reactsOn);
     const prices = s.market(answered.state).companies.slice(1).map((c) => c.price);
-    expect(prices).toEqual(defaultConfig.productTypes.ecommerce.rivals.map((r) => Math.round(6 * r.priceStance * 100) / 100));
-    expect(texts(answered.log)).toContain("CartCraft answered your £6 price: it now charges £5.10 a month.");
+    expect(prices).toEqual(defaultConfig.productTypes.ecommerce.rivals.map((r) => pennies(7 * r.priceStance)));
+    expect(texts(answered.log)).toContain("CartCraft answered your £7 price: it now charges £5.95 a month.");
     expect(s.market(answered.state).nextReaction).toBeNull();
   });
 
   it("sometimes undercuts the student when it answers", () => {
     const s = createSim(withRivals({ undercutChance: 1, undercutShare: 0.2 }));
-    const state = s.applyAction(running(s), { type: "setPrice", price: 6 });
+    const state = s.applyAction(running(s), { type: "setPrice", price: 7 });
     const answered = s.advance(state, defaultConfig.rivals.reactionDays + 1);
-    // Every rival prices 20% under the student's £6, or lower if its stance is cheaper still.
-    for (const c of s.market(answered.state).companies.slice(1)) expect(c.price).toBeLessThanOrEqual(4.8);
-    expect(texts(answered.log)).toContain("Tillbox undercut you: it now charges £4.80 a month, against your £6.");
+    // Every rival prices 20% under the student's £7, or lower if its stance is cheaper still.
+    for (const c of s.market(answered.state).companies.slice(1)) expect(c.price).toBeLessThanOrEqual(5.6);
+    expect(texts(answered.log)).toContain("Tillbox undercut you: it now charges £5.60 a month, against your £7.");
   });
 
   it("keeps a rival's price within its band, however far the student goes", () => {

@@ -147,6 +147,8 @@ describe("API traffic", () => {
     const down: GameState = {
       ...state,
       servers: state.servers.map((s) => (s.type === "database" ? { ...s, size: "small" as const } : s)),
+      users: state.users * 4,
+      paidUsers: state.paidUsers * 4,
       api: { ...state.api!, calls: 5_000 },
     };
     const { state: after, log } = sim.advance(down);
@@ -219,7 +221,7 @@ describe("app servers switched between CU and APIU", () => {
 describe("API instances on PaaS", () => {
   it("sets an API instance count, each giving the instance size's APIU", () => {
     const state = act(shop("paas"), { type: "buyApi" });
-    expect(sim.managed(state)).toMatchObject({ apiInstances: 0, apiInstanceUnits: 10, apiInstanceMonthlyCost: 900 });
+    expect(sim.managed(state)).toMatchObject({ apiInstances: 0, apiInstanceUnits: 10, apiInstanceMonthlyCost: 1_125 });
     expect(code(() => sim.applyAction(shop("paas"), { type: "setApiInstances", count: 1 }))).toBe("no_api");
     const two = act(state, { type: "setApiInstances", count: 2 });
     expect(sim.managed(two)!.apiInstances).toBe(2);
@@ -229,7 +231,7 @@ describe("API instances on PaaS", () => {
     expect(code(() => sim.applyAction(state, { type: "setApiInstances", count: 21 }))).toBe("bad_instances");
     // Billed like app instances.
     const { log } = sim.advance(two);
-    expect(entries(log).some((e) => e.text === "API instance (medium): 2 × £900 a month" && e.cashDelta === -60)).toBe(true);
+    expect(entries(log).some((e) => e.text === "API instance (medium): 2 × £1,125 a month" && e.cashDelta === -75)).toBe(true);
   });
 });
 
