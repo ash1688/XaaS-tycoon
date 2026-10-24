@@ -14,7 +14,8 @@ const goTo = (page: Page, name: string) =>
 async function pinPaidUsers(id: string, paidUsers: number) {
   const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
   try {
-    await sql`update companies set state = jsonb_set(state, '{paidUsers}', ${String(paidUsers)}::jsonb) where id = ${id}`;
+    // As a number: ${String(paidUsers)}::jsonb would store it as the string "1200".
+    await sql`update companies set state = jsonb_set(state, '{paidUsers}', to_jsonb(${paidUsers}::int)) where id = ${id}`;
   } finally {
     await sql.end();
   }
@@ -1078,6 +1079,17 @@ test("a student previews prices live, raises the price, and sees the backlash an
     "At £6.25 you'd make £24 a day more than now (£224 a day) once the wave settles. 55 paying users leave and 71 drop to free.",
   );
   await expect(preview.getByRole("img", { name: /The wave day by day/ })).toBeVisible();
+  // The rise's backlash tickets against today's support, as the sim quotes them: whether the team keeps up (#163).
+  const quote = await (await request.get(`/api/codes/${code}/companies/${id}/price-preview?price=6.25`)).json();
+  const n = (x: number) => x.toLocaleString("en-GB");
+  expect(quote.tickets.tickets).toBeGreaterThan(0);
+  await expect(preview.getByTestId("preview-backlash")).toHaveText(n(quote.tickets.tickets));
+  await expect(preview.getByTestId("preview-tickets")).toContainText(
+    `The rise brings about ${n(quote.tickets.tickets)} extra support tickets, up to ${n(quote.tickets.peakDay)} in a day.`,
+  );
+  await expect(preview.getByTestId("preview-tickets")).toContainText(
+    quote.tickets.canClear ? "so it can keep up." : quote.tickets.waitingAfter > 0 ? "Hire support first." : "satisfaction dips",
+  );
   // A cut previews a positive wave instead, updating as the price changes.
   await input.fill("4");
   await expect(preview.getByTestId("preview-joined")).toBeVisible();
