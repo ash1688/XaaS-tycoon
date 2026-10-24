@@ -30,7 +30,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 40;
+export const GAME_STATE_VERSION = 41;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -277,6 +277,11 @@ export interface InvestorValuation {
 export interface Investors {
   /** The day the next investor approaches: set when the hidden target is first hit, and again after a decline. */
   nextApproachDay: number | null;
+  /**
+   * The day the first investor (an angel) approached, whatever the student made of them: the company has grown up, so
+   * researchers can be hired from then. Null until then.
+   */
+  firstApproachDay: number | null;
   approach: Approach | null;
   /** Investors turned down, or whose offer lapsed unanswered: either brings a less generous one. */
   declined: { round: RoundId; investor: string; day: number; lapsed: boolean }[];
@@ -593,6 +598,8 @@ export interface GameState {
    * company's code, so kept through migrations, where the new model's cap applies.
    */
   optimisationDays: number;
+  /** Research points (RP) banked: researchers earn them each day, with no cap. Nothing spends them yet. */
+  researchPoints: number;
   /**
    * The launch total: users who trickle in over the launch ramp, drawn from the product's range when the game starts.
    * Kept from the student: the screens show only those who have joined.

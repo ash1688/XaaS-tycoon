@@ -1,10 +1,26 @@
 import { STAFF_GRADES, STAFF_POOLS, type GameConfig, type StaffGrade, type StaffPool } from "./config.ts";
 import { pounds, type createFinance } from "./finance.ts";
+import { researchUnlocked } from "./research.ts";
 import { isStaffGrade, isStaffPool, SimError, type GameState, type GradeCounts, type LogEntry } from "./state.ts";
 
-/** Pools a company can staff: every pool, except moderators on a product without user content. */
-export const poolsFor = (config: GameConfig, state: Pick<GameState, "productType">): StaffPool[] =>
+/** Pools that open once the company grows up, when the first angel investor approaches. */
+const GROWN_UP_POOLS: readonly StaffPool[] = ["researchers"];
+/** Pools with permanent staff only: no agency hires. */
+const PERMANENT_ONLY_POOLS: readonly StaffPool[] = ["researchers"];
+
+/** Whether a pool takes agency hires: researchers are permanent only. */
+export const agencyAllowed = (pool: StaffPool) => !PERMANENT_ONLY_POOLS.includes(pool);
+
+/** Pools a product can ever staff: every pool, except moderators on a product without user content. */
+const productPools = (config: GameConfig, state: Pick<GameState, "productType">) =>
   STAFF_POOLS.filter((pool) => pool !== "moderators" || config.productTypes[state.productType].moderation !== undefined);
+
+/**
+ * Pools a company can staff: every pool, except moderators on a product without user content, and researchers until
+ * the first angel investor approaches.
+ */
+export const poolsFor = (config: GameConfig, state: Pick<GameState, "productType" | "investors">): StaffPool[] =>
+  productPools(config, state).filter((pool) => !GROWN_UP_POOLS.includes(pool) || researchUnlocked(state));
 
 /**
  * One grade in a pool, as permanent or agency staff: how many are on the team, what each costs and does, and how long
@@ -50,8 +66,10 @@ export interface StaffPoolView {
   output: number;
   /** Permanent staff by grade. */
   grades: GradeView[];
-  /** Agency staff by grade. */
+  /** Agency staff by grade: none for a pool that's permanent only. */
   agency: GradeView[];
+  /** Whether agency staff can be hired: not researchers, who are permanent only. */
+  agencyAllowed: boolean;
   hiring: HireView[];
   /** Why the pool has nothing to do, in a sentence, when it hasn't: developers with nothing to build. Null otherwise. */
   idle: string | null;
@@ -117,22 +135,27 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
 
   /**
    * The company's opening team: each pool's starting count, all permanent mids, on the team from day 1. No agency
-   * staff, and no moderators on a product without user content, whatever the config says.
+   * staff, no moderators on a product without user content and no researchers (not yet open), whatever the config says.
    */
   function startingStaff(product: Pick<GameState, "productType">): Pick<GameState, "staff" | "agency" | "hiring"> {
-    const pools = poolsFor(config, product);
+    const pools = productPools(config, product).filter((pool) => !GROWN_UP_POOLS.includes(pool));
     const staff = allPools((pool) => ({ ...noStaff(), mid: pools.includes(pool) ? config.staff[pool].startingCount : 0 }));
     return { staff, agency: allPools(noStaff), hiring: [] };
   }
 
-  const PICK_POOL = "Pick developers, ops, support or moderators.";
+  const PICK_POOL = "Pick developers, ops, support, moderators or researchers.";
 
-  /** Moderators handle reports on user content, so a product without any has none to hire or move. */
+  /**
+   * Moderators handle reports on user content, so a product without any has none to hire or move. Researchers can't
+   * be hired or moved into until the first angel investor approaches.
+   */
   function checkContent(state: GameState, pool: StaffPool) {
-    if (!poolsFor(config, state).includes(pool)) {
-      const product = config.productTypes[state.productType].name;
-      throw new SimError("no_content", `A ${product.toLowerCase()} has no user content to moderate, so it has no moderators.`);
+    if (poolsFor(config, state).includes(pool)) return;
+    if (GROWN_UP_POOLS.includes(pool)) {
+      throw new SimError("not_yet", `${config.staff[pool].name} join once your company grows up: when your first angel investor approaches.`);
     }
+    const product = config.productTypes[state.productType].name;
+    throw new SimError("no_content", `A ${product.toLowerCase()} has no user content to moderate, so it has no moderators.`);
   }
 
   function checkPoolAndGrade(state: GameState, pool: StaffPool, grade: StaffGrade) {
@@ -164,6 +187,9 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
     if (!Number.isInteger(count) || count < 1) throw new SimError("bad_count", "Pick a whole number of people, at least 1.");
     // Anything but true is permanent staff, as an API caller may send anything.
     const isAgency = agency === true;
+    if (type === "hire" && isAgency && !agencyAllowed(pool)) {
+      throw new SimError("permanent_only", `${config.staff[pool].name} are permanent hires only: an agency can't supply them.`);
+    }
     if (type === "hire") {
       const leadDays = isAgency ? config.agency.leadDays : config.staffGrades[grade].leadDays;
       // With no lead time (a teacher's config can set one), they join the team at once.
@@ -261,7 +287,7 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
     }));
   }
 
-  /** Pools the company can staff: no moderators on a product without user content. */
+  /** Pools the company can staff: no moderators on a product without user content, no researchers until they open. */
   function staffView(state: GameState): StaffPoolView[] {
     return poolsFor(config, state).map((pool) => ({
       pool,
@@ -270,7 +296,8 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
       agencyCount: headcount(state, pool, true),
       output: staffOutput(config, state, pool),
       grades: gradeViews(state, pool, false),
-      agency: gradeViews(state, pool, true),
+      agency: agencyAllowed(pool) ? gradeViews(state, pool, true) : [],
+      agencyAllowed: agencyAllowed(pool),
       hiring: state.hiring
         .filter((h) => h.pool === pool)
         .map(({ grade, count, agency, arrivesOn }) => ({ grade, count, agency, arrivesOn, daysLeft: arrivesOn - state.day })),

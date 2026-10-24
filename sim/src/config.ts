@@ -12,7 +12,7 @@ export const CUSTOMER_TYPE_IDS = ["casual", "enthusiasts", "professionals", "bus
 export type CustomerTypeId = (typeof CUSTOMER_TYPE_IDS)[number];
 
 /** Moderators are only hired on a product with user content (see ProductModeration). */
-export const STAFF_POOLS = ["developers", "ops", "support", "moderators"] as const;
+export const STAFF_POOLS = ["developers", "ops", "support", "moderators", "researchers"] as const;
 export type StaffPool = (typeof STAFF_POOLS)[number];
 export const STAFF_GRADES = ["junior", "mid", "senior"] as const;
 export type StaffGrade = (typeof STAFF_GRADES)[number];
@@ -1041,6 +1041,15 @@ export interface MvpConfig {
  * fewer servers and ops, or fewer instances on PaaS), and the per-user platform fee on SaaS. It's permanent, and kept
  * through migrations, where the new model's cap applies.
  */
+/**
+ * Research: researchers, a staff pool that joins when the first angel investor approaches, earn research points (RP)
+ * a day. RP bank with no cap.
+ */
+export interface ResearchConfig {
+  /** RP a mid researcher earns a day: other grades earn this × their output. */
+  pointsPerPerson: number;
+}
+
 export interface OptimisationConfig {
   /** Developer-days for the saving to reach about 63% of its cap (1 − 1/e): bigger is slower. */
   k: number;
@@ -1428,6 +1437,7 @@ export interface GameConfig {
   launch: LaunchConfig;
   mvp: MvpConfig;
   optimisation: OptimisationConfig;
+  research: ResearchConfig;
   models: Record<ModelId, ModelConfig>;
   productTypes: Record<ProductTypeId, ProductTypeConfig>;
   customerTypes: Record<CustomerTypeId, CustomerTypeConfig>;
@@ -1488,6 +1498,8 @@ export const defaultConfig: GameConfig = {
   // Placeholders for the balance pass: a developer on optimisation full time gets about 63% of the cap in 60 days. On-prem
   // owns the whole stack and its hardware costs the most, so it has the most to gain.
   optimisation: { k: 60, cap: { onprem: 0.5, iaas: 0.35, paas: 0.35, saas: 0.35 } },
+  // Placeholder for the balance pass.
+  research: { pointsPerPerson: 2 },
   models: {
     onprem: {
       name: "Own servers (on-prem)",
@@ -2100,6 +2112,8 @@ export const defaultConfig: GameConfig = {
     support: { name: "Support staff", personName: "support person", dayRate: 100, startingCount: 1 },
     // None to start: only content products need them, and not until the users are posting.
     moderators: { name: "Moderators", personName: "moderator", dayRate: 60, startingCount: 0 },
+    // None to start, and none to hire until the first angel investor approaches. Placeholder pay for the balance pass.
+    researchers: { name: "Researchers", personName: "researcher", dayRate: 130, startingCount: 0 },
   },
   // A senior does about twice a junior's work for about 1.7× the pay: cheaper per unit of work, dearer up front, and
   // slowest to arrive. Placeholders from the beta design.

@@ -269,6 +269,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   for (const m of MODEL_IDS) {
     add(`optimisation.cap.${m}`, "People", "Optimisation", `Most it saves (${MODEL_LABELS[m]})`, "The most optimisation can cut resource need per user on this model (0.5 = half): CU and DBU per user, PaaS instances, or the SaaS per-user fee. Kept through a migration, capped at the new model's.", range(0, 0.95, 0.05));
   }
+  add("research.pointsPerPerson", "People", "Research", "Research points per researcher", "Research points (RP) a mid researcher earns a day. Juniors and seniors earn this × their grade's output. RP bank with no cap.", range(0, 100, 0.5));
   for (const p of PRODUCT_TYPE_IDS) {
     for (const f of base.productTypes[p]?.features ?? []) {
       const at = `productTypes.${p}.features.${f.id}`;

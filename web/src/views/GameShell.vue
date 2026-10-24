@@ -11,15 +11,17 @@ const game = provideGame(props.code, props.id);
 game.load();
 
 const route = useRoute();
-// The pages, in nav order. A page added later goes here and in the routes in main.ts.
-const PAGES = [
+// The pages, in nav order. A page added later goes here and in the routes in main.ts. Research appears once the first
+// angel investor approaches, as the company grows up.
+const PAGES = computed(() => [
   { path: "", name: "Home" },
   { path: "/product", name: "Product" },
   { path: "/infrastructure", name: "Infrastructure" },
   { path: "/people", name: "People" },
+  ...(game.company?.research.unlocked ? [{ path: "/research", name: "Research" }] : []),
   { path: "/customers", name: "Customers" },
   { path: "/finance", name: "Finance" },
-];
+]);
 const onHome = computed(() => route.name === "game-home");
 const onFinance = computed(() => route.name === "game-finance");
 const onBell = computed(() => route.name === "game-ipo");

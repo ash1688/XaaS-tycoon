@@ -129,7 +129,14 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
   const angel = c.angel;
   const negotiator = createNegotiation(config.negotiation);
 
-  const startingInvestors = (): Investors => ({ nextApproachDay: null, approach: null, declined: [], angel: null, valuation: null });
+  const startingInvestors = (): Investors => ({
+    nextApproachDay: null,
+    firstApproachDay: null,
+    approach: null,
+    declined: [],
+    angel: null,
+    valuation: null,
+  });
 
   const netCash = (state: GameState) => state.cash - loanOwed(state.loan);
 
@@ -182,9 +189,20 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
         cashDelta: 0,
         kind: "funding",
       },
+      // The first approach is the company growing up: researchers can be hired from now, whatever the answer.
+      ...(state.investors.firstApproachDay === null
+        ? [
+            {
+              text: "Your company is growing up: you can hire researchers now, on People, and follow their work on Research.",
+              cashDelta: 0,
+              kind: "staff" as const,
+            },
+          ]
+        : []),
     ];
+    const firstApproachDay = state.investors.firstApproachDay ?? state.day;
     return {
-      state: { ...state, investorRng: rng, investors: { ...state.investors, approach: record, nextApproachDay: null } },
+      state: { ...state, investorRng: rng, investors: { ...state.investors, approach: record, nextApproachDay: null, firstApproachDay } },
       entries,
     };
   }

@@ -27,6 +27,7 @@ import { createIpo, type IpoView } from "./ipo.ts";
 import { createLaunch, type LaunchView } from "./launch.ts";
 import { createLoan, type LoanQuote, type LoanView } from "./loan.ts";
 import { mvpDay, mvpStatus, startingMvp, type MvpView } from "./mvp.ts";
+import { researchDay, researchView, type ResearchView } from "./research.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
 import { optimisationDay, optimisationView, type OptimisationView } from "./optimisation.ts";
 import { createCustomerMix } from "./mix.ts";
@@ -75,6 +76,7 @@ export type { AngelView, InvestorOffer, InvestorsView } from "./investors.ts";
 export type { FloatPreview, IpoCondition, IpoConditionId, IpoOffer, IpoStatus, IpoView } from "./ipo.ts";
 export type { LaunchView } from "./launch.ts";
 export type { MvpView } from "./mvp.ts";
+export type { ResearchView } from "./research.ts";
 export type { OptimisationView } from "./optimisation.ts";
 export type { LoanQuote, LoanView } from "./loan.ts";
 export type { LostAddon, MigrationQuote, MigrationView, SetupRack } from "./migration.ts";
@@ -398,6 +400,11 @@ export interface Sim {
    * developer-days so far, and the saving on resource need per user out of the current model's cap.
    */
   optimisation(state: GameState): OptimisationView;
+  /**
+   * Research: whether researchers can be hired yet (from the first angel investor's approach), the research points
+   * (RP) banked, and RP a day at today's researchers.
+   */
+  research(state: GameState): ResearchView;
   /** The migration under way, or null. */
   migration(state: GameState): MigrationView | null;
   /**
@@ -565,6 +572,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       mvp: startingMvp(config, productType, model),
       optimisationShare: 0,
       optimisationDays: 0,
+      researchPoints: 0,
       ...support.startingSupport(),
       ...moderation.startingModeration(),
       ...conversion.startingConversion(),
@@ -790,6 +798,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     // optimisation.
     const build = features.buildDay(state);
     const optimisationDays = optimisationDay(state, staffOutput(config, state, "developers"), yesterday.mvp.doneDay !== null);
+    // Researchers earn their RP, banked with no cap.
+    const researchPoints = researchDay(config, state, staffOutput(config, state, "researchers"));
 
     // Each event explains itself first, then any outage. Billed on the current model until a migration completes, so
     // the model being left is billed pro rata up to the day you leave. During a migration the new model is billed as
@@ -848,6 +858,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       downtimeHours: state.downtimeHours + served.hoursDown,
       features: build.features,
       optimisationDays,
+      researchPoints,
       events: recorded.records,
       ticketsToday: care.ticketsToday,
       burstTickets: care.burstTickets,
@@ -1032,6 +1043,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     optimisation: (s) => {
       const state = load(s);
       return optimisationView(config, state, staffOutput(config, state, "developers"));
+    },
+    research: (s) => {
+      const state = load(s);
+      return researchView(config, state, staffOutput(config, state, "researchers"));
     },
     migration: (s) => migration.migration(load(s)),
     migrationQuote: (s, target) => migration.migrationQuote(load(s), target),

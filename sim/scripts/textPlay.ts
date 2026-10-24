@@ -327,6 +327,10 @@ export function renderStatus(sim: Sim, state: GameState): string {
         `saving ${(100 * o.saving).toFixed(1)}% of resource need per user (most ${Math.round(100 * o.cap)}% on this model)`,
     );
   }
+  const research = sim.research(state);
+  if (research.unlocked) {
+    lines.push(`research: ${+research.points.toFixed(1)} RP banked, ${research.pointsPerDay} RP a day (nothing to spend them on yet)`);
+  }
   const launch = sim.launch(state);
   if (launch.status !== "launched") {
     lines.push(

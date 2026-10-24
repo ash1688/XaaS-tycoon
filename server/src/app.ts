@@ -378,6 +378,7 @@ export async function buildApp(opts: AppOptions) {
       launch: sim.launch(state),
       mvp: sim.mvp(state),
       optimisation: sim.optimisation(state),
+      research: sim.research(state),
       users: state.users,
       paidUsers: state.paidUsers,
       freeUsers: state.users - state.paidUsers,
