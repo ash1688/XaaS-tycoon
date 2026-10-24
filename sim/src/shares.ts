@@ -31,6 +31,7 @@ export type ValuationDriverId =
   | "multipleFloor"
   | "payingUsers"
   | "falling"
+  | "investor"
   | "netCash"
   | "minimum"
   | "liquidation";
@@ -61,7 +62,8 @@ export interface ValuationView {
   recentUptime: number;
   /**
    * Revenue first, then growth, satisfaction, uptime, paying users, what holds it down while the company is falling,
-   * net cash and any top-up to the minimum, or for a liquidated company what takes it to nothing.
+   * what an investor's valuation adds (or takes off), net cash and any top-up to the minimum, or for a liquidated
+   * company what takes it to nothing.
    */
   drivers: ValuationDriver[];
 }
@@ -161,6 +163,11 @@ export interface FundingView {
   grant: GrantView | null;
   /** Each open offer's negotiation; null once it's answered. */
   negotiations: Record<FunderId, NegotiationView | null>;
+  /**
+   * The day the first angel was accepted, which closed friends and family and the grant: an offer still open then is
+   * gone. Null before. A grant already accepted keeps its condition.
+   */
+  closedDay: number | null;
 }
 
 /** What friends and family's offer is negotiated on: their cash, and their share of the company after (0–1). */
@@ -180,6 +187,7 @@ const HOURS_PER_DAY = 24;
 const NAMES: Record<Shareholder["id"], string> = {
   student: "You",
   friendsAndFamily: "Friends and family",
+  angel: "Angel investor",
   vulture: "Vulture VC",
   public: "Public shareholders",
 };
@@ -446,10 +454,21 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
     return before;
   }
 
-  function valuation(state: GameState): ValuationView {
-    const { annualRevenue, multiple, growth, recentUptime, drivers, value: worth } = business(state);
+  /** The business today, held while anything's falling: the formula's valuation less net cash, before the minimum. */
+  function heldBusiness(state: GameState) {
+    const today = business(state);
     const falling = fallingOn(state, state.day);
-    const heldWorth = Math.round(held(worth, falling.length > 0, heldBefore(state)));
+    return { ...today, falling, heldWorth: Math.round(held(today.value, falling.length > 0, heldBefore(state))) };
+  }
+
+  /**
+   * The formula's business today, before any investor's valuation: what an investor's offer values at a multiple. At
+   * least £1, so a multiple of it always means something.
+   */
+  const businessWorth = (state: GameState) => Math.max(1, heldBusiness(state).heldWorth);
+
+  function valuation(state: GameState): ValuationView {
+    const { annualRevenue, multiple, growth, recentUptime, drivers, value: worth, falling, heldWorth } = heldBusiness(state);
     if (heldWorth < worth) {
       drivers.push({
         id: "falling",
@@ -458,6 +477,17 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
         detail: falling.length
           ? `${sentence(falling)} down on the ${v.fallDays} days before: while anything's falling the business can't gain value`
           : `Nothing's falling now, so the business is catching up on what it couldn't gain while it was, over about ${v.fallDays} days`,
+      });
+    }
+    // From the first investor after friends and family, the business is worth their multiple of the formula's: it
+    // moves in step with it. Cash still counts at face value.
+    const set = state.investors.valuation;
+    if (set) {
+      drivers.push({
+        id: "investor",
+        label: "Investor's valuation",
+        amount: Math.round((set.multiple - 1) * heldWorth),
+        detail: `${set.investor}, your angel, valued the business at ${Math.round(set.multiple * 100) / 100}× the formula's on day ${set.day}: it moves in step with the formula from then on`,
       });
     }
     // Cash counts, less what's still owed on a loan: a company is worth at least what's in the bank.
@@ -506,7 +536,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
       sharePrice,
       rows: state.shareholders.map((h) => ({
         id: h.id,
-        name: NAMES[h.id],
+        name: h.id === "angel" && state.investors.angel ? `${state.investors.angel.investor} (angel)` : NAMES[h.id],
         shares: h.shares,
         share: h.shares / shares,
         value: Math.round((value * h.shares) / shares),
@@ -518,8 +548,11 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
   const studentShare = (state: GameState) =>
     (state.shareholders.find((h) => h.id === "student")?.shares ?? 0) / sharesInIssue(state);
 
+  /** Friends and family and the grant close once the first angel is accepted. */
+  const closed = (state: GameState) => state.investors.angel !== null;
+
   function friendsAndFamilyOffer(state: GameState): FriendsAndFamilyOffer | null {
-    if (state.funding.friendsAndFamily) return null;
+    if (state.funding.friendsAndFamily || closed(state)) return null;
     const shares = sharesInIssue(state);
     const negotiating = state.funding.negotiating.friendsAndFamily;
     let amount: number, newShares: number, value: number, sharePrice: number;
@@ -567,7 +600,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
   }
 
   function grantOffer(state: GameState): GrantOffer | null {
-    if (state.funding.grant) return null;
+    if (state.funding.grant || closed(state)) return null;
     const negotiating = state.funding.negotiating.grant;
     const { amount, days } = negotiating ? (negotiator.latest(negotiating) as { amount: number; days: number }) : f.grant;
     const minUptime = f.grant.minUptime[state.model];
@@ -620,7 +653,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
   const rollBonus = (_state: GameState) => 0;
 
   function negotiationView(state: GameState, funder: FunderId): NegotiationView | null {
-    if (state.funding[funder]) return null;
+    if (state.funding[funder] || closed(state)) return null;
     const n = negotiationOf(state, funder);
     return {
       offers: n.offers,
@@ -643,6 +676,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
         friendsAndFamily: negotiationView(state, "friendsAndFamily"),
         grant: negotiationView(state, "grant"),
       },
+      closedDay: state.investors.angel?.day ?? null,
     };
   }
 
@@ -691,6 +725,12 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
       throw new SimError(
         "funding_answered",
         `${FUNDER_NAMES[funder]}'s offer can only be taken once, and you ${answered.status === "declined" ? "declined" : "accepted"} it on day ${answered.day}.`,
+      );
+    }
+    if (closed(state)) {
+      throw new SimError(
+        "funding_closed",
+        `${FUNDER_NAMES[funder]}'s offer closed when you took on your angel investor on day ${state.investors.angel!.day}.`,
       );
     }
   }
@@ -796,6 +836,9 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
   return {
     startingShares,
     valuation,
+    businessWorth,
+    sharesInIssue,
+    rollBonus,
     capTable,
     studentShare,
     funding,

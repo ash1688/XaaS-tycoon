@@ -23,6 +23,8 @@ const PAGES = [
 const onHome = computed(() => route.name === "game-home");
 const onFinance = computed(() => route.name === "game-finance");
 const onBell = computed(() => route.name === "game-ipo");
+// An investor who has approached and is waiting for an answer: a notification on every page, and a badge on Finance.
+const approach = computed(() => game.company?.investors.offer ?? null);
 
 // Each page visit goes in the playtest log, by its route name: "game-finance" is "finance".
 watch(
@@ -74,7 +76,10 @@ async function closeMenu() {
         </button>
         <ul id="game-nav-links" :class="{ open: menuOpen }">
           <li v-for="page in PAGES" :key="page.name">
-            <RouterLink :to="`${game.base}${page.path}`" class="nav-link">{{ page.name }}</RouterLink>
+            <RouterLink :to="`${game.base}${page.path}`" class="nav-link">
+              {{ page.name
+              }}<span v-if="page.name === 'Finance' && approach && !game.over" class="nav-badge" data-testid="finance-badge" aria-hidden="true">1</span>
+            </RouterLink>
           </li>
         </ul>
       </nav>
@@ -158,6 +163,13 @@ async function closeMenu() {
           <RouterLink v-if="!onFinance" :to="`${game.base}/finance`">Open Finance</RouterLink>
         </p>
       </div>
+      <p v-if="approach && !game.over" class="ipo-note investor-note" role="status" data-testid="investor-note">
+        <span class="badge">Investor</span>
+        {{ approach.investor }}, an angel investor, likes what you're doing and wants to invest
+        {{ formatCash(approach.amount) }}.
+        <RouterLink v-if="!onFinance" :to="`${game.base}/finance`">See their offer on Finance</RouterLink>
+        <template v-else>Their offer is below.</template>
+      </p>
       <p v-if="game.ipoApproved && !onBell" class="ipo-note" role="status" data-testid="ipo-approved-note">
         <span class="badge">IPO approved</span>
         Your company is ready to float. Choose your float and ring the opening bell: the game waits for you.

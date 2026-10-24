@@ -179,6 +179,10 @@ Valuation divided by shares in issue.
 The order of investment after friends and family: an angel, then Series A, B, C and D venture capital rounds.
 _Avoid_: Stages, levels
 
+**Angel investor**:
+The first rung of the funding ladder: one investor who approaches a few days after the company first earns steady revenue. Accepting their offer sets the valuation to their figure and closes friends and family and grants; declining brings another angel a few days later.
+_Avoid_: Angel round, seed investor
+
 **Lead VC**:
 The VC the student went with in the last round, who returns to offer in the next round alongside two new VCs.
 _Avoid_: Main investor

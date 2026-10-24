@@ -91,6 +91,13 @@ export const api = {
       `/api/codes/${enc(code)}/companies/${enc(id)}/counter-odds?${new URLSearchParams({ funder, ...Object.fromEntries(Object.entries(terms).map(([k, v]) => [k, String(v)])) })}`,
     ),
 
+  // The same for an investor's open approach (the angel's).
+  investorOdds: (code: string, id: string, terms: Record<string, number>) =>
+    request<CounterOddsView>(
+      "GET",
+      `/api/codes/${enc(code)}/companies/${enc(id)}/investor-odds?${new URLSearchParams(Object.fromEntries(Object.entries(terms).map(([k, v]) => [k, String(v)])))}`,
+    ),
+
   teacherLogin: (password: string) => request<{ ok: true }>("POST", "/api/teacher/login", { password }),
   teacherLogout: () => request<{ ok: true }>("POST", "/api/teacher/logout"),
   teacherMe: () => request<{ ok: true }>("GET", "/api/teacher/me"),

@@ -418,6 +418,7 @@ export async function buildApp(opts: AppOptions) {
       valuation: sim.valuation(state),
       capTable: sim.capTable(state),
       funding: sim.funding(state),
+      investors: sim.investors(state),
       ipo: sim.ipo(state),
       rescue: sim.rescue(state),
       features: sim.features(state),
@@ -709,6 +710,25 @@ export async function buildApp(opts: AppOptions) {
     },
   );
 
+  // What a counter to an investor's open approach would do, for the negotiation modal's live odds. Changes nothing.
+  app.get<{ Params: { code: string; id: string }; Querystring: { amount?: number; share?: number } }>(
+    "/api/codes/:code/companies/:id/investor-odds",
+    {
+      schema: {
+        querystring: {
+          type: "object",
+          properties: { amount: COUNTER_TERMS.amount, share: COUNTER_TERMS.share },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (req, reply) => {
+      const row = await findCompany(req.params.code, req.params.id);
+      if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      return simOf(row).investorCounterOdds(row.state, req.query) satisfies CounterOddsView;
+    },
+  );
+
   // How the company did: shown when the game ends, and available any time as a summary so far.
   app.get<{ Params: { code: string; id: string } }>("/api/codes/:code/companies/:id/summary", async (req, reply) => {
     const row = await findCompany(req.params.code, req.params.id);
@@ -753,6 +773,9 @@ export async function buildApp(opts: AppOptions) {
                 "acceptFunding",
                 "declineFunding",
                 "counterFunding",
+                "acceptInvestor",
+                "declineInvestor",
+                "counterInvestor",
                 "buyBack",
                 "buyApi",
                 "switchServer",
@@ -800,7 +823,7 @@ export async function buildApp(opts: AppOptions) {
             funder: { enum: [...FUNDER_IDS] },
             // ringBell: the float, as a share of the company after the IPO. The sim checks it's in the allowed range.
             float: { type: "number", minimum: 0, maximum: 1 },
-            // counterFunding: the terms asked for. The sim checks they're the funder's and how far they ask.
+            // counterFunding and counterInvestor: the terms asked for. The sim checks they're the offer's and how far they ask.
             terms: { type: "object", properties: COUNTER_TERMS, additionalProperties: false },
           },
           allOf: [
@@ -815,6 +838,7 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { const: "setInstances" } } }, then: { required: ["count"] } },
             { if: { properties: { type: { enum: ["acceptFunding", "declineFunding"] } } }, then: { required: ["funder"] } },
             { if: { properties: { type: { const: "counterFunding" } } }, then: { required: ["funder", "terms"] } },
+            { if: { properties: { type: { const: "counterInvestor" } } }, then: { required: ["terms"] } },
             { if: { properties: { type: { enum: ["hire", "letGo", "setInstances"] } } }, then: { properties: { count: { type: "integer", minimum: 1 } } } },
             { if: { properties: { type: { const: "setApiInstances" } } }, then: { required: ["count"] } },
             { if: { properties: { type: { const: "switchServer" } } }, then: { required: ["id", "gives"] } },
@@ -898,7 +922,7 @@ export async function buildApp(opts: AppOptions) {
                       ms: { type: "integer", minimum: 0 },
                       prices: { type: "array", maxItems: 20, items: { type: "number", minimum: 0 } },
                       confirmed: { type: "boolean" },
-                      kind: { enum: ["migration", "loan", "friendsAndFamily", "grant"] },
+                      kind: { enum: ["migration", "loan", "friendsAndFamily", "grant", "angel"] },
                       target: { enum: [...MODEL_IDS] },
                       control: { type: "string", pattern: "^[a-z][a-z0-9-]{0,47}$" },
                       value: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,23}$" },

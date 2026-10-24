@@ -30,7 +30,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 37;
+export const GAME_STATE_VERSION = 38;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -149,9 +149,9 @@ export type FunderId = (typeof FUNDER_IDS)[number];
 export interface Shareholder {
   /**
    * "student" for the student, who owns every share at the start; otherwise the funder who bought them, "vulture" for
-   * a rescue buyout, or "public" for the float's new shares, sold at the IPO.
+   * a rescue buyout, "angel" for the angel investor, or "public" for the float's new shares, sold at the IPO.
    */
-  id: "student" | "friendsAndFamily" | "vulture" | "public";
+  id: "student" | "friendsAndFamily" | "angel" | "vulture" | "public";
   shares: number;
   /** The day they got their shares: 1 for the student. */
   day: number;
@@ -195,6 +195,69 @@ export interface Funding {
    * then, while the offer is the fixed one, and again once it's answered.
    */
   negotiating: Record<FunderId, Negotiation | null>;
+}
+
+/** The rungs of the funding ladder. Only the angel so far: Series A–D will follow. */
+export const ROUND_IDS = ["angel"] as const;
+export type RoundId = (typeof ROUND_IDS)[number];
+
+/**
+ * An investor who approached the student with an offer, still to be answered: cash for a share of the company after,
+ * as offers in a negotiation (the first their opening). The business's worth and net cash on the day they approached
+ * are what their offer was made on: their terms value the business at a multiple of it.
+ */
+export interface Approach {
+  round: RoundId;
+  /** Who they are: "Priya Shah". */
+  investor: string;
+  day: number;
+  business: number;
+  netCash: number;
+  /** Their offers so far, on `amount` and `share`, and the rolls between them: just the opening until countered. */
+  negotiation: Negotiation;
+}
+
+/**
+ * The angel's deal once accepted: what they put in and got, and their target, income averaged over `days` days
+ * reaching dailyRevenue by byDay. "running" until it's "met", or "missed" on byDay, when they took extraShares.
+ */
+export interface AngelDeal {
+  investor: string;
+  day: number;
+  amount: number;
+  shares: number;
+  /** Their share of the company then, 0–1, and the valuation it was struck at, their cash included. */
+  share: number;
+  valuation: number;
+  target: { dailyRevenue: number; days: number; byDay: number };
+  status: "running" | "met" | "missed";
+  /** The day it was met or missed; null while it runs. */
+  settledDay: number | null;
+  extraShares: number;
+}
+
+/**
+ * The valuation an investor set: from the day they invested the business is valued at `multiple` × the formula's,
+ * cash at face value. Set by the first investor after friends and family: the angel.
+ */
+export interface InvestorValuation {
+  investor: string;
+  round: RoundId;
+  day: number;
+  multiple: number;
+}
+
+/**
+ * The funding ladder: who approaches next and when, the approach open now, those turned down, the angel's deal, and the
+ * valuation an investor set.
+ */
+export interface Investors {
+  /** The day the next investor approaches: set when the hidden target is first hit, and again after a decline. */
+  nextApproachDay: number | null;
+  approach: Approach | null;
+  declined: { round: RoundId; investor: string; day: number }[];
+  angel: AngelDeal | null;
+  valuation: InvestorValuation | null;
 }
 
 /** People of one grade let go from one team in a rescue buyout's cost cuts. */
@@ -561,6 +624,8 @@ export interface GameState {
   shareholders: Shareholder[];
   /** Friends and family and the grant, once answered. */
   funding: Funding;
+  /** The angel and, later, the VCs: who's approached, the deals done and the valuation they set. */
+  investors: Investors;
   /** The rescue buyout, once cash has run out once; null before. */
   rescue: Rescue | null;
   /** Applications to float, and the IPO once the bell has been rung. */
@@ -584,6 +649,8 @@ export interface GameState {
   encounterRng: number;
   /** The same for negotiation rolls: one a counter. */
   negotiationRng: number;
+  /** And for investors: who approaches, and their opening offer. */
+  investorRng: number;
   /** Scripted events that were on during the day just played. */
   events: EventRecord[];
   /**
@@ -695,6 +762,15 @@ export type Action =
   | { type: "acceptFunding"; funder: FunderId }
   /** Turns a funder's offer down for good. */
   | { type: "declineFunding"; funder: FunderId }
+  /**
+   * Accepts the open investor approach's offer that stands, at once: their cash for new shares. The first angel closes
+   * friends and family and the grant, and sets the valuation.
+   */
+  | { type: "acceptInvestor" }
+  /** Turns the open approach down: a new investor approaches a few days later. */
+  | { type: "declineInvestor" }
+  /** Counters the open approach's offer on `amount` and `share` (theirs after, 0–1), as counterFunding does. */
+  | { type: "counterInvestor"; terms: Partial<Terms> }
   /** Buys all the vulture VC's shares back after a rescue buyout, at its price, at once. Refused without the cash. */
   | { type: "buyBack" }
   /**

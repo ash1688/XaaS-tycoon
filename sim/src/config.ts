@@ -1279,6 +1279,54 @@ export interface RescueConfig {
 }
 
 /**
+ * The funding ladder's investors, who approach the student rather than being asked: the angel now, Series A–D later.
+ * When the company first hits a rung's hidden target, the investor approaches approachDays later with an offer: cash
+ * for a share of the company, which can be negotiated like any offer. Declining, or any approach left once a deal is
+ * done elsewhere, brings a new investor retryDays later.
+ *
+ * The angel (see AngelConfig) is the first investor after friends and family: accepting sets the valuation to their
+ * figure, which moves in step with the formula from then on, and friends and family and the grant close.
+ */
+export interface InvestorsConfig {
+  /** Days after the hidden target is first hit before the investor approaches. */
+  approachDays: number;
+  /** Days after declining an investor before a new one approaches. */
+  retryDays: number;
+  angel: AngelConfig;
+}
+
+/**
+ * The angel investor.
+ *
+ * - Hidden target: income earned a day, averaged over target.days days played since the launch, reaches
+ *   target.dailyRevenue: the first steady revenue.
+ * - Their offer: they value the business (the valuation less net cash, before the minimum) at a premium over the
+ *   formula, drawn from premium.min to premium.max, plus net cash at face value: that's the valuation before their cash.
+ *   They ask for a share of the company after, drawn from share.min to share.max, and put in the cash that buys it at
+ *   that valuation, to the nearest £500, from minAmount to maxAmount (for less of the company if that caps it). All of it is paid up front. Each angel declined makes
+ *   the next less generous: declinePremium off the most premium, declineShare on the least share.
+ * - Their target, set on accepting: income averaged over target.days days reaching targetGrowth × what it was when
+ *   accepted (or × target.dailyRevenue, if that's more), within targetDays, or by the game's last day if sooner, when
+ *   the growth asked for shrinks in step with the days left. Missing it costs extra equity: new shares
+ *   take their share of the company up by missShare (0.05 = five points).
+ * - Their valuation: on accepting, the business is worth what their terms say, as a multiple of the formula's business;
+ *   from then on the valuation is that multiple × the formula's business, plus net cash, never below the minimum.
+ */
+export interface AngelConfig {
+  target: { dailyRevenue: number; days: number };
+  premium: { min: number; max: number };
+  share: { min: number; max: number };
+  minAmount: number;
+  maxAmount: number;
+  /** Each angel declined takes this off the next one's most premium, and adds declineShare to their least share. */
+  declinePremium: number;
+  declineShare: number;
+  targetGrowth: number;
+  targetDays: number;
+  missShare: number;
+}
+
+/**
  * Paid APIs, for a product that has one (see ProductApiConfig). Each call served earns pricePerCall. Calls need APIU,
  * from API servers or app servers switched from CU to APIU (on PaaS, API instances): calls beyond the APIU are
  * dropped, and their income with them. On SaaS the provider runs the API, so it needs no APIU, but takes a fee per
@@ -1350,6 +1398,7 @@ export interface GameConfig {
   ipo: IpoConfig;
   negotiation: NegotiationConfig;
   rescue: RescueConfig;
+  investors: InvestorsConfig;
   pricing: PricingConfig;
   support: SupportConfig;
   moderation: ModerationConfig;
@@ -2128,6 +2177,26 @@ export const defaultConfig: GameConfig = {
   // Placeholders from the design: about 30 days of breathing space for about 75% of the company. Buying it back costs
   // at least twice what the vulture VC put in.
   rescue: { breathingDays: 30, minCover: 0.25, share: 0.75, staffCut: 0.25, buyBackPremium: 1.5, minReturn: 2 },
+  // The angel approaches about three weeks after launch on sensible play, once income has averaged £500 a day for a
+  // fortnight: a company worth about £60-130k, so a fifth of it costs the angel about £15-35k. Sensible play makes its
+  // target (2.5 times that income within 60 days) with a few weeks to spare; a company that stalls doesn't.
+  investors: {
+    approachDays: 3,
+    retryDays: 5,
+    angel: {
+      target: { dailyRevenue: 500, days: 14 },
+      premium: { min: 1.1, max: 1.4 },
+      share: { min: 0.15, max: 0.25 },
+      minAmount: 10_000,
+      maxAmount: 100_000,
+      // Three declines and the next angel offers the least premium for at least 21%.
+      declinePremium: 0.1,
+      declineShare: 0.02,
+      targetGrowth: 2.5,
+      targetDays: 60,
+      missShare: 0.05,
+    },
+  },
   pricing: {
     maxPrice: 1_000,
     growthSensitivity: 1,

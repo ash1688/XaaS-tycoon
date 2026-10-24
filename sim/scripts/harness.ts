@@ -50,6 +50,8 @@ export interface Strategy {
   migrateDay?: number;
   /** Accepts friends and family and the grant on day 1. */
   funding?: boolean;
+  /** Accepts the first angel investor's opening offer the day they approach. */
+  angel?: boolean;
 }
 
 export const STRATEGIES: Strategy[] = [
@@ -91,6 +93,15 @@ export const STRATEGIES: Strategy[] = [
     scaling: "ahead",
     loan: "never",
     funding: true,
+  },
+  {
+    id: "angel",
+    description: "As sensible, and accepts the first angel investor's opening offer the day they approach.",
+    priceFactor: 1,
+    support: true,
+    scaling: "ahead",
+    loan: "onprem",
+    angel: true,
   },
   {
     id: "migrate",
@@ -400,6 +411,7 @@ export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameSta
     const month = sim.dailyStaffCost(s) * 30 + sim.monthlyInfrastructureCost(s);
     if (s.cash > quote.total + month) s = tryAction(sim, s, { type: "startMigration", model: migrateTo[s.model] });
   }
+  if (strategy.angel && sim.investors(s).offer) s = tryAction(sim, s, { type: "acceptInvestor" });
   if (strategy.loan === "late" && !s.loan && s.cash < 7 * (sim.dailyStaffCost(s) + sim.monthlyInfrastructureCost(s) / 30)) {
     s = tryAction(sim, s, { type: "takeLoan" });
   }

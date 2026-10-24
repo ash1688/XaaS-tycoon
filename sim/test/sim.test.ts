@@ -230,6 +230,7 @@ const config: GameConfig = {
   ipo: defaultConfig.ipo,
   negotiation: defaultConfig.negotiation,
   rescue: defaultConfig.rescue,
+  investors: defaultConfig.investors,
   // No price waves unless a test says otherwise, so a price change only has its ongoing effect on growth and payers.
   pricing: {
     maxPrice: 1_000,
