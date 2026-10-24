@@ -101,6 +101,9 @@ const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.fr
           <span class="muted" :data-testid="`${pool.id}-work`">
             Does the work of {{ formatCount(game.work(pool.id)) }} mid{{ game.work(pool.id) === 1 ? "" : "s" }}
           </span>
+          <span v-if="game.staffPool(pool.id)?.idle" class="idle-note" :data-testid="`${pool.id}-idle`">
+            {{ game.staffPool(pool.id)?.idle }}
+          </span>
           <span v-if="pool.id === 'support'" class="muted" data-testid="support-hint">
             A mid clears {{ formatCount(game.meta.ticketsPerPerson) }} tickets a day. Your users raise about
             {{ formatCount(game.company.usualTickets) }} a day, so you need the work of

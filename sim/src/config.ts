@@ -999,6 +999,12 @@ export interface EventConfig {
   layer: LayerId;
   /** How it comes up on the encounter list, as a random event. Left out, it's never a random event. */
   encounter?: EncounterOdds;
+  /**
+   * A warning, when it's next on the encounter list and the danger meter would reach it within `days` well-run days:
+   * the student hears `text` that day, with time to get ready. Risky days fill the meter faster, so it can come sooner.
+   * Left out, the event is a surprise.
+   */
+  warning?: { days: number; text: string };
   /** Fixed days it fires on as well, outside the encounter system. */
   schedule?: EventSchedule;
   /** Days it lasts, from the day it fires. */
@@ -1226,7 +1232,8 @@ export interface IpoConfig {
  * - The roll is the die, less greedPenalty × the distance (rounded to a whole pip), plus any bonus (a CFO, later).
  *   From highFrom the other side moves moves.high of the way to the counter; from middleFrom, moves.middle; below it,
  *   moves.low. So the further a counter asks, the worse its odds, and asking a lot pays less on average than asking a
- *   little more than nothing.
+ *   little more than nothing. A moves.low below 0 makes a low roll go against the student: the other side hardens and
+ *   the next offer is worse than the one countered, so a counter is a gamble, not a free try.
  * - The other side never walks away: its latest offer stands until the student accepts or declines it.
  */
 export interface NegotiationConfig {
@@ -1237,7 +1244,7 @@ export interface NegotiationConfig {
   greedPenalty: number;
   /** The most a counter can ask, in all, as a share of the offer (0.5 = 50%). */
   maxAsk: number;
-  /** Share of the way from the offer to the counter the next offer moves, on each kind of roll. */
+  /** Share of the way from the offer to the counter the next offer moves, on each kind of roll; below 0, away from it. */
   moves: { high: number; middle: number; low: number };
 }
 
@@ -2107,7 +2114,8 @@ export const defaultConfig: GameConfig = {
     middleFrom: 7,
     greedPenalty: 30,
     maxAsk: 0.5,
-    moves: { high: 0.8, middle: 0.5, low: 0.1 },
+    // A low roll hardens the other side: the next offer is a fifth of the counter's distance worse than the last.
+    moves: { high: 0.8, middle: 0.5, low: -0.2 },
   },
   // Placeholders from the design: about 30 days of breathing space for about 75% of the company. Buying it back costs
   // at least twice what the vulture VC put in.
@@ -2330,6 +2338,11 @@ export const defaultConfig: GameConfig = {
       layer: "runtime",
       // The commonest random event.
       encounter: { chance: 0.6 },
+      // A tip-off a week ahead: long enough to order on-prem kit (4 days) or rent VMs, if the student acts on it.
+      warning: {
+        days: 7,
+        text: "A big news site has been asking about your product. If they feature it, expect a flood of visitors within about a week: more than your servers can carry unless you add capacity first.",
+      },
       days: 2,
       // Triple the CU and DBU demand: more than a sensible setup carries, so only a model that scales stays up.
       load: { multiplier: 2, extra: 80_000, unitMultiplier: 3 },
@@ -2582,19 +2595,19 @@ export const defaultConfig: GameConfig = {
       effects: {
         onprem: {
           cost: { amount: 4_000, text: "Money clawed back by the banks, and their fees" },
-          detail: "You built your own checkout, so spotting fraud is your job, and nothing stopped them.",
+          detail: "Your own code takes the payments, so spotting fraud is your job, and nothing stopped them.",
         },
         iaas: {
           cost: { amount: 4_000, text: "Money clawed back by the banks, and their fees" },
-          detail: "You built your own checkout, so spotting fraud is your job, and nothing stopped them.",
+          detail: "Your own code takes the payments, so spotting fraud is your job, and nothing stopped them.",
         },
         paas: {
           cost: { amount: 4_000, text: "Money clawed back by the banks, and their fees" },
-          detail: "You built your own checkout on the platform, so spotting fraud is your job, and nothing stopped them.",
+          detail: "Your own code on the platform takes the payments, so spotting fraud is your job, and nothing stopped them.",
         },
         saas: {
           cost: { amount: 1_500, text: "Money clawed back by the banks, and their fees" },
-          detail: "The provider's checkout has its own fraud checks, which caught most of it. You lost what slipped through.",
+          detail: "The provider takes the payments and runs its own fraud checks, which caught most of it. You lost what slipped through.",
         },
       },
     },

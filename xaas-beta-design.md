@@ -91,7 +91,7 @@ When starting a company, the student chooses how many shares it has, from **10,0
   - **Angels and venture capital** come to the student. When the company hits a hidden target, a few days later the student gets a notification in Finance: an angel or VC likes what they're doing and wants to invest. The student can decline or start negotiating.
 - **Negotiation.** Up to three rounds:
   1. The investor opens with offer 1 (e.g. £50k for 20%).
-  2. The student counters (e.g. £50k for 10%). A dice roll sets offer 2: a high roll moves most of the way to the student, a middle roll meets halfway, a low roll barely moves.
+  2. The student counters (e.g. £50k for 10%). A dice roll sets offer 2: a high roll moves most of the way to the student, a middle roll meets halfway, and a low roll makes them dig in: offer 2 is a little worse than offer 1, so a counter is never a free try.
   3. The student can counter once more; a new roll sets offer 3.
   4. **Offer 3 is final:** take it or leave it.
   - The further a counter is from the investor's offer, the worse the odds on the roll.
@@ -188,6 +188,8 @@ Random events work like random battles in the original Final Fantasy VII:
 2. **Danger meter.** Starts at 0 and rises every day. How much depends on what the student did that day and how the company is doing: unpatched servers, the slider above 100%, overloaded capacity and low satisfaction make it climb faster; a well-run day makes it creep.
 3. **The check.** Each day the meter is compared with the next event on the list (the lowest threshold). Below it, nothing happens. At or above it, that event fires.
 4. **Reset.** When an event fires, the list is emptied, a new list is rolled and the meter goes back to 0.
+
+One exception to the surprise: a **traffic spike gives a tip-off** about a week ahead (when it's next on the list and a week of well-run days would reach its threshold), as nothing but spare capacity protects on-prem and new kit takes days to arrive. Risky days fill the meter faster, so it can come sooner.
 
 There's no hard minimum gap between events. Because the meter climbs from 0 after each one, gaps come naturally, and thresholds are tuned so the next event rarely comes within about 14 days (students complained about spikes landing close together). The meter controls **when** something happens; the situation controls **what**.
 

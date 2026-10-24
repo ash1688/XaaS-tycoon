@@ -14,7 +14,8 @@ const goTo = (page: Page, name: string) =>
 async function pinPaidUsers(id: string, paidUsers: number) {
   const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
   try {
-    await sql`update companies set state = jsonb_set(state, '{paidUsers}', ${String(paidUsers)}::jsonb) where id = ${id}`;
+    // As a number: ${String(paidUsers)}::jsonb would store it as the string "1200".
+    await sql`update companies set state = jsonb_set(state, '{paidUsers}', to_jsonb(${paidUsers}::int)) where id = ${id}`;
   } finally {
     await sql.end();
   }
@@ -388,10 +389,10 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
   // Default config: PaaS is £1,000 upfront and £109 a day (power and cooling included) with one instance and a small
   // managed database, sized for the users; IaaS £66 a day with its VMs, and £3,000 to leave.
   await expect(student.getByTestId("quote-upfront")).toHaveText("£1,000");
-  await expect(student.getByTestId("quote-double")).toHaveText("£1,526");
+  await expect(student.getByTestId("quote-double")).toHaveText("£1,750");
   await expect(student.getByTestId("quote-pro-rata")).toHaveText("£924");
   await expect(student.getByTestId("quote-exit")).toHaveText("£3,000");
-  await expect(student.getByTestId("quote-total")).toHaveText("£6,450");
+  await expect(student.getByTestId("quote-total")).toHaveText("£6,674");
   await expect(student.getByTestId("quote-overrun")).toContainText("chance of 2–5 extra days");
   // Nothing has started or been charged yet.
   const company = async () => (await request.get(`/api/codes/${code}/companies/${id}`)).json();
@@ -1078,6 +1079,17 @@ test("a student previews prices live, raises the price, and sees the backlash an
     "At £6.25 you'd make £24 a day more than now (£224 a day) once the wave settles. 55 paying users leave and 71 drop to free.",
   );
   await expect(preview.getByRole("img", { name: /The wave day by day/ })).toBeVisible();
+  // The rise's backlash tickets against today's support, as the sim quotes them: whether the team keeps up (#163).
+  const quote = await (await request.get(`/api/codes/${code}/companies/${id}/price-preview?price=6.25`)).json();
+  const n = (x: number) => x.toLocaleString("en-GB");
+  expect(quote.tickets.tickets).toBeGreaterThan(0);
+  await expect(preview.getByTestId("preview-backlash")).toHaveText(n(quote.tickets.tickets));
+  await expect(preview.getByTestId("preview-tickets")).toContainText(
+    `The rise brings about ${n(quote.tickets.tickets)} extra support tickets, up to ${n(quote.tickets.peakDay)} in a day.`,
+  );
+  await expect(preview.getByTestId("preview-tickets")).toContainText(
+    quote.tickets.canClear ? "so it can keep up." : quote.tickets.waitingAfter > 0 ? "Hire support first." : "satisfaction dips",
+  );
   // A cut previews a positive wave instead, updating as the price changes.
   await input.fill("4");
   await expect(preview.getByTestId("preview-joined")).toBeVisible();

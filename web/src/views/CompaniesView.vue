@@ -191,7 +191,7 @@ async function start() {
         <fieldset>
           <legend>What are you building?</legend>
           <p class="muted">You build one product for the whole game.</p>
-          <div class="choices">
+          <div class="choices choices-3">
             <label v-for="p in meta.productTypes" :key="p.id" class="choice" :class="{ on: productType === p.id }">
               <input type="radio" name="productType" :value="p.id" v-model="productType" />
               <strong>{{ p.name }}</strong>

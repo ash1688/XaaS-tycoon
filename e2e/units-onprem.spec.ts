@@ -34,10 +34,10 @@ test("on-prem, buying a server charges it up front and shows it on order, counti
   // Picking small, the note says the upfront price with its cabling, running cost, units, rack space and delivery time
   // before + buys one.
   await servers.getByTestId("size-app").selectOption("small");
-  await expect(servers.getByTestId("size-app").locator('option[value="small"]')).toContainText("£400 + £30/mo");
+  await expect(servers.getByTestId("size-app").locator('option[value="small"]')).toContainText("£260 + £30/mo");
   const note = servers.getByTestId("step-note-app");
   await expect(note).toContainText("6 CU");
-  await expect(note).toContainText("£400 plus £50 cabling up front");
+  await expect(note).toContainText("£260 plus £50 cabling up front");
   await expect(note).toContainText("takes 1U in a rack");
   await expect(note).toContainText("£30 a month");
   await expect(note).toContainText("arrives in 4 days");
@@ -49,7 +49,7 @@ test("on-prem, buying a server charges it up front and shows it on order, counti
 
   // Paid for at once, and on order with its days left.
   const bought = await (await request.get(`/api/codes/${code}/companies/${id}`)).json();
-  expect(bought.cash).toBe(cash - 400 - 50);
+  expect(bought.cash).toBe(cash - 260 - 50);
   expect(bought.spend.cabling).toBeGreaterThan(0);
   const order = servers.getByTestId("on-order").locator('[data-order="app-small"]');
   await expect(order).toContainText("App server · small");
@@ -65,7 +65,7 @@ test("on-prem, buying a server charges it up front and shows it on order, counti
   await servers.getByTestId("size-app").selectOption("large");
   await servers.getByRole("button", { name: "Sell a large app server" }).click();
   const sell = student.getByRole("dialog", { name: "Sell a server" });
-  await expect(sell.getByTestId("sell-note")).toHaveText("You get £400 back (40% of the £1,000 you paid).");
+  await expect(sell.getByTestId("sell-note")).toHaveText("You get £260 back (40% of the £650 you paid).");
   await sell.getByRole("button", { name: "Keep it" }).click();
 
   // Racks: the large app server and database (4U each) and the small one on order (1U) are in the server room's rack.

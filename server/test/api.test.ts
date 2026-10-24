@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
-import { createSim, defaultConfig, GAME_STATE_VERSION } from "@xaas/sim";
+import { createSim, defaultConfig, GAME_STATE_VERSION, PRODUCT_TYPE_IDS } from "@xaas/sim";
 import { buildApp } from "../src/app.ts";
 import { companies } from "../src/db/schema.ts";
 import type {
@@ -845,14 +845,10 @@ describe("difficulty", () => {
 describe("products", () => {
   it("lists every product in the meta, with its per-user fee multiplier", async () => {
     const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
-    expect(meta.productTypes.map((p) => [p.id, p.name, p.perUserFeeMultiplier])).toEqual([
-      ["ecommerce", "E-commerce platform", 1],
-      ["social", "Social network", 1],
-      ["video", "Video sharing platform", 1],
-      ["payments", "Payments app", 1],
-      ["assistant", "AI assistant", defaultConfig.productTypes.assistant.demand.perUserFeeMultiplier],
-      ["games", "Games network", defaultConfig.productTypes.games.demand.perUserFeeMultiplier],
-    ]);
+    expect(meta.productTypes.map((p) => [p.id, p.perUserFeeMultiplier])).toEqual(
+      PRODUCT_TYPE_IDS.map((id) => [id, defaultConfig.productTypes[id].demand.perUserFeeMultiplier]),
+    );
+    expect(meta.productTypes.map((p) => p.name)).toEqual(PRODUCT_TYPE_IDS.map((id) => defaultConfig.productTypes[id].name));
   });
 
   it("starts an AI assistant and a games network, with their own features and paid API", async () => {
@@ -1141,6 +1137,8 @@ describe("servers on-prem", () => {
   // (£1,200), 10 days to arrive and 40% back on selling.
   const ownSim = createSim({ ...sim.config, startingCash: 100_000 });
   const onprem = defaultConfig.models.onprem.servers!;
+  /** What selling a bought server back refunds: its sell-back share of what it cost. */
+  const sellBack = (paid: number) => Math.round(paid * onprem.purchase!.sellBackShare);
   let ownApp: Awaited<ReturnType<typeof buildApp>>;
 
   beforeAll(async () => {
@@ -1168,13 +1166,15 @@ describe("servers on-prem", () => {
 
   it("starts with the starter kit bought on top of the server room, and offers kit to buy", async () => {
     const { company } = await setup();
-    // The server room (£2,500) with its medium rack (£500), the kit, and cabling for the rack and 2 servers.
-    expect(company.cash).toBe(100_000 - 2_500 - 500 - 1_000 - 1_200 - 150);
-    expect(company.spend.infrastructure).toBe(5_200);
+    // The server room (£2,500) with its medium rack (£500), the large app server and database, and cabling for the
+    // rack and 2 servers.
+    const kit = onprem.purchase!.price.app.large + onprem.purchase!.price.database.large;
+    expect(company.cash).toBe(100_000 - 2_500 - 500 - kit - 150);
+    expect(company.spend.infrastructure).toBe(2_500 + 500 + kit);
     expect(company.spend.cabling).toBe(150);
     expect(company.servers).toEqual([
-      expect.objectContaining({ id: 1, type: "app", size: "large", status: "ready", daysLeft: 0, paid: 1_000, sellBack: 400 }),
-      expect.objectContaining({ id: 2, type: "database", size: "large", status: "ready", daysLeft: 0, paid: 1_200, sellBack: 480 }),
+      expect.objectContaining({ id: 1, type: "app", size: "large", status: "ready", daysLeft: 0, paid: onprem.purchase!.price.app.large, sellBack: sellBack(onprem.purchase!.price.app.large) }),
+      expect.objectContaining({ id: 2, type: "database", size: "large", status: "ready", daysLeft: 0, paid: onprem.purchase!.price.database.large, sellBack: sellBack(onprem.purchase!.price.database.large) }),
     ]);
     expect(company.serverOptions).toHaveLength(16);
     expect(company.serverOptions).toContainEqual(
@@ -1189,7 +1189,7 @@ describe("servers on-prem", () => {
       }),
     );
     const meta = (await ownApp.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
-    expect(meta.models.find((m) => m.id === "onprem")).toMatchObject({ upfrontCost: 5_350, powerAndCooling: 25 });
+    expect(meta.models.find((m) => m.id === "onprem")).toMatchObject({ upfrontCost: 2_500 + 500 + kit + 150, powerAndCooling: 25 });
   });
 
   it("buys kit, charging it at once, on order with the days left until it arrives", async () => {
@@ -1216,7 +1216,7 @@ describe("servers on-prem", () => {
     expect(onOrder.json()).toMatchObject({ error: "on_order" });
     const sold = await act({ type: "sellServer", id: 2 });
     expect(sold.statusCode).toBe(200);
-    expect(sold.json<CompanyView>().cash).toBe(before.cash - onprem.purchase!.price.cache.small - onprem.purchase!.cablingCost + 480);
+    expect(sold.json<CompanyView>().cash).toBe(before.cash - onprem.purchase!.price.cache.small - onprem.purchase!.cablingCost + sellBack(onprem.purchase!.price.database.large));
     expect((await get()).servers.map((s) => s.id)).toEqual([1, 3]);
   });
 
@@ -1628,7 +1628,8 @@ describe("bank loan", () => {
     expect(without.json()).toMatchObject({ error: "cant_afford", message: expect.stringContaining("bank loan") });
     const withLoan = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "onprem", takeLoan: true });
     expect(withLoan.statusCode).toBe(201);
-    expect(withLoan.json<CompanyView>().cash).toBe(1_000 + 35_000 - 5_350);
+    const kit = defaultConfig.models.onprem.servers!.purchase!.price;
+    expect(withLoan.json<CompanyView>().cash).toBe(1_000 + 35_000 - (2_500 + 500 + kit.app.large + kit.database.large + 150));
   });
 });
 
@@ -1755,7 +1756,11 @@ describe("shares and funding", () => {
     const { act } = await setup();
     const res = await act({ type: "counterFunding", funder: "grant", terms: { days: 45 } });
     expect(res.statusCode).toBe(200);
-    expect(res.json<CompanyView>().funding.grantOffer!.days).toBeLessThan(sim.config.funding.grant.days);
+    // A low roll makes the grant dig in, with a longer condition; any other roll shortens it.
+    const { funding } = res.json<CompanyView>();
+    const days = funding.grantOffer!.days;
+    if (funding.negotiations.grant!.rounds[0]!.result === "low") expect(days).toBeGreaterThan(sim.config.funding.grant.days);
+    else expect(days).toBeLessThan(sim.config.funding.grant.days);
     expect((await act({ type: "counterFunding", funder: "grant" })).statusCode).toBe(400);
     expect((await act({ type: "counterFunding", funder: "grant", terms: { price: 5 } })).statusCode).toBe(400);
     expect((await act({ type: "counterFunding", funder: "grant", terms: { days: 2.5 } })).statusCode).toBe(400);
@@ -3344,14 +3349,15 @@ describe("pricing and income", () => {
     expect(company.market.companies.reduce((sum, c) => sum + c.share, 0)).toBeCloseTo(1, 10);
     expect(company.market.byType.map((t) => t.id)).toEqual(["casual", "enthusiasts", "professionals", "businesses"]);
 
-    const priced = (await act({ type: "setPrice", price: 6 })).json<CompanyView>();
+    const raised = fairPrice + 1;
+    const priced = (await act({ type: "setPrice", price: raised })).json<CompanyView>();
     const { day } = priced.market.nextReaction!;
     expect(day).toBe(company.day + 1 + sim.config.rivals.reactionDays);
     let body = await next();
     while (body.company.day < day - 1) body = await next();
     expect(body.company.market.companies[1]!.price).toBe(fairPrice * rivals[0]!.priceStance);
     body = await next();
-    expect(body.company.market.companies.slice(1).map((c) => c.price)).toEqual(rivals.map((r) => Math.round(6 * r.priceStance * 100) / 100));
+    expect(body.company.market.companies.slice(1).map((c) => c.price)).toEqual(rivals.map((r) => Math.round(raised * r.priceStance * 100) / 100));
     expect(body.company.market.nextReaction).toBeNull();
   });
 

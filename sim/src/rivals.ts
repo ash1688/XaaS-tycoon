@@ -54,6 +54,12 @@ export interface MarketView {
   reactionDays: number;
   /** A price of the student's the rivals haven't answered yet, and the day they will; null when there isn't one. */
   nextReaction: { day: number; price: number } | null;
+  /**
+   * The users the product can reach (the product's market size), and how much of it the student's users fill, 0–1.
+   * Growth is held back by the share filled: at 0.9, new users come at a tenth of the rate, and a holiday's boost
+   * multiplies only that tenth.
+   */
+  reach: { size: number; filled: number };
 }
 
 /** Someone in the market for the value sums: a price and a quality. */
@@ -284,6 +290,7 @@ export function createRivals(config: GameConfig, features: Features, pricing: Pr
     const list = contenders(state);
     const total = state.users + state.rivals.reduce((sum, r) => sum + r.users, 0);
     const share = (users: number) => (total > 0 ? users / total : 0);
+    const size = config.productTypes[state.productType].growth.marketSize;
     const round1 = (n: number) => Math.round(n * 10) / 10;
     const companies: MarketCompanyView[] = [
       {
@@ -330,6 +337,7 @@ export function createRivals(config: GameConfig, features: Features, pricing: Pr
       growth: rivalGrowth(state),
       reactionDays: config.rivals.reactionDays,
       nextReaction,
+      reach: { size, filled: Math.min(1, state.users / size) },
     };
   }
 

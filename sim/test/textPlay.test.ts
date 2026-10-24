@@ -92,6 +92,18 @@ describe("runCommand", () => {
     expect(turn.rows).toEqual([]);
   });
 
+  it("previews a rise's ticket burst and whether support clears it (#163)", () => {
+    // A company with users to react: 400 of 1,000 paying.
+    const state: GameState = { ...start(), users: 1000, paidUsers: 400 };
+    const p = sim.pricePreview(state, state.price * 2);
+    expect(p.tickets.tickets).toBeGreaterThan(0);
+    const line = run(state, `preview ${state.price * 2}`).lines[0]!;
+    expect(line).toContain(`; +${p.tickets.tickets} tickets (busiest day +${p.tickets.peakDay}; support clears ${p.tickets.clearance}/day`);
+    expect(line).toMatch(/: support (clears them as they come|falls behind: up to \d+ extra waiting, cleared by the end|can't keep up: up to \d+ extra waiting, \d+ still waiting after)/);
+    // A cut brings no burst, so says nothing about tickets.
+    expect(run(state, `preview ${state.price / 2}`).lines[0]).not.toContain("tickets");
+  });
+
   it("shows the customer mix with thresholds, and a rise's reaction by customer type", () => {
     const state = advanceUntil(sim, run(start(), "instances 2").state, 20, who).state;
     expect(renderStatus(sim, state)).toMatch(
@@ -435,10 +447,10 @@ describe("shares and funding", () => {
     expect(renderCommands(sim, state)).toMatch(/counter ff \[amount <£>\] \[share <%>\]/);
     const odds = run(state, "odds ff amount 18000");
     expect(odds.state).toBe(state);
-    expect(odds.lines.join("\n")).toMatch(/asks 20% better \(most 50%\): −6 on the roll\n  high 5% → £17,400 .*\n  middle 35% → £16,500 .*\n  low 60% → £15,300/);
+    expect(odds.lines.join("\n")).toMatch(/asks 20% better \(most 50%\): −6 on the roll\n  high 5% → £17,400 .*\n  middle 35% → £16,500 .*\n  low 60% → £14,400/);
     let turn = run(state, "counter ff amount 18000");
     expect(turn.rows[0]).toMatchObject({ type: "counterFunding", ok: true, params: { funder: "friendsAndFamily", terms: { amount: 18_000 } } });
-    expect(turn.lines[0]).toMatch(/^counter £18,000 for [\d.]+%: rolled \d+ −6 for asking 20% = −?\d+: (high|middle|low), they moved \d+% of the way\. Offer 2: .*\(1 counter left\)/);
+    expect(turn.lines[0]).toMatch(/^counter £18,000 for [\d.]+%: rolled \d+ −6 for asking 20% = −?\d+: ((high|middle), they moved \d+% of the way|low, they dug in: the offer got worse by 20% of what you asked)\. Offer 2: .*\(1 counter left\)/);
     expect(renderStatus(sim, turn.state)).toMatch(/friends and family offer 2 of 3, 1 counter left/);
     expect(run(turn.state, "funding").lines.join("\n")).toMatch(/offer 1 £15,000 .*; you asked £18,000 .*, rolled .* → offer 2 /);
     turn = run(turn.state, "counter ff share 20");
@@ -810,5 +822,27 @@ describe("the new products (#118)", () => {
     state = turn.state;
     expect(sim.features(state).find((f) => f.id === "achievements")?.status).not.toBe("notStarted");
     expect(sim.api(state)?.owned).toBe(true);
+  });
+});
+
+describe("playtest polish (#164)", () => {
+  it("shows how full the market is, and when developers have nothing to do", () => {
+    const state = sim.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 });
+    const status = renderStatus(sim, sim.advance(state, 10).state);
+    expect(status).toMatch(/market \d+% full \(of 40,000 users it can reach\): growth runs at \d+% of an empty market's/);
+    expect(status).toMatch(/developers .* \| IDLE: On SaaS the provider builds the features/);
+  });
+
+  it("shows a traffic spike's warning while it stands", () => {
+    const spike = defaultConfig.events.find((e) => e.id === "trafficSpike")!;
+    const warned = createSim({
+      ...defaultConfig,
+      encounters: { ...defaultConfig.encounters, thresholdMin: 10, thresholdMax: 10 },
+      events: [{ ...spike, encounter: { chance: 1 } }],
+    });
+    let state = warned.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 });
+    while (!warned.danger(state).warning && state.day < 30) state = warned.advance(state).state;
+    expect(warned.danger(state).warning?.event).toBe("trafficSpike");
+    expect(renderStatus(warned, state)).toMatch(/WARNING: A big news site has been asking about your product/);
   });
 });

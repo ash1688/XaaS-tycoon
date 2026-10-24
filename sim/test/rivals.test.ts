@@ -178,3 +178,21 @@ describe("rivals and market share", () => {
     expect(market.growth).toBe(1);
   });
 });
+
+describe("the market's size", () => {
+  it("shows how much of the users the product can reach the company has, even with no rivals", () => {
+    const { marketSize } = defaultConfig.productTypes.ecommerce.growth;
+    const state = running();
+    expect(sim.market(state).reach).toEqual({ size: marketSize, filled: state.users / marketSize });
+    const alone = createSim(withoutRivals("ecommerce"));
+    expect(alone.market(running(alone)).reach.size).toBe(marketSize);
+    // Never shown past full, whatever a migration or wave of users leaves.
+    expect(sim.market({ ...state, users: marketSize * 2 }).reach.filled).toBe(1);
+  });
+
+  it("fills up as users grow, and growth slows in step", () => {
+    const early = sim.market(running()).reach.filled;
+    const later = sim.market(sim.advance(running(), 60).state).reach.filled;
+    expect(later).toBeGreaterThan(early);
+  });
+});
