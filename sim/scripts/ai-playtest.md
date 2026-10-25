@@ -117,7 +117,8 @@ npm run -s play -- summary <game>
   them down, and another angel approaches a few days later. An offer stands for a few days only (`look` shows when
   it lapses); left unanswered, it lapses and counts as declining it.
 - **Pay reviews**: a game counts as one year of four quarters, and before quarters 2, 3 and 4 your staff come to you
-  about pay. Time stops, and `next` is refused until the review is settled. `pay` shows it: this review's inflation
+  about pay. Until IPO and a career have years of 365 days: reviews before quarters 2, 3 and 4 of the first year, then
+  before every quarter after (`Y2Q1` is quarter 1 of year 2). Time stops, and `next` is refused until the review is settled. `pay` shows it: this review's inflation
   (2–6%), the least you may offer (inflation less a point) and the most staff ask (inflation plus four points), where
   they open. `offer 3.5` offers a 3.5% rise: staff accept an offer that reaches a hidden figure near a fair rise for
   how the company is doing, or counter, and a dice roll decides how far they come down (a low roll makes them ask for
@@ -140,6 +141,16 @@ npm run -s play -- summary <game>
   accepted, staff's counter accepted, or the tribunal's pick and fee), the cash rise against inflation, the schemes
   raised and share save's new shares, and the pay multiplier after; then the schemes held with their cost a day, the
   staff share scheme's stake and when the next review comes.
+- **Drift** (until IPO and a career only): at the end of every 365-day year, running prices rise by a fresh random
+  2–6% (servers, VMs, rent, provider and platform fees, power, model benefits) and time stops. Your own price never
+  rises by itself, and pay only rises in pay reviews. Servers and VMs added after a year's end give 10% more units for
+  the money each year (compounding); kit you already have keeps its units, so replacing old kit can pay. The `drift:`
+  status line shows prices against the start and the next year's end; `drift` lists each year's end. A 180-day or
+  1-year game never reaches a year's end, so it never drifts.
+- **Server wear** (on-prem): a server wears its slider² a day (1 at 100%). Its life is about 5 years (1,825 days) in a
+  1-year game or longer, and 250 in a 180-day game, so at 100% it lasts the game but at 150% it wears out in about 111
+  days. At 90% worn, time stops with a warning (`NEARLY WORN OUT in ~Nd` beside the server); past its life it may
+  crash on any day. Sell it and buy a new one, or turn its slider down.
 - The first time cash runs out, a **vulture VC rescues** the company: it puts in cash for the losses plus about 30
   days, takes most of the company in new shares, and forces cost cuts (staff let go, hires cancelled). Time stops
   when it happens. `rescue` shows the terms in full; `buyback` buys all its shares back from company cash, at the

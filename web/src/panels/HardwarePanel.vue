@@ -62,6 +62,14 @@ const pct = (share: number) => `${+(100 * share).toFixed(share < 0.1 ? 1 : 0)}%`
               · a day: {{ pct(s.risk.overheat) }} chance of overheating, {{ pct(s.risk.crash) }} of a crash
             </template>
           </span>
+          <span v-if="s.wearWarning" class="warn-text" :data-testid="`wear-warning-${s.id}`">
+            <span class="badge">{{ s.wearDaysLeft === 0 ? "Worn out" : "Nearly worn out" }}</span>
+            <template v-if="s.wearDaysLeft === 0">Past the end of its life, it may crash on any day: sell it and buy a new one.</template>
+            <template v-else>
+              About {{ s.wearDaysLeft }} day{{ s.wearDaysLeft === 1 ? "" : "s" }} left at this setting. Replace it, or turn it
+              down to make it last.
+            </template>
+          </span>
           <span v-if="s.crashedDays" class="warn-text" :data-testid="`crashed-${s.id}`">
             <span class="badge">Crashed</span> No capacity for {{ s.crashedDays }} more day{{ s.crashedDays === 1 ? "" : "s" }} while ops fix it.
           </span>

@@ -1,5 +1,5 @@
 import { RACK_SIZES, type GameConfig, type ModelId, type RackSize, type ServerSize } from "./config.ts";
-import { count, pounds, risen, type Finance } from "./finance.ts";
+import { count, pounds, priceRiseOn, risen, type Finance } from "./finance.ts";
 import { isRackSize, SimError, type GameState, type LogEntry, type Rack, type Server } from "./state.ts";
 
 /** One of the company's racks, for the screen. */
@@ -61,7 +61,7 @@ export function createRacks(config: GameConfig, finance: Finance) {
   const basePrice = (model: ModelId, size: RackSize) => racksOf(model)?.sizes[size].price ?? 0;
   /** A rack's price today, after any price rises on the model. */
   const rackPrice = (state: GameState, model: ModelId, size: RackSize) =>
-    risen(basePrice(model, size), state.priceRises[model] ?? 1);
+    risen(basePrice(model, size), priceRiseOn(state, model));
   const sellBackValue = (model: ModelId, rack: Rack) => Math.round(rack.paid * sellBackShare(model));
   const racksText = (n: number, size: RackSize) => `${count.format(n)} ${size} rack${n === 1 ? "" : "s"}`;
 

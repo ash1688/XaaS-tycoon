@@ -9,6 +9,7 @@ import type { MvpView } from "./mvp.ts";
 import type { MigrationView } from "./migration.ts";
 import type { ServerView, UnitsView } from "./servers.ts";
 import type { FundingView } from "./shares.ts";
+import { quarterName } from "./payReview.ts";
 import type { DayLog, GameState } from "./state.ts";
 
 /** With this many days of cash left or fewer, time pauses once: a loan or cost cuts can still help. */
@@ -79,7 +80,7 @@ export function createPauses(config: GameConfig, views: PauseViews) {
 
     // A pay review opening: the day can't go on until it's settled.
     if (after.payReview && !before.payReview) {
-      add("payReview", "pay-review", `Pay review: your staff want to talk about pay before quarter ${after.payReview.quarter} starts`);
+      add("payReview", "pay-review", `Pay review: your staff want to talk about pay before ${quarterName(after.payReview)} starts`);
     }
 
     // Cash ran out and a vulture VC rescued the company: it now owns most of it, and the next cash-out is liquidation.
@@ -123,6 +124,15 @@ export function createPauses(config: GameConfig, views: PauseViews) {
     if (grantBefore === "accepted" && grantAfter === "withdrawn") add("alert", "grant", "The grant was withdrawn");
     if (grantBefore === "accepted" && grantAfter === "met") add("finished", "grant", "The grant's condition is met: it's yours to keep");
     if ((after.api?.dropped ?? 0) > 0 && (before.api?.dropped ?? 0) === 0) add("alert", "api-dropped", "API calls are being dropped");
+    // A year's end in a long game: running prices rose, and new kit is better (drift).
+    for (const y of after.yearEnds.slice(before.yearEnds.length)) {
+      add("alert", "year-end", `Year ${y.year} is over: running prices rose ${Math.round(y.inflation * 1000) / 10}%`);
+    }
+    // A server nearly worn out, on the day it's first warned about: time to replace it or ease off its slider.
+    const warnedBefore = new Set(views.servers(before).filter((x) => x.wearWarning).map((x) => x.id));
+    for (const x of views.servers(after)) {
+      if (x.wearWarning && !warnedBefore.has(x.id)) add("alert", `wear-${x.id}`, `Server #${x.id} is nearly worn out`);
+    }
 
     // The IPO: every readiness condition met at last, or a condition lost by a company that was ready.
     const ipoBefore = views.ipo(before);

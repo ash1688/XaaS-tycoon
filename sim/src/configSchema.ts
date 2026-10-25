@@ -327,8 +327,16 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("hardware.overheat.capacity", "Infrastructure", H, "Overheating: capacity left", "The share of its capacity an overheated server gives (0.5 = half).", SHARE);
   add("hardware.crash.chance", "Infrastructure", H, "Crash: chance a day at the top", "A server at the top of the slider crashes on this share of days, the same curve as overheating.", SHARE);
   add("hardware.crash.days", "Infrastructure", H, "Crash: days down", "How many days a crashed server gives nothing while ops fix it.", range(1, 30, 1));
-  add("hardware.lifespan", "Infrastructure", H, "Lifespan (days at 100%)", "Wear a server can build up before it's worn out. It wears the slider² a day: 1 at 100%, 2.25 at 150%.", range(1, 20_000, 1));
+  add("hardware.lifespan", "Infrastructure", H, "Lifespan (days at 100%)", "Wear a server can build up before it's worn out, in a game of a year or more. It wears the slider² a day: 1 at 100%, 2.25 at 150%.", range(1, 20_000, 1));
+  add("hardware.shortGameLifespan", "Infrastructure", H, "Lifespan in a 180-day game", "The same in a 180-day game, which counts as one year: above its days, a server at 100% never wears out, but one pushed hard does.", range(1, 20_000, 1));
+  add("hardware.warnAt", "Infrastructure", H, "Wear warning", "The student is warned once a server's wear reaches this share of its lifespan (0.9 = 90%).", SHARE);
   add("hardware.wornCrashChance", "Infrastructure", H, "Worn out: extra crash chance", "Past its lifespan a server has this × (wear − lifespan) ÷ lifespan extra chance a day of a crash, whatever its slider.", SHARE);
+  const D = "Drift (long games)";
+  add("drift.on", "Infrastructure", D, "Drift", "At the end of each year of a long game, running prices rise and new kit gives more units. Off, prices and kit stay as they are all game.", TOGGLE);
+  add("drift.yearDays", "Infrastructure", D, "Year", "Prices and kit drift at the end of each year this many days long. A game that ends first never drifts.", range(4, 3650, 1));
+  add("drift.inflation.min", "Infrastructure", D, "Least price rise", "Each year's end rolls its own rise from the least to the most (0.02 = 2%): servers, VMs, rent, fees and power. Never the student's price or pay.", range(0, 0.5, 0.001));
+  add("drift.inflation.max", "Infrastructure", D, "Most price rise", "The most a year's end can raise running prices.", range(0, 0.5, 0.001));
+  add("drift.newKitUnits", "Infrastructure", D, "More units on new kit", "Each year's end, servers and VMs added from then give this much more capacity for the money (0.1 = 10%), compounding. Kit you have keeps its units.", range(0, 1, 0.01));
   for (const p of PRODUCT_TYPE_IDS) {
     for (const f of base.productTypes[p]?.features ?? []) {
       const at = `productTypes.${p}.features.${f.id}`;
@@ -592,7 +600,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("support.ticketsPerPerson", "People", "", "Tickets per support person", "Tickets one support person clears a day.", range(1, 1_000, 1));
   add("addons.minConfigDevelopers", "People", "", "Developers to configure add-ons", "On SaaS, add-ons can't be bought with fewer developers than this.", HEADCOUNT);
   add("payReview.on", "People", "Pay reviews", "Pay reviews", "Staff come about pay at the start of quarters 2, 3 and 4 (a quarter of the game each), and the clock waits until it's settled. Off, pay stays at the day rates all game.", TOGGLE);
-  add("payReview.openEndedYearDays", "People", "Pay reviews", "Year until IPO", "A game with no last day (until IPO) has its reviews in the quarters of a year this many days long.", range(4, 3650, 1));
+  add("payReview.openEndedYearDays", "People", "Pay reviews", "Year in long games", "Until IPO and a career have years this many days long: reviews at the start of quarters 2, 3 and 4 in the first, then every quarter.", range(4, 3650, 1));
   add("payReview.inflation.min", "People", "Pay reviews", "Least inflation", "Each review rolls its own inflation from the least to the most (0.02 = 2%).", range(0, 0.2, 0.001));
   add("payReview.inflation.max", "People", "Pay reviews", "Most inflation", "The most inflation a review can roll.", range(0, 0.2, 0.001));
   add("payReview.minOfferBelow", "People", "Pay reviews", "Least offer below inflation", "The student can't offer less than inflation less this (0.01 = one point), and never below 0%.", range(0, 0.2, 0.001));
@@ -785,6 +793,7 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
     ["negotiation.moves.low", "negotiation.moves.middle", "A middle roll can't move less than a low one."],
     ["negotiation.moves.middle", "negotiation.moves.high", "A high roll can't move less than a middle one."],
     ["payReview.inflation.min", "payReview.inflation.max", "A review's most inflation can't be below its least."],
+    ["drift.inflation.min", "drift.inflation.max", "A year's most price rise can't be below its least."],
     ["payReview.negotiation.middleFrom", "payReview.negotiation.highFrom", "A high roll can't start below a middle one."],
     ["payReview.negotiation.highFrom", "payReview.negotiation.dieSides", "A high roll has to be possible on the die."],
     ["payReview.negotiation.moves.low", "payReview.negotiation.moves.middle", "A middle roll can't move less than a low one."],

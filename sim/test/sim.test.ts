@@ -153,6 +153,7 @@ const config: GameConfig = {
   campaigns: defaultConfig.campaigns,
   tiers: defaultConfig.tiers,
   hardware: defaultConfig.hardware,
+  drift: defaultConfig.drift,
   // Capacity far above any load here, so outages only happen where a test lowers it.
   // No upfront or per-user costs, so each model costs a flat monthly ÷ 30 a day unless a test adds them.
   models: {
@@ -1497,8 +1498,8 @@ describe("servers on IaaS", () => {
   it("starts a new IaaS game with the configured starter setup, ready for the first day", () => {
     const state = begin();
     expect(flat.servers(state)).toEqual([
-      { id: 1, type: "app", size: "massive", name: "App server", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, apiu: false, monthlyCost: 0, paid: null, sellBack: null, rack: null, performance: null, wear: null, risk: null, crashedDays: 0, overheatedDays: 0 },
-      { id: 2, type: "database", size: "massive", name: "Database", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, apiu: false, monthlyCost: 0, paid: null, sellBack: null, rack: null, performance: null, wear: null, risk: null, crashedDays: 0, overheatedDays: 0 },
+      { id: 1, type: "app", size: "massive", name: "App server", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, unitBoost: 1, apiu: false, monthlyCost: 0, paid: null, sellBack: null, rack: null, performance: null, wear: null, wearDaysLeft: null, wearWarning: false, risk: null, crashedDays: 0, overheatedDays: 0 },
+      { id: 2, type: "database", size: "massive", name: "Database", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, unitBoost: 1, apiu: false, monthlyCost: 0, paid: null, sellBack: null, rack: null, performance: null, wear: null, wearDaysLeft: null, wearWarning: false, risk: null, crashedDays: 0, overheatedDays: 0 },
     ]);
     expect(flat.units(state)).toMatchObject({ cu: { demand: 10, capacity: 10_000 }, dbu: { demand: 10, capacity: 10_000 } });
   });

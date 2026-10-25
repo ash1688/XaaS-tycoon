@@ -32,7 +32,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 49;
+export const GAME_STATE_VERSION = 50;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -429,6 +429,11 @@ export interface Server {
   performance?: number;
   /** Wear built up each day it has been in service: the slider squared a day. Left out before any. */
   wear?: number;
+  /**
+   * Its units as a multiple of the config's, from drift: kit added after a year's end gives more for the money (1.1 =
+   * 10% more). Kept for life. Left out at 1.
+   */
+  unitBoost?: number;
   /** Overheated: it gives the configured share of its capacity on every day up to and including this one. */
   overheatedUntil?: number;
   /** Crashed: it gives nothing on every day up to and including this one, while ops fix it. */
@@ -604,8 +609,10 @@ export interface Campaign {
  * student offer that falls short is the counter a roll answers (see payReview.ts).
  */
 export interface PayReview {
-  /** The quarter it opens: 2, 3 or 4. */
+  /** The quarter it opens: 2, 3 or 4, and in a long game's later years 1 to 4 too. */
   quarter: number;
+  /** The game year the quarter is in: 1 in a game of a year or less, and in a long game's first year. */
+  year: number;
   /** The quarter's first day: the first day played at the agreed rise. */
   startDay: number;
   /** This review's inflation, 0.03 = 3%. */
@@ -642,6 +649,7 @@ export type TribunalPick = "student" | "middle" | "staff";
 /** A pay review settled, for the pay history. */
 export interface PayReviewRecord {
   quarter: number;
+  year: number;
   startDay: number;
   /** The day played when it was settled: the rise applies from the next. */
   settledDay: number;
@@ -896,6 +904,28 @@ export interface GameState {
   staffSchemes: SchemeLevels;
   /** Pay reviews' own seeded RNG, for inflation and staff's walk-away figure, so they don't change the rest of the game. */
   payReviewRng: number;
+  /**
+   * Drift: running prices as a multiple of the config's, from every year's end so far (1.04 after a 4% rise). It
+   * applies on top of any provider price rise, on every model. Never to the student's price or to pay.
+   */
+  priceLevel: number;
+  /** Units servers and VMs added now give, as a multiple of the config's: 1.1 after one year's end at 10%. */
+  newKitUnits: number;
+  /** The years' ends so far, oldest first. */
+  yearEnds: YearEndRecord[];
+  /** Drift's own seeded RNG, for each year's price rise, so it doesn't change the rest of the game. */
+  driftRng: number;
+}
+
+/** One year's end in a long game: the price rise it rolled and where prices and new kit stood after it. */
+export interface YearEndRecord {
+  /** The year that ended (1 for the first) and its last day. */
+  year: number;
+  day: number;
+  /** The price rise rolled: 0.04 = 4%. */
+  inflation: number;
+  priceLevel: number;
+  newKitUnits: number;
 }
 
 /** Something the player does between days. */
@@ -1101,7 +1131,8 @@ export interface LogEntry {
     | "calendar"
     | "ipo"
     | "rival"
-    | "campaign";
+    | "campaign"
+    | "drift";
 }
 
 export interface DayLog {

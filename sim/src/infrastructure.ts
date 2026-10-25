@@ -2,7 +2,7 @@ import type { GameConfig, ModelId, ProductTypeId } from "./config.ts";
 import { autoscaling, eventHours, outageHours, powerSaving } from "./benefits.ts";
 import type { Customers } from "./customers.ts";
 import type { EventToday, Events } from "./events.ts";
-import { count, pounds, risen } from "./finance.ts";
+import { count, pounds, priceRiseOn, risen } from "./finance.ts";
 import { demandPerUser, optimisedShare } from "./optimisation.ts";
 import { vary } from "./rng.ts";
 import type { Servers, UnitCapacity, UnitsView } from "./servers.ts";
@@ -72,11 +72,11 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     return demand;
   }
 
-  /** A model's power and cooling a day, after any model benefit's saving (hardware efficiency). */
+  /** A model's power and cooling a day, after drift's price level and any model benefit's saving (hardware efficiency). */
   const dailyPower = (state: GameState, modelId: ModelId) =>
-    config.models[modelId].powerAndCooling * (1 - powerSaving(config, state, modelId));
+    risen(config.models[modelId].powerAndCooling, state.priceLevel) * (1 - powerSaving(config, state, modelId));
 
-  /** A model's power and cooling for some days, as its own charge (power). Not raised by provider price rises. */
+  /** A model's power and cooling for some days, as its own charge (power). Not raised by provider price rises, only by drift. */
   function powerEntries(state: GameState, modelId: ModelId, days = 1): LogEntry[] {
     const { name } = config.models[modelId];
     const powerAndCooling = dailyPower(state, modelId);
@@ -90,7 +90,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
    * the per-user fee (SaaS's platform fee) by its saving on the model.
    */
   function modelPrices(state: GameState, modelId: ModelId) {
-    const rise = state.priceRises[modelId] ?? 1;
+    const rise = priceRiseOn(state, modelId);
     const { monthlyCost } = config.models[modelId];
     const perUser = perUserFee(state.productType, modelId) * optimisedShare(config, state, modelId);
     return { monthlyCost: risen(monthlyCost, rise), monthlyCostPerUser: risen(perUser, rise) };

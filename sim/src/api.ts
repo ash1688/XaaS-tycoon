@@ -1,6 +1,6 @@
 import type { GameConfig } from "./config.ts";
 import type { Features } from "./features.ts";
-import { count, pounds, type Finance } from "./finance.ts";
+import { count, pounds, priceRiseOn, type Finance } from "./finance.ts";
 import { SimError, type ApiState, type GameState, type LogEntry } from "./state.ts";
 
 /** The product's paid API, for the screen: what it costs to buy, and once bought, its calls and what they earn. */
@@ -69,7 +69,7 @@ export function createApi(
    * thousandth of a penny, since it's a fraction of one.
    */
   const feePerCall = (state: GameState, providerRuns: boolean) =>
-    providerRuns ? Math.round(config.api.saasFeePerCall * (state.priceRises[state.model] ?? 1) * 1e5) / 1e5 : null;
+    providerRuns ? Math.round(config.api.saasFeePerCall * priceRiseOn(state, state.model) * 1e5) / 1e5 : null;
 
   /** Calls the APIU can serve on a day: unlimited where the provider runs the API. */
   function callsCapacity(state: GameState, day: number) {

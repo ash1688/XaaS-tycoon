@@ -24,6 +24,7 @@ import { createEvents, type EventView, type FeatureGapView } from "./events.ts";
 import { createFeatures, type FeatureView } from "./features.ts";
 import { createFinance, noSpend, pounds } from "./finance.ts";
 import { hardwareDay, setPerformance } from "./hardware.ts";
+import { createDrift, type DriftView } from "./drift.ts";
 import { createInfrastructure, type ProviderView } from "./infrastructure.ts";
 import { createInvestors, type InvestorsView } from "./investors.ts";
 import { createIpo, type IpoView } from "./ipo.ts";
@@ -38,7 +39,7 @@ import { isNameAllowed } from "./nameFilter.ts";
 import type { CounterOdds, Terms } from "./negotiation.ts";
 import { createPauses, type TickResult } from "./pauses.ts";
 import { payHistory, type PayHistoryView } from "./payHistory.ts";
-import { createPayReview, REVIEW_QUARTERS, type PayOfferPreview, type PayReviewView } from "./payReview.ts";
+import { createPayReview, type PayOfferPreview, type PayReviewView } from "./payReview.ts";
 import { schemeEntries, schemeViews, type SchemeLevels, type StaffSchemeView } from "./staffSchemes.ts";
 import { createPricing, type CustomerMixView, type PaymentsView, type PricePreview, type PriceWaveView } from "./pricing.ts";
 import { createRacks, type RacksView } from "./racks.ts";
@@ -100,7 +101,8 @@ export type { PayOfferPreview, PayReviewView, SchemeOfferPreview, TribunalOdds }
 export type { PayHistoryEntry, PayHistoryView, SchemeRaise, StaffShareSchemeView } from "./payHistory.ts";
 export type { SchemeLevels, ShareSaveIssue, StaffSchemeId, StaffSchemeView } from "./staffSchemes.ts";
 export { STAFF_SCHEMES } from "./staffSchemes.ts";
-export { inflationNow, REVIEW_QUARTERS, TRIBUNAL_PICKS } from "./payReview.ts";
+export { inflationNow, quarterName, REVIEW_QUARTERS, TRIBUNAL_PICKS, type ReviewSlot } from "./payReview.ts";
+export type { DriftView } from "./drift.ts";
 export type { RescueView } from "./rescue.ts";
 export type { TicketOutlook } from "./support.ts";
 export type { MarketCompanyView, MarketView, TypeContestView } from "./rivals.ts";
@@ -425,8 +427,16 @@ export interface Sim {
    * go up, and are paid every day as staff spend.
    */
   staffSchemes(state: GameState): StaffSchemeView[];
-  /** The first day of quarters 2, 3 and 4: the days pay reviews start, in order. */
+  /**
+   * The days pay reviews start, in order: the first days of quarters 2, 3 and 4, and in a long game's later years of
+   * every quarter (listed up to the end of next year until IPO).
+   */
   payReviewDays(state: GameState): number[];
+  /**
+   * Drift in a long game: running prices and new kit's units as multiples of the config's, every year's end so far
+   * with the price rise it rolled, and the next year's end, if the game reaches it.
+   */
+  drift(state: GameState): DriftView;
   /**
    * The pay history: each settled review with its inflation, how it ended, the rise and schemes it agreed, any tribunal
    * fee and share save's new shares; the pay multiplier so far, the schemes held and their cost a day, the staff share
@@ -584,6 +594,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const investors = createInvestors(config, finance, shares);
   const campaigns = createCampaigns(config, calendar);
   const payReview = createPayReview(config, { runwayDays: (s) => runway(s).days, chargeNow: finance.chargeNow });
+  const drift = createDrift(config);
 
   function newGame({
     companyName,
@@ -682,6 +693,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       featureGaps: [],
       api: null,
       ...payReview.startingPayReview(seed),
+      ...drift.startingDrift(seed),
     };
     // The loan arrives with the upfront bill. A model that costs more up front than the company has would run it out
     // of cash on day 1, so it's refused instead: on-prem needs the loan.
@@ -1014,15 +1026,18 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const opened = tiers.tiersDay(funded.state);
     const tiered: GameState =
       opened.tiers.length > funded.state.tiers.length ? { ...funded.state, tiers: opened.tiers } : funded.state;
+    // At a year's end in a long game, running prices rise and new kit gets better, from tomorrow (drift).
+    const drifted = drift.yearEnd(tiered, day);
     // Last of all, a pay review if the next day starts a quarter that has one: it holds the clock until it's settled.
-    const quarter = payReview.reviewDue(tiered);
-    const reviewed = quarter === null ? { state: tiered, entries: [] } : payReview.openReview(tiered, quarter);
+    const slot = payReview.reviewDue(drifted.state);
+    const reviewed = slot === null ? { state: drifted.state, entries: [] } : payReview.openReview(drifted.state, slot);
     const entriesToday = [
       // First, what a tribunal settled before today.
       ...payReview.tribunalEntries(yesterday, day),
       ...payReview.schemeStartEntries(yesterday, day),
-      ...settled.entries, ...released.entries, ...funded.entries, ...opened.entries, ...reviewed.entries];
-    return { state: reviewed.state, log: [{ day, entries: entriesToday }] };
+      ...settled.entries, ...released.entries, ...funded.entries, ...opened.entries, ...drifted.entries, ...reviewed.entries];
+    // Kit added today (managed autoscaling, a migration's new setup) gives what new kit gives now.
+    return { state: drift.stampNewKit(yesterday, reviewed.state), log: [{ day, entries: entriesToday }] };
   }
 
   /**
@@ -1170,7 +1185,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     config,
     newGame,
     load,
-    applyAction,
+    // Kit added by an action gives what new kit gives now.
+    applyAction: (s, action) => drift.stampNewKit(s, applyAction(s, action)),
     advance,
     tick,
     tickDays: (s) => pauses.tickDays(load(s)),
@@ -1224,8 +1240,9 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     payReviewDays: (s) => payReview.quarterStarts(load(s)),
     payHistory: (s) => {
       const state = load(s);
-      return payHistory(config, state, payReview.quarterStarts(state), REVIEW_QUARTERS);
+      return payHistory(config, state, payReview.reviewSlots(state));
     },
+    drift: (s) => drift.driftView(load(s)),
     launch: (s) => launch.launchView(load(s)),
     mvp: (s) => mvpView(load(s)),
     optimisation: (s) => {
