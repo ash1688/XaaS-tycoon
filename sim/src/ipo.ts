@@ -1,5 +1,6 @@
 import type { GameConfig } from "./config.ts";
 import { count, pounds, type Finance } from "./finance.ts";
+import { marketSize } from "./market.ts";
 import { layerOwner } from "./responsibility.ts";
 import { nextRandom } from "./rng.ts";
 import type { Servers } from "./servers.ts";
@@ -123,7 +124,7 @@ export function createIpo(
 
   function conditions(state: GameState): IpoCondition[] {
     const product = c.products[state.productType];
-    const market = config.productTypes[state.productType].growth.marketSize;
+    const market = Math.round(marketSize(config, state));
     const days = record(state);
     const n = Math.max(1, days.length);
     const v = shares.valuation(state);

@@ -1,6 +1,7 @@
 import type { GameConfig } from "./config.ts";
 import { count, pounds, type Finance } from "./finance.ts";
 import { loanOwed } from "./loan.ts";
+import { marketSize } from "./market.ts";
 import { createNegotiation, type CounterOdds, type TermSpec, type Terms } from "./negotiation.ts";
 import { nextRandom } from "./rng.ts";
 import type { NegotiationView, Shares } from "./shares.ts";
@@ -248,7 +249,7 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
     const share = (byDay - state.day) / angel.targetDays;
     const growth = 1 + (angel.targetGrowth - 1) * share;
     // Never more than a share of the users the market still has room for, so a fast start can't set one beyond reach.
-    const room = Math.max(0, config.productTypes[state.productType].growth.marketSize - state.users);
+    const room = Math.max(0, marketSize(config, state) - state.users);
     const users = Math.min(angel.usersRoomShare * room, Math.max(angel.minUsersGained, angel.usersPace * usersPace(state) * angel.targetDays) * share);
     return {
       dailyRevenue: Math.ceil((growth * now) / 50) * 50,

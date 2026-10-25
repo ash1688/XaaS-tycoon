@@ -8,6 +8,7 @@ import type { Rivals } from "./rivals.ts";
 import { nextRandom, seedRng, vary } from "./rng.ts";
 import type { GameState, LogEntry, UnitDemand } from "./state.ts";
 import type { UsersLost } from "./mix.ts";
+import { marketSize } from "./market.ts";
 import { demandPerUser } from "./optimisation.ts";
 import type { Support } from "./support.ts";
 
@@ -135,7 +136,7 @@ export function createCustomers(
     const [growthVariation, next] = vary(rng, profile.growthNoise);
     const rate = growthFactors(state, day, hoursDown > 0).reduce(
       (r, f) => r * f,
-      profile.dailyGrowth * (1 - state.users / profile.marketSize) * growthVariation,
+      profile.dailyGrowth * (1 - state.users / marketSize(config, state)) * growthVariation,
     );
     const churnShare = Math.min(1, churnShares(state, hoursDown).reduce((sum, c) => sum + c, 0));
     const churned = Math.round(state.users * churnShare);

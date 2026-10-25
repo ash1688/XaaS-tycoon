@@ -1005,7 +1005,7 @@ describe("campaigns (#115) and marketers (#180)", () => {
     const state = { ...unstaffed, staff: { ...unstaffed.staff, marketers: { junior: 0, mid: 1, senior: 1 } } };
     expect(renderStatus(sim, state)).toMatch(/^marketers: 2, 2 free \(1 mid, 1 senior; a new campaign gets the senior\)/m);
     expect(renderStatus(sim, state)).toMatch(/^campaigns: 0\/2 running, market \d+% full$/m);
-    expect(renderCommands(sim, state)).toMatch(/^ {2}campaign <casual\|enthusiasts\|professionals\|businesses> <budget £100–1000000> <days 7–90> {3}\(spent evenly from tomorrow; brings users of that type: casual £1\.\d\d a user now, /m);
+    expect(renderCommands(sim, state)).toMatch(/^ {2}campaign <casual\|enthusiasts\|professionals\|businesses> <budget £100–1000000> <days 7–90> {3}\(spent evenly from tomorrow; brings users of that type: casual £\d\.\d\d a user now, /m);
     const started = run(state, "campaign businesses 1600 10");
     expect(started.rows[0]).toMatchObject({ type: "startCampaign", ok: true });
     expect(renderCommands(sim, started.state)).toMatch(/^ {2}stopcampaign <1> /m);

@@ -10,6 +10,7 @@ import {
 import type { Features } from "./features.ts";
 import type { Pricing } from "./pricing.ts";
 import { pounds } from "./finance.ts";
+import { marketSize } from "./market.ts";
 import { nextRandom, seedRng } from "./rng.ts";
 import type { GameState, LogEntry, RivalJoin, RivalState } from "./state.ts";
 
@@ -290,7 +291,7 @@ export function createRivals(config: GameConfig, features: Features, pricing: Pr
     const list = contenders(state);
     const total = state.users + state.rivals.reduce((sum, r) => sum + r.users, 0);
     const share = (users: number) => (total > 0 ? users / total : 0);
-    const size = config.productTypes[state.productType].growth.marketSize;
+    const size = Math.round(marketSize(config, state));
     const round1 = (n: number) => Math.round(n * 10) / 10;
     const companies: MarketCompanyView[] = [
       {

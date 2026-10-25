@@ -77,6 +77,8 @@ test("the Marketing page opens at the first angel approach, and a campaign runs 
   await goTo(student, "Marketing");
   await expect(student.getByTestId("marketers-free")).toHaveText("1 of 1 free");
   await expect(student.getByTestId("campaigns-running")).toHaveText("0 of 1");
+  // No campaign has grown the market yet, out of its cap.
+  await expect(student.getByTestId("campaigns-market-grown")).toHaveText(/^\+0 of \+[\d,]+$/);
   const form = student.getByTestId("campaign-new");
   await expect(form.getByTestId("campaign-marketer")).toHaveText("Run by a mid marketer: ×1 users per pound.");
   await form.getByLabel("Customer type").selectOption("casual");
@@ -101,6 +103,9 @@ test("the Marketing page opens at the first angel approach, and a campaign runs 
   await expect(row.getByTestId("campaign-users")).toHaveText(/^[1-9]\d*$/);
   await expect(row.getByTestId("campaign-cost-per-user")).toHaveText(/^£\d+(\.\d\d)?$/);
   await expect(student.getByTestId("campaigns-spent")).toHaveText("£100");
+  // Its users grew the market, for good, and the stats row says how far.
+  await expect(row.getByTestId("campaign-market-added")).toHaveText(/^\+[1-9][\d,]*$/);
+  await expect(student.getByTestId("campaigns-market-grown")).toHaveText(/^\+[1-9][\d,]* of \+[\d,]+$/);
 
   await row.getByRole("button", { name: "Stop the campaign for casual users" }).click();
   await expect(row).toHaveAttribute("data-status", "stopped");

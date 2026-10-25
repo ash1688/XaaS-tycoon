@@ -1,6 +1,7 @@
 import type { EventConfig, EventEffect, EventOutcome, GameConfig, ModelId, ProductTypeId } from "./config.ts";
 import { layerOwner, layerResponsibility, type LayerId, type Owner } from "./responsibility.ts";
 import { count, pounds } from "./finance.ts";
+import { marketSize } from "./market.ts";
 import { staffOutput } from "./staff.ts";
 import type { EventRecord, FeatureGap, GameState, LogEntry, ScheduledEvent } from "./state.ts";
 
@@ -220,8 +221,7 @@ export function createEvents(config: GameConfig) {
    * the market has room. They arrive at the end of the day, after growth.
    */
   function newUsersToday(state: GameState, day: number, today: EventToday[], users: number): number[] {
-    const { marketSize } = config.productTypes[state.productType].growth;
-    let room = Math.max(0, marketSize - users);
+    let room = Math.max(0, marketSize(config, state) - users);
     return today.map(({ event, outcome }) => {
       if (!outcome.freeUsers || !state.schedule.some((s) => s.event === event.id && s.day === day)) return 0;
       const wave = Math.min(room, Math.max(outcome.freeUsers.min, Math.round(users * outcome.freeUsers.share)));

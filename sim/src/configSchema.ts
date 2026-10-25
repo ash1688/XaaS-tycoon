@@ -282,6 +282,8 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("campaigns.overlapMultiplier", "Customers", CAMPAIGNS, "Overlap on one type", "With n campaigns on the same customer type running on a day, each brings this^(n − 1) of the users per pound it would alone (0.6: two bring 60% each).", SHARE);
   add("campaigns.holidayLeadDays", "Customers", CAMPAIGNS, "Holiday timing window (days)", "A campaign started up to this many days before a holiday that boosts the product's growth gets the holiday bonus.", range(0, 90, 1));
   add("campaigns.holidayBonus", "Customers", CAMPAIGNS, "Holiday bonus", "A campaign timed for a holiday brings this × the users per pound, for the whole of its run.", MULTIPLIER);
+  add("campaigns.marketPerUser", "Customers", CAMPAIGNS, "Market growth per user", "Brand awareness: each user a campaign brings in adds this to the product's market size, for good.", range(0, 100, 0.1));
+  add("campaigns.marketGrowthCap", "Customers", CAMPAIGNS, "Market growth cap", "The most campaigns can add to the market, all told, as a share of the product's base market size (0.5: +50%).", range(0, 10, 0.05));
   const T = "Tiers";
   const TIER = range(1, 4, 1);
   const RP = range(0, 100_000, 1);
