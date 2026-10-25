@@ -28,6 +28,7 @@ import {
   type NegotiationRound,
   type NegotiationView,
   type HolidayView,
+  type PayHistoryEntry,
   type PayOfferPreview,
   type PayOfferTerms,
   type SchemeLevels,
@@ -669,6 +670,39 @@ function payResultLine(sim: Sim, before: GameState, after: GameState): string {
   return `pay review settled: ${how}. Pay ×${after.payMultiplier.toFixed(3)} of the day rates from day ${settled.startDay}: the team costs ${money(sim.dailyStaffCost(after))}/day (was ${money(sim.dailyStaffCost(before))})${schemes ? `; schemes held: ${schemes}` : ""}${shares}`;
 }
 
+const endedText = (r: PayHistoryEntry) =>
+  r.outcome === "offerAccepted"
+    ? `staff accepted your ${["first", "second", "final"][r.offers - 1] ?? ""} offer`
+    : r.outcome === "counterAccepted"
+      ? "you accepted staff's counter"
+      : `tribunal picked ${tribunalPickText[r.tribunalPick!]} (fee ${money(r.tribunalFee)})`;
+
+/** The pay history in full: each settled review, the multiplier so far, the schemes held and the next review. */
+function payHistoryLines(sim: Sim, state: GameState): string[] {
+  const h = sim.payHistory(state);
+  const next = h.nextReview ? `quarter ${h.nextReview.quarter}, from day ${h.nextReview.startDay}` : null;
+  if (!h.reviews.length) return [`pay history: no pay reviews yet${next ? `. The first comes at the start of ${next}` : ""}`];
+  const lines = [
+    `pay history: pay ×${h.payMultiplier.toFixed(3)} of the day rates (+${rise(h.payMultiplier - 1)} compounded)${h.tribunalFees ? `; tribunal fees ${money(h.tribunalFees)}` : ""}`,
+  ];
+  for (const r of h.reviews) {
+    const raised = r.schemeRaises.map((x) => (x.toggle ? x.name : `${x.name} ${x.from}→${x.to}`)).join(", ");
+    const real = `${r.realTerms < 0 ? "" : "+"}${rise(r.realTerms)} on inflation`;
+    lines.push(
+      `  Q${r.quarter} ${r.date} (day ${r.startDay}): inflation ${rise(r.inflation)}; staff opened at ${rise(r.staffFigures[0]!)}; ` +
+        `${endedText(r)}: ${rise(r.rise)} cash (${real})${raised ? ` + ${raised}` : ""}` +
+        `${r.shareSaveShares ? `; ${r.shareSaveShares.toLocaleString("en-GB")} new shares to the staff share scheme` : ""} → pay ×${r.payMultiplier.toFixed(3)}`,
+    );
+  }
+  const schemes = schemesText(h.schemes);
+  lines.push(`  schemes held: ${schemes ? `${schemes}; ${money(h.schemesCostPerDay)}/day in all` : "none"}`);
+  if (h.staffShareScheme) {
+    lines.push(`  staff share scheme: ${h.staffShareScheme.shares.toLocaleString("en-GB")} shares, ${stake(h.staffShareScheme.share)} of the company`);
+  }
+  if (next) lines.push(`  next review: ${next}`);
+  return lines;
+}
+
 /** The IPO in a line: how many readiness conditions are met and what's next. */
 function ipoStatus(sim: Sim, state: GameState): string {
   const ipo = sim.ipo(state);
@@ -1067,6 +1101,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
   const loan = sim.loan(state);
   if (loan?.remaining) lines.push(`  repayloan   (pay off the loan now: ${money(loan.payoff)}, saving ${money(loan.interestSaved)} interest)`);
   lines.push(`  calendar   (the holidays to come, their dates and what each does to your product)`);
+  lines.push(`  payhistory   (every pay review settled: inflation, how it ended, the rise and schemes; changes nothing)`);
   const tick = sim.tickDays(state) === 7 ? "a week (this is a career)" : "a day";
   lines.push(
     `  next [days]   (play ticks of ${tick} until that many days have gone by, default 7; stops early, on the day, when something needs you)`,
@@ -1089,6 +1124,7 @@ export type Command =
   | { kind: "rescue" }
   | { kind: "calendar" }
   | { kind: "pay" }
+  | { kind: "payHistory" }
   | { kind: "payOdds"; rise: number; schemes: Partial<SchemeLevels> }
   | { kind: "next"; days: number }
   /** The teacher ends the game, as from the staff panel. */
@@ -1248,6 +1284,8 @@ export function parseCommand(text: string): Command {
       return { kind: "calendar" };
     case "pay":
       return { kind: "pay" };
+    case "payhistory":
+      return { kind: "payHistory" };
     case "offer":
       return args.length > 1
         ? one({ type: "offerPayRise", rise: risePercent(args[0]), schemes: schemeArgs(args.slice(1)) })
@@ -1373,6 +1411,7 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
   if (command.kind === "rescue") return { state, rows: [], lines: rescueLines(sim, state) };
   if (command.kind === "calendar") return { state, rows: [], lines: calendarLines(sim, state) };
   if (command.kind === "pay") return { state, rows: [], lines: payLines(sim, state) };
+  if (command.kind === "payHistory") return { state, rows: [], lines: payHistoryLines(sim, state) };
   if (command.kind === "payOdds") return { state, rows: [], lines: payOddsLines(sim.payOfferPreview(state, command.rise, command.schemes)) };
   if (command.kind === "end") {
     const ended = sim.endGame(state);

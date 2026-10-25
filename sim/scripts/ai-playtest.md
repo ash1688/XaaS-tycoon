@@ -136,6 +136,10 @@ npm run -s play -- summary <game>
   counter is cash only, and so is a tribunal that picks staff's figure; one that picks yours or the middle keeps your
   schemes. `pay` lists the schemes, levels and costs; `payodds 2.5 pension=2` shows the offer's worth and each
   scheme's cost.
+- `payhistory` lists every pay review settled: its date, inflation, staff's opening ask, how it ended (your offer
+  accepted, staff's counter accepted, or the tribunal's pick and fee), the cash rise against inflation, the schemes
+  raised and share save's new shares, and the pay multiplier after; then the schemes held with their cost a day, the
+  staff share scheme's stake and when the next review comes.
 - The first time cash runs out, a **vulture VC rescues** the company: it puts in cash for the losses plus about 30
   days, takes most of the company in new shares, and forces cost cuts (staff let go, hires cancelled). Time stops
   when it happens. `rescue` shows the terms in full; `buyback` buys all its shares back from company cash, at the

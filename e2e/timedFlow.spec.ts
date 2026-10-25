@@ -215,7 +215,56 @@ test("a pay review with no deal after the final offer warns of the tribunal, sho
     await student.getByRole("button", { name: "Continue" }).click();
     await expect(student.getByTestId("day")).toContainText(`8 of ${E2E_FINAL_DAY}`);
     await expect(student.getByText(/The tribunal settled quarter 2's pay review on/)).toBeVisible();
+
+    // The pay history on the People page has it, with the tribunal's pick and fee.
+    await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "People" }).click();
+    const row = student.getByTestId("pay-history").getByTestId("pay-history-q2");
+    await expect(row.getByTestId("pay-history-ended")).toContainText(/Tribunal picked (your offer|the middle|staff's figure)/);
+    await expect(row.getByTestId("pay-history-fee")).toContainText("tribunal fee £2,000");
+    await expect(student.getByTestId("pay-history-fees")).toContainText("Tribunal fees paid: £2,000.");
   } finally {
     await sql.end();
   }
+});
+
+test("the People page's pay history is empty before the first review, then lists each review settled", async ({ browser, request }) => {
+  const { code, id } = await newCompany(browser, request, "Payroll Ltd");
+  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
+  try {
+    await sql`update companies set state = jsonb_set(jsonb_set(state, '{day}', '6'::jsonb), '{cash}', '500000'::jsonb) where id = ${id}`;
+  } finally {
+    await sql.end();
+  }
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${id}`);
+  await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "People" }).click();
+  const history = student.getByTestId("pay-history");
+  await expect(history.getByTestId("pay-history-empty")).toHaveText(
+    "No pay reviews yet. The first comes at the start of quarter 2, on day 8.",
+  );
+  await expect(history.getByTestId("pay-multiplier")).toContainText("Pay is ×1.000 the day rates: no rises yet.");
+
+  // Play to the review and settle it on staff's whole ask, which they always accept.
+  await student.getByRole("button", { name: "Continue" }).click();
+  const modal = student.getByRole("dialog", { name: "Pay review" });
+  await expect(modal).toBeVisible();
+  const inflation = await modal.getByTestId("pay-inflation").innerText();
+  const maxAsk = (await modal.getByTestId("pay-max-ask").innerText()).replace("%", "");
+  await modal.getByTestId("pay-rise").fill(maxAsk);
+  await modal.getByTestId("pay-offer").click();
+  await expect(modal.getByTestId("pay-settled")).toBeVisible();
+  await modal.getByTestId("pay-done").click();
+
+  await expect(history.getByTestId("pay-history-empty")).toHaveCount(0);
+  const row = history.getByTestId("pay-history-q2");
+  await expect(row).toContainText("Quarter 2");
+  await expect(row).toContainText("(day 8)");
+  await expect(row).toContainText(inflation);
+  await expect(row.getByTestId("pay-history-ended")).toHaveText("Agreed: staff accepted your first offer");
+  await expect(row.getByTestId("pay-history-rise")).toContainText(`${maxAsk}%`);
+  await expect(row.getByTestId("pay-history-schemes")).toHaveText("none");
+  await expect(row.getByTestId("pay-history-fee")).toHaveCount(0);
+  const multiplier = (1 + Number(maxAsk) / 100).toFixed(3);
+  await expect(history.getByTestId("pay-multiplier")).toContainText(`Pay is ×${multiplier} the day rates: +${maxAsk}% from every rise so far`);
+  await expect(history.getByTestId("pay-history-next")).toContainText(/quarter 3, on day \d+\./);
 });

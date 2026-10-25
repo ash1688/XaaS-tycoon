@@ -4444,4 +4444,39 @@ describe("pay reviews", () => {
     expect(staffRow).toMatchObject({ name: "Staff share scheme", shares: preview.dilution!.newShares });
     expect(settled.capTable.rows.find((r) => r.id === "student")!.share).toBeCloseTo(preview.dilution!.yourShareAfter, 9);
   });
+
+  it("shows the pay history: empty before the first review, then each review settled with its schemes and shares", async () => {
+    const { act, result } = await reviewing();
+    const review = result.company.payReview!;
+    const empty = result.company.payHistory;
+    expect(empty).toMatchObject({ reviews: [], payMultiplier: 1, tribunalFees: 0, schemesCostPerDay: 0, staffShareScheme: null });
+    // The open review is the current one: the next is quarter 3's.
+    expect(empty.nextReview).toMatchObject({ quarter: 3 });
+    const worth = (2 * 0.0075 + 0.01) * 0.7;
+    const cash = Math.floor((review.maxAsk - worth) * 1000) / 1000;
+    const settled = (await act({ type: "offerPayRise", rise: cash, schemes: { pension: 2, shareSave: 1 } })).json<CompanyView>();
+    const h = settled.payHistory;
+    expect(h.payMultiplier).toBe(settled.payMultiplier);
+    expect(h.reviews).toHaveLength(1);
+    expect(h.reviews[0]).toMatchObject({
+      quarter: 2,
+      startDay: review.startDay,
+      inflation: review.inflation,
+      offers: 1,
+      outcome: "offerAccepted",
+      tribunalPick: null,
+      tribunalFee: 0,
+      rise: cash,
+      shareSaveShares: settled.lastPayReview!.shareSaveShares,
+      payMultiplier: settled.payMultiplier,
+    });
+    expect(h.reviews[0]!.date).toMatch(/^\w+ \d+ \w+ \d{4}$/);
+    expect(h.reviews[0]!.schemeRaises.map((s) => [s.id, s.from, s.to])).toEqual([
+      ["pension", 0, 2],
+      ["shareSave", 0, 1],
+    ]);
+    expect(h.schemesCostPerDay).toBeCloseTo(settled.staffSchemes.reduce((sum, s) => sum + s.costPerDay, 0), 9);
+    const staffRow = settled.capTable.rows.find((r) => r.id === "staffScheme")!;
+    expect(h.staffShareScheme).toEqual({ shares: staffRow.shares, share: staffRow.share });
+  });
 });

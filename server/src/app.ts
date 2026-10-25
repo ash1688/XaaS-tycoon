@@ -437,6 +437,7 @@ export async function buildApp(opts: AppOptions) {
       lastPayReview: state.pastPayReviews.at(-1) ?? null,
       payMultiplier: state.payMultiplier,
       staffSchemes: sim.staffSchemes(state),
+      payHistory: sim.payHistory(state),
       ipo: sim.ipo(state),
       rescue: sim.rescue(state),
       features: sim.features(state),
