@@ -126,6 +126,15 @@ npm run -s play -- summary <game>
   which charges a fee (about £2k) and picks your figure, staff's or the middle, favouring whichever is closest to the
   hidden fair rise, so lowballing backfires. On the final offer `payodds` shows the tribunal's odds. The rise raises every team's day rate from the next day, new hires and agency staff included,
   and each review's rise compounds on the last. A rise below inflation is a pay cut in real terms.
+- **Staff schemes**: an offer can add schemes to a smaller cash rise: `offer 2.5 pension=2 health=1 death=on
+  discount=on` (pension top-up and the health cash plan go 0–3; death in service and the discount scheme are on or
+  off). Staff weigh the offer's worth: the cash plus each level added × its worth to them × about 70% (they want cash).
+  Only levels added this review count. Each scheme then costs every day for good, as staff spend, for every permanent
+  member of staff: the pension and death in service a share of pay, the health plan and discount scheme £ per person,
+  each with its own cost for what staff see in it. Levels only go up: lowering one is refused. Accepting staff's
+  counter is cash only, and so is a tribunal that picks staff's figure; one that picks yours or the middle keeps your
+  schemes. `pay` lists the schemes, levels and costs; `payodds 2.5 pension=2` shows the offer's worth and each
+  scheme's cost.
 - The first time cash runs out, a **vulture VC rescues** the company: it puts in cash for the losses plus about 30
   days, takes most of the company in new shares, and forces cost cuts (staff let go, hires cancelled). Time stops
   when it happens. `rescue` shows the terms in full; `buyback` buys all its shares back from company cash, at the

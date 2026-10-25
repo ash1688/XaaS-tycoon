@@ -4265,3 +4265,34 @@ select:disabled {
 .pay-review .warn-note {
   margin: 0 0 1rem;
 }
+
+/* The pay review's staff schemes: a slider or a toggle each, floored at the level held. */
+.pay-review .pay-schemes {
+  flex-basis: 100%;
+  margin: 0;
+  padding: 0.5rem 0.75rem 0.75rem;
+  border: 1px solid var(--border, currentColor);
+  border-radius: 6px;
+  display: grid;
+  gap: 0.6rem;
+}
+.pay-review .pay-schemes legend {
+  font-weight: 600;
+  padding: 0 0.25rem;
+}
+.pay-review .pay-scheme {
+  display: grid;
+  gap: 0.2rem;
+}
+.pay-review .pay-scheme label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+}
+.pay-review .pay-scheme input[type="range"] {
+  width: 10rem;
+}
+.pay-review .pay-scheme input[type="checkbox"] {
+  width: auto;
+}

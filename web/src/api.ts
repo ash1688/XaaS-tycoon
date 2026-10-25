@@ -1,4 +1,4 @@
-import type { SpendCategory } from "@xaas/sim";
+import type { SchemeLevels, SpendCategory } from "@xaas/sim";
 import type {
   ActionBody,
   ApiError,
@@ -99,9 +99,13 @@ export const api = {
       `/api/codes/${enc(code)}/companies/${enc(id)}/investor-odds?${new URLSearchParams(Object.fromEntries(Object.entries(terms).map(([k, v]) => [k, String(v)])))}`,
     ),
 
-  // What offering staff a rise in the open pay review would do, for the pay review modal's live cost and odds.
-  payOffer: (code: string, id: string, rise: number) =>
-    request<PayOfferView>("GET", `/api/codes/${enc(code)}/companies/${enc(id)}/pay-offer?${new URLSearchParams({ rise: String(rise) })}`),
+  // What offering staff a rise and staff scheme levels in the open pay review would do, for the pay review modal's live
+  // cost, worth to staff and odds.
+  payOffer: (code: string, id: string, rise: number, schemes: Partial<SchemeLevels> = {}) =>
+    request<PayOfferView>(
+      "GET",
+      `/api/codes/${enc(code)}/companies/${enc(id)}/pay-offer?${new URLSearchParams({ rise: String(rise), ...Object.fromEntries(Object.entries(schemes).map(([k, v]) => [k, String(v)])) })}`,
+    ),
 
   teacherLogin: (password: string) => request<{ ok: true }>("POST", "/api/teacher/login", { password }),
   teacherLogout: () => request<{ ok: true }>("POST", "/api/teacher/logout"),

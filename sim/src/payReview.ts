@@ -4,9 +4,24 @@ import { createNegotiation, MAX_OFFERS, type CounterOdds, type NegotiationRound,
 import { nextRandom, seedRng } from "./rng.ts";
 import { dailyStaffCost } from "./staff.ts";
 import {
+  checkSchemes,
+  noSchemes,
+  schemeCost,
+  schemeRaisesText,
+  schemesCost,
+  schemeValuation,
+  schemeValue,
+  schemeViews,
+  STAFF_SCHEMES,
+  type SchemeLevels,
+  type StaffSchemeId,
+  type StaffSchemeView,
+} from "./staffSchemes.ts";
+import {
   SimError,
   type GameState,
   type LogEntry,
+  type PayOfferTerms,
   type PayReview,
   type PayReviewOutcome,
   type PayReviewRecord,
@@ -32,9 +47,12 @@ export interface PayReviewView {
   /** The least the student can offer, and the most staff ask. */
   minOffer: number;
   maxAsk: number;
-  /** What staff are asking now: their opening ask, then their latest counter. */
+  /** What staff are asking now: their opening ask, then their latest counter. A counter is a cash rise. */
   staffFigure: number;
+  /** Each offer's worth to staff: its cash rise plus the schemes it raises, as staff value them. */
   studentOffers: number[];
+  /** What made up each offer: its cash rise and the scheme levels it asked for. */
+  offerTerms: PayOfferTerms[];
   /** Staff's figures: their opening ask, then each counter. */
   staffFigures: number[];
   /** The roll that answered each offer that fell short, oldest first. */
@@ -47,17 +65,45 @@ export interface PayReviewView {
   tribunalFee: number;
   /** Whether staff have countered, so there's a counter to accept. */
   canAcceptCounter: boolean;
-  /** What the team costs a day now, before any rise. */
+  /** What the team costs a day now, before any rise: pay and staff schemes. */
   dailyStaffCost: number;
+  /** The staff schemes, at the levels held: an offer can raise them, never lower them. */
+  schemes: StaffSchemeView[];
+  /** How much of a scheme's value staff count (0.7 = 70%). */
+  schemeValuation: number;
+}
+
+/** One scheme in an offer's preview: the level offered, what that adds to its worth to staff, and its cost a day. */
+export interface SchemeOfferPreview {
+  id: StaffSchemeId;
+  name: string;
+  /** The level held now, and the level offered. */
+  held: number;
+  level: number;
+  /** What the levels added are worth to staff, as a rise, after the valuation. */
+  value: number;
+  /** What it would cost a day at the offered level, at today's team after the rise. */
+  costPerDay: number;
+  /** Its cost a day more than now. */
+  extraPerDay: number;
 }
 
 /** What offering a rise would do, before it's made: its cost, and staff's answer if it falls short of a deal. */
 export interface PayOfferPreview {
+  /** The cash rise. */
   rise: number;
-  /** What the rise adds to the team's pay a day, and over a year of 365 days, at today's team. */
+  /** The scheme levels offered. */
+  schemes: SchemeLevels;
+  /** What the schemes raised are worth to staff, as a rise, after the valuation: only the increases count. */
+  schemeValue: number;
+  /** The offer's worth to staff: the cash rise plus schemeValue. This is what they weigh against their figure. */
+  value: number;
+  /** Each scheme: the level offered, its worth to staff and its cost a day. */
+  schemeCosts: SchemeOfferPreview[];
+  /** What the rise and the schemes add to the team's cost a day, and over a year of 365 days, at today's team. */
   extraPerDay: number;
   extraPerYear: number;
-  /** The rise against inflation: below 0 is a pay cut in real terms. */
+  /** The cash rise against inflation: below 0 is a pay cut in real terms. */
   realTerms: number;
   /** The offer is what staff are asking, so they take it: there's nothing to roll for. */
   meetsAsk: boolean;
@@ -73,8 +119,13 @@ export interface PayOfferPreview {
 /** The tribunal's three figures, its chance of picking each, and its fee. */
 export interface TribunalOdds {
   fee: number;
-  /** The rise each pick sets: the student's final offer, midway, and staff's last counter. */
+  /** Each pick's worth to staff: the student's final offer, midway, and staff's last counter. */
   rises: Record<TribunalPick, number>;
+  /**
+   * The cash rise each pick sets. The student's offer and the middle keep the offer's schemes, so the middle's cash is
+   * its worth less theirs; staff's figure is cash only.
+   */
+  cash: Record<TribunalPick, number>;
   /** The chance of each pick, 0–1, adding up to 1. */
   chances: Record<TribunalPick, number>;
 }
@@ -96,10 +147,13 @@ export function createPayReview(
   const negotiator = createNegotiation(c.negotiation);
 
   /** No review yet, pay at the config's rates, and the reviews' own RNG, seeded apart from the game's. */
-  const startingPayReview = (seed: number): Pick<GameState, "payReview" | "pastPayReviews" | "payMultiplier" | "payReviewRng"> => ({
+  const startingPayReview = (
+    seed: number,
+  ): Pick<GameState, "payReview" | "pastPayReviews" | "payMultiplier" | "staffSchemes" | "payReviewRng"> => ({
     payReview: null,
     pastPayReviews: [],
     payMultiplier: 1,
+    staffSchemes: noSchemes(),
     payReviewRng: seedRng(seed ^ 0x9a7e),
   });
 
@@ -160,6 +214,7 @@ export function createPayReview(
       fairRise,
       walkAway,
       studentOffers: [],
+      offerTerms: [],
       negotiation: negotiator.open({ rise: maxAsk }),
     };
     const text =
@@ -181,38 +236,58 @@ export function createPayReview(
 
   const staffFigure = (review: PayReview) => negotiator.latest(review.negotiation).rise!;
 
-  /** A rise checked against the caps, rounded to a tenth of a point. Refused outside them. */
-  function checkOffer(review: PayReview, rise: number): number {
+  /**
+   * An offer checked: a cash rise from 0, rounded to a tenth of a point, and scheme levels none below those held. Its
+   * worth to staff (the rise plus the schemes raised, as they value them) has to be within the caps, and once staff
+   * have countered, below their figure. Refused otherwise.
+   */
+  function checkOffer(
+    state: GameState,
+    review: PayReview,
+    rise: number,
+    asked: Partial<SchemeLevels> | undefined,
+  ): { terms: PayOfferTerms; schemeValue: number; value: number } {
     if (typeof rise !== "number" || !Number.isFinite(rise)) throw new SimError("bad_offer", "Offer a rise as a number.");
-    const offered = roundRise(rise);
-    if (offered < review.minOffer) {
+    const cash = roundRise(rise);
+    if (cash < 0) throw new SimError("bad_offer", "A cash rise can't be below 0%.");
+    const schemes = checkSchemes(config, state.staffSchemes, asked);
+    const worth = schemeValue(config, state, state.staffSchemes, schemes);
+    // Schemes add finer amounts (0.525 points for a pension level), but the offer's worth is kept to a tenth of a point
+    // like every rise, so staff's counters move in the same steps.
+    const value = roundRise(cash + worth);
+    const withSchemes = worth > 0 ? ", with schemes as staff value them," : "";
+    if (value < review.minOffer) {
       throw new SimError(
         "offer_too_low",
-        `The least you can offer is ${risePercent(review.minOffer)}: inflation (${risePercent(review.inflation)}) less a point. Less would be an insult.`,
+        `The least you can offer${withSchemes} is ${risePercent(review.minOffer)}: inflation (${risePercent(review.inflation)}) less a point. Less would be an insult.`,
         { minOffer: review.minOffer },
       );
     }
-    if (offered > review.maxAsk) {
-      throw new SimError("offer_too_high", `Staff are asking for ${risePercent(review.maxAsk)} at most: offer that or less.`, {
+    if (value > review.maxAsk) {
+      throw new SimError("offer_too_high", `Staff are asking for ${risePercent(review.maxAsk)} at most: offer that${withSchemes} or less.`, {
         maxAsk: review.maxAsk,
       });
     }
-    if (review.studentOffers.length && offered >= staffFigure(review)) {
+    if (review.studentOffers.length && value >= staffFigure(review)) {
       throw new SimError(
         "above_counter",
         `Staff are asking for ${risePercent(staffFigure(review))}: accept their counter rather than offer as much or more.`,
       );
     }
-    return offered;
+    return { terms: { rise: cash, schemes }, schemeValue: worth, value };
   }
 
-  /** Settles the review on `rise`: it multiplies every pool's pay from the next day played. */
+  /**
+   * Settles the review on a cash `rise`, which multiplies every pool's pay from the next day played, and the scheme
+   * levels `schemes`, paid from the next day too.
+   */
   function settle(
     state: GameState,
     review: PayReview,
-    studentOffers: number[],
+    offers: { studentOffers: number[]; offerTerms: PayOfferTerms[] },
     outcome: PayReviewOutcome,
     rise: number,
+    schemes: SchemeLevels,
     tribunal: PayReviewRecord["tribunal"] = null,
   ): GameState {
     const record: PayReviewRecord = {
@@ -222,10 +297,12 @@ export function createPayReview(
       inflation: review.inflation,
       minOffer: review.minOffer,
       maxAsk: review.maxAsk,
-      studentOffers,
+      studentOffers: offers.studentOffers,
+      offerTerms: offers.offerTerms,
       staffFigures: review.negotiation.offers.map((o) => o.rise!),
       outcome,
       rise,
+      schemes,
       tribunal,
     };
     return {
@@ -233,6 +310,7 @@ export function createPayReview(
       payReview: null,
       pastPayReviews: [...state.pastPayReviews, record],
       payMultiplier: Number((state.payMultiplier * (1 + rise)).toPrecision(12)),
+      staffSchemes: schemes,
     };
   }
 
@@ -241,55 +319,73 @@ export function createPayReview(
    * rise is from the fair rise, as a share of the gap between the two figures: the closer, the likelier, and the middle
    * likeliest when the fair rise is about halfway. See PayReviewConfig's tribunal.
    */
-  function tribunalOdds(review: PayReview, offered: number): TribunalOdds {
+  function tribunalOdds(review: PayReview, offered: number, cash: number): TribunalOdds {
     const staff = staffFigure(review);
     const rises: Record<TribunalPick, number> = { student: offered, middle: roundRise((offered + staff) / 2), staff };
+    // The schemes' share of the offer stays with the middle, which tops up the cash.
+    const schemes = offered - cash;
+    const cashRises: Record<TribunalPick, number> = { student: cash, middle: Math.max(0, roundRise(rises.middle - schemes)), staff };
     const gap = Math.max(staff - offered, STEP);
     const weights = TRIBUNAL_PICKS.map((p) => Math.exp((-c.tribunal.sharpness * Math.abs(rises[p] - review.fairRise)) / gap));
     const total = weights.reduce((sum, w) => sum + w, 0);
     const chances = Object.fromEntries(TRIBUNAL_PICKS.map((p, i) => [p, weights[i]! / total])) as Record<TribunalPick, number>;
-    return { fee: c.tribunal.fee, rises, chances };
+    return { fee: c.tribunal.fee, rises, cash: cashRises, chances };
   }
 
   /**
    * The tribunal, after a final offer short of a deal: a roll on the reviews' RNG picks the student's offer, staff's
-   * figure or the middle at tribunalOdds, and its fee is charged at once. The pick is recorded: schemes (#193) apply on
-   * the student's figure or the middle, but not staff's, which is cash only.
+   * figure or the middle at tribunalOdds, and its fee is charged at once. The pick is recorded: the offer's schemes
+   * apply on the student's figure or the middle, but not staff's, which is cash only.
    */
-  function goToTribunal(state: GameState, review: PayReview, studentOffers: number[]): GameState {
-    const odds = tribunalOdds(review, studentOffers.at(-1)!);
+  function goToTribunal(
+    state: GameState,
+    review: PayReview,
+    offers: { studentOffers: number[]; offerTerms: PayOfferTerms[] },
+  ): GameState {
+    const final = offers.offerTerms.at(-1)!;
+    const odds = tribunalOdds(review, offers.studentOffers.at(-1)!, final.rise);
     const [roll, rng] = nextRandom(state.payReviewRng);
     let below = 0;
     const pick = TRIBUNAL_PICKS.find((p) => roll < (below += odds.chances[p])) ?? "staff";
     const charged = deps.chargeNow({ ...state, payReviewRng: rng }, [
       { text: `Tribunal fee for quarter ${review.quarter}'s pay review`, cashDelta: -odds.fee, category: "staff" },
     ]);
-    return settle(charged, review, studentOffers, "tribunal", odds.rises[pick], { pick, fee: odds.fee, chances: odds.chances });
+    const schemes = pick === "staff" ? state.staffSchemes : final.schemes;
+    return settle(charged, review, offers, "tribunal", odds.cash[pick], schemes, { pick, fee: odds.fee, chances: odds.chances });
   }
 
   /**
-   * Offers staff `rise`. At or above their walk-away figure they accept. Short of it, they counter, with a roll on the
-   * reviews' RNG for how far they come down from their figure towards the offer; on the final (third) offer there's no
-   * counter, and it goes to the tribunal.
+   * Offers staff a cash `rise` and any scheme levels raised. Staff weigh its worth: the rise plus the schemes raised,
+   * as they value them. At or above their walk-away figure they accept. Short of it, they counter with a cash figure,
+   * with a roll on the reviews' RNG for how far they come down from their figure towards the offer; on the final
+   * (third) offer there's no counter, and it goes to the tribunal.
    */
-  function offer(state: GameState, rise: number): GameState {
+  function offer(state: GameState, rise: number, schemes?: Partial<SchemeLevels>): GameState {
     const review = openOrRefuse(state);
-    const offered = checkOffer(review, rise);
-    const studentOffers = [...review.studentOffers, offered];
-    if (offered >= review.walkAway) return settle(state, review, studentOffers, "offerAccepted", offered);
-    if (studentOffers.length >= MAX_OFFERS) {
-      return goToTribunal(state, review, studentOffers);
+    const checked = checkOffer(state, review, rise, schemes);
+    const offers = {
+      studentOffers: [...review.studentOffers, checked.value],
+      offerTerms: [...review.offerTerms, checked.terms],
+    };
+    if (checked.value >= review.walkAway) {
+      return settle(state, review, offers, "offerAccepted", checked.terms.rise, checked.terms.schemes);
     }
-    const done = negotiator.counter(review.negotiation, { rise: offered }, specsFor(review), state.payReviewRng);
-    return { ...state, payReviewRng: done.rng, payReview: { ...review, studentOffers, negotiation: done.negotiation } };
+    if (offers.studentOffers.length >= MAX_OFFERS) {
+      return goToTribunal(state, review, offers);
+    }
+    const done = negotiator.counter(review.negotiation, { rise: checked.value }, specsFor(review), state.payReviewRng);
+    return { ...state, payReviewRng: done.rng, payReview: { ...review, ...offers, negotiation: done.negotiation } };
   }
 
-  /** Accepts staff's counter: their figure is the rise. */
+  /** Accepts staff's counter: their figure is the cash rise, and no schemes are raised. */
   function acceptCounter(state: GameState): GameState {
     const review = openOrRefuse(state);
     if (!review.studentOffers.length) throw new SimError("no_counter", "Staff haven't countered yet: make them an offer first.");
-    return settle(state, review, review.studentOffers, "counterAccepted", staffFigure(review));
+    return settle(state, review, review, "counterAccepted", staffFigure(review), state.staffSchemes);
   }
+
+  /** What the team costs a day: everyone's pay and the staff schemes held. */
+  const teamCost = (state: GameState) => dailyStaffCost(config, state) + schemesCost(config, state, state.staffSchemes);
 
   function payReviewView(state: GameState): PayReviewView | null {
     const review = state.payReview;
@@ -303,33 +399,56 @@ export function createPayReview(
       maxAsk: review.maxAsk,
       staffFigure: staffFigure(review),
       studentOffers: review.studentOffers,
+      offerTerms: review.offerTerms,
       staffFigures: review.negotiation.offers.map((o) => o.rise!),
       rounds: review.negotiation.rounds,
       offersLeft,
       final: offersLeft === 1,
       tribunalFee: c.tribunal.fee,
       canAcceptCounter: review.studentOffers.length > 0,
-      dailyStaffCost: dailyStaffCost(config, state),
+      dailyStaffCost: teamCost(state),
+      schemes: schemeViews(config, state),
+      schemeValuation: schemeValuation(config, state),
     };
   }
 
-  /** What offering `rise` would do: its cost at today's team, and the roll's odds if staff counter. Refused as offer would. */
-  function offerPreview(state: GameState, rise: number): PayOfferPreview {
+  /**
+   * What offering a cash `rise` and scheme levels would do: its worth to staff, its cost at today's team, each scheme's
+   * cost a day, and the roll's odds if staff counter. Refused as offer would.
+   */
+  function offerPreview(state: GameState, rise: number, schemes?: Partial<SchemeLevels>): PayOfferPreview {
     const review = openOrRefuse(state);
-    const offered = checkOffer(review, rise);
-    const now = dailyStaffCost(config, state);
-    const extraPerDay = dailyStaffCost(config, { ...state, payMultiplier: state.payMultiplier * (1 + offered) }) - now;
+    const { terms, schemeValue: worth, value } = checkOffer(state, review, rise, schemes);
+    const after: GameState = { ...state, payMultiplier: state.payMultiplier * (1 + terms.rise), staffSchemes: terms.schemes };
+    const extraPerDay = Math.round((teamCost(after) - teamCost(state)) * 100) / 100;
     const final = review.studentOffers.length + 1 >= MAX_OFFERS;
     // Only staff's opening ask can be offered in full: once they've countered, offering it is refused.
-    const meetsAsk = offered >= staffFigure(review);
+    const meetsAsk = value >= staffFigure(review);
+    const valuation = schemeValuation(config, state);
+    const schemeCosts = STAFF_SCHEMES.map((id): SchemeOfferPreview => {
+      const costPerDay = schemeCost(config, after, id, terms.schemes[id]);
+      return {
+        id,
+        name: config.payReview.schemes[id].name,
+        held: state.staffSchemes[id],
+        level: terms.schemes[id],
+        value: (terms.schemes[id] - state.staffSchemes[id]) * config.payReview.schemes[id].staffValue * valuation,
+        costPerDay,
+        extraPerDay: Math.round((costPerDay - schemeCost(config, state, id, state.staffSchemes[id])) * 100) / 100,
+      };
+    });
     return {
-      rise: offered,
+      rise: terms.rise,
+      schemes: terms.schemes,
+      schemeValue: worth,
+      value,
+      schemeCosts,
       extraPerDay,
       extraPerYear: extraPerDay * 365,
-      realTerms: roundRise(offered - review.inflation),
+      realTerms: roundRise(terms.rise - review.inflation),
       meetsAsk,
-      odds: final || meetsAsk ? null : negotiator.odds(review.negotiation, { rise: offered }, specsFor(review)),
-      tribunal: final && !meetsAsk ? tribunalOdds(review, offered) : null,
+      odds: final || meetsAsk ? null : negotiator.odds(review.negotiation, { rise: value }, specsFor(review)),
+      tribunal: final && !meetsAsk ? tribunalOdds(review, value, terms.rise) : null,
     };
   }
 
@@ -347,6 +466,17 @@ export function createPayReview(
     return [{ text, cashDelta: 0, kind: "staff" }];
   }
 
+  /** On the first day played after a review that raised staff schemes, the day log says which, paid from today. */
+  function schemeStartEntries(state: GameState, day: number): LogEntry[] {
+    const last = state.pastPayReviews.at(-1);
+    if (!last || last.startDay !== day) return [];
+    const before = state.pastPayReviews.at(-2)?.schemes ?? noSchemes();
+    const raised = schemeRaisesText(config, before, last.schemes);
+    if (!raised) return [];
+    const text = `Staff schemes from today: ${raised}. They're paid every day from now on, and can't be taken away.`;
+    return [{ text, cashDelta: 0, kind: "staff" }];
+  }
+
   return {
     startingPayReview,
     quarterStarts,
@@ -357,6 +487,8 @@ export function createPayReview(
     payReviewView,
     offerPreview,
     tribunalEntries,
+    schemeStartEntries,
+    teamCost,
   };
 }
 

@@ -38,6 +38,7 @@ import { isNameAllowed } from "./nameFilter.ts";
 import type { CounterOdds, Terms } from "./negotiation.ts";
 import { createPauses, type TickResult } from "./pauses.ts";
 import { createPayReview, type PayOfferPreview, type PayReviewView } from "./payReview.ts";
+import { schemeEntries, schemeViews, type SchemeLevels, type StaffSchemeView } from "./staffSchemes.ts";
 import { createPricing, type CustomerMixView, type PaymentsView, type PricePreview, type PriceWaveView } from "./pricing.ts";
 import { createRacks, type RacksView } from "./racks.ts";
 import { createRescue, type RescueView } from "./rescue.ts";
@@ -94,7 +95,9 @@ export type { NewUserFactor } from "./mix.ts";
 export type { RackOption, RackView, RacksView } from "./racks.ts";
 export type { CounterOdds, NegotiationRound, RollResult, TermSpec, Terms } from "./negotiation.ts";
 export { MAX_OFFERS, ROLL_RESULTS } from "./negotiation.ts";
-export type { PayOfferPreview, PayReviewView, TribunalOdds } from "./payReview.ts";
+export type { PayOfferPreview, PayReviewView, SchemeOfferPreview, TribunalOdds } from "./payReview.ts";
+export type { SchemeLevels, StaffSchemeId, StaffSchemeView } from "./staffSchemes.ts";
+export { STAFF_SCHEMES } from "./staffSchemes.ts";
 export { inflationNow, REVIEW_QUARTERS, TRIBUNAL_PICKS } from "./payReview.ts";
 export type { RescueView } from "./rescue.ts";
 export type { TicketOutlook } from "./support.ts";
@@ -186,6 +189,7 @@ export {
   type PayReview,
   type PayReviewOutcome,
   type PayReviewRecord,
+  type PayOfferTerms,
   type TribunalPick,
   type Server,
   type Shareholder,
@@ -408,11 +412,17 @@ export interface Sim {
    */
   payReview(state: GameState): PayReviewView | null;
   /**
-   * What offering staff `rise` in the open review would do, before it's made: what it adds to pay a day and a year, and
+   * What offering staff a cash `rise` and scheme levels in the open review would do, before it's made: its worth to
+   * staff, what it adds to the team's cost a day and a year with each scheme's cost, and
    * the odds of each roll if they counter (or, on the final offer, where it settles if it falls short). Refused as
    * offerPayRise would refuse it.
    */
-  payOfferPreview(state: GameState, rise: number): PayOfferPreview;
+  payOfferPreview(state: GameState, rise: number, schemes?: Partial<SchemeLevels>): PayOfferPreview;
+  /**
+   * The staff schemes at the levels held, with what each costs a day at today's team. Agreed in pay reviews: they only
+   * go up, and are paid every day as staff spend.
+   */
+  staffSchemes(state: GameState): StaffSchemeView[];
   /** The first day of quarters 2, 3 and 4: the days pay reviews start, in order. */
   payReviewDays(state: GameState): number[];
   /**
@@ -808,7 +818,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       case "stopCampaign":
         return campaigns.stopCampaign(state, action.id);
       case "offerPayRise":
-        return payReview.offer(state, action.rise);
+        return payReview.offer(state, action.rise, action.schemes);
       case "acceptPayCounter":
         return payReview.acceptCounter(state);
       default:
@@ -927,6 +937,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       ...features.addonEntries(state),
       ...benefits.benefitEntries(state),
       ...staff.staffEntries(state),
+      ...schemeEntries(config, state),
       ...served.charges,
       ...events.costEntries(today),
       ...repayment.entries,
@@ -1001,6 +1012,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const entriesToday = [
       // First, what a tribunal settled before today.
       ...payReview.tribunalEntries(yesterday, day),
+      ...payReview.schemeStartEntries(yesterday, day),
       ...settled.entries, ...released.entries, ...funded.entries, ...opened.entries, ...reviewed.entries];
     return { state: reviewed.state, log: [{ day, entries: entriesToday }] };
   }
@@ -1028,6 +1040,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       ...features.addonEntries(state),
       ...benefits.benefitEntries(state),
       ...staff.staffEntries(state),
+      ...schemeEntries(config, state),
     ];
     const repayment = loan.dailyRepayment(state);
     const calls = api.usualDay(state);
@@ -1198,7 +1211,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     investors: (s) => investors.investors(load(s)),
     investorCounterOdds: (s, terms) => investors.counterOdds(load(s), terms),
     payReview: (s) => payReview.payReviewView(load(s)),
-    payOfferPreview: (s, rise) => payReview.offerPreview(load(s), rise),
+    payOfferPreview: (s, rise, schemes) => payReview.offerPreview(load(s), rise, schemes),
+    staffSchemes: (s) => schemeViews(config, load(s)),
     payReviewDays: (s) => payReview.quarterStarts(load(s)),
     launch: (s) => launch.launchView(load(s)),
     mvp: (s) => mvpView(load(s)),

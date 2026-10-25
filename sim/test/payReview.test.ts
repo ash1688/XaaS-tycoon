@@ -555,7 +555,7 @@ describe("the bots and text play", () => {
     const blocked = runScript(plain, turn.state, "next", who);
     expect(blocked.lines.at(-1)).toMatch(/^refused: Your staff want to talk about pay/);
     const odds = runScript(plain, turn.state, `payodds ${pct(review.minOffer)}`, who);
-    expect(odds.lines[1]).toMatch(/^offer [\d.]+% \(1\.0% below inflation: a real-terms pay cut\): \+£[\d,]+\/day, \+£[\d,]+ a year/);
+    expect(odds.lines[1]).toMatch(/^offer [\d.]+% cash \(1\.0% below inflation: a real-terms pay cut\): \+£[\d,]+\/day, \+£[\d,]+ a year/);
     expect(odds.lines.join("\n")).toMatch(/high \d+% → [\d.]+%/);
     const countered = runScript(plain, turn.state, `offer ${pct(review.minOffer)}`, who);
     expect(countered.lines[1]).toMatch(/: staff counter, rolled \d+/);
@@ -576,7 +576,7 @@ describe("the bots and text play", () => {
     expect(final.lines.join("\n")).toMatch(/your next offer is FINAL: if staff don't accept it, it goes to a TRIBUNAL, which charges £2,000/);
     const odds = runScript(plain, final.state, `payodds ${pct(minOffer)}`, who).lines.join("\n");
     expect(odds).toMatch(/the tribunal sits for £2,000 and picks:/);
-    expect(odds).toMatch(/your offer \d+% → [\d.]+%\n {4}the middle \d+% → [\d.]+%\n {4}staff's figure \d+% → [\d.]+%/);
+    expect(odds).toMatch(/your offer \d+% → [\d.]+% cash\n {4}the middle \d+% → [\d.]+% cash\n {4}staff's figure \d+% → [\d.]+% cash, no schemes/);
     const settled = runScript(plain, final.state, `offer ${pct(minOffer)}; next 1`, who);
     expect(settled.lines[1]).toMatch(/^pay review settled: no deal on the final offer, so the tribunal sat \(fee £2,000\) and picked (your final offer|the middle|staff's figure), [\d.]+%/);
     expect(settled.lines.join("\n")).toMatch(/The tribunal settled quarter 2's pay review on/);

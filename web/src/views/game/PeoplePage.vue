@@ -3,7 +3,7 @@ import { formatCash } from "../../api";
 import { days, useGame } from "../../game";
 import StaffPanel from "../../panels/StaffPanel.vue";
 
-// People: the staff, and what each team does.
+// People: the staff, what each team does, and the staff schemes agreed in pay reviews.
 const game = useGame();
 </script>
 
@@ -92,6 +92,25 @@ const game = useGame();
       <p class="muted" data-testid="severance-terms">
         Agency staff are the dear way to cover a short gap: they start soon and go with no severance. Letting go permanent
         staff pays them {{ game.meta.severanceDays === 1 ? "a day's" : `${game.meta.severanceDays} days'` }} pay each in severance, at once.
+      </p>
+    </section>
+    <section v-if="game.company" class="card" aria-labelledby="schemes-heading" data-testid="staff-schemes">
+      <h2 id="schemes-heading">Staff schemes</h2>
+      <p class="muted">
+        Benefits agreed in pay reviews instead of cash. Each is paid every day for every permanent member of staff, and
+        once given can't be lowered or taken away.
+      </p>
+      <table class="compare">
+        <tbody>
+          <tr v-for="s in game.company.staffSchemes" :key="s.id" :data-testid="`staff-scheme-${s.id}`">
+            <th scope="row">{{ s.name }}</th>
+            <td>{{ s.toggle ? (s.level ? "On" : "Off") : `Level ${s.level} of ${s.maxLevel}` }}</td>
+            <td>{{ s.level ? `${formatCash(s.costPerDay)} a day` : "—" }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="muted" data-testid="staff-schemes-total">
+        Running cost: {{ formatCash(game.company.staffSchemes.reduce((sum, s) => sum + s.costPerDay, 0)) }} a day.
       </p>
     </section>
   </div>

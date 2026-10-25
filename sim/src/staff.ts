@@ -79,7 +79,7 @@ export interface StaffPoolView {
  * Pools whose pay the pay reviews' rises leave alone. The C-suite (#108), once it's built, keeps its own packages and
  * goes here; every pool there is now takes the rise.
  */
-const NO_PAY_RISE: readonly string[] = ["csuite"];
+export const NO_PAY_RISE: readonly string[] = ["csuite"];
 
 /**
  * A grade's pay in a pool, to the pound: permanent, or through an agency, whose premium is on top. `payMultiplier` is

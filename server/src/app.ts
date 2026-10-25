@@ -48,11 +48,13 @@ import {
   SPEND_CATEGORIES,
   STAFF_GRADES,
   STAFF_POOLS,
+  STAFF_SCHEMES,
   validateOverrides,
   type ConfigOverrides,
   type GameConfig,
   type GameState,
   type Loan,
+  type SchemeLevels,
   type Sim,
   type FunderId,
   type Spend,
@@ -191,6 +193,9 @@ const COUNTER_TERMS = {
   share: { type: "number", exclusiveMinimum: 0, exclusiveMaximum: 1 },
   days: { type: "integer", minimum: 1 },
 } as const;
+
+/** Staff scheme levels in a pay offer, by scheme. Which levels each allows, and that none goes down, is the sim's. */
+const SCHEME_LEVELS = Object.fromEntries(STAFF_SCHEMES.map((id) => [id, { type: "integer", minimum: 0, maximum: 9 }]));
 
 /** The built-in preset: the base config. Read-only, and not a row, so it always exists. */
 export const DEFAULT_PRESET = "Default";
@@ -431,6 +436,7 @@ export async function buildApp(opts: AppOptions) {
       payReview: sim.payReview(state),
       lastPayReview: state.pastPayReviews.at(-1) ?? null,
       payMultiplier: state.payMultiplier,
+      staffSchemes: sim.staffSchemes(state),
       ipo: sim.ipo(state),
       rescue: sim.rescue(state),
       features: sim.features(state),
@@ -742,16 +748,16 @@ export async function buildApp(opts: AppOptions) {
     },
   );
 
-  // What offering staff a rise in the open pay review would do, for the pay review modal's live cost and odds. Changes
-  // nothing.
-  app.get<{ Params: { code: string; id: string }; Querystring: { rise: number } }>(
+  // What offering staff a rise, and any staff scheme levels, in the open pay review would do, for the pay review
+  // modal's live cost, worth to staff and odds. Changes nothing.
+  app.get<{ Params: { code: string; id: string }; Querystring: { rise: number } & Partial<SchemeLevels> }>(
     "/api/codes/:code/companies/:id/pay-offer",
     {
       schema: {
         querystring: {
           type: "object",
           required: ["rise"],
-          properties: { rise: { type: "number", minimum: 0, maximum: 1 } },
+          properties: { rise: { type: "number", minimum: 0, maximum: 1 }, ...SCHEME_LEVELS },
           additionalProperties: false,
         },
       },
@@ -759,7 +765,8 @@ export async function buildApp(opts: AppOptions) {
     async (req, reply) => {
       const row = await findCompany(req.params.code, req.params.id);
       if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
-      return simOf(row).payOfferPreview(row.state, req.query.rise) satisfies PayOfferView;
+      const { rise, ...schemes } = req.query;
+      return simOf(row).payOfferPreview(row.state, rise, schemes) satisfies PayOfferView;
     },
   );
 
@@ -882,6 +889,8 @@ export async function buildApp(opts: AppOptions) {
             share: { type: "number", minimum: 0, maximum: 1 },
             // offerPayRise: the rise offered, 0.04 = 4%. The sim checks it against the review's caps.
             rise: { type: "number", minimum: 0, maximum: 1 },
+            // offerPayRise: staff scheme levels offered with it, by scheme. The sim checks none goes down.
+            schemes: { type: "object", properties: SCHEME_LEVELS, additionalProperties: false },
             // counterFunding and counterInvestor: the terms asked for. The sim checks they're the offer's and how far they ask.
             terms: { type: "object", properties: COUNTER_TERMS, additionalProperties: false },
           },

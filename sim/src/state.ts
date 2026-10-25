@@ -1,4 +1,5 @@
 import type { Negotiation, Terms } from "./negotiation.ts";
+import type { SchemeLevels } from "./staffSchemes.ts";
 import {
   DIFFICULTY_IDS,
   GAME_LENGTH_IDS,
@@ -31,7 +32,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 46;
+export const GAME_STATE_VERSION = 47;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -614,10 +615,21 @@ export interface PayReview {
   /** Kept from the student: the fair rise for how the company is doing, and staff's walk-away figure near it. */
   fairRise: number;
   walkAway: number;
-  /** The student's offers so far, oldest first: the third is final. */
+  /**
+   * The student's offers so far, oldest first, each as its worth to staff: the cash rise plus the schemes it raises,
+   * valued as staff see them. The third is final.
+   */
   studentOffers: number[];
+  /** What made up each of the student's offers, in step with studentOffers. */
+  offerTerms: PayOfferTerms[];
   /** Staff's figures, oldest first, as negotiation offers on `rise`: their opening ask, then each counter. */
   negotiation: Negotiation;
+}
+
+/** A student's pay offer: a cash rise (0.03 = 3%), and the scheme levels it asks for, none below those held. */
+export interface PayOfferTerms {
+  rise: number;
+  schemes: SchemeLevels;
 }
 
 /** How a pay review was settled: staff accepted the student's offer, the student staff's counter, or a tribunal. */
@@ -635,12 +647,19 @@ export interface PayReviewRecord {
   inflation: number;
   minOffer: number;
   maxAsk: number;
+  /** Each offer's worth to staff, and what made it up. */
   studentOffers: number[];
+  offerTerms: PayOfferTerms[];
   /** Staff's figures: their opening ask, then each counter. */
   staffFigures: number[];
   outcome: PayReviewOutcome;
-  /** The rise agreed, 0.04 = 4%. */
+  /** The cash rise agreed, 0.04 = 4%. */
   rise: number;
+  /**
+   * The scheme levels held after it: raised by the student's offer when staff accepted it or a tribunal picked it or
+   * the middle, and unchanged on an accepted counter or a tribunal's pick of staff's figure, which are cash only.
+   */
+  schemes: SchemeLevels;
   /**
    * Set when a tribunal settled it: what it picked, the fee charged and the odds it had. Schemes (#193) apply on the
    * student's figure or the middle, but not staff's, which is cash only.
@@ -870,6 +889,8 @@ export interface GameState {
    * rise). New hires and agency staff are paid at it too.
    */
   payMultiplier: number;
+  /** The staff schemes' levels, agreed in pay reviews: they only go up, and are paid every day. */
+  staffSchemes: SchemeLevels;
   /** Pay reviews' own seeded RNG, for inflation and staff's walk-away figure, so they don't change the rest of the game. */
   payReviewRng: number;
 }
@@ -1010,10 +1031,12 @@ export type Action =
   | { type: "stopCampaign"; id: number }
   /**
    * Offers staff a pay rise in the open pay review (0.04 = 4%), from the least offer to the most staff ask. Staff accept
-   * one at or above their hidden walk-away figure, or counter with a roll. The third offer is final.
+   * one at or above their hidden walk-away figure, or counter with a roll. The third offer is final. `schemes` raises
+   * staff schemes alongside the cash, as the levels wanted (none below those held); the offer is then worth the rise
+   * plus the levels added, valued as staff see them.
    */
-  | { type: "offerPayRise"; rise: number }
-  /** Accepts staff's counter in the open pay review: their figure is the rise. */
+  | { type: "offerPayRise"; rise: number; schemes?: Partial<SchemeLevels> }
+  /** Accepts staff's counter in the open pay review: their figure is the cash rise, with no schemes. */
   | { type: "acceptPayCounter" };
 
 export interface NewGameParams {

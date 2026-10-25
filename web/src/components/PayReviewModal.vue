@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { TRIBUNAL_PICKS, type RollResult, type TribunalPick } from "@xaas/sim";
+import { TRIBUNAL_PICKS, type PayOfferTerms, type RollResult, type SchemeLevels, type TribunalPick } from "@xaas/sim";
 import type { PayOfferView } from "@xaas/server/api-types";
 import { api, formatCash } from "../api";
 import { useGame } from "../game";
 import AppModal from "./AppModal.vue";
 
 // A pay review: before quarters 2, 3 and 4 the staff come to the student about pay, and the game holds until it's
-// settled. It shows this review's inflation and the caps, the offers and counters so far, a cash rise to offer with
-// what it costs and the odds on staff's counter, and their counter to accept. Before the final offer it warns that the
-// next step is the tribunal, with its fee and odds, and once settled says what the tribunal picked. It opens by itself; closed to look
+// settled. It shows this review's inflation and the caps, the offers and counters so far, a cash rise and staff scheme
+// levels to offer (sliders and toggles floored at the levels held) with what they cost, what the offer is worth to staff
+// and the odds on staff's counter, and their counter to accept. Before the final offer it warns that the next step is
+// the tribunal, with its fee and odds, and once settled says what the tribunal picked. It opens by itself; closed to look
 // around, the note in the shell opens it again, and the day still can't go on.
 const props = defineProps<{ open: boolean }>();
 const emit = defineEmits<{ close: [] }>();
@@ -31,14 +32,45 @@ watch(
 );
 const rise = computed(() => (typeof draft.value === "number" ? Math.round(draft.value * 10) / 1000 : null));
 
+// Scheme levels to offer, starting at those held each review: they can't go lower. Kept between offers.
+const levels = ref<SchemeLevels>({ pension: 0, health: 0, deathInService: 0, discount: 0 });
+watch(
+  () => review.value?.quarter,
+  () => {
+    if (review.value) levels.value = Object.fromEntries(review.value.schemes.map((s) => [s.id, s.level])) as SchemeLevels;
+  },
+  { immediate: true },
+);
+/** The levels raised above those held: what the offer adds. */
+const raised = computed(() =>
+  (review.value?.schemes ?? []).filter((s) => levels.value[s.id] > s.level).map((s) => ({ ...s, to: levels.value[s.id] })),
+);
+/** Only schemes raised are sent: the rest stay where they are. */
+const offeredSchemes = computed(() => Object.fromEntries(raised.value.map((s) => [s.id, s.to])) as Partial<SchemeLevels>);
+/** A scheme's worth to staff, to a hundredth of a point: 0.53%. */
+const finePct = (n: number) => `${(Math.round(Math.round(n * 1e6) / 100) / 100).toFixed(2)}%`;
+/** A scheme's cost model in words: "0.4% of pay" or "£0.30 a person". */
+const costModel = (s: { wageShare: number; perPerson: number }) =>
+  [s.wageShare ? `${(s.wageShare * 100).toFixed(1)}% of pay` : "", s.perPerson ? `£${s.perPerson.toFixed(2)} a person` : ""]
+    .filter(Boolean)
+    .join(" + ");
+/** An offer in words: "3.0%", or "2.0% cash + Pension top-up to 2 (worth 2.5%)". */
+function offerText(terms: PayOfferTerms | undefined, value: number): string {
+  if (!terms || !review.value) return pct(value);
+  const added = review.value.schemes
+    .filter((s) => terms.schemes[s.id] > s.level)
+    .map((s) => (s.toggle ? s.name : `${s.name} to ${terms.schemes[s.id]}`));
+  return added.length ? `${pct(terms.rise)} cash + ${added.join(", ")} (worth ${pct(value)} to staff)` : pct(terms.rise);
+}
+
 const PREVIEW_DELAY_MS = 250;
 const preview = ref<PayOfferView>();
 const previewError = ref("");
 let timer: number | undefined;
 let seq = 0;
 watch(
-  [rise, () => props.open, () => review.value?.studentOffers.length],
-  ([r, open]) => {
+  [rise, offeredSchemes, () => props.open, () => review.value?.studentOffers.length],
+  ([r, schemes, open]) => {
     window.clearTimeout(timer);
     const mine = ++seq;
     preview.value = undefined;
@@ -46,7 +78,7 @@ watch(
     if (r === null || !open || !review.value) return;
     timer = window.setTimeout(async () => {
       try {
-        const result = await api.payOffer(game.code, game.id, r);
+        const result = await api.payOffer(game.code, game.id, r, schemes);
         if (mine === seq) preview.value = result;
       } catch (e) {
         if (mine === seq) previewError.value = (e as Error).message;
@@ -59,8 +91,9 @@ onBeforeUnmount(() => window.clearTimeout(timer));
 
 async function offer() {
   if (rise.value === null) return;
-  game.track("control", { control: "pay-offer", value: String(rise.value) });
-  await game.act({ type: "offerPayRise", rise: rise.value });
+  const schemes = offeredSchemes.value;
+  game.track("control", { control: "pay-offer", value: [String(rise.value), ...raised.value.map((s) => `${s.id}=${s.to}`)].join(" ") });
+  await game.act(raised.value.length ? { type: "offerPayRise", rise: rise.value, schemes } : { type: "offerPayRise", rise: rise.value });
 }
 
 async function acceptCounter() {
@@ -89,6 +122,8 @@ const tribunal = computed(() => {
   const last = game.company?.lastPayReview;
   return settled.value && last?.startDay === settled.value.startDay ? last.tribunal : null;
 });
+// The schemes held once it settled, if any.
+const schemesHeld = computed(() => (game.company?.staffSchemes ?? []).filter((s) => s.level > 0));
 const PICK: Record<TribunalPick, string> = { student: "Your offer", middle: "The middle", staff: "Staff's figure" };
 
 const RESULT: Record<RollResult, string> = { high: "a high roll", middle: "a middle roll", low: "a low roll" };
@@ -127,7 +162,7 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
               <td data-testid="pay-max-ask">{{ pct(review.maxAsk) }}</td>
             </tr>
             <tr>
-              <th scope="row">Your team costs now</th>
+              <th scope="row">Your team costs now <span class="muted">pay and staff schemes</span></th>
               <td>{{ formatCash(review.dailyStaffCost) }} a day</td>
             </tr>
           </tbody>
@@ -136,7 +171,7 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
 
         <ol v-if="review.rounds.length" class="negotiation-rounds" data-testid="pay-rounds">
           <li v-for="(r, i) in review.rounds" :key="i" data-testid="pay-round">
-            You offered {{ pct(review.studentOffers[i]!) }}. Rolled {{ r.die }}<template v-if="r.penalty">
+            You offered {{ offerText(review.offerTerms[i], review.studentOffers[i]!) }}. Rolled {{ r.die }}<template v-if="r.penalty">
               − {{ r.penalty }} for asking them down {{ percent(r.ask) }}</template
             ><template v-if="r.bonus"> + {{ r.bonus }} bonus</template> = {{ signed(r.total) }}:
             <strong>{{ RESULT[r.result] }}: {{ moveText(r.move, review.staffFigures[i]!, review.staffFigures[i + 1]!) }}</strong>. They now ask {{ pct(review.staffFigures[i + 1]!) }}.
@@ -145,8 +180,8 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
 
         <div v-if="review.canAcceptCounter" class="pay-counter" data-testid="pay-counter">
           <p>
-            <span class="badge">Staff counter</span> Your staff are asking for <strong>{{ pct(review.staffFigure) }}</strong>.
-            You can agree it now, or make another offer.
+            <span class="badge">Staff counter</span> Your staff are asking for <strong>{{ pct(review.staffFigure) }}</strong>
+            in cash. You can agree it now, as a cash rise with no schemes, or make another offer.
           </p>
           <button :disabled="game.busy" data-testid="pay-accept-counter" @click="acceptCounter">
             Agree {{ pct(review.staffFigure) }}
@@ -158,7 +193,8 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
           <span class="badge warn-badge">Final offer: next is a tribunal</span> This is your last offer. If staff don't accept
           it, the review goes to a <strong>tribunal</strong>, which charges a <strong>{{ formatCash(review.tribunalFee) }}</strong>
           fee and sets the rise: your offer, their {{ pct(review.staffFigure) }} or the middle. It favours whichever is closest
-          to a fair rise for how your company is doing, so a lowball offer is likely to lose.
+          to a fair rise for how your company is doing, so a lowball offer is likely to lose. Your schemes apply if it picks your
+          offer or the middle, but not theirs.
         </p>
 
         <form class="counter-form" novalidate @submit.prevent="offer">
@@ -174,13 +210,65 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
               data-testid="pay-rise"
             />
           </label>
+          <fieldset class="pay-schemes" data-testid="pay-schemes">
+            <legend>Staff schemes</legend>
+            <p class="muted">
+              Benefits instead of cash: each costs you every day from now on, for every permanent member of staff, and can't be
+              taken away once given. Without a head of people, staff count {{ percent(review.schemeValuation) }} of a scheme's
+              worth.
+            </p>
+            <div v-for="s in review.schemes" :key="s.id" class="pay-scheme" :data-testid="`pay-scheme-${s.id}`">
+              <label v-if="s.toggle">
+                <input
+                  type="checkbox"
+                  :checked="levels[s.id] > 0"
+                  :disabled="s.level > 0"
+                  :data-testid="`pay-scheme-${s.id}-input`"
+                  @change="levels[s.id] = ($event.target as HTMLInputElement).checked ? 1 : 0"
+                />
+                <span><strong>{{ s.name }}</strong><template v-if="s.level > 0"> (held: on)</template></span>
+              </label>
+              <label v-else>
+                <span>
+                  <strong>{{ s.name }}</strong>: level {{ levels[s.id] }} of {{ s.maxLevel }}<template v-if="s.level > 0">
+                    (held: {{ s.level }})</template
+                  >
+                </span>
+                <input
+                  v-model.number="levels[s.id]"
+                  type="range"
+                  :min="s.level"
+                  :max="s.maxLevel"
+                  step="1"
+                  :data-testid="`pay-scheme-${s.id}-input`"
+                />
+              </label>
+              <span class="muted">
+                {{ s.blurb }} {{ s.toggle ? "It costs" : "Each level costs" }} {{ costModel(s) }} a day, and is worth
+                {{ finePct(s.staffValue * review.schemeValuation) }} to staff.
+                <template v-if="s.level > 0">Now {{ formatCash(s.costPerDay) }} a day.</template>
+              </span>
+            </div>
+          </fieldset>
           <div v-if="preview" class="counter-odds" data-testid="pay-preview">
+            <p v-if="raised.length" data-testid="pay-worth">
+              Worth <strong>{{ pct(preview.value) }}</strong> to your staff: {{ pct(preview.rise) }} cash plus
+              {{ finePct(preview.schemeValue) }} for the schemes, as they value them.
+            </p>
+            <table v-if="raised.length" class="quote" data-testid="pay-scheme-costs">
+              <tbody>
+                <tr v-for="s in preview.schemeCosts.filter((c) => c.level > c.held)" :key="s.id" :data-testid="`pay-scheme-cost-${s.id}`">
+                  <th scope="row">{{ s.name }} <span class="muted">worth {{ finePct(s.value) }} to staff</span></th>
+                  <td>{{ formatCash(s.costPerDay) }} a day, for good</td>
+                </tr>
+              </tbody>
+            </table>
             <p data-testid="pay-cost">
-              That adds <strong>{{ formatCash(preview.extraPerDay) }} a day</strong> to your team's pay:
-              <strong>{{ formatCash(preview.extraPerYear) }} a year</strong> at today's team.
-              <template v-if="preview.realTerms < 0">It's {{ pct(-preview.realTerms) }} below inflation: a pay cut in real terms.</template>
-              <template v-else-if="preview.realTerms > 0">It's {{ pct(preview.realTerms) }} above inflation.</template>
-              <template v-else>It matches inflation: pay holds its value.</template>
+              That adds <strong>{{ formatCash(preview.extraPerDay) }} a day</strong> to your team's cost:
+              <strong>{{ formatCash(preview.extraPerYear) }} a year</strong> at today's team<template v-if="raised.length">, schemes included</template>.
+              <template v-if="preview.realTerms < 0">The cash is {{ pct(-preview.realTerms) }} below inflation: a pay cut in real terms.</template>
+              <template v-else-if="preview.realTerms > 0">The cash is {{ pct(preview.realTerms) }} above inflation.</template>
+              <template v-else>The cash matches inflation: pay holds its value.</template>
             </p>
             <p v-if="preview.meetsAsk" data-testid="pay-meets-ask">That's what your staff are asking: they'll take it.</p>
             <template v-else-if="preview.odds">
@@ -208,7 +296,9 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
                 <tbody>
                   <tr v-for="p in TRIBUNAL_PICKS" :key="p" :data-testid="`pay-tribunal-${p}`">
                     <th scope="row">{{ PICK[p] }}, {{ percent(preview.tribunal.chances[p]) }}</th>
-                    <td>a {{ pct(preview.tribunal.rises[p]) }} rise</td>
+                    <td>
+                      a {{ pct(preview.tribunal.cash[p]) }} rise<template v-if="raised.length">{{ p === "staff" ? ", no schemes" : " + your schemes" }}</template>
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -217,7 +307,8 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
           <p v-else-if="previewError" class="error" data-testid="pay-preview-error">{{ previewError }}</p>
           <p v-else class="muted">Type a rise from {{ pct(review.minOffer) }} to {{ pct(review.maxAsk) }} to see what it costs.</p>
           <button type="submit" :disabled="game.busy || !preview" data-testid="pay-offer">
-            Offer {{ rise === null ? "" : pct(rise) }} ({{ review.offersLeft }} {{ review.offersLeft === 1 ? "offer" : "offers" }} left)
+            Offer {{ rise === null ? "" : pct(rise) }}<template v-if="raised.length"> + {{ raised.length }} {{ raised.length === 1 ? "scheme" : "schemes" }}</template>
+            ({{ review.offersLeft }} {{ review.offersLeft === 1 ? "offer" : "offers" }} left)
           </button>
         </form>
       </template>
@@ -229,6 +320,10 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
         <p data-testid="pay-settled">
           <strong>Pay review settled on a {{ pct(settled.rise) }} rise.</strong> Every team is paid it from day
           {{ settled.startDay }}: pay is now {{ (game.company?.payMultiplier ?? 1).toFixed(3) }}× the starting day rates.
+        </p>
+        <p v-if="schemesHeld.length" data-testid="pay-schemes-held">
+          Staff schemes from day {{ settled.startDay }}:
+          {{ schemesHeld.map((s) => `${s.name}${s.toggle ? "" : ` ${s.level}`} (${formatCash(s.costPerDay)} a day)`).join(", ") }}.
         </p>
         <button data-testid="pay-done" @click="emit('close')">Play on</button>
       </template>
