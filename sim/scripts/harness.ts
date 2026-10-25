@@ -3,6 +3,10 @@
 import {
   createSim,
   FUNDER_IDS,
+  CSUITE_ROLES,
+  IPO_ROLES,
+  seriesApproachDay,
+  type CsuiteRole,
   ROUND_IDS,
   type RoundId,
   profitCosts,
@@ -83,7 +87,24 @@ export interface Strategy {
   schemes?: Partial<SchemeLevels>;
   /** How it bargains in pay reviews, in place of the default policy (see settlePay). */
   pay?: PayPolicy;
+  /** Who it hires to the C-suite, and how it picks from each shortlist. Left out, the IPO's three (see hireExecutives). */
+  csuite?: CsuitePolicy;
 }
+
+/**
+ * Who a strategy hires to the C-suite: each role in `roles` once it's open (and the company has launched, for any but
+ * the head of development), the candidate `pick` prefers. `beforeTrading` holds every hire until that many days before
+ * the IPO's trading history is met, and Series A has approached (when the CISO and legal counsel open): the executives
+ * the IPO needs, as late as they can be hired in time to float.
+ */
+export interface CsuitePolicy {
+  roles: CsuiteRole[];
+  pick: "cheapest" | "strongest";
+  beforeTrading?: number;
+}
+
+/** The default: the CFO, CISO and legal counsel the IPO needs, the cheapest of each, two weeks before it could float. */
+const IPO_EXECUTIVES: CsuitePolicy = { roles: [...IPO_ROLES], pick: "cheapest", beforeTrading: 14 };
 
 /**
  * A way of bargaining in pay reviews: what it opens with, what it adds in schemes, when it takes staff's counter and
@@ -237,6 +258,16 @@ export const STRATEGIES: Strategy[] = [
     slider: { building: 0, idle: false },
   },
   {
+    id: "csuite",
+    description:
+      "As sensible, and hires the strongest candidate to every C-suite role as soon as it opens: the head of development on day 1, the other heads at the launch, legal counsel and the CISO with the rest at Series A.",
+    priceFactor: 1,
+    support: true,
+    scaling: "ahead",
+    loan: "onprem",
+    csuite: { roles: [...CSUITE_ROLES], pick: "strongest" },
+  },
+  {
     id: "cash-only",
     description:
       "As sensible, but bargains in pay reviews with cash alone: opens at inflation, takes a counter up to 1.5 points over it, and otherwise comes halfway to staff's figure, as far as the tribunal unless its fee would leave less than two weeks' running costs.",
@@ -313,6 +344,11 @@ export interface GameResult {
   /** The day each rung of the funding ladder first approached, or null; and the day the IPO's trading history was met. */
   rounds: Record<RoundId, number | null>;
   tradingDay: number | null;
+  /**
+   * The C-suite: executives hired, the day the last of the IPO's three (CFO, CISO, legal counsel) was, or null, what
+   * their salaries came to and the equity they took.
+   */
+  csuite: { hired: number; ipoDay: number | null; pay: number; equity: number };
 }
 
 /** How a game's pay reviews went. */
@@ -617,6 +653,26 @@ function research(sim: Sim, state: GameState, strategy: Strategy): GameState {
   return s;
 }
 
+/** Hires the C-suite roles the strategy wants, each once it's open: see CsuitePolicy. */
+function hireExecutives(sim: Sim, state: GameState, strategy: Strategy): GameState {
+  const policy = strategy.csuite ?? IPO_EXECUTIVES;
+  if (policy.beforeTrading !== undefined) {
+    if (state.launchDay === null || seriesApproachDay(state, "seriesA") === null) return state;
+    const tradingDay = state.launchDay + sim.config.ipo.minTradingDays - 1;
+    if (state.day < tradingDay - policy.beforeTrading) return state;
+  }
+  let s = state;
+  for (const role of policy.roles) {
+    const view = sim.csuite(s).roles.find((r) => r.role === role)!;
+    if (!view.open || view.executive || (role !== "headOfDevelopment" && s.launchDay === null)) continue;
+    const pick = view.shortlist.reduce((a, b) =>
+      policy.pick === "cheapest" ? (b.salary < a.salary ? b : a) : b.strength > a.strength ? b : a,
+    );
+    s = tryAction(sim, s, { type: "hireExecutive", role, candidate: pick.id });
+  }
+  return s;
+}
+
 /** What a user brings in a month at today's price and paying share: what a Campaign's cost per user is weighed against. */
 function monthlyValue(state: GameState): number {
   return state.users > 0 ? (state.price * state.paidUsers) / state.users : 0;
@@ -801,6 +857,7 @@ export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameSta
     }
   }
   s = mvpTeam(sim, s, strategy);
+  s = hireExecutives(sim, s, strategy);
   s = marketing(sim, research(sim, s, strategy), strategy);
   return optimise(sim, buildFeatures(sim, s), strategy);
 }
@@ -886,6 +943,19 @@ export function playGame(sim: Sim, { model, productType, strategy, seed }: GameS
       ...state.investors.vc.firstApproachDay,
     },
     tradingDay: state.launchDay === null ? null : state.launchDay + sim.config.ipo.minTradingDays - 1,
+    csuite: csuiteResult(state),
+  };
+}
+
+function csuiteResult(state: GameState): GameResult["csuite"] {
+  const { hired } = state.csuite;
+  const ipo = IPO_ROLES.map((role) => hired.find((e) => e.role === role)?.day ?? null);
+  return {
+    hired: hired.length,
+    ipoDay: ipo.every((d) => d !== null) ? Math.max(...(ipo as number[])) : null,
+    // Paid from the day after hiring to the last day played.
+    pay: hired.reduce((sum, e) => sum + e.salary * Math.max(0, state.day - e.day), 0),
+    equity: Math.round(hired.reduce((sum, e) => sum + e.equity, 0) * 10_000) / 10_000,
   };
 }
 
@@ -980,6 +1050,7 @@ function emptyResult(model: ModelId, productType: ProductTypeId, strategy: strin
     },
     rounds: { angel: null, seriesA: null, seriesB: null, seriesC: null, seriesD: null },
     tradingDay: null,
+    csuite: { hired: 0, ipoDay: null, pay: 0, equity: 0 },
   };
 }
 
@@ -1174,6 +1245,26 @@ export function renderReport(results: GameResult[], { title = "Balance report", 
       `${d.length}/${g.length}`,
       `${onTime}/${g.length}`,
       d.length ? `d${Math.max(...d)}${d.length < g.length ? ` (${g.length - d.length} never)` : ""}` : "never",
+    ];
+  })), "");
+
+  out.push("## C-suite by strategy", "");
+  out.push(
+    "Executives hired, as medians across every game that started. IPO three: the day the last of the CFO, CISO and legal counsel was hired (they're needed to float), and how many games had all three. Pay: what their salaries came to over the game. Equity: the share of the company they took, capped at the C-suite's cap.",
+    "",
+  );
+  out.push(table(["Strategy", "Hired", "IPO three", "Had all three", "Pay", "Equity", "Break-even"], used.map((s) => {
+    const g = results.filter((r) => r.strategy === s.id && r.outcome !== "cant-start");
+    const ipo = g.flatMap((r) => (r.csuite.ipoDay === null ? [] : [r.csuite.ipoDay]));
+    const even = g.flatMap((r) => (r.breakEvenDay === null ? [] : [r.breakEvenDay]));
+    return [
+      s.id,
+      `${whole(median(g.map((r) => r.csuite.hired)))}`,
+      ipo.length ? `d${whole(median(ipo))}` : "never",
+      `${ipo.length}/${g.length}`,
+      money(median(g.map((r) => r.csuite.pay))),
+      `${Math.round(median(g.map((r) => r.csuite.equity)) * 1000) / 10}%`,
+      even.length ? `d${whole(median(even))}${even.length < g.length ? ` (${g.length - even.length} never)` : ""}` : "never",
     ];
   })), "");
 

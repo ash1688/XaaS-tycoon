@@ -13,6 +13,7 @@ import {
   type SeriesId,
   type Sim,
 } from "../src/index.ts";
+import { withIpoExecutives } from "./executives.ts";
 
 // Venture capital, Series A–D, through the sim's public interface: each round approaching at its hidden target with
 // three offers, their leans, picking one (which closes the others), declining or failing (three new VCs), accepting
@@ -136,7 +137,10 @@ describe("the rounds approaching", () => {
       expect(o.yourShareAfter).toBeCloseTo(a.yourShareBefore * (1 - o.theirShare), 5);
     }
     expect(pauses.at(-1)).toMatchObject({ day: state.day, reason: { kind: "offer", id: "offer-seriesA" } });
-    expect(log.at(-1)!.entries.at(-1)!.text).toMatch(/^Series A: three venture capitalists want to invest in Acme\./);
+    // Last but for the C-suite roles Series A opens.
+    expect(log.at(-1)!.entries.filter((e) => !e.text.startsWith("You can hire a")).at(-1)!.text).toMatch(
+      /^Series A: three venture capitalists want to invest in Acme\./,
+    );
   });
 
   it("leans each VC's offer: most cash asks the most, least ownership the least and values the company highest", () => {
@@ -305,8 +309,12 @@ describe("picking, declining and accepting", () => {
 describe("the IPO gate", () => {
   it("refuses the IPO until Series A–D have all approached, even when every round was declined", () => {
     let state = begin(easyIpo);
-    // Profit is left to the record: making money on every day of it, so only the rounds can hold the IPO back.
-    const profitable = (s: GameState): GameState => ({ ...s, spendByDay: s.spendByDay.map((d) => ({ ...d, income: 1_000_000 })) });
+    // Profit is left to the record: making money on every day of it, and the CFO, CISO and legal counsel are hired, so
+    // only the rounds can hold the IPO back.
+    const profitable = (s: GameState): GameState => ({
+      ...withIpoExecutives(s),
+      spendByDay: s.spendByDay.map((d) => ({ ...d, income: 1_000_000 })),
+    });
     const unmet = (s: GameState) => easyIpo.ipo(profitable(s)).conditions.filter((c) => !c.met).map((c) => c.id);
     state = playUntil(easyIpo, state, (s) => s.launchDay !== null && s.day > s.launchDay + 3).state;
     expect(unmet(state)).toEqual([...SERIES_IDS]);

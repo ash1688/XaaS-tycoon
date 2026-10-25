@@ -95,7 +95,10 @@ describe("tiers", () => {
       [3, false, null],
       [4, false, null],
     ]);
-    expect(tier(state, 2).conditions).toEqual([{ label: "Users", value: 0, target: 7_000, unit: "users", met: false }]);
+    expect(tier(state, 2).conditions).toEqual([
+      { label: "Users", value: 0, target: 7_000, unit: "users", met: false },
+      { label: "A CTO hired", value: 0, target: 1, unit: "yes", met: false },
+    ]);
     expect(tier(state, 3).conditions.map((c) => c.label)).toEqual(["Income a day, last 30 days", "Uptime, last 30 days"]);
     expect(tier(state, 4)).toMatchObject({ any: true });
     expect(tier(state, 4).conditions.map((c) => c.label)).toEqual(["An angel investor's money taken", "Every IPO condition met"]);

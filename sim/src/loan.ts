@@ -1,4 +1,5 @@
 import type { GameConfig } from "./config.ts";
+import { loanRateShare } from "./executives.ts";
 import { interestIn, pounds, type Finance } from "./finance.ts";
 import { SimError, type GameState, type Loan, type LogEntry } from "./state.ts";
 
@@ -50,9 +51,12 @@ export const loanOwed = (loan: Loan | null): number => (loan && isOpen(loan) ? p
 export function createLoan(config: GameConfig, finance: Finance) {
   const { amount, baseRate, ratePerDay, termDays, termPerDay, minTermDays, minDays } = config.loan;
 
-  /** The terms for a loan taken on a day (between days, so repaid from the next one), whether or not it can be. */
-  function termsOn(day: number): LoanQuote {
-    const rate = Math.round((baseRate + ratePerDay * (day - 1)) * 1e6) / 1e6;
+  /**
+   * The terms for a loan taken on a day (between days, so repaid from the next one), whether or not it can be. A CFO
+   * gets the rate down by their cut: rateShare is what's left of it.
+   */
+  function termsOn(day: number, rateShare = 1): LoanQuote {
+    const rate = Math.round((baseRate + ratePerDay * (day - 1)) * rateShare * 1e6) / 1e6;
     const days = Math.max(minTermDays, Math.round(termDays - termPerDay * (day - 1)));
     // Rounded up to the pound, like every charge, so the repayments add up to at least the amount plus interest.
     const dailyRepayment = Math.ceil((amount * (1 + rate)) / days - 1e-9);
@@ -83,12 +87,12 @@ export function createLoan(config: GameConfig, finance: Finance) {
 
   /** What taking a loan now would cost, or null if one can't be taken: one's being repaid, or it's too late. */
   function loanQuote(state: GameState): LoanQuote | null {
-    return refusal(state) ? null : termsOn(state.day);
+    return refusal(state) ? null : termsOn(state.day, loanRateShare(config, state));
   }
 
   /** A new loan taken today, with any repaid one kept for the summary. */
   function withNewLoan(state: GameState): GameState {
-    const { rate, days, lastDay, dailyRepayment, total } = termsOn(state.day);
+    const { rate, days, lastDay, dailyRepayment, total } = termsOn(state.day, loanRateShare(config, state));
     const loan: Loan = {
       amount,
       day: state.day,

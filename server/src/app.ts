@@ -24,6 +24,7 @@ import {
   allowedDifficulties,
   allowedGameLengths,
   applyOverrides,
+  CSUITE_ROLES,
   configFields,
   createSim,
   diffFromDefaults,
@@ -438,6 +439,7 @@ export async function buildApp(opts: AppOptions) {
       payMultiplier: state.payMultiplier,
       staffSchemes: sim.staffSchemes(state),
       payHistory: sim.payHistory(state),
+      csuite: sim.csuite(state),
       drift: sim.drift(state),
       ipo: sim.ipo(state),
       rescue: sim.rescue(state),
@@ -836,6 +838,7 @@ export async function buildApp(opts: AppOptions) {
                 "stopCampaign",
                 "offerPayRise",
                 "acceptPayCounter",
+                "hireExecutive",
               ],
             },
             pool: { enum: [...STAFF_POOLS] },
@@ -896,6 +899,10 @@ export async function buildApp(opts: AppOptions) {
             rise: { type: "number", minimum: 0, maximum: 1 },
             // offerPayRise: staff scheme levels offered with it, by scheme. The sim checks none goes down.
             schemes: { type: "object", properties: SCHEME_LEVELS, additionalProperties: false },
+            // hireExecutive: the C-suite role, and the candidate from its shortlist by id ("cfo-2"). The sim checks the
+            // role is open and unfilled and the candidate is on its shortlist.
+            role: { enum: [...CSUITE_ROLES] },
+            candidate: { type: "string", minLength: 1, maxLength: 64 },
             // counterFunding and counterInvestor: the terms asked for. The sim checks they're the offer's and how far they ask.
             terms: { type: "object", properties: COUNTER_TERMS, additionalProperties: false },
           },
@@ -924,6 +931,7 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { const: "startCampaign" } } }, then: { required: ["customerType", "budget", "days"] } },
             { if: { properties: { type: { const: "stopCampaign" } } }, then: { required: ["id"] } },
             { if: { properties: { type: { const: "offerPayRise" } } }, then: { required: ["rise"] } },
+            { if: { properties: { type: { const: "hireExecutive" } } }, then: { required: ["role", "candidate"] } },
             {
               if: { properties: { type: { const: "setManagedService" } } },
               then: { required: ["service", "size"] },

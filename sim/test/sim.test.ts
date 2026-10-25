@@ -150,6 +150,7 @@ const config: GameConfig = {
   mvp: NO_MVP,
   optimisation: defaultConfig.optimisation,
   research: defaultConfig.research,
+  csuite: defaultConfig.csuite,
   campaigns: defaultConfig.campaigns,
   tiers: defaultConfig.tiers,
   hardware: defaultConfig.hardware,

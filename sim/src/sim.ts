@@ -18,6 +18,7 @@ import {
   type ServerCount,
 } from "./config.ts";
 import { createConversion, type ConversionView } from "./conversion.ts";
+import { createCsuite, startingCsuite, type CsuiteView } from "./csuite.ts";
 import { createCustomers } from "./customers.ts";
 import { createEncounters, type DangerView } from "./encounters.ts";
 import { createEvents, type EventView, type FeatureGapView } from "./events.ts";
@@ -80,13 +81,15 @@ export type { CalendarView, GameDate, HolidayView } from "./calendar.ts";
 export type { CampaignTypeView, CampaignView, CampaignsView } from "./campaigns.ts";
 export { dayOfDate, gameDate } from "./calendar.ts";
 export type { ConversionDriver, ConversionDriverId, ConversionView } from "./conversion.ts";
+export type { CandidateView, CsuiteRoleView, CsuiteView, ExecutiveEffectView, ExecutiveView } from "./csuite.ts";
+export { IPO_ROLES } from "./csuite.ts";
 export type { DangerRiskView, DangerView } from "./encounters.ts";
 export type { EventView, FeatureGapView } from "./events.ts";
 export type { FeatureStatus, FeatureView } from "./features.ts";
 export type { ProviderView } from "./infrastructure.ts";
 export type { AngelView, InvestorOffer, InvestorsView, VcApproachView, VcOfferView, VcRoundView, VcView } from "./investors.ts";
 export { seriesApproachDay } from "./investors.ts";
-export type { FloatPreview, IpoCondition, IpoConditionId, IpoOffer, IpoStatus, IpoView } from "./ipo.ts";
+export type { FloatPreview, IpoCondition, IpoConditionId, IpoOffer, IpoRole, IpoStatus, IpoView } from "./ipo.ts";
 export type { LaunchView } from "./launch.ts";
 export type { MvpView } from "./mvp.ts";
 export type { ResearchView } from "./research.ts";
@@ -143,6 +146,7 @@ export {
   GAME_STATE_VERSION,
   isCurrentState,
   isDifficultyId,
+  isCsuiteRole,
   isFunderId,
   isGameLengthId,
   isManagedService,
@@ -160,6 +164,9 @@ export {
   type AngelDeal,
   type AngelTarget,
   type Campaign,
+  type Candidate,
+  type Csuite,
+  type Executive,
   type ApiState,
   type Approach,
   type DayLog,
@@ -506,6 +513,11 @@ export interface Sim {
   danger(state: GameState): DangerView;
   /** Feature gaps still slowing growth, oldest first. Shown every day, not just the day the event fired. */
   featureGaps(state: GameState): FeatureGapView[];
+  /**
+   * The C-suite, for the People page: every role with when it opens, who fills it, or its shortlist with each
+   * candidate's effects, salary and equity ask now; and the equity cap, used and left.
+   */
+  csuite(state: GameState): CsuiteView;
   /** How the company did: final figures, spend by category, migrations and spend over time. */
   summarise(state: GameState): GameSummary;
   /**
@@ -601,6 +613,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const campaigns = createCampaigns(config, calendar);
   const payReview = createPayReview(config, { runwayDays: (s) => runway(s).days, chargeNow: finance.chargeNow });
   const drift = createDrift(config);
+  const csuite = createCsuite(config);
 
   function newGame({
     companyName,
@@ -700,6 +713,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       api: null,
       ...payReview.startingPayReview(seed),
       ...drift.startingDrift(seed),
+      csuite: startingCsuite(config, seed),
     };
     // The loan arrives with the upfront bill. A model that costs more up front than the company has would run it out
     // of cash on day 1, so it's refused instead: on-prem needs the loan.
@@ -849,6 +863,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
         return payReview.offer(state, action.rise, action.schemes);
       case "acceptPayCounter":
         return payReview.acceptCounter(state);
+      case "hireExecutive":
+        return csuite.hire(state, action.role, action.candidate);
       default:
         throw new SimError("unknown_action", "That action isn't recognised.");
     }
@@ -943,6 +959,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       ...calendar.dayEntries(state, day),
       ...check.entries,
       ...arrivals.entries,
+      // Executives hired between days start today.
+      ...state.csuite.hired.filter((e) => e.day === yesterday.day).map((e) => ({ text: csuite.hiredText(e), cashDelta: 0, kind: "staff" as const })),
       ...building.entries,
       ...launched.entries,
       ...recorded.entries,
@@ -965,6 +983,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       ...features.addonEntries(state),
       ...benefits.benefitEntries(state),
       ...staff.staffEntries(state),
+      ...csuite.payEntries(state),
       ...schemeEntries(config, state),
       ...served.charges,
       ...events.costEntries(today),
@@ -1043,7 +1062,9 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       // First, what a tribunal settled before today.
       ...payReview.tribunalEntries(yesterday, day),
       ...payReview.schemeStartEntries(yesterday, day),
-      ...settled.entries, ...released.entries, ...funded.entries, ...opened.entries, ...drifted.entries, ...reviewed.entries];
+      ...settled.entries, ...released.entries, ...funded.entries, ...opened.entries, ...drifted.entries, ...reviewed.entries,
+      // C-suite roles that opened today, with their shortlists.
+      ...csuite.openedEntries(yesterday, reviewed.state)];
     // Kit added today (managed autoscaling, a migration's new setup) gives what new kit gives now.
     return { state: drift.stampNewKit(yesterday, reviewed.state), log: [{ day, entries: entriesToday }] };
   }
@@ -1071,6 +1092,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       ...features.addonEntries(state),
       ...benefits.benefitEntries(state),
       ...staff.staffEntries(state),
+      ...csuite.payEntries(state),
       ...schemeEntries(config, state),
     ];
     const repayment = loan.dailyRepayment(state);
@@ -1271,6 +1293,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     calendar: (s) => calendar.calendar(load(s)),
     danger: (s) => encounters.danger(load(s)),
     featureGaps: (s) => events.featureGaps(load(s)),
+    csuite: (s) => csuite.csuiteView(load(s)),
     summarise: (s) => summary.summarise(load(s)),
     api: (s) => api.apiView(load(s)),
   };

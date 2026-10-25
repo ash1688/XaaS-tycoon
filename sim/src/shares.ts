@@ -1,5 +1,6 @@
 import type { GameConfig } from "./config.ts";
 import type { Conversion } from "./conversion.ts";
+import { cfoRollBonus } from "./executives.ts";
 import { count, pounds, type Finance } from "./finance.ts";
 import { loanOwed } from "./loan.ts";
 import {
@@ -193,6 +194,7 @@ const NAMES: Record<Shareholder["id"], string> = {
   vulture: "Vulture VC",
   public: "Public shareholders",
   staffScheme: "Staff share scheme",
+  executive: "C-suite",
 };
 const FUNDER_NAMES: Record<FunderId, string> = { friendsAndFamily: "Friends and family", grant: "The grant" };
 const percent = (share: number) => `${Math.round(share * 1000) / 10}%`;
@@ -544,7 +546,9 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
             ? `${state.investors.angel.investor} (angel)`
             : h.id === "vc" && h.investor
               ? `${h.investor} (VC)`
-              : NAMES[h.id],
+              : h.id === "executive" && h.investor && h.role
+                ? `${h.investor} (${config.csuite.roles[h.role].name})`
+                : NAMES[h.id],
         shares: h.shares,
         share: h.shares / shares,
         value: Math.round((value * h.shares) / shares),
@@ -661,8 +665,8 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
   const negotiationOf = (state: GameState, funder: FunderId): Negotiation =>
     state.funding.negotiating[funder] ?? negotiator.open(openTerms(state, funder));
 
-  /** Pips on top of every negotiation roll. None yet: a CFO will add some. */
-  const rollBonus = (_state: GameState) => 0;
+  /** Pips on top of every investor and funder negotiation roll: the CFO's, none without one. Pay reviews don't use it. */
+  const rollBonus = (state: GameState) => cfoRollBonus(config, state);
 
   function negotiationView(state: GameState, funder: FunderId): NegotiationView | null {
     if (state.funding[funder] || closed(state)) return null;

@@ -1,4 +1,5 @@
 import { TIER_NUMBERS, type GameConfig, type ModelId, type ProductTypeId, type TierNumber } from "./config.ts";
+import { hasExecutive } from "./executives.ts";
 import { count, pounds } from "./finance.ts";
 import { researchUnlocked } from "./research.ts";
 import { SimError, type GameState, type LogEntry, type TierReached } from "./state.ts";
@@ -159,7 +160,7 @@ function conditionText(config: GameConfig, state: Pick<GameState, "productType">
     case 1:
       return "It's open from the start.";
     case 2:
-      return `Tier 2 opens at ${count.format(tier2Users(config, state.productType))} users.`;
+      return `Tier 2 opens at ${count.format(tier2Users(config, state.productType))} users, or with a CTO.`;
     case 3:
       return `Tier 3 opens once your last ${tier3.days} days average ${pounds(tier3.dailyIncome)} a day in income and ${tier3.uptime}% uptime.`;
     case 4:
@@ -184,7 +185,10 @@ function conditions(config: GameConfig, state: GameState, tier: TierNumber, ctx:
     case 1:
       return [];
     case 2:
-      return [part("Users", state.users, tier2Users(config, state.productType), "users")];
+      return [
+        part("Users", state.users, tier2Users(config, state.productType), "users"),
+        part("A CTO hired", hasExecutive(state, "cto") ? 1 : 0, 1, "yes"),
+      ];
     case 3: {
       // Averaged over the whole window, so a company that hasn't played that many days yet can't meet it.
       const window = lastDays(state, tier3.days);
@@ -205,8 +209,8 @@ function conditions(config: GameConfig, state: GameState, tier: TierNumber, ctx:
   }
 }
 
-/** Tier 4 takes either part; every other tier needs all of its parts. */
-const anyPart = (tier: TierNumber) => tier === 4;
+/** Tiers 2 (the users, or a CTO) and 4 take either part; tier 3 needs both of its parts. */
+const anyPart = (tier: TierNumber) => tier === 2 || tier === 4;
 
 const conditionMet = (list: TierConditionView[], tier: TierNumber) =>
   anyPart(tier) ? list.some((c) => c.met) : list.every((c) => c.met);

@@ -43,6 +43,21 @@ export type DifficultyId = (typeof DIFFICULTY_IDS)[number];
 /** The venture capital rounds of the funding ladder, after the angel. Saved in game state, so don't rename. */
 export const SERIES_IDS = ["seriesA", "seriesB", "seriesC", "seriesD"] as const;
 export type SeriesId = (typeof SERIES_IDS)[number];
+/** The C-suite roles the student can hire, in the order they're listed. The student is the CEO, so isn't one. */
+export const CSUITE_ROLES = [
+  "headOfDevelopment",
+  "headOfOps",
+  "headOfSupport",
+  "cfo",
+  "cto",
+  "headOfPeople",
+  "cmo",
+  "coo",
+  "cio",
+  "ciso",
+  "legalCounsel",
+] as const;
+export type CsuiteRole = (typeof CSUITE_ROLES)[number];
 
 /**
  * The way a VC's offer leans: the most cash, the fewest conditions or the least of the company taken. Saved in game
@@ -1072,6 +1087,44 @@ export interface ResearchConfig {
   pointsPerPerson: number;
 }
 
+/** The lowest and highest a candidate's figure can be: the weakest candidate gets min, the strongest max. */
+export interface CsuiteRange {
+  min: number;
+  max: number;
+}
+
+/**
+ * One C-suite role: its title, and the ranges its candidates are drawn from. Each candidate has a strength from 0 to 1
+ * that sets every effect within its range; salary and equity ask follow strength, with some luck, so a strong candidate
+ * costs more.
+ */
+export interface CsuiteRoleConfig {
+  name: string;
+  /** Pay a day, in pounds. Fixed for good: pay reviews leave the C-suite out. */
+  salary: CsuiteRange;
+  /** The equity asked for, as a share of the company, before the cap shrinks it (0.01 = 1%). Paid in new shares. */
+  equity: CsuiteRange;
+  /** Each effect's range, by name: see the role in csuite.ts for what each does. Legal counsel has none. */
+  effects: Record<string, CsuiteRange>;
+}
+
+/**
+ * The C-suite: senior roles hired once each from a shortlist, opening as the company grows (see csuite.ts). Each gives a
+ * lasting bonus to one area, for a salary and an equity ask in new shares.
+ */
+export interface CsuiteConfig {
+  /** Candidates on each role's shortlist. */
+  shortlistSize: number;
+  /**
+   * The most the whole C-suite's equity asks can add up to (0.1 = 10%). Each ask is its base × the share of the cap
+   * still unused, so asks shrink as the cap fills and never pass it. The staff share scheme is a pot of its own.
+   */
+  equityCap: number;
+  /** How much of salary and equity is luck rather than strength: 0.25 = a quarter. */
+  payLuck: number;
+  roles: Record<CsuiteRole, CsuiteRoleConfig>;
+}
+
 /**
  * Campaigns: the student picks a customer type, a budget and a length, and the campaign spends the budget evenly over
  * its days, adding new users of that type directly, on top of normal growth. Each day it adds about
@@ -1775,6 +1828,7 @@ export interface GameConfig {
   mvp: MvpConfig;
   optimisation: OptimisationConfig;
   research: ResearchConfig;
+  csuite: CsuiteConfig;
   campaigns: CampaignsConfig;
   tiers: TiersConfig;
   hardware: HardwareConfig;
@@ -1843,6 +1897,81 @@ export const defaultConfig: GameConfig = {
   optimisation: { k: 30, cap: { onprem: 0.5, iaas: 0.35, paas: 0.35, saas: 0.35 } },
   // Tuned in the balance pass (#181): with a researcher at £80 a day, research about pays for itself over a game.
   research: { pointsPerPerson: 4 },
+  // Placeholders from the design (#108), for the designer to sign off. Effects are centred on the design's figures:
+  // +20% developer output, +25% RP, +10% campaigns, −8% running costs, migrations 30% cheaper and faster.
+  csuite: {
+    shortlistSize: 3,
+    equityCap: 0.1,
+    payLuck: 0.25,
+    roles: {
+      headOfDevelopment: {
+        name: "Head of development",
+        salary: { min: 110, max: 170 },
+        equity: { min: 0.0025, max: 0.0075 },
+        effects: { output: { min: 0.1, max: 0.3 } },
+      },
+      headOfOps: {
+        name: "Head of ops",
+        salary: { min: 100, max: 160 },
+        equity: { min: 0.0025, max: 0.0075 },
+        effects: { output: { min: 0.1, max: 0.3 }, outageCut: { min: 0.1, max: 0.3 } },
+      },
+      headOfSupport: {
+        name: "Head of support",
+        salary: { min: 90, max: 150 },
+        equity: { min: 0.0025, max: 0.0075 },
+        effects: { output: { min: 0.1, max: 0.3 }, recovery: { min: 0.25, max: 0.75 } },
+      },
+      cfo: {
+        name: "CFO",
+        salary: { min: 130, max: 190 },
+        equity: { min: 0.01, max: 0.02 },
+        effects: { rollBonus: { min: 1, max: 3 }, loanRateCut: { min: 0.1, max: 0.3 } },
+      },
+      cto: {
+        name: "CTO",
+        salary: { min: 140, max: 200 },
+        equity: { min: 0.01, max: 0.02 },
+        effects: { research: { min: 0.15, max: 0.35 } },
+      },
+      headOfPeople: {
+        name: "Head of people",
+        salary: { min: 110, max: 170 },
+        equity: { min: 0.005, max: 0.01 },
+        effects: { strength: { min: 1, max: 1.5 } },
+      },
+      cmo: {
+        name: "CMO",
+        salary: { min: 150, max: 210 },
+        equity: { min: 0.0075, max: 0.015 },
+        effects: { campaigns: { min: 0.05, max: 0.15 } },
+      },
+      coo: {
+        name: "COO",
+        salary: { min: 160, max: 220 },
+        equity: { min: 0.0075, max: 0.015 },
+        effects: { runningCostCut: { min: 0.04, max: 0.12 } },
+      },
+      cio: {
+        name: "CIO",
+        salary: { min: 150, max: 210 },
+        equity: { min: 0.0075, max: 0.015 },
+        effects: { migrationCut: { min: 0.2, max: 0.4 } },
+      },
+      ciso: {
+        name: "CISO",
+        salary: { min: 140, max: 200 },
+        equity: { min: 0.0075, max: 0.015 },
+        effects: { patching: { min: 0.2, max: 0.4 }, breachCut: { min: 0.3, max: 0.6 } },
+      },
+      legalCounsel: {
+        name: "Legal counsel",
+        salary: { min: 120, max: 180 },
+        equity: { min: 0.005, max: 0.01 },
+        effects: {},
+      },
+    },
+  },
   // Tuned for #200 once campaigns grew the market: casual users £1 each up to businesses £8. With each campaign user
   // growing the market by 5, up to +30% of its base size, two marketers running campaigns from the angel approach end a
   // game with at least careful play's cash on most models and products.
