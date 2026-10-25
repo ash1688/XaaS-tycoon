@@ -122,8 +122,9 @@ npm run -s play -- summary <game>
   they open. `offer 3.5` offers a 3.5% rise: staff accept an offer that reaches a hidden figure near a fair rise for
   how the company is doing, or counter, and a dice roll decides how far they come down (a low roll makes them ask for
   more). `payodds 3.5` shows what an offer would cost a day and a year, and the odds on their counter. `accept pay`
-  agrees their counter at any time. Your third offer is final: if staff don't accept it, the rise is set midway between
-  it and their figure. The rise raises every team's day rate from the next day, new hires and agency staff included,
+  agrees their counter at any time. Your third offer is final: if staff don't accept it, it goes to a **tribunal**,
+  which charges a fee (about £2k) and picks your figure, staff's or the middle, favouring whichever is closest to the
+  hidden fair rise, so lowballing backfires. On the final offer `payodds` shows the tribunal's odds. The rise raises every team's day rate from the next day, new hires and agency staff included,
   and each review's rise compounds on the last. A rise below inflation is a pay cut in real terms.
 - The first time cash runs out, a **vulture VC rescues** the company: it puts in cash for the losses plus about 30
   days, takes most of the company in new shares, and forces cost cuts (staff let go, hires cancelled). Time stops

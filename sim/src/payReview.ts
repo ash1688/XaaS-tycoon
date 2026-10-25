@@ -1,9 +1,17 @@
 import type { GameConfig } from "./config.ts";
-import { profitCosts } from "./finance.ts";
+import { pounds, profitCosts } from "./finance.ts";
 import { createNegotiation, MAX_OFFERS, type CounterOdds, type NegotiationRound, type TermSpec } from "./negotiation.ts";
 import { nextRandom, seedRng } from "./rng.ts";
 import { dailyStaffCost } from "./staff.ts";
-import { SimError, type GameState, type LogEntry, type PayReview, type PayReviewOutcome, type PayReviewRecord } from "./state.ts";
+import {
+  SimError,
+  type GameState,
+  type LogEntry,
+  type PayReview,
+  type PayReviewOutcome,
+  type PayReviewRecord,
+  type TribunalPick,
+} from "./state.ts";
 
 /** Quarters with a pay review: every one after the first. */
 export const REVIEW_QUARTERS = [2, 3, 4] as const;
@@ -33,8 +41,10 @@ export interface PayReviewView {
   rounds: NegotiationRound[];
   /** Offers the student has left: 3, 2, then 1 for the final offer. */
   offersLeft: number;
-  /** The next offer is the last: short of a deal, it settles midway between it and staff's figure. */
+  /** The next offer is the last: short of a deal, the review goes to the tribunal, which charges its fee. */
   final: boolean;
+  /** What the tribunal charges, every time it sits. */
+  tribunalFee: number;
   /** Whether staff have countered, so there's a counter to accept. */
   canAcceptCounter: boolean;
   /** What the team costs a day now, before any rise. */
@@ -56,17 +66,32 @@ export interface PayOfferPreview {
    * and on an offer that meets their ask.
    */
   odds: CounterOdds | null;
-  /** On the final offer, the rise it settles on if it falls short of a deal: midway to staff's figure. Null before. */
-  midpoint: number | null;
+  /** On the final offer, what the tribunal would do if it falls short of a deal. Null before, and on an offer at their ask. */
+  tribunal: TribunalOdds | null;
 }
+
+/** The tribunal's three figures, its chance of picking each, and its fee. */
+export interface TribunalOdds {
+  fee: number;
+  /** The rise each pick sets: the student's final offer, midway, and staff's last counter. */
+  rises: Record<TribunalPick, number>;
+  /** The chance of each pick, 0–1, adding up to 1. */
+  chances: Record<TribunalPick, number>;
+}
+
+export const TRIBUNAL_PICKS = ["student", "middle", "staff"] as const satisfies readonly TribunalPick[];
 
 /**
  * Pay reviews: at the start of quarters 2, 3 and 4 staff come to the student about pay, and the clock is held until
  * it's settled. The student offers first; staff accept an offer that reaches their hidden walk-away figure, or counter
  * with the investor negotiation's roll the other way round: staff's figure is the offer, and the student's the counter
- * it moves towards. The third offer is final. The agreed rise multiplies every pool's pay. See PayReviewConfig.
+ * it moves towards. The third offer is final: short of a deal it goes to the tribunal. The agreed rise multiplies every
+ * pool's pay. See PayReviewConfig.
  */
-export function createPayReview(config: GameConfig, deps: { runwayDays(state: GameState): number | null }) {
+export function createPayReview(
+  config: GameConfig,
+  deps: { runwayDays(state: GameState): number | null; chargeNow(state: GameState, entries: LogEntry[]): GameState },
+) {
   const c = config.payReview;
   const negotiator = createNegotiation(c.negotiation);
 
@@ -182,7 +207,14 @@ export function createPayReview(config: GameConfig, deps: { runwayDays(state: Ga
   }
 
   /** Settles the review on `rise`: it multiplies every pool's pay from the next day played. */
-  function settle(state: GameState, review: PayReview, studentOffers: number[], outcome: PayReviewOutcome, rise: number): GameState {
+  function settle(
+    state: GameState,
+    review: PayReview,
+    studentOffers: number[],
+    outcome: PayReviewOutcome,
+    rise: number,
+    tribunal: PayReviewRecord["tribunal"] = null,
+  ): GameState {
     const record: PayReviewRecord = {
       quarter: review.quarter,
       startDay: review.startDay,
@@ -194,6 +226,7 @@ export function createPayReview(config: GameConfig, deps: { runwayDays(state: Ga
       staffFigures: review.negotiation.offers.map((o) => o.rise!),
       outcome,
       rise,
+      tribunal,
     };
     return {
       ...state,
@@ -204,9 +237,40 @@ export function createPayReview(config: GameConfig, deps: { runwayDays(state: Ga
   }
 
   /**
+   * The tribunal's odds on a final offer of `offered` against staff's last figure. Each pick is weighted by how far its
+   * rise is from the fair rise, as a share of the gap between the two figures: the closer, the likelier, and the middle
+   * likeliest when the fair rise is about halfway. See PayReviewConfig's tribunal.
+   */
+  function tribunalOdds(review: PayReview, offered: number): TribunalOdds {
+    const staff = staffFigure(review);
+    const rises: Record<TribunalPick, number> = { student: offered, middle: roundRise((offered + staff) / 2), staff };
+    const gap = Math.max(staff - offered, STEP);
+    const weights = TRIBUNAL_PICKS.map((p) => Math.exp((-c.tribunal.sharpness * Math.abs(rises[p] - review.fairRise)) / gap));
+    const total = weights.reduce((sum, w) => sum + w, 0);
+    const chances = Object.fromEntries(TRIBUNAL_PICKS.map((p, i) => [p, weights[i]! / total])) as Record<TribunalPick, number>;
+    return { fee: c.tribunal.fee, rises, chances };
+  }
+
+  /**
+   * The tribunal, after a final offer short of a deal: a roll on the reviews' RNG picks the student's offer, staff's
+   * figure or the middle at tribunalOdds, and its fee is charged at once. The pick is recorded: schemes (#193) apply on
+   * the student's figure or the middle, but not staff's, which is cash only.
+   */
+  function goToTribunal(state: GameState, review: PayReview, studentOffers: number[]): GameState {
+    const odds = tribunalOdds(review, studentOffers.at(-1)!);
+    const [roll, rng] = nextRandom(state.payReviewRng);
+    let below = 0;
+    const pick = TRIBUNAL_PICKS.find((p) => roll < (below += odds.chances[p])) ?? "staff";
+    const charged = deps.chargeNow({ ...state, payReviewRng: rng }, [
+      { text: `Tribunal fee for quarter ${review.quarter}'s pay review`, cashDelta: -odds.fee, category: "staff" },
+    ]);
+    return settle(charged, review, studentOffers, "tribunal", odds.rises[pick], { pick, fee: odds.fee, chances: odds.chances });
+  }
+
+  /**
    * Offers staff `rise`. At or above their walk-away figure they accept. Short of it, they counter, with a roll on the
    * reviews' RNG for how far they come down from their figure towards the offer; on the final (third) offer there's no
-   * counter, and it settles midway between the offer and their figure.
+   * counter, and it goes to the tribunal.
    */
   function offer(state: GameState, rise: number): GameState {
     const review = openOrRefuse(state);
@@ -214,7 +278,7 @@ export function createPayReview(config: GameConfig, deps: { runwayDays(state: Ga
     const studentOffers = [...review.studentOffers, offered];
     if (offered >= review.walkAway) return settle(state, review, studentOffers, "offerAccepted", offered);
     if (studentOffers.length >= MAX_OFFERS) {
-      return settle(state, review, studentOffers, "midpoint", roundRise((offered + staffFigure(review)) / 2));
+      return goToTribunal(state, review, studentOffers);
     }
     const done = negotiator.counter(review.negotiation, { rise: offered }, specsFor(review), state.payReviewRng);
     return { ...state, payReviewRng: done.rng, payReview: { ...review, studentOffers, negotiation: done.negotiation } };
@@ -243,6 +307,7 @@ export function createPayReview(config: GameConfig, deps: { runwayDays(state: Ga
       rounds: review.negotiation.rounds,
       offersLeft,
       final: offersLeft === 1,
+      tribunalFee: c.tribunal.fee,
       canAcceptCounter: review.studentOffers.length > 0,
       dailyStaffCost: dailyStaffCost(config, state),
     };
@@ -264,11 +329,35 @@ export function createPayReview(config: GameConfig, deps: { runwayDays(state: Ga
       realTerms: roundRise(offered - review.inflation),
       meetsAsk,
       odds: final || meetsAsk ? null : negotiator.odds(review.negotiation, { rise: offered }, specsFor(review)),
-      midpoint: final && !meetsAsk ? roundRise((offered + staffFigure(review)) / 2) : null,
+      tribunal: final && !meetsAsk ? tribunalOdds(review, offered) : null,
     };
   }
 
-  return { startingPayReview, quarterStarts, reviewDue, openReview, offer, acceptCounter, payReviewView, offerPreview };
+  /**
+   * On the first day played after a review the tribunal settled, the day log says what it picked, the rise and its fee
+   * (charged when it sat, in the day before).
+   */
+  function tribunalEntries(state: GameState, day: number): LogEntry[] {
+    const last = state.pastPayReviews.at(-1);
+    if (!last?.tribunal || last.startDay !== day) return [];
+    const picked = { student: "your final offer", middle: "the middle", staff: "your staff's figure" }[last.tribunal.pick];
+    const text =
+      `The tribunal settled quarter ${last.quarter}'s pay review on ${picked}: a ${risePercent(last.rise)} rise from today. ` +
+      `Its fee was ${pounds(last.tribunal.fee)}.`;
+    return [{ text, cashDelta: 0, kind: "staff" }];
+  }
+
+  return {
+    startingPayReview,
+    quarterStarts,
+    reviewDue,
+    openReview,
+    offer,
+    acceptCounter,
+    payReviewView,
+    offerPreview,
+    tribunalEntries,
+  };
 }
 
 /**

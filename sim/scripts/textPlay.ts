@@ -539,7 +539,12 @@ function payLines(sim: Sim, state: GameState): string[] {
       ? `  staff are asking ${rise(review.staffFigure)}: "accept pay" to agree it, or offer again`
       : `  staff open at ${rise(review.staffFigure)}: make the first offer`,
   );
-  if (review.final) lines.push("  your next offer is FINAL: if staff don't accept it, the rise is set midway between it and their figure");
+  if (review.final) {
+    lines.push(
+      `  your next offer is FINAL: if staff don't accept it, it goes to a TRIBUNAL, which charges ${money(review.tribunalFee)} and picks your figure, theirs or the middle, ` +
+        `favouring whichever is closest to a fair rise ("payodds <rise %>" for its odds)`,
+    );
+  }
   return lines;
 }
 
@@ -549,7 +554,15 @@ function payOddsLines(p: PayOfferPreview): string[] {
   const real = p.realTerms < 0 ? `${rise(-p.realTerms)} below inflation: a real-terms pay cut` : `${rise(p.realTerms)} above inflation`;
   const lines = [`offer ${rise(p.rise)} (${real}): +${money(p.extraPerDay)}/day, +${money(p.extraPerYear)} a year at today's team`];
   if (p.meetsAsk) lines.push("  that's what staff are asking: they take it");
-  if (p.midpoint !== null) lines.push(`  final offer: staff accept it, or the rise is set midway at ${rise(p.midpoint)}`);
+  if (p.tribunal) {
+    const t = p.tribunal;
+    lines.push(
+      `  final offer: if staff don't accept it, the tribunal sits for ${money(t.fee)} and picks:`,
+      `    your offer ${chance(t.chances.student)} → ${rise(t.rises.student)}`,
+      `    the middle ${chance(t.chances.middle)} → ${rise(t.rises.middle)}`,
+      `    staff's figure ${chance(t.chances.staff)} → ${rise(t.rises.staff)}`,
+    );
+  }
   if (p.odds) {
     const o = p.odds;
     lines.push(
@@ -561,6 +574,8 @@ function payOddsLines(p: PayOfferPreview): string[] {
   }
   return lines;
 }
+
+const tribunalPickText = { student: "your final offer", middle: "the middle", staff: "staff's figure" } as const;
 
 /** How an offer or an accepted counter left the review: settled on a rise, or staff's counter standing. */
 function payResultLine(sim: Sim, before: GameState, after: GameState): string {
@@ -576,7 +591,7 @@ function payResultLine(sim: Sim, before: GameState, after: GameState): string {
       ? `staff accepted your offer of ${rise(settled.rise)}`
       : settled.outcome === "counterAccepted"
         ? `you accepted staff's counter of ${rise(settled.rise)}`
-        : `no deal on the final offer: the rise is set midway, at ${rise(settled.rise)}`;
+        : `no deal on the final offer, so the tribunal sat (fee ${money(settled.tribunal!.fee)}) and picked ${tribunalPickText[settled.tribunal!.pick]}, ${rise(settled.rise)}`;
   return `pay review settled: ${how}. Pay ×${after.payMultiplier.toFixed(3)} of the day rates from day ${settled.startDay}: the team costs ${money(sim.dailyStaffCost(after))}/day (was ${money(sim.dailyStaffCost(before))})`;
 }
 
@@ -817,7 +832,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
   if (review) {
     lines.push(
       `  pay   (the pay review in full; changes nothing)`,
-      `  offer <${rise(review.minOffer)}–${rise(review.maxAsk)}>   (offer staff a pay rise, e.g. offer 3.5: they accept or counter with a roll; the third offer is final)`,
+      `  offer <${rise(review.minOffer)}–${rise(review.maxAsk)}>   (offer staff a pay rise, e.g. offer 3.5: they accept or counter with a roll; the third offer is final, and short of a deal goes to a tribunal)`,
       `  payodds <rise %>   (what an offer would cost, and the odds on staff's counter; changes nothing)`,
     );
     if (review.canAcceptCounter) lines.push(`  accept pay   (agree staff's counter of ${rise(review.staffFigure)})`);

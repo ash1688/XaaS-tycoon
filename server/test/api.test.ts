@@ -4315,7 +4315,7 @@ describe("pay reviews", () => {
     const preview = await payApp.inject({ method: "GET", url: `${url}/pay-offer?rise=${review.minOffer}` });
     expect(preview.statusCode).toBe(200);
     const body = preview.json<PayOfferView>();
-    expect(body).toMatchObject({ rise: review.minOffer, midpoint: null, odds: { counter: { rise: review.minOffer } } });
+    expect(body).toMatchObject({ rise: review.minOffer, tribunal: null, odds: { counter: { rise: review.minOffer } } });
     expect(body.extraPerYear).toBe(body.extraPerDay * 365);
     expect(body.extraPerDay).toBeGreaterThan(0);
     const low = await payApp.inject({ method: "GET", url: `${url}/pay-offer?rise=${review.minOffer - 0.005}` });
@@ -4348,5 +4348,30 @@ describe("pay reviews", () => {
     const settled = (await act({ type: "offerPayRise", rise: result.company.payReview!.maxAsk })).json<CompanyView>();
     expect(settled.payReview).toBeNull();
     expect(settled.payMultiplier).toBeCloseTo(1 + result.company.payReview!.maxAsk, 9);
+    expect(settled.lastPayReview).toMatchObject({ outcome: "offerAccepted", tribunal: null });
+  });
+
+  it("sends a final offer short of a deal to the tribunal, which charges its fee and says what it picked", async () => {
+    const { url, act, next, result } = await reviewing();
+    const { minOffer } = result.company.payReview!;
+    await act({ type: "offerPayRise", rise: minOffer });
+    const final = (await act({ type: "offerPayRise", rise: minOffer })).json<CompanyView>();
+    expect(final.payReview).toMatchObject({ final: true, offersLeft: 1, tribunalFee: 2_000 });
+    // The preview of the final offer shows the tribunal's odds, not a counter's.
+    const preview = (await payApp.inject({ method: "GET", url: `${url}/pay-offer?rise=${minOffer}` })).json<PayOfferView>();
+    expect(preview).toMatchObject({ odds: null, tribunal: { fee: 2_000, rises: { student: minOffer, staff: final.payReview!.staffFigure } } });
+    const { student, middle, staff } = preview.tribunal!.chances;
+    expect(student + middle + staff).toBeCloseTo(1, 9);
+    // No separate step: the failed final offer goes straight to the tribunal, which settles the review.
+    const settled = (await act({ type: "offerPayRise", rise: minOffer })).json<CompanyView>();
+    expect(settled.payReview).toBeNull();
+    expect(settled.cash).toBe(final.cash - 2_000);
+    const record = settled.lastPayReview!;
+    expect(record).toMatchObject({ outcome: "tribunal", tribunal: { fee: 2_000 } });
+    expect(record.rise).toBe(preview.tribunal!.rises[record.tribunal!.pick]);
+    expect(settled.payMultiplier).toBeCloseTo(1 + record.rise, 9);
+    const played = (await next()).json<ContinueResult>();
+    expect(played.company.day).toBe(4);
+    expect(played.log[0]!.entries[0]!.text).toMatch(/^The tribunal settled quarter 2's pay review on/);
   });
 });
