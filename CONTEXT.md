@@ -112,6 +112,9 @@ _Avoid_: Employee trust, staff shares
 What settles a pay review with no deal after the student's third offer: it picks the student's figure, staff's or the middle, favouring whichever is closer to a fair rise (the middle when they're about as close), and charges a fee. It always settles the review: there's no declining it.
 _Avoid_: Arbitration, court
 
+**Pay history**:
+The record of every pay review settled, on the People page and in text play: each one's inflation, how it ended (the student's offer accepted, staff's counter accepted, or the tribunal's pick and fee), the cash rise, the staff schemes it raised and share save's new shares. With it, the **pay multiplier**: every rise so far compounded, pay as a multiple of the day rates.
+
 ### Infrastructure
 
 **Rack**:

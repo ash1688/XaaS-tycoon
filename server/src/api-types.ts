@@ -41,6 +41,7 @@ import type {
   ModelComparison,
   PauseReason,
   PayOfferPreview,
+  PayHistoryView,
   PayReviewRecord,
   PayReviewView,
   StaffSchemeView,
@@ -454,6 +455,12 @@ export interface CompanyView {
    * only go up.
    */
   staffSchemes: StaffSchemeView[];
+  /**
+   * The pay history, read-only: each settled review (date, inflation, how it ended and any tribunal pick and fee, the
+   * cash rise, schemes raised, share save's new shares and the pay multiplier after), the multiplier so far, the
+   * schemes held with their cost a day, the staff share scheme's holding, and the next review. Empty before the first.
+   */
+  payHistory: PayHistoryView;
   /**
    * The IPO: the readiness checklist condition by condition, whether the company can apply to float and why not, a
    * cold market's wait, once approved the offer with what each float would do, and once floated the first day of

@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { formatCash } from "../../api";
 import { days, useGame } from "../../game";
+import PayHistoryPanel from "../../panels/PayHistoryPanel.vue";
 import StaffPanel from "../../panels/StaffPanel.vue";
+import { formatShare } from "../../shares";
 
-// People: the staff, what each team does, and the staff schemes agreed in pay reviews.
+// People: the staff, what each team does, the staff schemes agreed in pay reviews, and the pay history.
 const game = useGame();
 </script>
 
@@ -112,6 +114,12 @@ const game = useGame();
       <p class="muted" data-testid="staff-schemes-total">
         Running cost: {{ formatCash(game.company.staffSchemes.reduce((sum, s) => sum + s.costPerDay, 0)) }} a day.
       </p>
+      <p v-if="game.company.payHistory.staffShareScheme" class="muted" data-testid="staff-share-scheme">
+        The staff share scheme holds
+        {{ game.company.payHistory.staffShareScheme.shares.toLocaleString("en-GB") }} shares from share save:
+        {{ formatShare(game.company.payHistory.staffShareScheme.share) }} of the company.
+      </p>
     </section>
+    <PayHistoryPanel />
   </div>
 </template>

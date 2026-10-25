@@ -37,7 +37,8 @@ import { createCustomerMix } from "./mix.ts";
 import { isNameAllowed } from "./nameFilter.ts";
 import type { CounterOdds, Terms } from "./negotiation.ts";
 import { createPauses, type TickResult } from "./pauses.ts";
-import { createPayReview, type PayOfferPreview, type PayReviewView } from "./payReview.ts";
+import { payHistory, type PayHistoryView } from "./payHistory.ts";
+import { createPayReview, REVIEW_QUARTERS, type PayOfferPreview, type PayReviewView } from "./payReview.ts";
 import { schemeEntries, schemeViews, type SchemeLevels, type StaffSchemeView } from "./staffSchemes.ts";
 import { createPricing, type CustomerMixView, type PaymentsView, type PricePreview, type PriceWaveView } from "./pricing.ts";
 import { createRacks, type RacksView } from "./racks.ts";
@@ -96,6 +97,7 @@ export type { RackOption, RackView, RacksView } from "./racks.ts";
 export type { CounterOdds, NegotiationRound, RollResult, TermSpec, Terms } from "./negotiation.ts";
 export { MAX_OFFERS, ROLL_RESULTS } from "./negotiation.ts";
 export type { PayOfferPreview, PayReviewView, SchemeOfferPreview, TribunalOdds } from "./payReview.ts";
+export type { PayHistoryEntry, PayHistoryView, SchemeRaise, StaffShareSchemeView } from "./payHistory.ts";
 export type { SchemeLevels, ShareSaveIssue, StaffSchemeId, StaffSchemeView } from "./staffSchemes.ts";
 export { STAFF_SCHEMES } from "./staffSchemes.ts";
 export { inflationNow, REVIEW_QUARTERS, TRIBUNAL_PICKS } from "./payReview.ts";
@@ -425,6 +427,12 @@ export interface Sim {
   staffSchemes(state: GameState): StaffSchemeView[];
   /** The first day of quarters 2, 3 and 4: the days pay reviews start, in order. */
   payReviewDays(state: GameState): number[];
+  /**
+   * The pay history: each settled review with its inflation, how it ended, the rise and schemes it agreed, any tribunal
+   * fee and share save's new shares; the pay multiplier so far, the schemes held and their cost a day, the staff share
+   * scheme's holding, and the next review. Read-only.
+   */
+  payHistory(state: GameState): PayHistoryView;
   /**
    * Where the company is with its launch: waiting for capacity, its first users due, arriving over the ramp, or
    * launched; the day they started (or will start) arriving, and the launch total.
@@ -1214,6 +1222,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     payOfferPreview: (s, rise, schemes) => payReview.offerPreview(load(s), rise, schemes),
     staffSchemes: (s) => schemeViews(config, load(s)),
     payReviewDays: (s) => payReview.quarterStarts(load(s)),
+    payHistory: (s) => {
+      const state = load(s);
+      return payHistory(config, state, payReview.quarterStarts(state), REVIEW_QUARTERS);
+    },
     launch: (s) => launch.launchView(load(s)),
     mvp: (s) => mvpView(load(s)),
     optimisation: (s) => {
