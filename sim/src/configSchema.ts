@@ -279,7 +279,6 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("campaigns.maxBudget", "Customers", CAMPAIGNS, "Biggest budget", "The most a campaign's budget can be.", range(1, 100_000_000, 100));
   add("campaigns.minDays", "Customers", CAMPAIGNS, "Shortest (days)", "The fewest days a campaign can run.", GAME_DAY);
   add("campaigns.maxDays", "Customers", CAMPAIGNS, "Longest (days)", "The most days a campaign can run.", GAME_DAY);
-  add("campaigns.maxRunning", "Customers", CAMPAIGNS, "Most at once", "How many campaigns can run at the same time.", range(0, 20, 1));
   add("campaigns.overlapMultiplier", "Customers", CAMPAIGNS, "Overlap on one type", "With n campaigns on the same customer type running on a day, each brings this^(n − 1) of the users per pound it would alone (0.6: two bring 60% each).", SHARE);
   add("campaigns.holidayLeadDays", "Customers", CAMPAIGNS, "Holiday timing window (days)", "A campaign started up to this many days before a holiday that boosts the product's growth gets the holiday bonus.", range(0, 90, 1));
   add("campaigns.holidayBonus", "Customers", CAMPAIGNS, "Holiday bonus", "A campaign timed for a holiday brings this × the users per pound, for the whole of its run.", MULTIPLIER);

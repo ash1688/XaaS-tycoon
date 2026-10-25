@@ -5,7 +5,7 @@ import { formatCash, formatCount } from "../api";
 import { days, useGame } from "../game";
 import LetGoConfirm from "./LetGoConfirm.vue";
 
-// One team's quick hire: pick permanent or agency staff (permanent only for researchers) and a grade, then − and + let go or hire one of it. Letting go
+// One team's quick hire: pick permanent or agency staff (permanent only for researchers and marketers) and a grade, then − and + let go or hire one of it. Letting go
 // permanent staff asks first, showing their severance; agency staff go at once, with none. The count is the permanent
 // team; agency staff are listed apart under it, and hires still to start under that with the day they start, as they
 // cost and do nothing until then.

@@ -8,10 +8,21 @@ import { useGame } from "../../game";
 // campaign (a customer type, a budget and a length) and it runs from the next day, spending its budget evenly and
 // bringing new users of that type directly, on top of normal growth. A pound buys fewer users as the market fills up
 // and when another campaign targets the same type; one started just before a holiday works better. Each campaign shows
-// its spend, users brought in and cost per user as it runs.
+// its spend, users brought in and cost per user as it runs. Marketers (hired on People) run them, one each: a new
+// campaign gets the most senior free marketer, and a senior brings more users per pound than a junior. With no free
+// marketer the form is disabled and says why.
 const game = useGame();
 const id = useId();
 const view = computed(() => game.company?.campaigns ?? null);
+const marketers = computed(() => game.staffPool("marketers"));
+/** "1 senior, 2 mid": the marketers on the team by grade, with how many of each are free. */
+const marketerGrades = computed(() =>
+  (view.value?.marketers.grades ?? [])
+    .filter((g) => g.count > 0)
+    .map((g) => `${g.count} ${g.name.toLowerCase()}${g.free < g.count ? ` (${g.free} free)` : ""}`)
+    .join(", "),
+);
+const nextGrade = computed(() => view.value?.marketers.grades.find((g) => g.grade === view.value?.marketers.next) ?? null);
 
 const type = ref<CustomerTypeId>("casual");
 const budget = ref<number | "">(1_000);
@@ -57,9 +68,14 @@ const stop = (c: CampaignView) => game.actFrom("campaign-stop", { type: "stopCam
       <template v-if="view.unlocked">
         <div class="stats">
           <div class="stat">
+            <span class="label">Marketers</span>
+            <span class="value" data-testid="marketers-free">{{ view.marketers.free }} of {{ view.marketers.count }} free</span>
+            <small>{{ marketerGrades || "hire them on People" }}</small>
+          </div>
+          <div class="stat">
             <span class="label">Campaigns running</span>
             <span class="value" data-testid="campaigns-running">{{ view.running }} of {{ view.capacity }}</span>
-            <small>at once</small>
+            <small>one for each marketer</small>
           </div>
           <div class="stat">
             <span class="label">Market filled</span>
@@ -76,8 +92,10 @@ const stop = (c: CampaignView) => game.actFrom("campaign-stop", { type: "stopCam
           A campaign aims at one customer type. It spends its budget evenly over its days and brings new users of that
           type on top of your usual growth. Each type costs its own amount to win: casual users are cheap and businesses
           dear. Two campaigns on the same type at once each bring fewer users per pound, and a campaign started just
-          before a holiday brings more.
+          before a holiday brings more. Each campaign needs a free marketer to run it until it ends: a senior brings more
+          users per pound, a junior fewer.
         </p>
+        <p v-if="marketers?.idle" class="features-note" data-testid="marketers-idle-note">{{ marketers.idle }}</p>
       </template>
       <p v-else class="muted" data-testid="marketing-locked">
         Marketing opens once your company grows up: when your first angel investor approaches.
@@ -121,6 +139,9 @@ const stop = (c: CampaignView) => game.actFrom("campaign-stop", { type: "stopCam
           Started now, it's timed for {{ view.holiday.name }} in {{ view.holiday.daysUntil }} days: ×{{ view.holiday.bonus }}
           users per pound for its whole run.
         </p>
+        <p v-if="view.canStart && nextGrade" class="muted" data-testid="campaign-marketer">
+          Run by a {{ nextGrade.name.toLowerCase() }} marketer: ×{{ nextGrade.output }} users per pound.
+        </p>
         <p v-if="view.canStart && estimate !== null && perDay !== null" class="muted" data-testid="campaign-estimate">
           About {{ formatCount(estimate) }} {{ picked?.name.toLowerCase() }} at today's market, spending
           {{ formatCash(perDay) }} a day.
@@ -143,6 +164,7 @@ const stop = (c: CampaignView) => game.actFrom("campaign-stop", { type: "stopCam
         <thead>
           <tr>
             <th scope="col">Aimed at</th>
+            <th scope="col">Marketer</th>
             <th scope="col">Days</th>
             <th scope="col">Spent</th>
             <th scope="col">Users brought in</th>
@@ -156,6 +178,7 @@ const stop = (c: CampaignView) => game.actFrom("campaign-stop", { type: "stopCam
               {{ c.customerTypeName }}
               <small v-if="c.holiday" class="muted"> · {{ c.holiday }} bonus</small>
             </td>
+            <td data-testid="campaign-marketer-grade">{{ c.gradeName }}</td>
             <td data-testid="campaign-days-run">{{ c.daysRun }} of {{ c.days }}</td>
             <td data-testid="campaign-spent">{{ formatCash(c.spent) }} of {{ formatCash(c.budget) }}</td>
             <td data-testid="campaign-users">{{ formatCount(c.users) }}</td>

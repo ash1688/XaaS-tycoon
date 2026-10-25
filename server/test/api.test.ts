@@ -115,6 +115,7 @@ const sim = createSim({
     support: { ...defaultConfig.staff.support, dayRate: 3, startingCount: 0 },
     moderators: { ...defaultConfig.staff.moderators, dayRate: 2, startingCount: 0 },
     researchers: { ...defaultConfig.staff.researchers, dayRate: 5, startingCount: 0 },
+    marketers: { ...defaultConfig.staff.marketers, dayRate: 6, startingCount: 0 },
   },
   // Mids (the default hire) and seniors start at once, so tests needn't wait; juniors wait 3 days, to test lead times.
   staffGrades: {
@@ -3283,6 +3284,7 @@ describe("meta", () => {
       ["support", 3],
       ["moderators", 2],
       ["researchers", 5],
+      ["marketers", 6],
     ]);
     // On-prem's and IaaS's from their starter servers; PaaS's and SaaS's a small fixed number.
     expect(meta.models.map((m) => m.opsNeeded)).toEqual([2, 1, 1, 1]);
@@ -4152,7 +4154,7 @@ describe("tiers, model benefits and the hardware slider (#123)", () => {
   });
 });
 
-describe("campaigns (#115)", () => {
+describe("campaigns (#115) and marketers (#180)", () => {
   async function setup() {
     const code = await newCode();
     const company = (await newCompany(code)).json<CompanyView>();
@@ -4177,10 +4179,16 @@ describe("campaigns (#115)", () => {
   it("starts a campaign, runs it with its spend, users and cost per user, and stops it", async () => {
     const { act, next, approached } = await setup();
     await approached();
+    await act({ type: "hire", pool: "marketers" });
     const started = await act({ type: "startCampaign", customerType: "casual", budget: 700, days: 7 });
     expect(started.statusCode).toBe(200);
     const view = started.json<CompanyView>().campaigns;
-    expect(view).toMatchObject({ unlocked: true, running: 1, campaigns: [{ id: 1, customerType: "casual", budget: 700, days: 7, status: "starting", spent: 0 }] });
+    expect(view).toMatchObject({
+      unlocked: true,
+      running: 1,
+      marketers: { count: 1, free: 0 },
+      campaigns: [{ id: 1, customerType: "casual", budget: 700, days: 7, status: "starting", spent: 0, grade: "mid", gradeName: "Mid" }],
+    });
     const { company, log } = await next();
     const [campaign] = company.campaigns.campaigns;
     expect(campaign).toMatchObject({ status: "running", daysRun: 1, spent: 100 });
@@ -4195,6 +4203,7 @@ describe("campaigns (#115)", () => {
   it("refuses a bad campaign, and checks the action's fields", async () => {
     const { act, approached } = await setup();
     await approached();
+    await act({ type: "hire", pool: "marketers" });
     expect((await act({ type: "startCampaign", customerType: "casual", budget: 50, days: 7 })).json()).toMatchObject({ error: "bad_budget" });
     expect((await act({ type: "startCampaign", customerType: "casual", budget: 700, days: 2 })).json()).toMatchObject({ error: "bad_length" });
     expect((await act({ type: "startCampaign", customerType: "casual", budget: 5_000, days: 7 })).json()).toMatchObject({ error: "cant_afford" });
@@ -4207,5 +4216,38 @@ describe("campaigns (#115)", () => {
     ]) {
       expect((await act(payload)).statusCode).toBe(400);
     }
+  });
+
+  it("keeps marketers locked until the first angel approaches, then hires them as permanent staff only", async () => {
+    const { company, act, approached } = await setup();
+    expect(company.marketers).toBe(0);
+    expect(company.staff.map((p) => p.pool)).not.toContain("marketers");
+    expect((await act({ type: "hire", pool: "marketers" })).json()).toMatchObject({ error: "not_yet" });
+    await approached();
+    const agency = await act({ type: "hire", pool: "marketers", agency: true });
+    expect(agency.statusCode).toBe(400);
+    expect(agency.json()).toMatchObject({ error: "permanent_only" });
+    const hired = (await act({ type: "hire", pool: "marketers", grade: "senior" })).json<CompanyView>();
+    expect(hired.marketers).toBe(1);
+    expect(hired.staff.find((p) => p.pool === "marketers")).toMatchObject({ agencyAllowed: false, idle: expect.stringMatching(/^1 marketer isn't running a campaign/) });
+    expect(hired.campaigns).toMatchObject({ canStart: true, capacity: 1, marketers: { count: 1, free: 1, next: "senior" } });
+  });
+
+  it("needs a free marketer to start a campaign, and keeps a busy one from being let go", async () => {
+    const { act, approached } = await setup();
+    await approached();
+    const none = await act({ type: "startCampaign", customerType: "casual", budget: 700, days: 7 });
+    expect(none.statusCode).toBe(400);
+    expect(none.json()).toMatchObject({ error: "no_marketer" });
+    await act({ type: "hire", pool: "marketers" });
+    const started = (await act({ type: "startCampaign", customerType: "casual", budget: 700, days: 7 })).json<CompanyView>();
+    expect(started.campaigns).toMatchObject({ canStart: false, marketers: { free: 0 } });
+    expect(started.staff.find((p) => p.pool === "marketers")!.idle).toBeNull();
+    const busy = await act({ type: "letGo", pool: "marketers" });
+    expect(busy.statusCode).toBe(400);
+    expect(busy.json()).toMatchObject({ error: "marketer_busy" });
+    expect((await act({ type: "moveStaff", from: "marketers", to: "developers" })).json()).toMatchObject({ error: "marketer_busy" });
+    await act({ type: "stopCampaign", id: 1 });
+    expect((await act({ type: "letGo", pool: "marketers" })).json<CompanyView>().marketers).toBe(0);
   });
 });

@@ -1,8 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
 
-// Campaigns (#115): the Marketing page opens at the first angel investor's approach, with the new-campaign form; a
-// campaign runs from the next day, showing its spend, users brought in and cost per user, and can be stopped.
+// Campaigns (#115) and marketers (#180): the Marketing page opens at the first angel investor's approach, with the
+// new-campaign form, disabled until a marketer is hired; a campaign runs from the next day, run by a marketer, showing
+// its spend, users brought in and cost per user, and can be stopped.
 
 // An angel approaches within days of launch, as in the angel spec.
 const EARLY_ANGEL = {
@@ -11,6 +12,8 @@ const EARLY_ANGEL = {
   "investors.retryDays": 2,
   "investors.angel.target.dailyRevenue": 100,
   "investors.angel.target.days": 1,
+  // Mids start at once, so a marketer hired today can run a campaign today.
+  "staffGrades.mid.leadDays": 0,
 };
 
 let code: string | null = null;
@@ -56,9 +59,26 @@ test("the Marketing page opens at the first angel approach, and a campaign runs 
   for (let i = 0; i < 10 && !(await note.isVisible()); i++) await playDay(student);
   await expect(note).toBeVisible();
 
+  // No marketers yet: the form is disabled, and says why.
   await goTo(student, "Marketing");
-  await expect(student.getByTestId("campaigns-running")).toHaveText("0 of 2");
+  await expect(student.getByTestId("marketers-free")).toHaveText("0 of 0 free");
+  await expect(student.getByTestId("campaign-why")).toHaveText("Each campaign needs a marketer to run it: hire one on People.");
+  await expect(student.getByTestId("campaign-start")).toBeDisabled();
+
+  // People has a marketers row, permanent only. A mid hired there is flagged idle until a campaign is running.
+  await goTo(student, "People");
+  const marketers = student.locator('[data-pool="marketers"]');
+  await expect(marketers.getByTestId("marketers-permanent-only")).toContainText("Permanent hires only");
+  await expect(marketers.getByTestId("marketers-agency-pick")).toHaveCount(0);
+  await marketers.getByRole("button", { name: "Hire one mid marketer" }).click();
+  await expect(marketers.getByTestId("marketers-count")).toHaveText("1");
+  await expect(student.getByTestId("marketers-idle")).toContainText("1 marketer isn't running a campaign");
+
+  await goTo(student, "Marketing");
+  await expect(student.getByTestId("marketers-free")).toHaveText("1 of 1 free");
+  await expect(student.getByTestId("campaigns-running")).toHaveText("0 of 1");
   const form = student.getByTestId("campaign-new");
+  await expect(form.getByTestId("campaign-marketer")).toHaveText("Run by a mid marketer: ×1 users per pound.");
   await form.getByLabel("Customer type").selectOption("casual");
   await form.getByLabel(/^Budget/).fill("1400");
   await form.getByLabel(/^Length in days/).fill("14");
@@ -68,7 +88,11 @@ test("the Marketing page opens at the first angel approach, and a campaign runs 
   const row = student.locator("[data-campaign='1']");
   await expect(row).toHaveAttribute("data-status", "starting");
   await expect(row.getByTestId("campaign-spent")).toHaveText("£0 of £1,400");
-  await expect(student.getByTestId("campaigns-running")).toHaveText("1 of 2");
+  await expect(row.getByTestId("campaign-marketer-grade")).toHaveText("Mid");
+  await expect(student.getByTestId("campaigns-running")).toHaveText("1 of 1");
+  await expect(student.getByTestId("marketers-free")).toHaveText("0 of 1 free");
+  await expect(student.getByTestId("campaign-start")).toBeDisabled();
+  await expect(student.getByTestId("campaign-why")).toContainText("Your one marketer is running a campaign");
 
   await playDay(student);
   await expect(row).toHaveAttribute("data-status", "running");
@@ -80,5 +104,6 @@ test("the Marketing page opens at the first angel approach, and a campaign runs 
 
   await row.getByRole("button", { name: "Stop the campaign for casual users" }).click();
   await expect(row).toHaveAttribute("data-status", "stopped");
-  await expect(student.getByTestId("campaigns-running")).toHaveText("0 of 2");
+  await expect(student.getByTestId("campaigns-running")).toHaveText("0 of 1");
+  await expect(student.getByTestId("marketers-free")).toHaveText("1 of 1 free");
 });

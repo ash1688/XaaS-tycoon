@@ -709,6 +709,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
         return staff.changeStaff(state, action.type, action.pool, action.grade, action.count, action.agency);
       case "letGo": {
         const left = staff.changeStaff(state, action.type, action.pool, action.grade, action.count, action.agency);
+        // A marketer running a campaign stays until it ends or is stopped.
+        if (action.pool === "marketers") campaigns.checkBusyMarketers(left);
         // Some permanent staff let go may join a rival. Agency staff go back to their agency.
         return action.agency ? left : rivals.staffLeft(left, action.pool, action.grade ?? "mid", action.count ?? 1);
       }
@@ -718,8 +720,11 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
         return features.buyAddon(state, action.feature);
       case "setOptimisation":
         return setOptimisation(state, action.share);
-      case "moveStaff":
-        return staff.moveStaff(state, action.to, action.from, action.grade);
+      case "moveStaff": {
+        const moved = staff.moveStaff(state, action.to, action.from, action.grade);
+        if (action.from === "marketers") campaigns.checkBusyMarketers(moved);
+        return moved;
+      }
       case "startMigration":
         return migration.startMigration(state, action.model);
       case "setPrice":
@@ -953,8 +958,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     entries.push(...migrated.entries);
     // The first time cash runs out a vulture VC rescues the company; the second time is liquidation.
     const settled = finance.settle(migrated.state, day, entries, rescue.rescue);
+    // A rescue's cuts may let go marketers who were running campaigns: those campaigns stop.
+    const released = campaigns.release(settled.state);
     // Last, the funding ladder: an angel's target, and an investor who approaches a company doing well.
-    const funded = investors.investorDay(settled.state, {
+    const funded = investors.investorDay(released.state, {
       joined: (ramping ? 0 : organic.arrived) + wave.joined + (users - wave.users),
       left: (ramping ? 0 : organic.lost.reduce((sum, l) => sum + l.users, 0)) + (wave.left?.users ?? 0),
     });
@@ -962,7 +969,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const opened = tiers.tiersDay(funded.state);
     const final: GameState =
       opened.tiers.length > funded.state.tiers.length ? { ...funded.state, tiers: opened.tiers } : funded.state;
-    return { state: final, log: [{ day, entries: [...settled.entries, ...funded.entries, ...opened.entries] }] };
+    return { state: final, log: [{ day, entries: [...settled.entries, ...released.entries, ...funded.entries, ...opened.entries] }] };
   }
 
   /**
@@ -1087,7 +1094,9 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
         ? { ...p, idle: developersIdle(state) }
         : p.pool === "researchers"
           ? { ...p, idle: researchersIdle(state) }
-          : p,
+          : p.pool === "marketers"
+            ? { ...p, idle: campaigns.marketersIdle(state) }
+            : p,
     );
   }
 

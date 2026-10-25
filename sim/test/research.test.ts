@@ -94,8 +94,8 @@ describe("researchers once the first angel approaches", () => {
     const row = researchers(sim, state)!;
     expect(row).toMatchObject({ name: "Researchers", headcount: 0, agencyCount: 0, output: 0, agencyAllowed: false, agency: [] });
     expect(row.grades.find((g) => g.grade === "mid")!.dayRate).toBe(130);
-    // Every other pool still takes agency staff.
-    expect(sim.staff(state).filter((p) => p.pool !== "researchers").every((p) => p.agencyAllowed)).toBe(true);
+    // Every other pool but marketers (#180) still takes agency staff.
+    expect(sim.staff(state).filter((p) => p.pool !== "researchers" && p.pool !== "marketers").every((p) => p.agencyAllowed)).toBe(true);
     const today = log.filter((d) => d.day === state.day).flatMap((d) => d.entries);
     expect(today.some((e) => e.text.includes("hire researchers"))).toBe(true);
     // Only the first approach says so.

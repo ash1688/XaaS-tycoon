@@ -7,19 +7,20 @@ import LetGoConfirm from "../components/LetGoConfirm.vue";
 import { useGame } from "../game";
 
 // Developers, ops, support, (on a product with user content) moderators and (once the first angel approaches)
-// researchers, each in junior, mid and senior grades, as permanent or agency staff (researchers permanent only): hire, let go, and retrain someone into another team. Pick permanent or agency and a grade,
+// researchers and marketers, each in junior, mid and senior grades, as permanent or agency staff (researchers and
+// marketers permanent only): hire, let go, and retrain someone into another team. Pick permanent or agency and a grade,
 // then − and + move one person; the number box hires or lets go that many at once, so a big team doesn't take hundreds
 // of clicks. Hires start after their grade's lead time, agency staff the next day. Letting go permanent staff asks
 // first, showing their severance.
 const game = useGame();
 const id = useId();
 const MAX_AT_ONCE = 999;
-const amounts = reactive<Record<StaffPool, number | "">>({ developers: 10, ops: 10, support: 10, moderators: 10, researchers: 10 });
-const grades = reactive<Record<StaffPool, StaffGrade>>({ developers: "mid", ops: "mid", support: "mid", moderators: "mid", researchers: "mid" });
-const agency = reactive<Record<StaffPool, boolean>>({ developers: false, ops: false, support: false, moderators: false, researchers: false });
+const amounts = reactive<Record<StaffPool, number | "">>({ developers: 10, ops: 10, support: 10, moderators: 10, researchers: 10, marketers: 10 });
+const grades = reactive<Record<StaffPool, StaffGrade>>({ developers: "mid", ops: "mid", support: "mid", moderators: "mid", researchers: "mid", marketers: "mid" });
+const agency = reactive<Record<StaffPool, boolean>>({ developers: false, ops: false, support: false, moderators: false, researchers: false, marketers: false });
 // The permanent staff waiting on the student to confirm letting them go, with their severance.
 const confirming = ref<{ pool: StaffPool; grade: StaffGrade; count: number }>();
-// The pools this company can staff: no moderators without user content, no researchers until they open.
+// The pools this company can staff: no moderators without user content, no researchers or marketers until they open.
 const pools = computed(() => (game.meta?.staff ?? []).filter((s) => game.company?.staff.some((p) => p.pool === s.id)));
 // The number in the box, or 0 when it isn't a whole number from 1 to the most at once.
 const amountOf = (pool: StaffPool) => {
@@ -77,7 +78,8 @@ const toCover = (pool: StaffPool) => {
 const moves = computed(() =>
   pools.value.flatMap((to) => pools.value.filter((from) => from.id !== to.id).map((from) => ({ from, to }))),
 );
-const rank = (pool: StaffPool) => (pool === "researchers" ? 3 : pool === "moderators" ? 2 : pool === "support" ? 1 : 0);
+const rank = (pool: StaffPool) =>
+  pool === "marketers" ? 4 : pool === "researchers" ? 3 : pool === "moderators" ? 2 : pool === "support" ? 1 : 0;
 const moveOrder = (from: StaffPool, to: StaffPool) => Math.max(rank(from), rank(to));
 const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.from.id, a.to.id) - moveOrder(b.from.id, b.to.id)));
 </script>
