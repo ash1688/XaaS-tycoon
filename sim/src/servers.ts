@@ -9,8 +9,8 @@ import {
   type ServerType,
 } from "./config.ts";
 import { powerSaving, rentSaving } from "./benefits.ts";
-import { count, pounds, risen, type Finance } from "./finance.ts";
-import { crashedOn, hardwareRisk, hasSlider, overheatedOn, performanceOf, unitFactor, wearShare } from "./hardware.ts";
+import { count, pounds, priceRiseOn, risen, type Finance } from "./finance.ts";
+import { crashedOn, hardwareRisk, hasSlider, overheatedOn, performanceOf, unitFactor, wearDaysLeft, wearShare } from "./hardware.ts";
 import { demandPerUser } from "./optimisation.ts";
 import type { Racks } from "./racks.ts";
 import {
@@ -40,8 +40,10 @@ export interface ServerView {
   readyDay: number;
   /** Days until it's ready or, bought, arrives: 0 once it has. */
   daysLeft: number;
-  /** CU, DBU, CH or APIU; for a load balancer, the app servers it can serve. */
+  /** CU, DBU, CH or APIU; for a load balancer, the app servers it can serve. More on kit added after a year's end. */
   units: number;
+  /** Its units as a multiple of the config's: above 1 on kit added after a year's end (drift). */
+  unitBoost: number;
   /** An app server switched to give APIU instead of CU, for the paid API's calls. False for any other. */
   apiu: boolean;
   /** Its monthly price today, after any provider price rises: rent, or for a bought one, power and upkeep. */
@@ -59,6 +61,10 @@ export interface ServerView {
   performance: number | null;
   /** On-prem, wear as a share of its lifespan (1 = worn out); null on any other model. */
   wear: number | null;
+  /** On-prem, days until it's worn out at its slider now (0 once it is; null at 0% or on any other model). */
+  wearDaysLeft: number | null;
+  /** On-prem, its wear has reached the warning share of its lifespan: it's nearly or already worn out. */
+  wearWarning: boolean;
   /** On-prem, its daily chances of overheating and crashing at its slider and wear; null on any other model. */
   risk: { overheat: number; crash: number } | null;
   /** Days left down from a crash, or overheated, counting tomorrow: 0 when it isn't. */
@@ -92,6 +98,7 @@ export interface ServerOption {
   size: ServerSize;
   name: string;
   blurb: string;
+  /** What one added now gives: more after a year's end (drift). */
   units: number;
   /** Rent a month, or on a model that buys its servers, power and upkeep a month. */
   monthlyCost: number;
@@ -246,12 +253,17 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
   const managedOf = (model: ModelId) => modelServers(model)?.managed;
   /** Whether a model buys its servers rather than renting them. */
   const buys = (model: ModelId) => !!purchaseOf(model);
-  /** Units a server gives on a model: a managed database or cache has the platform's own. */
-  const unitsOn = (model: ModelId, s: Pick<Server, "type" | "size">) => {
+  /**
+   * Units a server gives on a model: a managed database or cache has the platform's own. Kit added after a year's end
+   * gives more (its unitBoost, from drift), but a load balancer still covers the same app servers.
+   */
+  const unitsOn = (model: ModelId, s: Pick<Server, "type" | "size" | "unitBoost">) => {
     const managed = managedOf(model);
-    if (managed && isManagedService(s.type)) return managed.units[s.type][s.size];
-    return config.servers.types[s.type].units[s.size];
+    const units = managed && isManagedService(s.type) ? managed.units[s.type][s.size] : config.servers.types[s.type].units[s.size];
+    return s.unitBoost && s.type !== "loadBalancer" ? units * s.unitBoost : units;
   };
+  /** Units to the hundredth, for the screens. */
+  const shownUnits = (n: number) => Math.round(n * 100) / 100;
   const readyDaysOf = (model: ModelId) => modelServers(model)?.readyDays ?? 0;
   const nameOf = (type: ServerType) => config.servers.types[type].name;
   // "API" keeps its capitals mid-sentence.
@@ -267,7 +279,7 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
   /** A server's purchase price on a model that buys them, after any price rises; 0 where they're rented. */
   function purchasePrice(state: GameState, model: ModelId, type: ServerType, size: ServerSize): number {
     const price = purchaseOf(model)?.price[type][size] ?? 0;
-    return risen(price, state.priceRises[model] ?? 1);
+    return risen(price, priceRiseOn(state, model));
   }
 
   /** What selling a bought server back refunds: the configured share of what it cost, to the pound. */
@@ -457,7 +469,7 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
   function monthlyCost(state: GameState, model: ModelId, type: ServerType, size: ServerSize): number {
     const price = modelServers(model)?.monthlyCost[type]?.[size] ?? 0;
     const saving = Math.min(1, powerSaving(config, state, model) + rentSaving(config, state, model));
-    return risen(price, state.priceRises[model] ?? 1) * (1 - saving);
+    return risen(price, priceRiseOn(state, model)) * (1 - saving);
   }
 
   /** One server's monthly price: on a model with the hardware slider, its power and upkeep scale with the slider. */
@@ -894,14 +906,17 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
       status: s.readyDay <= state.day ? "ready" : "pending",
       readyDay: s.readyDay,
       daysLeft: Math.max(0, s.readyDay - state.day),
-      units: unitsOn(state.model, s),
+      units: shownUnits(unitsOn(state.model, s)),
+      unitBoost: s.unitBoost ?? 1,
       apiu: !!s.apiu,
       monthlyCost: serverMonthlyCost(state, state.model, s),
       paid: bought ? (s.paid ?? 0) : null,
       sellBack: bought ? sellBackValue(state.model, s) : null,
       rack: s.rack ?? null,
       performance: slider ? performanceOf(s) : null,
-      wear: slider ? Math.round(wearShare(config, s) * 1000) / 1000 : null,
+      wear: slider ? Math.round(wearShare(config, state, s) * 1000) / 1000 : null,
+      wearDaysLeft: slider ? wearDaysLeft(config, state, s) : null,
+      wearWarning: slider && wearShare(config, state, s) >= config.hardware.warnAt,
       risk: slider ? hardwareRisk(config, state, s) : null,
       crashedDays: crashedOn(s, state.day + 1) ? daysTo(s.crashedUntil) : 0,
       overheatedDays: overheatedOn(s, state.day + 1) ? daysTo(s.overheatedUntil) : 0,
@@ -923,7 +938,7 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
         size,
         name: nameOf(type),
         blurb: config.servers.types[type].blurb,
-        units: unitsOn(state.model, { type, size }),
+        units: shownUnits(unitsOn(state.model, { type, size, unitBoost: state.newKitUnits })),
         monthlyCost: monthlyCost(state, state.model, type, size),
         price: servers.purchase ? purchasePrice(state, state.model, type, size) : null,
         sellBackShare: servers.purchase?.sellBackShare ?? null,

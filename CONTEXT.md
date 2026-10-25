@@ -35,8 +35,12 @@ One step of the timed flow: a day, or a week in a career. A week is seven days s
 _Avoid_: Turn, round
 
 **Drift**:
-The slow change in the world over a long game: inflation, cheaper hardware and server wear.
+The slow change in the world over a long game (until IPO or a career). At each **year's end** (every 365 days), running prices rise by a fresh random 2–6% and servers and VMs added from then give about 10% more units for the money; kit already owned keeps its units. The student's own price and pay never drift: pay rises only in pay reviews. Servers age through the hardware slider's wear, whose lifespan scales with the game length. A 180-day or 1-year game never reaches a year's end.
 _Avoid_: Eras, ageing
+
+**Year's end**:
+The last day of each 365-day year of a long game, after which drift raises prices and improves new kit. A game's last day is never one.
+_Avoid_: New year, anniversary
 
 **MVP**:
 The first version of the product, which every game opens with the developers building, measured in developer-days. No users arrive until it's done: launch is the first day it's done and servers can serve them.
@@ -89,7 +93,7 @@ What researchers earn each day, more for higher grades. They bank with no cap, t
 _Avoid_: Science, research credits, XP
 
 **Pay review**:
-Staff coming to the student about pay before quarters 2, 3 and 4 of a game (a game counts as one year of four equal quarters). The clock holds until it's settled. Each review rolls its own inflation, from 2% to 6%; the student offers a rise from inflation less a point, and staff, who open at inflation plus four points, accept an offer near a fair rise for how the company is doing or counter with a roll. The agreed rise lifts every staff pool's day rate, new hires and agency staff included, and compounds with each review. The C-suite is left out.
+Staff coming to the student about pay before quarters 2, 3 and 4 of a game (a game counts as one year of four equal quarters). Until IPO and a career have 365-day years instead: quarters 2, 3 and 4 in the first, then every quarter. The clock holds until it's settled. Each review rolls its own inflation, from 2% to 6%; the student offers a rise from inflation less a point, and staff, who open at inflation plus four points, accept an offer near a fair rise for how the company is doing or counter with a roll. The agreed rise lifts every staff pool's day rate, new hires and agency staff included, and compounds with each review. The C-suite is left out.
 _Avoid_: Pay rise round, wage negotiation, salary review
 
 **People-lead modifier**:
@@ -122,7 +126,7 @@ A small, medium or large frame that holds on-prem servers, measured in rack unit
 _Avoid_: Cabinet, server room
 
 **Hardware slider**:
-On-prem only: each server runs at 0–150% of its normal capacity. Below 100% it costs less to run and wears slower; above, it risks overheating or a crash and wears faster.
+On-prem only: each server runs at 0–150% of its normal capacity. Below 100% it costs less to run and wears slower; above, it risks overheating or a crash and wears faster. Wear is the game's one ageing system: a server lasts about 5 years at 100% in a 1-year game or longer, and in a 180-day game lasts the game at 100% but wears out in a few months pushed hard. The student is warned before it's worn out.
 _Avoid_: Overclocking, performance slider (the developer slider is something else)
 
 **Rack unit (U)**:

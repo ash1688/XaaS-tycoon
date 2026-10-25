@@ -87,11 +87,15 @@ describe("the schedule", () => {
     }
   });
 
-  it("splits a career into quarters of its 47 years, and a game until IPO into a year's", () => {
-    const career = begin(sim, 42, "career");
-    // 47 years of 365 days is 17,155 days: quarters of 4,288.75.
-    expect(sim.payReviewDays(career)).toEqual([4289, 8578, 12867]);
-    expect(sim.payReviewDays(begin(sim, 42, "until-ipo"))).toEqual([92, 183, 274]);
+  it("gives a career and a game until IPO quarters 2–4 in year 1, then a review every quarter (#95)", () => {
+    const career = sim.payReviewDays(begin(sim, 42, "career"));
+    // Quarters of a 365-day year: 91.25 days.
+    expect(career.slice(0, 8)).toEqual([92, 183, 274, 366, 457, 548, 639, 731]);
+    // 47 years: three reviews in the first, four in each of the other 46, the last on the first day of the last quarter.
+    expect(career).toHaveLength(3 + 46 * 4);
+    expect(career.at(-1)).toBe(46 * 365 + Math.floor((3 * 365) / 4) + 1);
+    // With no last day, listed up to the end of next year.
+    expect(sim.payReviewDays(begin(sim, 42, "until-ipo"))).toEqual([92, 183, 274, 366, 457, 548, 639]);
   });
 
   it("opens none with pay reviews turned off", () => {
@@ -135,7 +139,7 @@ describe("holding the clock", () => {
       state = tick.state;
       tick = careers.tick(state);
     }
-    expect(tick.state.day).toBe(4288);
+    expect(tick.state.day).toBe(91);
     expect(tick.days).toBeLessThanOrEqual(7);
   });
 });

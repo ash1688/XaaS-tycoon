@@ -32,8 +32,22 @@ import {
   type TribunalPick,
 } from "./state.ts";
 
-/** Quarters with a pay review: every one after the first. */
+/** Quarters with a pay review in a game's first year: every one after the first. A long game's later years have all four. */
 export const REVIEW_QUARTERS = [2, 3, 4] as const;
+
+/** A pay review's place in the game: the quarter it opens, the game year that's in, and the quarter's first day. */
+export interface ReviewSlot {
+  quarter: number;
+  year: number;
+  startDay: number;
+}
+
+/** "quarter 3", or in a long game's later years "quarter 1 of year 2". */
+export const quarterName = (r: Pick<ReviewSlot, "quarter" | "year">) =>
+  r.year > 1 ? `quarter ${r.quarter} of year ${r.year}` : `quarter ${r.quarter}`;
+
+/** A game long enough for years of reviews: until IPO or a career. */
+const longGame = (state: Pick<GameState, "gameLength">) => state.gameLength === "until-ipo" || state.gameLength === "career";
 
 /** Rises, caps and inflation are kept to a tenth of a point: 0.034 is 3.4%. */
 const STEP = 0.001;
@@ -45,6 +59,8 @@ export const risePercent = (n: number) => `${Math.round(n * 1000) / 10}%`;
 /** The open pay review as the student sees it: the hidden fair rise and walk-away figure left out. */
 export interface PayReviewView {
   quarter: number;
+  /** The game year the quarter is in: above 1 only in a long game's later years. */
+  year: number;
   /** The quarter's first day: the first day played at the agreed rise. */
   startDay: number;
   inflation: number;
@@ -146,8 +162,8 @@ export interface TribunalOdds {
 export const TRIBUNAL_PICKS = ["student", "middle", "staff"] as const satisfies readonly TribunalPick[];
 
 /**
- * Pay reviews: at the start of quarters 2, 3 and 4 staff come to the student about pay, and the clock is held until
- * it's settled. The student offers first; staff accept an offer that reaches their hidden walk-away figure, or counter
+ * Pay reviews: at the start of quarters 2, 3 and 4 (and in a long game's later years, every quarter) staff come to
+ * the student about pay, and the clock is held until it's settled. The student offers first; staff accept an offer that reaches their hidden walk-away figure, or counter
  * with the investor negotiation's roll the other way round: staff's figure is the offer, and the student's the counter
  * it moves towards. The third offer is final: short of a deal it goes to the tribunal. The agreed rise multiplies every
  * pool's pay. See PayReviewConfig.
@@ -170,18 +186,55 @@ export function createPayReview(
     payReviewRng: seedRng(seed ^ 0x9a7e),
   });
 
-  /** Days in the game's year: its days, or for a game with no last day, the configured year. */
-  const yearDays = (state: GameState) => state.finalDay ?? c.openEndedYearDays;
+  /**
+   * The k-th quarter boundary of a long game (k from 1): the first day of the quarter after it, in years of
+   * openEndedYearDays. k = 1 to 3 are quarters 2 to 4 of year 1; k = 4 is quarter 1 of year 2, and so on.
+   */
+  const longSlot = (k: number): ReviewSlot => ({
+    quarter: (k % 4) + 1,
+    year: Math.floor(k / 4) + 1,
+    startDay: Math.floor((k * c.openEndedYearDays) / 4) + 1,
+  });
 
-  /** The first day of each quarter with a review, in order: 46, 91 and 136 in a 180-day game. */
-  const quarterStarts = (state: GameState) => REVIEW_QUARTERS.map((q) => Math.floor(((q - 1) * yearDays(state)) / 4) + 1);
+  /**
+   * Every pay review in the game, in order. A game of a year or less counts as one year of four quarters (its days ÷
+   * 4), with reviews at the start of quarters 2, 3 and 4: days 46, 91 and 136 in a 180-day game. A long game (until IPO
+   * or a career) has the same in its first year, then one at the start of every quarter (#95). With no last day
+   * (until IPO), they're listed up to the end of next year.
+   */
+  function reviewSlots(state: GameState): ReviewSlot[] {
+    if (!longGame(state)) {
+      const days = state.finalDay ?? c.openEndedYearDays;
+      return REVIEW_QUARTERS.map((q) => ({ quarter: q, year: 1, startDay: Math.floor(((q - 1) * days) / 4) + 1 }));
+    }
+    const year = c.openEndedYearDays;
+    const last = state.finalDay ?? (Math.floor(state.day / year) + 2) * year;
+    const slots: ReviewSlot[] = [];
+    for (let k = 1; ; k++) {
+      const slot = longSlot(k);
+      if (slot.startDay > last) return slots;
+      slots.push(slot);
+    }
+  }
 
-  /** The quarter whose first day is the next day to play, if it has a review: due now, after the day just played. */
-  function reviewDue(state: GameState): number | null {
+  /** The first day of each quarter with a review, in order. */
+  const quarterStarts = (state: GameState) => reviewSlots(state).map((r) => r.startDay);
+
+  /** The review whose quarter starts on `day`, if there is one. */
+  function slotStarting(state: GameState, day: number): ReviewSlot | null {
+    if (!longGame(state)) return reviewSlots(state).find((r) => r.startDay === day) ?? null;
+    // Worked out rather than listed, so a career's 47 years of reviews aren't listed every day.
+    const near = Math.floor(((day - 1) * 4) / c.openEndedYearDays);
+    for (const k of [near - 1, near, near + 1]) {
+      if (k >= 1 && longSlot(k).startDay === day) return longSlot(k);
+    }
+    return null;
+  }
+
+  /** The review whose quarter starts on the next day to play, if any: due now, after the day just played. */
+  function reviewDue(state: GameState): ReviewSlot | null {
     if (c.on !== 1 || state.status !== "playing" || state.payReview) return null;
-    const next = state.day + 1;
-    const i = quarterStarts(state).indexOf(next);
-    return i < 0 ? null : REVIEW_QUARTERS[i]!;
+    return slotStarting(state, state.day + 1);
   }
 
   /** Income and profit over `days` days played ending on `last`, from the day-by-day record. */
@@ -207,11 +260,12 @@ export function createPayReview(
   }
 
   /**
-   * Opens the review for `quarter` after the day just played: rolls inflation and staff's walk-away figure on the
+   * Opens the review for a quarter after the day just played: rolls inflation and staff's walk-away figure on the
    * reviews' own RNG, softened by the people-lead modifier, and staff open at their ask. The clock is held until it's
    * settled.
    */
-  function openReview(state: GameState, quarter: number): { state: GameState; entries: LogEntry[] } {
+  function openReview(state: GameState, slot: ReviewSlot): { state: GameState; entries: LogEntry[] } {
+    const { quarter, year } = slot;
     const lead = peopleLead(config, state);
     const [r1, rng1] = nextRandom(state.payReviewRng);
     const [r2, rng2] = nextRandom(rng1);
@@ -222,6 +276,7 @@ export function createPayReview(
     const walkAway = clamp(roundRise(fairRise + c.walkAwaySpread * (2 * r2 - 1) - lead.walkAwaySoftening), minOffer, maxAsk);
     const review: PayReview = {
       quarter,
+      year,
       startDay: state.day + 1,
       inflation,
       minOffer,
@@ -233,7 +288,7 @@ export function createPayReview(
       negotiation: negotiator.open({ rise: maxAsk }),
     };
     const text =
-      `Pay review: quarter ${quarter} starts on day ${review.startDay}, and your staff want to talk about pay. ` +
+      `Pay review: ${quarterName(review)} starts on day ${review.startDay}, and your staff want to talk about pay. ` +
       `Inflation is ${risePercent(inflation)}, and they're asking for ${risePercent(maxAsk)}. ` +
       `Make them an offer from ${risePercent(minOffer)}: the day can't go on until it's settled.` +
       (lead.headOfPeople ? "" : " You're dealing with staff directly: with no head of people, they're stricter and want cash.");
@@ -310,6 +365,7 @@ export function createPayReview(
     const issue = shareSaveIssue(config, state, state.staffSchemes, schemes);
     const record: PayReviewRecord = {
       quarter: review.quarter,
+      year: review.year,
       startDay: review.startDay,
       settledDay: state.day,
       inflation: review.inflation,
@@ -370,7 +426,7 @@ export function createPayReview(
     let below = 0;
     const pick = TRIBUNAL_PICKS.find((p) => roll < (below += odds.chances[p])) ?? "staff";
     const charged = deps.chargeNow({ ...state, payReviewRng: rng }, [
-      { text: `Tribunal fee for quarter ${review.quarter}'s pay review`, cashDelta: -odds.fee, category: "staff" },
+      { text: `Tribunal fee for ${quarterName(review)}'s pay review`, cashDelta: -odds.fee, category: "staff" },
     ]);
     const schemes = pick === "staff" ? state.staffSchemes : final.schemes;
     return settle(charged, review, offers, "tribunal", odds.cash[pick], schemes, { pick, fee: odds.fee, chances: odds.chances });
@@ -418,6 +474,7 @@ export function createPayReview(
     const lead = peopleLead(config, state);
     return {
       quarter: review.quarter,
+      year: review.year,
       startDay: review.startDay,
       inflation: review.inflation,
       minOffer: review.minOffer,
@@ -489,7 +546,7 @@ export function createPayReview(
     if (!last?.tribunal || last.startDay !== day) return [];
     const picked = { student: "your final offer", middle: "the middle", staff: "your staff's figure" }[last.tribunal.pick];
     const text =
-      `The tribunal settled quarter ${last.quarter}'s pay review on ${picked}: a ${risePercent(last.rise)} rise from today. ` +
+      `The tribunal settled ${quarterName(last)}'s pay review on ${picked}: a ${risePercent(last.rise)} rise from today. ` +
       `Its fee was ${pounds(last.tribunal.fee)}.`;
     return [{ text, cashDelta: 0, kind: "staff" }];
   }
@@ -520,6 +577,7 @@ export function createPayReview(
 
   return {
     startingPayReview,
+    reviewSlots,
     quarterStarts,
     reviewDue,
     openReview,

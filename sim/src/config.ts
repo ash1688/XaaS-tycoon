@@ -1194,11 +1194,34 @@ export interface HardwareConfig {
   /** The same for a crash: no units for `days` days, while ops fix it. */
   crash: { chance: number; days: number };
   /**
-   * A server builds up wear each day it's in service: slider². Past `lifespan`, it has an extra daily chance of a
-   * crash, even at 100% or below: `wornCrashChance` × (wear − lifespan) ÷ lifespan.
+   * A server builds up wear each day it's in service: slider². Past its lifespan, it has an extra daily chance of a
+   * crash, even at 100% or below: `wornCrashChance` × (wear − lifespan) ÷ lifespan. The lifespan scales with the game's
+   * length (drift, #95): `lifespan` in a game of a year or more, `shortGameLifespan` in a shorter one (180 days), which
+   * counts as one year so a server's life is squeezed into it.
    */
   lifespan: number;
+  shortGameLifespan: number;
   wornCrashChance: number;
+  /** A server is warned about once its wear reaches this share of its lifespan (0.9 = 90%), before it's worn out. */
+  warnAt: number;
+}
+
+/**
+ * Drift: long games change slowly. At the end of each `yearDays`-day year that isn't the game's last day, on drift's
+ * own RNG:
+ * - Running prices (servers and VMs, rent, provider and platform fees, power and cooling, model benefits, racks) rise
+ *   by a fresh random inflation.min–inflation.max, compounding. The student's own price never drifts, and nor does
+ *   pay: wages rise only through pay reviews.
+ * - Servers and VMs added from then on give `newKitUnits` more units for the same price, compounding (0.1 = 10% more
+ *   a year). Kit already in service keeps its units.
+ * A 180-day or 1-year game never reaches a year's end, so it never drifts.
+ */
+export interface DriftConfig {
+  /** 1 to drift; 0 turns it off. */
+  on: number;
+  yearDays: number;
+  inflation: { min: number; max: number };
+  newKitUnits: number;
 }
 
 /**
@@ -1442,9 +1465,10 @@ export interface NegotiationConfig {
 }
 
 /**
- * Pay reviews: a game counts as one year of four equal quarters (the game's days ÷ 4; a game with no last day counts
- * openEndedYearDays). At the start of quarters 2, 3 and 4 the staff come to the student about pay, and the clock stops
- * until it's settled. Every figure here is a share of pay: 0.01 is one point.
+ * Pay reviews: a game counts as one year of four equal quarters (the game's days ÷ 4). At the start of quarters 2, 3
+ * and 4 the staff come to the student about pay, and the clock stops until it's settled. A long game (until IPO or a
+ * career) has years of openEndedYearDays days instead: reviews at the start of quarters 2, 3 and 4 in its first year,
+ * then at the start of every quarter after (#95). Every figure here is a share of pay: 0.01 is one point.
  *
  * - Inflation: rolled for each review from inflation.min to inflation.max, on the review's own RNG.
  * - Caps: the student can offer no less than inflation − minOfferBelow (never below 0), and staff never ask for more
@@ -1461,7 +1485,7 @@ export interface NegotiationConfig {
 export interface PayReviewConfig {
   /** 1 if staff come about pay each quarter; 0 turns pay reviews off, and pay stays at the day rates all game. */
   on: number;
-  /** A year for a game with no last day (until IPO), whose quarters the reviews follow. */
+  /** A year in a long game (until IPO or a career), whose quarters the reviews follow. */
   openEndedYearDays: number;
   inflation: { min: number; max: number };
   /** The least offer is inflation less this (0.01 = one point), never below 0. */
@@ -1695,6 +1719,7 @@ export interface GameConfig {
   campaigns: CampaignsConfig;
   tiers: TiersConfig;
   hardware: HardwareConfig;
+  drift: DriftConfig;
   models: Record<ModelId, ModelConfig>;
   productTypes: Record<ProductTypeId, ProductTypeConfig>;
   customerTypes: Record<CustomerTypeId, CustomerTypeConfig>;
@@ -1871,14 +1896,24 @@ export const defaultConfig: GameConfig = {
       },
     ],
   },
-  // Placeholders for the balance pass: 150% risks overheating 12% of days and crashing 4%; a server wears out after two
-  // years at 100%.
+  // Placeholders for the balance pass: 150% risks overheating 12% of days and crashing 4%. A server wears out after
+  // five years at 100% (#95). A 180-day game squeezes that into it: at 100% a server never wears out, but at 150%
+  // (2.25 wear a day) it's worn out in about 111 days.
   hardware: {
     maxPerformance: 1.5,
     overheat: { chance: 0.12, days: 3, capacity: 0.5 },
     crash: { chance: 0.04, days: 2 },
-    lifespan: 730,
+    lifespan: 1_825,
+    shortGameLifespan: 250,
     wornCrashChance: 0.02,
+    warnAt: 0.9,
+  },
+  // Placeholders from the design (#95): prices rise 2–6% at each year's end, and new kit gives 10% more units a year.
+  drift: {
+    on: 1,
+    yearDays: 365,
+    inflation: { min: 0.02, max: 0.06 },
+    newKitUnits: 0.1,
   },
   models: {
     onprem: {

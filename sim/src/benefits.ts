@@ -1,5 +1,5 @@
 import type { GameConfig, ModelBenefitConfig, ModelBenefitEffects, ModelId, TierNumber } from "./config.ts";
-import { pounds, type Finance } from "./finance.ts";
+import { pounds, risen, type Finance } from "./finance.ts";
 import { isUnlocked, itemRpPrice, lockedMessage, tierAvailable } from "./tiers.ts";
 import { SimError, type GameState, type LogEntry } from "./state.ts";
 
@@ -91,19 +91,23 @@ export function createBenefits(config: GameConfig, finance: Finance) {
     }
     if (state.benefits.includes(id)) throw new SimError("benefit_active", `${benefit.name} is already on.`);
     if (!isUnlocked(config, state, id)) throw new SimError("locked", lockedMessage(config, state, id));
-    if (benefit.setupFee > state.cash) {
+    const setupFee = drifted(state, benefit.setupFee);
+    if (setupFee > state.cash) {
       throw new SimError(
         "cant_afford",
-        `Setting up ${benefit.name} costs ${pounds(benefit.setupFee)} and you have ${pounds(state.cash)}.`,
-        { cost: benefit.setupFee, cash: state.cash },
+        `Setting up ${benefit.name} costs ${pounds(setupFee)} and you have ${pounds(state.cash)}.`,
+        { cost: setupFee, cash: state.cash },
       );
     }
     const bought: GameState = { ...state, benefits: [...state.benefits, id] };
-    if (benefit.setupFee <= 0) return bought;
+    if (setupFee <= 0) return bought;
     return finance.chargeNow(bought, [
-      { text: `Model benefit set-up: ${benefit.name}`, cashDelta: -benefit.setupFee, category: "infrastructure" },
+      { text: `Model benefit set-up: ${benefit.name}`, cashDelta: -setupFee, category: "infrastructure" },
     ]);
   }
+
+  /** A benefit's fee after drift's price level from the years' ends so far. */
+  const drifted = (state: GameState, fee: number) => risen(fee, state.priceLevel);
 
   function cancelBenefit(state: GameState, id: string): GameState {
     const benefit = find(id);
@@ -118,14 +122,14 @@ export function createBenefits(config: GameConfig, finance: Finance) {
     return activeOn(config, state, state.model)
       .filter((b) => b.monthlyFee > 0)
       .map((b) => ({
-        text: `Model benefit: ${b.name} (${pounds(b.monthlyFee)} a month)`,
-        cashDelta: -Math.round(b.monthlyFee * share),
+        text: `Model benefit: ${b.name} (${pounds(drifted(state, b.monthlyFee))} a month)`,
+        cashDelta: -Math.round(drifted(state, b.monthlyFee) * share),
         category: "infrastructure" as const,
       }));
   }
 
   const monthlyBenefitCost = (state: GameState) =>
-    activeOn(config, state, state.model).reduce((sum, b) => sum + b.monthlyFee, 0);
+    activeOn(config, state, state.model).reduce((sum, b) => sum + drifted(state, b.monthlyFee), 0);
 
   /** The benefits a migration to another model would lose: every one that's on. */
   const benefitsLostTo = (state: GameState, to: ModelId) => (to === state.model ? [] : activeOn(config, state, state.model));
@@ -137,8 +141,8 @@ export function createBenefits(config: GameConfig, finance: Finance) {
       blurb: b.blurb,
       model: b.model,
       tier: b.tier,
-      setupFee: b.setupFee,
-      monthlyFee: b.monthlyFee,
+      setupFee: drifted(state, b.setupFee),
+      monthlyFee: drifted(state, b.monthlyFee),
       rpPrice: itemRpPrice(config, state, b.id),
       tierAvailable: tierAvailable(state, b.tier),
       unlocked: isUnlocked(config, state, b.id),

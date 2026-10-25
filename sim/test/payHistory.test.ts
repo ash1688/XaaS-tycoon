@@ -42,11 +42,11 @@ describe("pay history", () => {
   it("is empty before the first review, with the first to come", () => {
     const h = plain.payHistory(start);
     expect(h).toMatchObject({ reviews: [], payMultiplier: 1, tribunalFees: 0, staffShareScheme: null });
-    expect(h.nextReview).toEqual({ quarter: 2, startDay: days[0] });
+    expect(h.nextReview).toEqual({ quarter: 2, year: 1, startDay: days[0] });
     expect(h.schemes.every((s) => s.level === 0 && s.costPerDay === 0)).toBe(true);
     expect(h.schemesCostPerDay).toBe(0);
     // While the first is open, it's the current review, not the next.
-    expect(plain.payHistory(open).nextReview).toEqual({ quarter: 3, startDay: days[1] });
+    expect(plain.payHistory(open).nextReview).toEqual({ quarter: 3, year: 1, startDay: days[1] });
   });
 
   it("is empty on a saved game with no reviews yet", () => {
@@ -89,7 +89,7 @@ describe("pay history", () => {
     expect(h.schemesCostPerDay).toBeGreaterThan(0);
     const row = plain.capTable(settled).rows.find((x) => x.id === "staffScheme")!;
     expect(h.staffShareScheme).toEqual({ shares: row.shares, share: row.share });
-    expect(h.nextReview).toEqual({ quarter: 3, startDay: days[1] });
+    expect(h.nextReview).toEqual({ quarter: 3, year: 1, startDay: days[1] });
   });
 
   it("compounds the multiplier and shows only each review's raises", () => {

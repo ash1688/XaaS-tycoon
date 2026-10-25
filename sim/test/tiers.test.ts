@@ -510,14 +510,14 @@ describe("the hardware slider", () => {
 
   it("wears a server by the slider squared each day, slower below 100% and faster above", () => {
     const wearAfter = (p: number) => app(sim.advance(set({ ...running, servers: running.servers.map((x) => ({ ...x, wear: 0 })) }, p), 10).state).wear!;
-    expect(wearAfter(1)).toBeCloseTo(10 / hardware.lifespan, 3);
-    expect(wearAfter(0.5)).toBeCloseTo((10 * 0.25) / hardware.lifespan, 3);
+    expect(wearAfter(1)).toBeCloseTo(10 / hardware.shortGameLifespan, 3);
+    expect(wearAfter(0.5)).toBeCloseTo((10 * 0.25) / hardware.shortGameLifespan, 3);
     // Pushed hard, it may also crash or overheat on the way, but it wears all the same.
-    expect(wearAfter(1.5)).toBeCloseTo((10 * 2.25) / hardware.lifespan, 3);
+    expect(wearAfter(1.5)).toBeCloseTo((10 * 2.25) / hardware.shortGameLifespan, 3);
   });
 
   it("gives a worn-out server a chance of crashing even at 100%", () => {
-    const worn = { ...running, servers: running.servers.map((x) => ({ ...x, wear: hardware.lifespan * 1.5 })) };
+    const worn = { ...running, servers: running.servers.map((x) => ({ ...x, wear: hardware.shortGameLifespan * 1.5 })) };
     expect(app(worn).risk).toEqual({ overheat: 0, crash: hardware.wornCrashChance * 0.5 });
   });
 
@@ -567,6 +567,7 @@ describe("config", () => {
       "hardware.maxPerformance",
       "hardware.crash.chance",
       "hardware.lifespan",
+      "hardware.shortGameLifespan",
     ]) {
       expect(paths).toContain(p);
     }

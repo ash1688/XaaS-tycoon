@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { useRoute } from "vue-router";
+import { quarterName } from "@xaas/sim";
 import { formatCash } from "../api";
 import PayReviewModal from "../components/PayReviewModal.vue";
 import { days, provideGame } from "../game";
@@ -192,7 +193,7 @@ async function closeMenu() {
       </p>
       <p v-if="game.payReviewOpen && !payModal" class="ipo-note" role="status" data-testid="pay-review-note">
         <span class="badge">Pay review</span>
-        Your staff want to talk about pay before quarter {{ game.company.payReview!.quarter }}: the game waits until you've
+        Your staff want to talk about pay before {{ quarterName(game.company.payReview!) }}: the game waits until you've
         agreed a rise.
         <button class="ghost" data-testid="pay-review-open" @click="payModal = true">Open the pay review</button>
       </p>

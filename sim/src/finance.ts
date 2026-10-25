@@ -1,4 +1,4 @@
-import { SPEND_CATEGORIES, type GameConfig } from "./config.ts";
+import { SPEND_CATEGORIES, type GameConfig, type ModelId } from "./config.ts";
 import type { GameState, Loan, LogEntry, Spend } from "./state.ts";
 
 export const noSpend = (): Spend => ({ staff: 0, infrastructure: 0, cabling: 0, power: 0, addons: 0, campaigns: 0, debt: 0 });
@@ -16,6 +16,13 @@ export function pounds(n: number): string {
 
 /** A price after any provider price rises, to the penny. */
 export const risen = (price: number, rise: number) => Math.round(price * rise * 100) / 100;
+
+/**
+ * What a model's prices are multiplied by today: any provider price rises on it, and drift's price level from the
+ * years' ends so far (#95).
+ */
+export const priceRiseOn = (state: Pick<GameState, "priceRises" | "priceLevel">, model: ModelId) =>
+  (state.priceRises[model] ?? 1) * state.priceLevel;
 
 /**
  * The interest in bank loan repayments adding up to `repaid`. Each repayment is interest and principal in the loan's

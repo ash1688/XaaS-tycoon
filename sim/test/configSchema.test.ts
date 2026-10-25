@@ -126,9 +126,10 @@ describe("validateOverrides", () => {
     expect(validateOverrides({ "models.onprem.servers.racks.serverUnits.massive": 42 })).toEqual({});
   });
 
-  it("has a toggle for each game length, timed flow and pay reviews, and needs at least one length allowed", () => {
+  it("has a toggle for each game length, timed flow, drift and pay reviews, and needs at least one length allowed", () => {
     const toggles = fields.filter((f) => f.kind === "toggle");
     expect(toggles.map((f) => [f.path, f.default])).toEqual([
+      ["drift.on", 1],
       ["payReview.on", 1],
       ["allowedGameLengths.180-days", 1],
       ["allowedGameLengths.until-ipo", 0],

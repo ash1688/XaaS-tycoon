@@ -31,7 +31,7 @@ export function createFeatures(config: GameConfig, finance: Finance) {
 
   /** The one-off fee to set an add-on up: its developer-days × setupFeePerDevDay, after any provider price rise. */
   const setupFee = (state: GameState, f: FeatureConfig) =>
-    Math.round(risen(f.devDays * config.addons.setupFeePerDevDay, state.addonPriceRise));
+    Math.round(risen(f.devDays * config.addons.setupFeePerDevDay, state.addonPriceRise * state.priceLevel));
 
   const isActive = (state: GameState, id: string) => {
     const status = state.features[id]?.status;
@@ -183,7 +183,7 @@ export function createFeatures(config: GameConfig, finance: Finance) {
   function addonEntries(state: GameState, days = 1): LogEntry[] {
     const share = days / config.billing.daysPerMonth;
     return activeAddons(state).map((f) => {
-      const price = risen(f.addonPricePerUser, state.addonPriceRise);
+      const price = risen(f.addonPricePerUser, state.addonPriceRise * state.priceLevel);
       return {
         text: `Add-on: ${f.name} (${count.format(state.users)} users at ${pounds(price)} a month)`,
         cashDelta: -Math.round(state.users * price * share),
@@ -196,7 +196,7 @@ export function createFeatures(config: GameConfig, finance: Finance) {
   const dailyAddonCost = (state: GameState) => -addonEntries(state).reduce((sum, e) => sum + e.cashDelta, 0);
 
   function monthlyAddonCost(state: GameState): number {
-    const perUser = activeAddons(state).reduce((sum, f) => sum + risen(f.addonPricePerUser, state.addonPriceRise), 0);
+    const perUser = activeAddons(state).reduce((sum, f) => sum + risen(f.addonPricePerUser, state.addonPriceRise * state.priceLevel), 0);
     return Math.round(state.users * perUser);
   }
 

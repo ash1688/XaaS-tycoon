@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import type { PayHistoryEntry, TribunalPick } from "@xaas/sim";
+import { quarterName, type PayHistoryEntry, type TribunalPick } from "@xaas/sim";
 import { formatCash } from "../api";
 import { useGame } from "../game";
 import { formatShare } from "../shares";
@@ -23,6 +23,10 @@ function ended(r: PayHistoryEntry): string {
   if (r.outcome === "counterAccepted") return "You accepted staff's counter";
   return `Tribunal picked ${PICK[r.tribunalPick!]}`;
 }
+/** "q3", or in a long game's later years "y2q1", for the test ids. */
+const quarterId = (r: PayHistoryEntry) => `${r.year > 1 ? `y${r.year}` : ""}q${r.quarter}`;
+/** "Quarter 3", or "Quarter 1 of year 2". */
+const quarterTitle = (r: PayHistoryEntry) => quarterName(r).replace(/^q/, "Q");
 const ordinal = (n: number) => ["first", "second", "final"][n - 1] ?? `${n}th`;
 /** The schemes a review raised: "Pension top-up 0 → 2, Death in service". */
 const raises = (r: PayHistoryEntry) =>
@@ -38,13 +42,13 @@ const raises = (r: PayHistoryEntry) =>
     </p>
     <p v-if="!history.reviews.length" class="muted" data-testid="pay-history-empty">
       No pay reviews yet.<template v-if="history.nextReview">
-        The first comes at the start of quarter {{ history.nextReview.quarter }}, on day {{ history.nextReview.startDay }}.</template
+        The first comes at the start of {{ quarterName(history.nextReview) }}, on day {{ history.nextReview.startDay }}.</template
       >
     </p>
     <ol v-else class="pay-history">
-      <li v-for="r in history.reviews" :key="r.quarter" :data-testid="`pay-history-q${r.quarter}`">
+      <li v-for="r in history.reviews" :key="r.startDay" :data-testid="`pay-history-${quarterId(r)}`">
         <div class="head">
-          <strong>Quarter {{ r.quarter }}</strong>
+          <strong>{{ quarterTitle(r) }}</strong>
           <span class="muted">{{ r.date }} (day {{ r.startDay }})</span>
           <span class="after" title="Pay as a multiple of the day rates after this review">×{{ r.payMultiplier.toFixed(3) }}</span>
         </div>
@@ -71,7 +75,7 @@ const raises = (r: PayHistoryEntry) =>
       Tribunal fees paid: {{ formatCash(history.tribunalFees) }}.
     </p>
     <p v-if="history.reviews.length && history.nextReview" class="muted" data-testid="pay-history-next">
-      The next review comes at the start of quarter {{ history.nextReview.quarter }}, on day {{ history.nextReview.startDay }}.
+      The next review comes at the start of {{ quarterName(history.nextReview) }}, on day {{ history.nextReview.startDay }}.
     </p>
   </section>
 </template>

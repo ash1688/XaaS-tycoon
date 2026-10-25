@@ -1,5 +1,6 @@
 import { gameDate } from "./calendar.ts";
 import type { GameConfig } from "./config.ts";
+import type { ReviewSlot } from "./payReview.ts";
 import { noSchemes, schemeViews, STAFF_SCHEMES, type StaffSchemeId, type StaffSchemeView } from "./staffSchemes.ts";
 import type { GameState, PayReviewOutcome, TribunalPick } from "./state.ts";
 
@@ -16,6 +17,8 @@ export interface SchemeRaise {
 /** One settled pay review in the pay history, as the student sees it. */
 export interface PayHistoryEntry {
   quarter: number;
+  /** The game year the quarter is in: above 1 only in a long game's later years. */
+  year: number;
   /** The quarter's first day, the first played at the rise, and its date: "Mon 1 Apr 2026". */
   startDay: number;
   date: string;
@@ -63,20 +66,12 @@ export interface PayHistoryView {
   schemesCostPerDay: number;
   /** Null until share save has issued shares. */
   staffShareScheme: StaffShareSchemeView | null;
-  /** The next review: its quarter and the day it starts. Null when none is still to come, or reviews are off. */
-  nextReview: { quarter: number; startDay: number } | null;
+  /** The next review: its quarter, year and the day it starts. Null when none is still to come, or reviews are off. */
+  nextReview: ReviewSlot | null;
 }
 
-/**
- * The pay history from the reviews settled so far. Read-only: it changes nothing. `reviewDays` are the days quarters 2,
- * 3 and 4 start, with `reviewQuarters` their quarters.
- */
-export function payHistory(
-  config: GameConfig,
-  state: GameState,
-  reviewDays: number[],
-  reviewQuarters: readonly number[],
-): PayHistoryView {
+/** The pay history from the reviews settled so far. Read-only: it changes nothing. `slots` are the game's reviews. */
+export function payHistory(config: GameConfig, state: GameState, slots: ReviewSlot[]): PayHistoryView {
   let multiplier = 1;
   let held = noSchemes();
   const reviews = state.pastPayReviews.map((r): PayHistoryEntry => {
@@ -88,6 +83,7 @@ export function payHistory(
     held = r.schemes;
     return {
       quarter: r.quarter,
+      year: r.year,
       startDay: r.startDay,
       date: gameDate(state, r.startDay).text,
       settledDay: r.settledDay,
@@ -109,9 +105,8 @@ export function payHistory(
   const shares = state.shareholders.reduce((sum, h) => sum + h.shares, 0);
   const theirs = state.shareholders.find((h) => h.id === "staffScheme")?.shares ?? 0;
   // A review opens once the day before its quarter is played, so one starting tomorrow is open now or settled.
-  const i = config.payReview.on === 1 ? reviewDays.findIndex((d) => d > state.day + 1) : -1;
-  const startDay = reviewDays[i];
-  const beforeEnd = startDay !== undefined && (state.finalDay === null || startDay <= state.finalDay);
+  const next = config.payReview.on === 1 ? slots.find((r) => r.startDay > state.day + 1) : undefined;
+  const beforeEnd = next !== undefined && (state.finalDay === null || next.startDay <= state.finalDay);
   return {
     reviews,
     payMultiplier: state.payMultiplier,
@@ -119,6 +114,6 @@ export function payHistory(
     schemes,
     schemesCostPerDay: schemes.reduce((sum, s) => sum + s.costPerDay, 0),
     staffShareScheme: theirs > 0 ? { shares: theirs, share: theirs / shares } : null,
-    nextReview: beforeEnd ? { quarter: reviewQuarters[i]!, startDay } : null,
+    nextReview: beforeEnd ? next : null,
   };
 }

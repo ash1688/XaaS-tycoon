@@ -10,6 +10,7 @@ import {
   MANAGED_SERVICES,
   MODEL_IDS,
   percent,
+  quarterName,
   RACK_SIZES,
   SERVER_SIZES,
   SERVER_TYPES,
@@ -331,6 +332,7 @@ function tiersLine(sim: Sim, state: GameState): string {
 function hardwareText(s: ReturnType<Sim["servers"]>[number]): string {
   if (s.performance === null) return "";
   const parts = [`at ${Math.round(100 * s.performance)}%`, `wear ${Math.round(100 * (s.wear ?? 0))}%`];
+  if (s.wearWarning) parts.push(s.wearDaysLeft === 0 ? "WORN OUT: replace it" : `NEARLY WORN OUT in ~${s.wearDaysLeft}d at this slider`);
   if (s.risk && (s.risk.crash > 0 || s.risk.overheat > 0)) {
     parts.push(`risk ${(100 * s.risk.overheat).toFixed(1)}% overheat/${(100 * s.risk.crash).toFixed(1)}% crash a day`);
   }
@@ -452,7 +454,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
       `servers: ${servers
         .map(
           (s) =>
-            `#${s.id} ${s.size} ${s.type} ${s.units} ${s.apiu ? "APIU (switched)" : UNIT[s.type]}${s.rack !== null ? ` in rack #${s.rack}` : ""}${s.status === "pending" ? ` (arrives in ${s.daysLeft}d)` : ""}${hardwareText(s)}`,
+            `#${s.id} ${s.size} ${s.type} ${s.units} ${s.apiu ? "APIU (switched)" : UNIT[s.type]}${s.unitBoost > 1 && s.type !== "loadBalancer" ? ` (+${percent(s.unitBoost - 1)} newer kit)` : ""}${s.rack !== null ? ` in rack #${s.rack}` : ""}${s.status === "pending" ? ` (arrives in ${s.daysLeft}d)` : ""}${hardwareText(s)}`,
         )
         .join(", ")}`,
     );
@@ -495,6 +497,8 @@ export function renderStatus(sim: Sim, state: GameState): string {
     `${state.ipo.result ? `market value ${money(state.ipo.result.marketValue)} at the first day's close` : `valuation ${money(valuation.valuation)}`} | share price ${perShare(table.sharePrice)} | ${table.rows.map((r) => `${r.id === "angel" ? r.name : r.name.toLowerCase()} ${stake(r.share)}`).join(", ")} of ${table.sharesInIssue.toLocaleString("en-GB")} shares`,
   );
   lines.push(`pay: ${payStatus(sim, state)}`);
+  const drift = driftStatus(sim, state);
+  if (drift) lines.push(`drift: ${drift}`);
   lines.push(`funding: ${fundingStatus(sim, state)}`);
   const investors = investorsStatus(sim, state);
   if (investors) lines.push(`investors: ${investors}`);
@@ -519,13 +523,49 @@ export function renderStatus(sim: Sim, state: GameState): string {
 /** A pay rise as a percent, to a tenth: 3.4%. */
 const rise = (n: number) => `${(Math.round(n * 1000) / 10).toFixed(1)}%`;
 
+/** "Q3", or in a long game's later years "Y2Q1". */
+const quarterTag = (r: { quarter: number; year: number }) => `${r.year > 1 ? `Y${r.year}` : ""}Q${r.quarter}`;
+
+/** A price rise as a percent, to a tenth: 4.2%. */
+const tenth = (n: number) => `${Math.round(n * 1000) / 10}%`;
+
+/**
+ * Drift in a line: prices and new kit against the start, the years' rises so far and the next year's end. Empty in a
+ * game that never reaches a year's end and hasn't.
+ */
+function driftStatus(sim: Sim, state: GameState): string {
+  const d = sim.drift(state);
+  if (!d.yearEnds.length && d.nextYearEnd === null) return "";
+  const rises = d.yearEnds.map((y) => `Y${y.year} +${tenth(y.inflation)}`).join(", ");
+  const prices = d.yearEnds.length ? `running prices +${tenth(d.priceLevel - 1)} on the start (${rises}); new kit +${tenth(d.newKitUnits - 1)} units` : "prices as at the start";
+  const next = d.nextYearEnd !== null ? `; next year's end after day ${d.nextYearEnd}: prices +${tenth(sim.config.drift.inflation.min)}–${tenth(sim.config.drift.inflation.max)}, new kit +${tenth(sim.config.drift.newKitUnits)} units` : "";
+  return `${prices}${next}`;
+}
+
+/** Drift in full: every year's end, and what the next will do. */
+function driftLines(sim: Sim, state: GameState): string[] {
+  const d = sim.drift(state);
+  if (!d.on) return ["drift: off in this game's config"];
+  const lines = [`drift: years of ${d.yearDays} days; your own price and pay never drift (pay rises only in pay reviews)`];
+  for (const y of d.yearEnds) {
+    lines.push(`  year ${y.year} (ended day ${y.day}): prices +${tenth(y.inflation)} → ×${y.priceLevel.toFixed(3)}; new kit ×${y.newKitUnits.toFixed(3)} units`);
+  }
+  if (!d.yearEnds.length) lines.push("  no year's end yet");
+  lines.push(
+    d.nextYearEnd !== null
+      ? `  next year's end after day ${d.nextYearEnd} (${d.nextYearEnd - state.day} days): running prices rise ${tenth(sim.config.drift.inflation.min)}–${tenth(sim.config.drift.inflation.max)} at random, and servers and VMs added after it give ${tenth(sim.config.drift.newKitUnits)} more units for the money (kit you have keeps its units)`
+      : "  this game ends before another year's end",
+  );
+  return lines;
+}
+
 /** Pay in a line: the open review, or the rises agreed so far and the next review's day. */
 function payStatus(sim: Sim, state: GameState): string {
   const review = sim.payReview(state);
   if (review) {
-    return `PAY REVIEW OPEN for quarter ${review.quarter} (from day ${review.startDay}): inflation ${rise(review.inflation)}, offer ${rise(review.minOffer)}–${rise(review.maxAsk)}, staff asking ${rise(review.staffFigure)}; ${review.offersLeft} offer${review.offersLeft === 1 ? " left (final)" : "s left"}. The day can't go on until it's settled ("pay" for the review)`;
+    return `PAY REVIEW OPEN for ${quarterName(review)} (from day ${review.startDay}): inflation ${rise(review.inflation)}, offer ${rise(review.minOffer)}–${rise(review.maxAsk)}, staff asking ${rise(review.staffFigure)}; ${review.offersLeft} offer${review.offersLeft === 1 ? " left (final)" : "s left"}. The day can't go on until it's settled ("pay" for the review)`;
   }
-  const rises = state.pastPayReviews.map((r) => `Q${r.quarter} ${rise(r.rise)}`).join(", ");
+  const rises = state.pastPayReviews.map((r) => `${quarterTag(r)} ${rise(r.rise)}`).join(", ");
   const next = sim.config.payReview.on === 1 ? sim.payReviewDays(state).find((d) => d > state.day + 1) : undefined;
   const multiple = `pay ×${state.payMultiplier.toFixed(3)} of the day rates`;
   const schemes = schemesText(sim.staffSchemes(state));
@@ -575,7 +615,7 @@ function payLines(sim: Sim, state: GameState): string[] {
   const review = sim.payReview(state);
   if (!review) return [`pay: ${payStatus(sim, state)}`];
   const lines = [
-    `pay review, quarter ${review.quarter} (the rise applies from day ${review.startDay}): inflation ${rise(review.inflation)}. ` +
+    `pay review, ${quarterName(review)} (the rise applies from day ${review.startDay}): inflation ${rise(review.inflation)}. ` +
       `You can offer from ${rise(review.minOffer)} (inflation less a point); staff ask ${rise(review.maxAsk)} at most. A rise below inflation is a pay cut in real terms.`,
     `  the team costs ${money(review.dailyStaffCost)}/day now, pay and staff schemes`,
     ...schemeLines(review.schemes, review.schemeValuation),
@@ -688,7 +728,7 @@ const endedText = (r: PayHistoryEntry) =>
 /** The pay history in full: each settled review, the multiplier so far, the schemes held and the next review. */
 function payHistoryLines(sim: Sim, state: GameState): string[] {
   const h = sim.payHistory(state);
-  const next = h.nextReview ? `quarter ${h.nextReview.quarter}, from day ${h.nextReview.startDay}` : null;
+  const next = h.nextReview ? `${quarterName(h.nextReview)}, from day ${h.nextReview.startDay}` : null;
   if (!h.reviews.length) return [`pay history: no pay reviews yet${next ? `. The first comes at the start of ${next}` : ""}`];
   const lines = [
     `pay history: pay ×${h.payMultiplier.toFixed(3)} of the day rates (+${rise(h.payMultiplier - 1)} compounded)${h.tribunalFees ? `; tribunal fees ${money(h.tribunalFees)}` : ""}`,
@@ -697,7 +737,7 @@ function payHistoryLines(sim: Sim, state: GameState): string[] {
     const raised = r.schemeRaises.map((x) => (x.toggle ? x.name : `${x.name} ${x.from}→${x.to}`)).join(", ");
     const real = `${r.realTerms < 0 ? "" : "+"}${rise(r.realTerms)} on inflation`;
     lines.push(
-      `  Q${r.quarter} ${r.date} (day ${r.startDay}): inflation ${rise(r.inflation)}; staff opened at ${rise(r.staffFigures[0]!)}; ` +
+      `  ${quarterTag(r)} ${r.date} (day ${r.startDay}): inflation ${rise(r.inflation)}; staff opened at ${rise(r.staffFigures[0]!)}; ` +
         `${endedText(r)}: ${rise(r.rise)} cash (${real})${raised ? ` + ${raised}` : ""}` +
         `${r.shareSaveShares ? `; ${r.shareSaveShares.toLocaleString("en-GB")} new shares to the staff share scheme` : ""} → pay ×${r.payMultiplier.toFixed(3)}`,
     );
@@ -1110,6 +1150,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
   if (loan?.remaining) lines.push(`  repayloan   (pay off the loan now: ${money(loan.payoff)}, saving ${money(loan.interestSaved)} interest)`);
   lines.push(`  calendar   (the holidays to come, their dates and what each does to your product)`);
   lines.push(`  payhistory   (every pay review settled: inflation, how it ended, the rise and schemes; changes nothing)`);
+  lines.push(`  drift   (each year's end in a long game: running prices' rise and new kit's units; changes nothing)`);
   const tick = sim.tickDays(state) === 7 ? "a week (this is a career)" : "a day";
   lines.push(
     `  next [days]   (play ticks of ${tick} until that many days have gone by, default 7; stops early, on the day, when something needs you)`,
@@ -1133,6 +1174,7 @@ export type Command =
   | { kind: "calendar" }
   | { kind: "pay" }
   | { kind: "payHistory" }
+  | { kind: "drift" }
   | { kind: "payOdds"; rise: number; schemes: Partial<SchemeLevels> }
   | { kind: "next"; days: number }
   /** The teacher ends the game, as from the staff panel. */
@@ -1294,6 +1336,8 @@ export function parseCommand(text: string): Command {
       return { kind: "pay" };
     case "payhistory":
       return { kind: "payHistory" };
+    case "drift":
+      return { kind: "drift" };
     case "offer":
       return args.length > 1
         ? one({ type: "offerPayRise", rise: risePercent(args[0]), schemes: schemeArgs(args.slice(1)) })
@@ -1420,6 +1464,7 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
   if (command.kind === "calendar") return { state, rows: [], lines: calendarLines(sim, state) };
   if (command.kind === "pay") return { state, rows: [], lines: payLines(sim, state) };
   if (command.kind === "payHistory") return { state, rows: [], lines: payHistoryLines(sim, state) };
+  if (command.kind === "drift") return { state, rows: [], lines: driftLines(sim, state) };
   if (command.kind === "payOdds") return { state, rows: [], lines: payOddsLines(sim.payOfferPreview(state, command.rise, command.schemes)) };
   if (command.kind === "end") {
     const ended = sim.endGame(state);
@@ -1611,7 +1656,7 @@ function fundingLines(sim: Sim, state: GameState): string[] {
  * Log entry kinds worth showing every day they appear. Feature, migration and API entries show only on days they stop
  * time.
  */
-const SHOWN_KINDS = new Set(["outage", "event", "rescue", "liquidation", "finished", "support", "price", "launch", "staff", "funding", "danger", "calendar", "rival"]);
+const SHOWN_KINDS = new Set(["outage", "event", "rescue", "liquidation", "finished", "support", "price", "launch", "staff", "funding", "danger", "calendar", "rival", "drift"]);
 const STOPPING_KINDS = new Set(["feature", "migration", "api"]);
 
 /**

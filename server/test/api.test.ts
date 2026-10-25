@@ -4482,3 +4482,46 @@ describe("pay reviews", () => {
     expect(h.staffShareScheme).toEqual({ shares: staffRow.shares, share: staffRow.share });
   });
 });
+
+describe("drift", () => {
+  async function setup(body: object) {
+    await useOverrides({ "allowedGameLengths.until-ipo": 1, "payReview.on": 0 });
+    const code = await newCode();
+    const created = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "iaas", ...body });
+    expect(created.statusCode).toBe(201);
+    const company = created.json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const act = async (payload: object) => (await app.inject({ method: "POST", url: `${url}/actions`, payload })).json<CompanyView>();
+    const next = async () => (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    /** Moves the game to the eve of `day`, as if it had played up to the day before. */
+    const eveOf = (day: number) =>
+      testDb.db.execute(sql`update companies set state = jsonb_set(state, '{day}', ${String(day - 1)}::jsonb) where id = ${company.id}`);
+    return { company, act, next, eveOf };
+  }
+
+  it("shows a long game's year's end: prices up, a pause, and more units on kit added after it", async () => {
+    const { company, act, next, eveOf } = await setup({ gameLength: "until-ipo" });
+    expect(company.drift).toEqual({ on: true, yearDays: 365, priceLevel: 1, newKitUnits: 1, yearEnds: [], nextYearEnd: 365 });
+    const before = await act({ type: "rentServer", server: "app", size: "large" });
+    const units = before.servers.at(-1)!.units;
+    await eveOf(365);
+    const played = await next();
+    const [year] = played.company.drift.yearEnds;
+    expect(year).toMatchObject({ year: 1, day: 365, newKitUnits: 1.1 });
+    expect(year!.inflation).toBeGreaterThanOrEqual(0.02);
+    expect(year!.inflation).toBeLessThanOrEqual(0.06);
+    expect(played.company.drift.nextYearEnd).toBe(730);
+    expect(played.pauses).toContainEqual(expect.objectContaining({ kind: "alert", id: "year-end" }));
+    expect(played.log.flatMap((d) => d.entries).find((e) => e.kind === "drift")!.text).toMatch(/^Year 1 is over/);
+    // The VM rented before keeps its units, at the new rent; one rented now gives 10% more.
+    expect(played.company.servers.at(-1)).toMatchObject({ units, unitBoost: 1 });
+    expect(played.company.servers.at(-1)!.monthlyCost).toBeCloseTo(before.servers.at(-1)!.monthlyCost * year!.priceLevel, 1);
+    const after = await act({ type: "rentServer", server: "app", size: "large" });
+    expect(after.servers.at(-1)).toMatchObject({ units: units * 1.1, unitBoost: 1.1 });
+  });
+
+  it("has no year's end to come in a 180-day game", async () => {
+    const { company } = await setup({});
+    expect(company.drift).toMatchObject({ yearEnds: [], nextYearEnd: null });
+  });
+});

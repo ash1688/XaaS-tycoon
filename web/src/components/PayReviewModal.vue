@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { TRIBUNAL_PICKS, type PayOfferTerms, type RollResult, type SchemeLevels, type TribunalPick } from "@xaas/sim";
+import { quarterName, TRIBUNAL_PICKS, type PayOfferTerms, type RollResult, type SchemeLevels, type TribunalPick } from "@xaas/sim";
 import type { PayOfferView } from "@xaas/server/api-types";
 import { api, formatCash } from "../api";
 import { useGame } from "../game";
@@ -154,7 +154,7 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
       <p v-if="game.error" class="error" role="alert">{{ game.error }}</p>
       <template v-if="review">
         <p>
-          <strong>Quarter {{ review.quarter }} starts on day {{ review.startDay }}, and your staff want to talk about pay.</strong>
+          <strong>{{ quarterName(review).replace(/^q/, "Q") }} starts on day {{ review.startDay }}, and your staff want to talk about pay.</strong>
           The day can't go on until you've agreed a rise. It's paid from day {{ review.startDay }} to every team, new hires
           and agency staff included.
         </p>

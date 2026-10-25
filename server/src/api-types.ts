@@ -42,6 +42,7 @@ import type {
   PauseReason,
   PayOfferPreview,
   PayHistoryView,
+  DriftView,
   PayReviewRecord,
   PayReviewView,
   StaffSchemeView,
@@ -461,6 +462,11 @@ export interface CompanyView {
    * schemes held with their cost a day, the staff share scheme's holding, and the next review. Empty before the first.
    */
   payHistory: PayHistoryView;
+  /**
+   * Drift in a long game: running prices and new kit's units against the start, each year's end with the price rise
+   * it rolled, and the next year's end (null when the game ends first).
+   */
+  drift: DriftView;
   /**
    * The IPO: the readiness checklist condition by condition, whether the company can apply to float and why not, a
    * cold market's wait, once approved the offer with what each float would do, and once floated the first day of

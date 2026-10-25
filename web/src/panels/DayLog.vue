@@ -22,6 +22,7 @@ const EVENT_LABELS = {
   loan: "Loan",
   launch: "Launch",
   calendar: "Calendar",
+  drift: "Year's end",
 } as const;
 const events = computed(() => props.log.entries.filter((e) => !e.category && e.kind !== "income"));
 const income = computed(() => props.log.entries.filter((e) => e.kind === "income"));

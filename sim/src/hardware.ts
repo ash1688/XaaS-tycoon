@@ -34,20 +34,43 @@ export function unitFactor(config: GameConfig, model: ModelId, s: Server, day: n
   return performanceOf(s) * (overheatedOn(s, day) ? config.hardware.overheat.capacity : 1);
 }
 
+/**
+ * A server's lifespan in the game: the wear it can build up before it's worn out. A game shorter than a year (180
+ * days) counts as one year, so it has the short lifespan; a year or more has the full one (#95).
+ */
+export const lifespanOf = (config: GameConfig, state: Pick<GameState, "gameLength">) =>
+  state.gameLength === "180-days" ? config.hardware.shortGameLifespan : config.hardware.lifespan;
+
 /** Wear as a share of the server's lifespan: 1 when it's used it up. */
-export const wearShare = (config: GameConfig, s: Pick<Server, "wear">) =>
-  config.hardware.lifespan > 0 ? (s.wear ?? 0) / config.hardware.lifespan : 0;
+export function wearShare(config: GameConfig, state: Pick<GameState, "gameLength">, s: Pick<Server, "wear">): number {
+  const life = lifespanOf(config, state);
+  return life > 0 ? (s.wear ?? 0) / life : 0;
+}
+
+/**
+ * Days until a server is worn out at its slider now, counting today's wear as done: 0 once it is, null at 0% (it
+ * doesn't wear).
+ */
+export function wearDaysLeft(config: GameConfig, state: Pick<GameState, "gameLength">, s: Server): number | null {
+  const p = performanceOf(s);
+  if (p <= 0) return null;
+  return Math.max(0, Math.ceil((lifespanOf(config, state) - (s.wear ?? 0)) / (p * p)));
+}
 
 /**
  * A server's daily chances of overheating and crashing at its slider: none at 100% or below; above, the configured
  * chance at the top × x², where x runs from 0 at 100% to 1 at the top, × any benefit cutting the risk. Past its
  * lifespan, it has an extra chance of a crash whatever the slider.
  */
-export function hardwareRisk(config: GameConfig, state: Pick<GameState, "benefits" | "model">, s: Server): HardwareRisk {
+export function hardwareRisk(
+  config: GameConfig,
+  state: Pick<GameState, "benefits" | "model" | "gameLength">,
+  s: Server,
+): HardwareRisk {
   const { maxPerformance, overheat, crash, wornCrashChance } = config.hardware;
   const over = maxPerformance > 1 ? Math.max(0, (performanceOf(s) - 1) / (maxPerformance - 1)) : 0;
   const risk = sliderRisk(config, state, state.model) * over * over;
-  const worn = wornCrashChance * Math.max(0, wearShare(config, s) - 1);
+  const worn = wornCrashChance * Math.max(0, wearShare(config, state, s) - 1);
   return { overheat: Math.min(1, overheat.chance * risk), crash: Math.min(1, crash.chance * risk + worn) };
 }
 
@@ -57,7 +80,8 @@ const tidy = (n: number) => Math.round(n * 100) / 100;
 /**
  * A day on the hardware, on a model with the slider: each server that served today builds up its slider² of wear, then
  * rolls for a crash (no units for the configured days, from tomorrow) and, if it didn't crash, for overheating. One
- * already down from a crash doesn't roll. Draws from the hardware's own RNG only when there's a chance.
+ * already down from a crash doesn't roll. Draws from the hardware's own RNG only when there's a chance. A server whose
+ * wear reaches the warning share of its lifespan today is warned about, once.
  */
 export function hardwareDay(
   config: GameConfig,
@@ -78,6 +102,8 @@ export function hardwareDay(
     if (s.readyDay >= day) return s;
     const p = performanceOf(s);
     const worn: Server = { ...s, wear: tidy((s.wear ?? 0) + p * p) };
+    const warning = wearWarning(config, state, s, worn, name(s));
+    if (warning) entries.push(warning);
     if (crashedOn(s, day + 1)) return worn;
     const risk = hardwareRisk(config, state, worn);
     if (roll(risk.crash)) {
@@ -102,6 +128,30 @@ export function hardwareDay(
     return worn;
   });
   return { servers, hardwareRng: rng, entries };
+}
+
+/**
+ * The warning on the day a server's wear reaches the warning share of its lifespan, or its lifespan itself: how long
+ * it has left at its slider, and what to do. Null on any other day.
+ */
+function wearWarning(config: GameConfig, state: GameState, before: Server, after: Server, name: string): LogEntry | null {
+  const share = (s: Server) => wearShare(config, state, s);
+  const { warnAt } = config.hardware;
+  if (share(before) < 1 && share(after) >= 1) {
+    return {
+      text: `Worn out: server #${after.id} (${name}) has reached the end of its life. It may crash on any day now, more often the longer you keep it: sell it and buy a new one.`,
+      cashDelta: 0,
+      kind: "outage",
+    };
+  }
+  if (warnAt <= 0 || warnAt >= 1 || share(before) >= warnAt || share(after) < warnAt) return null;
+  const days = wearDaysLeft(config, state, after)!;
+  const p = performanceOf(after);
+  return {
+    text: `Wear warning: server #${after.id} (${name}) is ${Math.round(100 * share(after))}% worn and will be worn out in about ${days} day${days === 1 ? "" : "s"} at ${Math.round(100 * p)}%. After that it may crash: replace it, or turn its slider down to make it last.`,
+    cashDelta: 0,
+    kind: "outage",
+  };
 }
 
 /** Sets a bought server's slider, from the next day played. Kit still on order can be set ready for when it arrives. */
