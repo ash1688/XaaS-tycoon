@@ -33,13 +33,13 @@ test("tiers lock later features and model benefits, and the on-prem hardware sli
   await student.goto(`/play/${code}/${id}`);
   const nav = student.getByRole("navigation", { name: "Game" });
 
-  // Product: tier 1 is open, tier 2 waits on 5,000 users, and its feature can't be built yet.
+  // Product: tier 1 is open, tier 2 waits on 7,000 users (35% of the shop's market), and its feature can't be built yet.
   await nav.getByRole("link", { name: "Product", exact: true }).click();
   const tiers = student.getByTestId("tiers");
   await expect(tiers.locator('[data-tier="1"]')).toHaveAttribute("data-open", "true");
   await expect(tiers.locator('[data-tier="2"]')).toHaveAttribute("data-open", "false");
   await expect(tiers.getByTestId("tier-conditions-2")).toContainText("Users:");
-  await expect(tiers.getByTestId("tier-conditions-2")).toContainText("of 5,000");
+  await expect(tiers.getByTestId("tier-conditions-2")).toContainText("of 7,000");
   await expect(tiers.locator('[data-tier="2"] [data-item="hardwareEfficiency1"]')).toContainText("Model benefit");
   await expect(student.getByTestId("feature-locked-reviews")).toHaveText("Tier 2");
   await expect(student.getByRole("button", { name: "Build Wishlists" })).toBeVisible();

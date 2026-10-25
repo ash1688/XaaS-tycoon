@@ -95,7 +95,7 @@ describe("tiers", () => {
       [3, false, null],
       [4, false, null],
     ]);
-    expect(tier(state, 2).conditions).toEqual([{ label: "Users", value: 0, target: 5_000, unit: "users", met: false }]);
+    expect(tier(state, 2).conditions).toEqual([{ label: "Users", value: 0, target: 7_000, unit: "users", met: false }]);
     expect(tier(state, 3).conditions.map((c) => c.label)).toEqual(["Income a day, last 30 days", "Uptime, last 30 days"]);
     expect(tier(state, 4)).toMatchObject({ any: true });
     expect(tier(state, 4).conditions.map((c) => c.label)).toEqual(["An angel investor's money taken", "Every IPO condition met"]);
@@ -126,16 +126,16 @@ describe("tiers", () => {
       ["wishlists", 1, true],
     ]);
     expect(refusal(() => act(state, { type: "buildFeature", feature: "reviews" }))).toBe("locked");
-    expect(() => act(state, { type: "buildFeature", feature: "reviews" })).toThrow(/tier 2.*5,000 users/);
+    expect(() => act(state, { type: "buildFeature", feature: "reviews" })).toThrow(/tier 2.*7,000 users/);
     expect(act(state, { type: "buildFeature", feature: "wishlists" }).features.wishlists?.status).toBe("building");
     const saas = begin("saas");
     expect(refusal(() => act(saas, { type: "buyAddon", feature: "checkout" }))).toBe("locked");
     expect(act(saas, { type: "buyAddon", feature: "wishlists" }).features.wishlists?.status).toBe("addon");
   });
 
-  it("open tier 2 at 5,000 users, for good, with a log line and a pause", () => {
-    const state = { ...sim.advance(begin("saas"), 3).state, users: 5_000, paidUsers: 1_000 };
-    expect(tier(state, 2).conditions[0]).toMatchObject({ value: 5_000, met: true });
+  it("open tier 2 at 35% of the shop's 20,000-user market, for good, with a log line and a pause", () => {
+    const state = { ...sim.advance(begin("saas"), 3).state, users: 7_000, paidUsers: 1_000 };
+    expect(tier(state, 2).conditions[0]).toMatchObject({ value: 7_000, met: true });
     const turn = sim.tick(state);
     expect(tier(turn.state, 2)).toMatchObject({ available: true, day: 5 });
     expect(turn.state.tiers).toEqual([{ tier: 2, day: 5 }]);
@@ -148,6 +148,14 @@ describe("tiers", () => {
     expect(tier(fewer, 2).available).toBe(true);
   });
 
+  it("set tier 2's users by each product's market size, to the nearest 100", () => {
+    const target = (p: ProductTypeId, s: Sim = sim) => s.tiers(begin("iaas", p, s)).find((t) => t.tier === 2)!.conditions[0]!.target;
+    // 35% of a 4,000-user market (payments) is 1,400; of 40,000 (social) 14,000; of 25,000 (games) 8,750, so 8,800.
+    expect([target("payments"), target("social"), target("games")]).toEqual([1_400, 14_000, 8_800]);
+    const half = createSim({ ...quiet, tiers: { ...quiet.tiers, tier2: { marketShare: 0.5 } } });
+    expect(target("payments", half)).toBe(2_000);
+  });
+
   it("open tier 3 on income and uptime over the last 30 days, and only once tier 2 is open", () => {
     const base = sim.advance(begin("saas"), 3).state;
     // £2,500 a day for 30 days at 100% uptime, but too few users for tier 2: tier 3 waits.
@@ -155,13 +163,13 @@ describe("tiers", () => {
     expect(tier(rich, 3).conditions.every((c) => c.met)).toBe(true);
     expect(tier(sim.advance(rich).state, 3).available).toBe(false);
     // With the users too, both open on the same day.
-    const both = sim.advance({ ...rich, users: 6_000, paidUsers: 1_000 });
+    const both = sim.advance({ ...rich, users: 8_000, paidUsers: 1_000 });
     expect(both.state.tiers.map((t) => t.tier)).toEqual([2, 3]);
     expect(texts(both.log)).toContain("Tier 3 available: One-click checkout, Premium support plan can now be unlocked with research points.");
     // Too little income, or more than 1% of the hours down, and tier 3 stays shut.
-    const poor = withHistory({ ...base, users: 6_000 }, 30, 1_500);
+    const poor = withHistory({ ...base, users: 8_000 }, 30, 1_500);
     expect(sim.advance(poor).state.tiers.map((t) => t.tier)).toEqual([2]);
-    const flaky = withHistory({ ...base, users: 6_000 }, 30, 2_500, 1);
+    const flaky = withHistory({ ...base, users: 8_000 }, 30, 2_500, 1);
     expect(tier(flaky, 3).conditions[1]).toMatchObject({ value: 95.83, met: false });
     expect(sim.advance(flaky).state.tiers.map((t) => t.tier)).toEqual([2]);
   });
@@ -172,7 +180,7 @@ describe("tiers", () => {
     for (let i = 0; i < 200 && !sim.investors(state).offer; i++) state = sim.tick(playDay(sim, state, sensible)).state;
     state = act(state, { type: "acceptInvestor" });
     expect(tier(state, 4).conditions[0]).toMatchObject({ met: true });
-    const ready = withHistory({ ...state, users: 6_000 }, 30, 3_000);
+    const ready = withHistory({ ...state, users: 15_000 }, 30, 3_000);
     expect(sim.advance(ready).state.tiers.map((t) => t.tier)).toEqual([2, 3, 4]);
   });
 
@@ -544,7 +552,7 @@ describe("config", () => {
   it("puts every tier condition, RP price, benefit number and hardware number on the config page", () => {
     const paths = new Set(configFields().map((f) => f.path));
     for (const p of [
-      "tiers.tier2.users",
+      "tiers.tier2.marketShare",
       "tiers.tier3.dailyIncome",
       "tiers.tier3.uptime",
       "tiers.tier3.days",

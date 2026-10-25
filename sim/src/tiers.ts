@@ -1,4 +1,4 @@
-import { TIER_NUMBERS, type GameConfig, type ModelId, type TierNumber } from "./config.ts";
+import { TIER_NUMBERS, type GameConfig, type ModelId, type ProductTypeId, type TierNumber } from "./config.ts";
 import { count, pounds } from "./finance.ts";
 import { researchUnlocked } from "./research.ts";
 import { SimError, type GameState, type LogEntry, type TierReached } from "./state.ts";
@@ -105,7 +105,7 @@ export function lockedMessage(config: GameConfig, state: UnlockState & Pick<Game
   const item = findItem(config, state, id);
   if (!item) return "That isn't in any tier.";
   if (!tierAvailable(state, item.tier)) {
-    return `${item.name} is in tier ${item.tier}, which isn't available yet. ${conditionText(config, item.tier)}`;
+    return `${item.name} is in tier ${item.tier}, which isn't available yet. ${conditionText(config, state, item.tier)}`;
   }
   const where = researchUnlocked(state)
     ? "on the Research page"
@@ -125,7 +125,7 @@ export function unlockItem(config: GameConfig, state: GameState, id: string): Ga
     throw new SimError("already_unlocked", `${item.name} needs no unlocking: ${why}.`);
   }
   if (!tierAvailable(state, item.tier)) {
-    throw new SimError("tier_unavailable", `${item.name} is in tier ${item.tier}, which isn't available yet. ${conditionText(config, item.tier)}`);
+    throw new SimError("tier_unavailable", `${item.name} is in tier ${item.tier}, which isn't available yet. ${conditionText(config, state, item.tier)}`);
   }
   if (item.rpPrice > state.researchPoints) {
     throw new SimError(
@@ -148,14 +148,18 @@ const allItems = (config: GameConfig, state: Pick<GameState, "productType">) => 
 export const everythingUnlocked = (config: GameConfig, state: UnlockState) =>
   allItems(config, state).every((id) => isUnlocked(config, state, id));
 
+/** The users tier 2 needs on a product: its share of the product's market, to the nearest 100. */
+export const tier2Users = (config: GameConfig, productType: ProductTypeId) =>
+  Math.round((config.tiers.tier2.marketShare * config.productTypes[productType].growth.marketSize) / 100) * 100;
+
 /** A tier's condition in words, for a refusal or a log line. */
-function conditionText(config: GameConfig, tier: TierNumber): string {
-  const { tier2, tier3 } = config.tiers;
+function conditionText(config: GameConfig, state: Pick<GameState, "productType">, tier: TierNumber): string {
+  const { tier3 } = config.tiers;
   switch (tier) {
     case 1:
       return "It's open from the start.";
     case 2:
-      return `Tier 2 opens at ${count.format(tier2.users)} users.`;
+      return `Tier 2 opens at ${count.format(tier2Users(config, state.productType))} users.`;
     case 3:
       return `Tier 3 opens once your last ${tier3.days} days average ${pounds(tier3.dailyIncome)} a day in income and ${tier3.uptime}% uptime.`;
     case 4:
@@ -168,7 +172,7 @@ const lastDays = (state: Pick<GameState, "spendByDay">, days: number) => state.s
 
 /** Each part of a tier's condition today. */
 function conditions(config: GameConfig, state: GameState, tier: TierNumber, ctx: TierContext): TierConditionView[] {
-  const { tier2, tier3 } = config.tiers;
+  const { tier3 } = config.tiers;
   const part = (label: string, value: number, target: number, unit: TierConditionView["unit"]) => ({
     label,
     value,
@@ -180,7 +184,7 @@ function conditions(config: GameConfig, state: GameState, tier: TierNumber, ctx:
     case 1:
       return [];
     case 2:
-      return [part("Users", state.users, tier2.users, "users")];
+      return [part("Users", state.users, tier2Users(config, state.productType), "users")];
     case 3: {
       // Averaged over the whole window, so a company that hasn't played that many days yet can't meet it.
       const window = lastDays(state, tier3.days);

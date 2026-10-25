@@ -93,7 +93,7 @@ describe("researchers once the first angel approaches", () => {
     expect(sim.research(state)).toEqual({ unlocked: true, unlockedDay: state.day, points: 0, pointsPerDay: 0 });
     const row = researchers(sim, state)!;
     expect(row).toMatchObject({ name: "Researchers", headcount: 0, agencyCount: 0, output: 0, agencyAllowed: false, agency: [] });
-    expect(row.grades.find((g) => g.grade === "mid")!.dayRate).toBe(130);
+    expect(row.grades.find((g) => g.grade === "mid")!.dayRate).toBe(80);
     // Every other pool but marketers (#180) still takes agency staff.
     expect(sim.staff(state).filter((p) => p.pool !== "researchers" && p.pool !== "marketers").every((p) => p.agencyAllowed)).toBe(true);
     const today = log.filter((d) => d.day === state.day).flatMap((d) => d.entries);
@@ -111,14 +111,14 @@ describe("researchers once the first angel approaches", () => {
     const before = sim.dailyStaffCost(hired);
     const arrived = sim.advance(hired, lead).state;
     expect(arrived.staff.researchers.senior).toBe(1);
-    expect(sim.dailyStaffCost(arrived) - before).toBe(Math.round(130 * quiet.staffGrades.senior.payMultiplier));
+    expect(sim.dailyStaffCost(arrived) - before).toBe(Math.round(80 * quiet.staffGrades.senior.payMultiplier));
   });
 
   it("are let go with the usual severance", () => {
     const state = withResearchers({ mid: 2 });
     const after = sim.applyAction(state, { type: "letGo", pool: "researchers", grade: "mid" });
     expect(after.staff.researchers.mid).toBe(1);
-    expect(state.cash - after.cash).toBe(130 * quiet.severance.days);
+    expect(state.cash - after.cash).toBe(80 * quiet.severance.days);
   });
 
   it("stay open when the angel is declined, and after", () => {
@@ -143,32 +143,32 @@ describe("researchers once the first angel approaches", () => {
 });
 
 describe("research points", () => {
-  it("are earned each day from researcher output, 2 a mid", () => {
+  it("are earned each day from researcher output, 4 a mid", () => {
     const state = withResearchers({ mid: 3 });
-    expect(sim.research(state).pointsPerDay).toBe(6);
+    expect(sim.research(state).pointsPerDay).toBe(12);
     const after = sim.advance(state, 10).state;
-    expect(after.researchPoints).toBe(60);
-    expect(sim.research(after).points).toBe(60);
+    expect(after.researchPoints).toBe(120);
+    expect(sim.research(after).points).toBe(120);
   });
 
   it("scale with grade output", () => {
     const { staffGrades } = quiet;
     for (const grade of ["junior", "mid", "senior"] as const) {
       const state = withResearchers({ [grade]: 1 });
-      const perDay = Math.round(2 * staffGrades[grade].output * 100) / 100;
+      const perDay = Math.round(4 * staffGrades[grade].output * 100) / 100;
       expect(sim.research(state).pointsPerDay, grade).toBe(perDay);
       expect(sim.advance(state).state.researchPoints, grade).toBe(perDay);
     }
     const mixed = withResearchers({ junior: 2, mid: 1, senior: 1 });
     const output = 2 * staffGrades.junior.output + staffGrades.mid.output + staffGrades.senior.output;
-    expect(sim.research(mixed).pointsPerDay).toBe(Math.round(2 * output * 100) / 100);
+    expect(sim.research(mixed).pointsPerDay).toBe(Math.round(4 * output * 100) / 100);
   });
 
   it("count researchers only once they start work", () => {
     const hired = sim.applyAction({ ...approach.state, researchPoints: 0 }, hire("mid"));
     const lead = quiet.staffGrades.mid.leadDays;
     expect(sim.advance(hired, lead - 1).state.researchPoints).toBe(0);
-    expect(sim.advance(hired, lead).state.researchPoints).toBe(2);
+    expect(sim.advance(hired, lead).state.researchPoints).toBe(4);
   });
 
   it("bank with no cap", () => {

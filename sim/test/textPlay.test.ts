@@ -246,7 +246,7 @@ describe("advanceUntil", () => {
     // The launch is over on day 3, two days into the first week: time stops there.
     const launch = advanceUntil(careers, career, 7, who);
     expect(launch.state.day).toBe(3);
-    expect(launch.lines.at(-1)).toBe("stopped on day 3: Tier 2 available; Your launch is over");
+    expect(launch.lines.at(-1)).toBe("stopped on day 3: Your launch is over");
     // A quiet stretch then plays whole weeks: "next 10" is two of them, one Continue each.
     const weeks = advanceUntil(careers, launch.state, 10, who);
     expect(weeks.state.day).toBe(17);
@@ -652,9 +652,10 @@ describe("the IPO checklist over time", () => {
   it("stops time when the company is no longer ready", () => {
     const s = createSim({
       ...defaultConfig,
-      // No moderation, as on main before moderators, and no angel, whose offer lapsing stops time: this is about
-      // something else.
+      // No moderation, as on main before moderators, no angel, whose offer lapsing stops time, and no tier 2 opening,
+      // which stops it too: this is about something else.
       productTypes: { ...defaultConfig.productTypes, social: { ...defaultConfig.productTypes.social, moderation: undefined } },
+      tiers: { ...defaultConfig.tiers, tier2: { marketShare: 1 } },
       investors: {
         ...defaultConfig.investors,
         angel: { ...defaultConfig.investors.angel, target: { ...defaultConfig.investors.angel.target, dailyRevenue: 1_000_000 } },
@@ -944,7 +945,7 @@ describe("tiers, model benefits and the hardware slider (#123)", () => {
 
   it("shows the tiers, locked features and the next tier's condition, and offers unlocks then benefits once their tier is open", () => {
     const state = start();
-    expect(renderStatus(sim, state)).toMatch(/^tiers: open 1 \| tier 2 needs users 0\/5,000 \(unlocks photos, managedMonitoring\)$/m);
+    expect(renderStatus(sim, state)).toMatch(/^tiers: open 1 \| tier 2 needs users 0\/14,000 \(unlocks photos, managedMonitoring\)$/m);
     expect(renderStatus(sim, state)).toMatch(/messaging locked \(tier 3\)/);
     expect(renderCommands(sim, state)).not.toMatch(/^ {2}benefit /m);
     expect(renderCommands(sim, state)).toMatch(/^ {2}build <notifications> /m);

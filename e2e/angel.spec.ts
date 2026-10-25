@@ -172,6 +172,6 @@ test("the first angel's approach opens researchers and the Research page, which 
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).not.toHaveText(new RegExp(`^${day}\\b`));
   await goTo(student, "Research");
-  await expect(student.getByTestId("research-per-day")).toHaveText("2");
-  await expect(student.getByTestId("research-points")).toHaveText("2 RP");
+  await expect(student.getByTestId("research-per-day")).toHaveText("4");
+  await expect(student.getByTestId("research-points")).toHaveText("4 RP");
 });

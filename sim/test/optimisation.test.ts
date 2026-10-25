@@ -118,7 +118,7 @@ describe("the developer slider", () => {
 
 describe("the optimisation saving", () => {
   it("is cap × (1 − e^(−days ÷ k)), set in config", () => {
-    expect(defaultConfig.optimisation).toEqual({ k: 60, cap: { onprem: 0.5, iaas: 0.35, paas: 0.35, saas: 0.35 } });
+    expect(defaultConfig.optimisation).toEqual({ k: 30, cap: { onprem: 0.5, iaas: 0.35, paas: 0.35, saas: 0.35 } });
     for (const model of MODEL_IDS) {
       for (const days of [0, 10, k, 200]) {
         expect(sim.optimisation(optimised(begin(model), days)).saving, `${model} ${days}`).toBeCloseTo(
