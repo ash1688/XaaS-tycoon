@@ -528,10 +528,10 @@ export type PricePreviewView = PricePreview;
 export type CounterOddsView = CounterOdds;
 
 /**
- * GET .../pay-offer?rise=&pension=&health=&deathInService=&discount=: what offering staff that cash rise (0.04 = 4%) and
- * those scheme levels (left out, the levels held) in the open pay review would do, before it's made: its worth to
- * staff, what it adds to the team's cost a day and a year at today's team with each scheme's cost, and the odds on
- * staff's counter (or, on the final offer, the tribunal's odds and fee if it falls short). Changes nothing. Refused as
+ * GET .../pay-offer?rise=&pension=&health=&deathInService=&discount=&shareSave=: what offering staff that cash rise
+ * (0.04 = 4%) and those scheme levels (left out, the levels held) in the open pay review would do, before it's made:
+ * its worth to staff, what it adds to the team's cost a day and a year at today's team with each scheme's cost, the
+ * dilution share save's new shares would cause (null unless it's raised), and the odds on staff's counter (or, on the final offer, the tribunal's odds and fee if it falls short). Changes nothing. Refused as
  * the offer would be.
  */
 export type PayOfferView = PayOfferPreview;

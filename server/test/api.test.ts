@@ -4383,12 +4383,14 @@ describe("pay reviews", () => {
       ["health", 0],
       ["deathInService", 0],
       ["discount", 0],
+      ["shareSave", 0],
     ]);
     expect(review.schemeValuation).toBe(0.7);
     const preview = (
       await payApp.inject({ method: "GET", url: `${url}/pay-offer?rise=${review.minOffer}&pension=2&deathInService=1` })
     ).json<PayOfferView>();
-    expect(preview.schemes).toEqual({ pension: 2, health: 0, deathInService: 1, discount: 0 });
+    expect(preview.schemes).toEqual({ pension: 2, health: 0, deathInService: 1, discount: 0, shareSave: 0 });
+    expect(preview.dilution).toBeNull();
     expect(preview.schemeValue).toBeCloseTo((2 * 0.0075 + 0.0025) * 0.7, 9);
     expect(preview.value).toBeCloseTo(review.minOffer + preview.schemeValue, 3);
     expect(preview.schemeCosts.find((s) => s.id === "pension")!.costPerDay).toBeGreaterThan(0);
@@ -4415,5 +4417,31 @@ describe("pay reviews", () => {
     expect(lower.statusCode).toBe(400);
     expect(lower.json()).toMatchObject({ error: "scheme_decrease" });
     expect(later.company.payReview!.schemes.find((s) => s.id === "deathInService")!.level).toBe(1);
+  });
+
+  it("takes share save with an offer: previews the dilution, issues the shares to the staff share scheme on the cap table", async () => {
+    const { url, act, result } = await reviewing();
+    const review = result.company.payReview!;
+    const before = result.company.capTable;
+    expect(before.rows.map((r) => r.id)).toEqual(["student"]);
+    const preview = (await payApp.inject({ method: "GET", url: `${url}/pay-offer?rise=${review.minOffer}&shareSave=2` })).json<PayOfferView>();
+    expect(preview.schemes.shareSave).toBe(2);
+    expect(preview.schemeValue).toBeCloseTo(2 * 0.01 * 0.7, 9);
+    expect(preview.dilution).toEqual({
+      newShares: Math.round(before.sharesInIssue * 0.02),
+      sharesInIssue: before.sharesInIssue,
+      sharesAfter: before.sharesInIssue + Math.round(before.sharesInIssue * 0.02),
+      yourShareBefore: 1,
+      yourShareAfter: before.sharesInIssue / (before.sharesInIssue + Math.round(before.sharesInIssue * 0.02)),
+      schemeShareAfter: Math.round(before.sharesInIssue * 0.02) / (before.sharesInIssue + Math.round(before.sharesInIssue * 0.02)),
+    });
+    expect((await payApp.inject({ method: "GET", url: `${url}/pay-offer?rise=${review.minOffer}&shareSave=4` })).json()).toMatchObject({ error: "bad_offer" });
+    const cash = Math.floor((review.maxAsk - preview.schemeValue) * 1000) / 1000;
+    const settled = (await act({ type: "offerPayRise", rise: cash, schemes: { shareSave: 2 } })).json<CompanyView>();
+    expect(settled.lastPayReview).toMatchObject({ outcome: "offerAccepted", schemes: { shareSave: 2 }, shareSaveShares: preview.dilution!.newShares });
+    expect(settled.staffSchemes.find((s) => s.id === "shareSave")).toMatchObject({ level: 2, sharesPerLevel: 0.01 });
+    const staffRow = settled.capTable.rows.find((r) => r.id === "staffScheme")!;
+    expect(staffRow).toMatchObject({ name: "Staff share scheme", shares: preview.dilution!.newShares });
+    expect(settled.capTable.rows.find((r) => r.id === "student")!.share).toBeCloseTo(preview.dilution!.yourShareAfter, 9);
   });
 });

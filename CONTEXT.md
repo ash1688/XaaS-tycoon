@@ -93,8 +93,16 @@ Staff coming to the student about pay before quarters 2, 3 and 4 of a game (a ga
 _Avoid_: Pay rise round, wage negotiation, salary review
 
 **Staff scheme**:
-A benefit the student can offer in a pay review alongside or instead of some of a cash rise: a pension top-up, a health cash plan (levels 0–3), death in service or a discount scheme (on or off). Staff count only the levels added in that review, at about 70% of their worth without a head of people. Each is paid every day afterwards for every permanent member of staff, and its level only goes up: once given, it can't be lowered or taken away.
+A benefit the student can offer in a pay review alongside or instead of some of a cash rise: a pension top-up, a health cash plan, share save (levels 0–3), death in service or a discount scheme (on or off). Staff count only the levels added in that review, at about 70% of their worth without a head of people. Each is paid every day afterwards for every permanent member of staff, and its level only goes up: once given, it can't be lowered or taken away.
 _Avoid_: Benefit (that's a model benefit), perk, package
+
+**Share save**:
+The staff scheme paid for in ownership rather than cash: each level added issues new shares worth 1% of the company at the time to the **Staff share scheme**, diluting the student and every other holder as a funding round does. It costs only a little admin a day per person, and is worth the most of any scheme to staff.
+_Avoid_: Share options, ESOP, equity (for this scheme)
+
+**Staff share scheme**:
+The shareholder on the cap table that holds share save's shares for the staff. Each later share save level adds to it. It's a pot of its own, outside the student's stake and any C-suite equity cap.
+_Avoid_: Employee trust, staff shares
 
 **Tribunal**:
 What settles a pay review with no deal after the student's third offer: it picks the student's figure, staff's or the middle, favouring whichever is closer to a fair rise (the middle when they're about as close), and charges a fee. It always settles the review: there's no declining it.

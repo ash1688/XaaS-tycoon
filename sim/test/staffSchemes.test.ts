@@ -73,13 +73,14 @@ describe("an offer with schemes", () => {
   const review = plain.payReview(open)!;
 
   it("starts with no schemes, and the review shows each one at the level held", () => {
-    expect(open.staffSchemes).toEqual({ pension: 0, health: 0, deathInService: 0, discount: 0 });
+    expect(open.staffSchemes).toEqual({ pension: 0, health: 0, deathInService: 0, discount: 0, shareSave: 0 });
     expect(review.schemeValuation).toBe(0.7);
     expect(review.schemes.map((s) => [s.id, s.level, s.maxLevel, s.toggle])).toEqual([
       ["pension", 0, 3, false],
       ["health", 0, 3, false],
       ["deathInService", 0, 1, true],
       ["discount", 0, 1, true],
+      ["shareSave", 0, 3, false],
     ]);
   });
 
@@ -108,10 +109,10 @@ describe("an offer with schemes", () => {
     const settled = offer(plain, open, cash, levels);
     expect(plain.payReview(settled)).toBeNull();
     const record = settled.pastPayReviews.at(-1)!;
-    expect(record).toMatchObject({ outcome: "offerAccepted", rise: cash, schemes: { pension: 1, health: 0, deathInService: 0, discount: 0 } });
+    expect(record).toMatchObject({ outcome: "offerAccepted", rise: cash, schemes: { pension: 1, health: 0, deathInService: 0, discount: 0, shareSave: 0 } });
     expect(Math.abs(record.studentOffers[0]! - (cash + worth))).toBeLessThanOrEqual(0.0005 + 1e-9);
-    expect(record.offerTerms).toEqual([{ rise: cash, schemes: { pension: 1, health: 0, deathInService: 0, discount: 0 } }]);
-    expect(settled.staffSchemes).toEqual({ pension: 1, health: 0, deathInService: 0, discount: 0 });
+    expect(record.offerTerms).toEqual([{ rise: cash, schemes: { pension: 1, health: 0, deathInService: 0, discount: 0, shareSave: 0 } }]);
+    expect(settled.staffSchemes).toEqual({ pension: 1, health: 0, deathInService: 0, discount: 0, shareSave: 0 });
     // Only the cash multiplies pay.
     expect(settled.payMultiplier).toBeCloseTo(1 + cash, 9);
     // The same cash alone falls short, and staff counter.
@@ -133,7 +134,7 @@ describe("an offer with schemes", () => {
     expect(refusal(() => offer(plain, open, at, { pension: 4 }))).toBe("bad_offer");
     expect(refusal(() => offer(plain, open, at, { health: 1.5 }))).toBe("bad_offer");
     expect(refusal(() => offer(plain, open, at, { deathInService: 2 }))).toBe("bad_offer");
-    expect(refusal(() => offer(plain, open, at, { shareSave: 1 } as Partial<SchemeLevels>))).toBe("bad_offer");
+    expect(refusal(() => offer(plain, open, at, { bonus: 1 } as Partial<SchemeLevels>))).toBe("bad_offer");
     expect(refusal(() => plain.payOfferPreview(open, at, { pension: -1 }))).toBe("bad_offer");
   });
 
@@ -204,7 +205,7 @@ describe("levels only go up", () => {
 
   it("keeps the levels held when an offer leaves them out", () => {
     const settled = offer(plain, held, plain.payReview(held)!.maxAsk);
-    expect(settled.staffSchemes).toEqual({ pension: 2, health: 0, deathInService: 1, discount: 0 });
+    expect(settled.staffSchemes).toEqual({ pension: 2, health: 0, deathInService: 1, discount: 0, shareSave: 0 });
   });
 
   it("refuses lowering below the held level within the review as well", () => {
@@ -231,7 +232,7 @@ describe("accepting staff's counter", () => {
 
 describe("ongoing costs", () => {
   const open = untilReview(plain, begin());
-  const levels = { pension: 2, health: 3, deathInService: 1, discount: 1 };
+  const levels = { pension: 2, health: 3, deathInService: 1, discount: 1, shareSave: 1 };
   const settled = settleWith(plain, open, levels);
 
   it("are charged every day from the next, as staff spend, at each scheme's cost model", () => {
@@ -326,7 +327,7 @@ describe("the tribunal", () => {
       seen.add(pick);
       expect(record.rise).toBe(odds.cash[pick]);
       expect(settled.staffSchemes).toEqual(
-        pick === "staff" ? atFinal.staffSchemes : { pension: 1, health: 0, deathInService: 1, discount: 0 },
+        pick === "staff" ? atFinal.staffSchemes : { pension: 1, health: 0, deathInService: 1, discount: 0, shareSave: 0 },
       );
       expect(record.schemes).toEqual(settled.staffSchemes);
     }

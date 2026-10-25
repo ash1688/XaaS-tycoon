@@ -157,6 +157,11 @@ test("a pay review stops timed flow and holds the game until the student settles
   await modal.getByTestId("pay-scheme-deathInService-input").uncheck();
   await modal.getByTestId("pay-scheme-pension-input").fill("0");
   await expect(modal.getByTestId("pay-worth")).toHaveCount(0);
+  // Share save is paid for in ownership: the preview shows the dilution before the offer.
+  await modal.getByTestId("pay-scheme-shareSave-input").fill("2");
+  await expect(modal.getByTestId("pay-dilution")).toContainText(/Share save issues [\d,]+ new shares to the staff share scheme, which would own 2\.0% of your company\. You'd own 98\.0%, down from 100\.0%/);
+  await modal.getByTestId("pay-scheme-shareSave-input").fill("0");
+  await expect(modal.getByTestId("pay-dilution")).toHaveCount(0);
   // An offer of staff's whole ask is always accepted.
   await modal.getByTestId("pay-rise").fill(maxAsk);
   await expect(modal.getByTestId("pay-meets-ask")).toBeVisible();

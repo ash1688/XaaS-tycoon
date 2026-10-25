@@ -96,7 +96,7 @@ export type { RackOption, RackView, RacksView } from "./racks.ts";
 export type { CounterOdds, NegotiationRound, RollResult, TermSpec, Terms } from "./negotiation.ts";
 export { MAX_OFFERS, ROLL_RESULTS } from "./negotiation.ts";
 export type { PayOfferPreview, PayReviewView, SchemeOfferPreview, TribunalOdds } from "./payReview.ts";
-export type { SchemeLevels, StaffSchemeId, StaffSchemeView } from "./staffSchemes.ts";
+export type { SchemeLevels, ShareSaveIssue, StaffSchemeId, StaffSchemeView } from "./staffSchemes.ts";
 export { STAFF_SCHEMES } from "./staffSchemes.ts";
 export { inflationNow, REVIEW_QUARTERS, TRIBUNAL_PICKS } from "./payReview.ts";
 export type { RescueView } from "./rescue.ts";

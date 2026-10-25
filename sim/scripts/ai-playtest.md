@@ -127,8 +127,9 @@ npm run -s play -- summary <game>
   hidden fair rise, so lowballing backfires. On the final offer `payodds` shows the tribunal's odds. The rise raises every team's day rate from the next day, new hires and agency staff included,
   and each review's rise compounds on the last. A rise below inflation is a pay cut in real terms.
 - **Staff schemes**: an offer can add schemes to a smaller cash rise: `offer 2.5 pension=2 health=1 death=on
-  discount=on` (pension top-up and the health cash plan go 0–3; death in service and the discount scheme are on or
-  off). Staff weigh the offer's worth: the cash plus each level added × its worth to them × about 70% (they want cash).
+  discount=on shares=1` (pension top-up, the health cash plan and share save go 0–3; death in service and the discount
+  scheme are on or off). **Share save** (`shares=`) costs only a little admin, but each level added issues new shares
+  worth 1% of the company to the staff share scheme on the cap table, diluting you; `payodds` shows your stake after. Staff weigh the offer's worth: the cash plus each level added × its worth to them × about 70% (they want cash).
   Only levels added this review count. Each scheme then costs every day for good, as staff spend, for every permanent
   member of staff: the pension and death in service a share of pay, the health plan and discount scheme £ per person,
   each with its own cost for what staff see in it. Levels only go up: lowering one is refused. Accepting staff's

@@ -32,7 +32,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 47;
+export const GAME_STATE_VERSION = 48;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -158,9 +158,10 @@ export type FunderId = (typeof FUNDER_IDS)[number];
 export interface Shareholder {
   /**
    * "student" for the student, who owns every share at the start; otherwise the funder who bought them, "vulture" for
-   * a rescue buyout, "angel" for the angel investor, or "public" for the float's new shares, sold at the IPO.
+   * a rescue buyout, "angel" for the angel investor, "public" for the float's new shares, sold at the IPO, or
+   * "staffScheme" for the staff share scheme, which holds the shares share save issues for the staff.
    */
-  id: "student" | "friendsAndFamily" | "angel" | "vulture" | "public";
+  id: "student" | "friendsAndFamily" | "angel" | "vulture" | "public" | "staffScheme";
   shares: number;
   /** The day they got their shares: 1 for the student. */
   day: number;
@@ -660,6 +661,8 @@ export interface PayReviewRecord {
    * the middle, and unchanged on an accepted counter or a tribunal's pick of staff's figure, which are cash only.
    */
   schemes: SchemeLevels;
+  /** The new shares share save issued to the staff share scheme when it settled: 0 if share save wasn't raised. */
+  shareSaveShares: number;
   /**
    * Set when a tribunal settled it: what it picked, the fee charged and the odds it had. Schemes (#193) apply on the
    * student's figure or the middle, but not staff's, which is cash only.

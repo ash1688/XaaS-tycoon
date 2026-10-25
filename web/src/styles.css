@@ -530,6 +530,14 @@ fieldset > p {
   --holder: var(--provider);
 }
 
+.holder-4 {
+  --holder: var(--cabling);
+}
+
+.holder-5 {
+  --holder: var(--power);
+}
+
 .cap-bar span {
   display: block;
   height: 100%;

@@ -622,6 +622,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add(`${p}.perPerson`, "People", "Staff schemes", `${name}: £ per person`, "Each level costs this a day per permanent member of staff.", range(0, 50, 0.01));
     add(`${p}.staffValue`, "People", "Staff schemes", `${name}: worth to staff`, "What staff count a level as, as a rise before the scheme valuation (0.0075 = three quarters of a point).", range(0, 0.05, 0.0005));
   }
+  add("payReview.shareSavePerLevel", "People", "Staff schemes", "Share save: shares per level", "Each share save level added issues new shares worth this share of the company at the time (0.01 = 1%) to the staff share scheme, diluting every holder.", range(0, 0.1, 0.001));
   add("payReview.tribunal.sharpness", "People", "Pay review tribunal", "Leans to the fair figure", "How strongly the tribunal picks whichever figure (the final offer, staff's, or the middle) is closest to a fair rise. 0 picks each equally; at 3 a figure on the fair rise wins about 78% of the time.", range(0, 20, 0.1));
   add("addons.setupFeePerDevDay", "Money", "", "Add-on set-up fee per developer-day", "On SaaS, an add-on costs this × the developer-days it would take to build, once, when it's bought.", range(0, 10_000, 10));
 

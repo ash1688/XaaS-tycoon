@@ -190,6 +190,7 @@ const NAMES: Record<Shareholder["id"], string> = {
   angel: "Angel investor",
   vulture: "Vulture VC",
   public: "Public shareholders",
+  staffScheme: "Staff share scheme",
 };
 const FUNDER_NAMES: Record<FunderId, string> = { friendsAndFamily: "Friends and family", grant: "The grant" };
 const percent = (share: number) => `${Math.round(share * 1000) / 10}%`;

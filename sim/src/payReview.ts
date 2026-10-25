@@ -1,5 +1,5 @@
 import type { GameConfig } from "./config.ts";
-import { pounds, profitCosts } from "./finance.ts";
+import { count, pounds, profitCosts } from "./finance.ts";
 import { createNegotiation, MAX_OFFERS, type CounterOdds, type NegotiationRound, type TermSpec } from "./negotiation.ts";
 import { nextRandom, seedRng } from "./rng.ts";
 import { dailyStaffCost } from "./staff.ts";
@@ -12,7 +12,10 @@ import {
   schemeValuation,
   schemeValue,
   schemeViews,
+  shareSaveIssue,
   STAFF_SCHEMES,
+  withShareSave,
+  type ShareSaveIssue,
   type SchemeLevels,
   type StaffSchemeId,
   type StaffSchemeView,
@@ -100,6 +103,8 @@ export interface PayOfferPreview {
   value: number;
   /** Each scheme: the level offered, its worth to staff and its cost a day. */
   schemeCosts: SchemeOfferPreview[];
+  /** Share save raised: the new shares it would issue to the staff share scheme, and your stake before and after. */
+  dilution: ShareSaveIssue | null;
   /** What the rise and the schemes add to the team's cost a day, and over a year of 365 days, at today's team. */
   extraPerDay: number;
   extraPerYear: number;
@@ -279,7 +284,8 @@ export function createPayReview(
 
   /**
    * Settles the review on a cash `rise`, which multiplies every pool's pay from the next day played, and the scheme
-   * levels `schemes`, paid from the next day too.
+   * levels `schemes`, paid from the next day too. Share save raised issues its new shares to the staff share scheme
+   * now, at the cap table as it stands.
    */
   function settle(
     state: GameState,
@@ -290,6 +296,7 @@ export function createPayReview(
     schemes: SchemeLevels,
     tribunal: PayReviewRecord["tribunal"] = null,
   ): GameState {
+    const issue = shareSaveIssue(config, state, state.staffSchemes, schemes);
     const record: PayReviewRecord = {
       quarter: review.quarter,
       startDay: review.startDay,
@@ -303,10 +310,12 @@ export function createPayReview(
       outcome,
       rise,
       schemes,
+      shareSaveShares: issue?.newShares ?? 0,
       tribunal,
     };
     return {
       ...state,
+      shareholders: issue ? withShareSave(state.shareholders, issue.newShares, review.startDay) : state.shareholders,
       payReview: null,
       pastPayReviews: [...state.pastPayReviews, record],
       payMultiplier: Number((state.payMultiplier * (1 + rise)).toPrecision(12)),
@@ -443,6 +452,7 @@ export function createPayReview(
       schemeValue: worth,
       value,
       schemeCosts,
+      dilution: shareSaveIssue(config, state, state.staffSchemes, terms.schemes),
       extraPerDay,
       extraPerYear: extraPerDay * 365,
       realTerms: roundRise(terms.rise - review.inflation),
@@ -474,7 +484,20 @@ export function createPayReview(
     const raised = schemeRaisesText(config, before, last.schemes);
     if (!raised) return [];
     const text = `Staff schemes from today: ${raised}. They're paid every day from now on, and can't be taken away.`;
-    return [{ text, cashDelta: 0, kind: "staff" }];
+    const entries: LogEntry[] = [{ text, cashDelta: 0, kind: "staff" }];
+    if (last.shareSaveShares > 0) {
+      const inIssue = state.shareholders.reduce((sum, h) => sum + h.shares, 0);
+      const yours = (state.shareholders.find((h) => h.id === "student")?.shares ?? 0) / inIssue;
+      const scheme = (state.shareholders.find((h) => h.id === "staffScheme")?.shares ?? 0) / inIssue;
+      entries.push({
+        text:
+          `The staff share scheme has ${count.format(last.shareSaveShares)} new shares from share save, and owns ` +
+          `${risePercent(scheme)} of the company. They dilute every holder: you own ${risePercent(yours)}.`,
+        cashDelta: 0,
+        kind: "staff",
+      });
+    }
+    return entries;
   }
 
   return {
