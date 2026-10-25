@@ -33,7 +33,7 @@ watch(
 const rise = computed(() => (typeof draft.value === "number" ? Math.round(draft.value * 10) / 1000 : null));
 
 // Scheme levels to offer, starting at those held each review: they can't go lower. Kept between offers.
-const levels = ref<SchemeLevels>({ pension: 0, health: 0, deathInService: 0, discount: 0 });
+const levels = ref<SchemeLevels>({ pension: 0, health: 0, deathInService: 0, discount: 0, shareSave: 0 });
 watch(
   () => review.value?.quarter,
   () => {
@@ -49,11 +49,17 @@ const raised = computed(() =>
 const offeredSchemes = computed(() => Object.fromEntries(raised.value.map((s) => [s.id, s.to])) as Partial<SchemeLevels>);
 /** A scheme's worth to staff, to a hundredth of a point: 0.53%. */
 const finePct = (n: number) => `${(Math.round(Math.round(n * 1e6) / 100) / 100).toFixed(2)}%`;
-/** A scheme's cost model in words: "0.4% of pay" or "£0.30 a person". */
-const costModel = (s: { wageShare: number; perPerson: number }) =>
-  [s.wageShare ? `${(s.wageShare * 100).toFixed(1)}% of pay` : "", s.perPerson ? `£${s.perPerson.toFixed(2)} a person` : ""]
+/** A scheme's cost model in words: "0.4% of pay", "£0.30 a person", or for share save its shares too. */
+const costModel = (s: { wageShare: number; perPerson: number; sharesPerLevel: number }) =>
+  [
+    s.wageShare ? `${(s.wageShare * 100).toFixed(1)}% of pay` : "",
+    s.perPerson ? `£${s.perPerson.toFixed(2)} a person` : "",
+    s.sharesPerLevel ? `new shares worth ${percent(s.sharesPerLevel)} of your company, once` : "",
+  ]
     .filter(Boolean)
     .join(" + ");
+/** A share of the company to a tenth of a percent: 98.0%. */
+const stake = (n: number) => `${(Math.round(n * 1000) / 10).toFixed(1)}%`;
 /** An offer in words: "3.0%", or "2.0% cash + Pension top-up to 2 (worth 2.5%)". */
 function offerText(terms: PayOfferTerms | undefined, value: number): string {
   if (!terms || !review.value) return pct(value);
@@ -121,6 +127,11 @@ watch(
 const tribunal = computed(() => {
   const last = game.company?.lastPayReview;
   return settled.value && last?.startDay === settled.value.startDay ? last.tribunal : null;
+});
+// The new shares share save issued when the review just settled, if it was raised.
+const shareSaveIssued = computed(() => {
+  const last = game.company?.lastPayReview;
+  return settled.value && last?.startDay === settled.value.startDay ? last.shareSaveShares : 0;
 });
 // The schemes held once it settled, if any.
 const schemesHeld = computed(() => (game.company?.staffSchemes ?? []).filter((s) => s.level > 0));
@@ -263,6 +274,13 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
                 </tr>
               </tbody>
             </table>
+            <p v-if="preview.dilution" class="warn-note" data-testid="pay-dilution">
+              <span class="badge warn-badge">Dilution</span> Share save issues
+              <strong>{{ preview.dilution.newShares.toLocaleString("en-GB") }} new shares</strong> to the staff share scheme,
+              which would own {{ stake(preview.dilution.schemeShareAfter) }} of your company. You'd own
+              <strong>{{ stake(preview.dilution.yourShareAfter) }}</strong>, down from {{ stake(preview.dilution.yourShareBefore) }}:
+              it's paid for in ownership, not cash.
+            </p>
             <p data-testid="pay-cost">
               That adds <strong>{{ formatCash(preview.extraPerDay) }} a day</strong> to your team's cost:
               <strong>{{ formatCash(preview.extraPerYear) }} a year</strong> at today's team<template v-if="raised.length">, schemes included</template>.
@@ -324,6 +342,10 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
         <p v-if="schemesHeld.length" data-testid="pay-schemes-held">
           Staff schemes from day {{ settled.startDay }}:
           {{ schemesHeld.map((s) => `${s.name}${s.toggle ? "" : ` ${s.level}`} (${formatCash(s.costPerDay)} a day)`).join(", ") }}.
+        </p>
+        <p v-if="shareSaveIssued" data-testid="pay-share-save-issued">
+          Share save issued {{ shareSaveIssued.toLocaleString("en-GB") }} new shares to the staff share scheme: see who owns
+          what on the Finance page's cap table.
         </p>
         <button data-testid="pay-done" @click="emit('close')">Play on</button>
       </template>

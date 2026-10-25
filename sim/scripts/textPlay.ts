@@ -532,7 +532,13 @@ function payStatus(sim: Sim, state: GameState): string {
 const fineRise = (n: number) => `${(Math.round(Math.round(n * 1e6) / 100) / 100).toFixed(2)}%`;
 
 /** The text play name of each staff scheme, as typed in an offer: "death=on". */
-const SCHEME_WORDS: Record<StaffSchemeId, string> = { pension: "pension", health: "health", deathInService: "death", discount: "discount" };
+const SCHEME_WORDS: Record<StaffSchemeId, string> = {
+  pension: "pension",
+  health: "health",
+  deathInService: "death",
+  discount: "discount",
+  shareSave: "shares",
+};
 
 /** The schemes held, with their cost a day: "Pension top-up 2 (£3.84/day), Death in service (£0.96/day)". Empty for none. */
 function schemesText(schemes: StaffSchemeView[]): string {
@@ -547,7 +553,13 @@ function schemeLines(schemes: StaffSchemeView[], valuation: number): string[] {
   return [
     `  staff schemes (levels only go up; staff count ${pct(valuation * 100)} of a scheme's worth): add them to an offer, e.g. offer 2.5 pension=1 death=on`,
     ...schemes.map((s) => {
-      const cost = [s.wageShare ? `${(s.wageShare * 100).toFixed(1)}% of pay` : "", s.perPerson ? `£${s.perPerson.toFixed(2)}/person/day` : ""].filter(Boolean).join(" + ");
+      const cost = [
+        s.wageShare ? `${(s.wageShare * 100).toFixed(1)}% of pay` : "",
+        s.perPerson ? `£${s.perPerson.toFixed(2)}/person/day` : "",
+        s.sharesPerLevel ? `new shares worth ${pct(s.sharesPerLevel * 100)} of the company (diluting you)` : "",
+      ]
+        .filter(Boolean)
+        .join(" + ");
       const held = s.toggle ? (s.level ? "on" : "off") : `level ${s.level} of ${s.maxLevel}`;
       return `    ${SCHEME_WORDS[s.id]}: ${s.name}, ${held} (${money(s.costPerDay)}/day now); ${s.toggle ? "it" : "each level"} costs ${cost} and is worth ${fineRise(s.staffValue * valuation)} to staff`;
     }),
@@ -602,6 +614,12 @@ function payOddsLines(p: PayOfferPreview): string[] {
       lines.push(`    ${s.name} ${s.held} → ${s.level}: worth ${fineRise(s.value)} to staff, costs ${money(s.costPerDay)}/day (+${money(s.extraPerDay)})`);
     }
   }
+  if (p.dilution) {
+    const d = p.dilution;
+    lines.push(
+      `  share save issues ${d.newShares.toLocaleString("en-GB")} new shares to the staff share scheme (${stake(d.schemeShareAfter)} of the company after): you'd own ${stake(d.yourShareAfter)}, down from ${stake(d.yourShareBefore)}`,
+    );
+  }
   if (p.meetsAsk) lines.push("  that's what staff are asking: they take it");
   if (p.tribunal) {
     const t = p.tribunal;
@@ -624,6 +642,9 @@ function payOddsLines(p: PayOfferPreview): string[] {
   return lines;
 }
 
+/** The student's share of the company, 0–1, from the cap table. */
+const yourShare = (sim: Sim, state: GameState) => sim.capTable(state).rows.find((r) => r.id === "student")?.share ?? 0;
+
 const tribunalPickText = { student: "your final offer", middle: "the middle", staff: "staff's figure" } as const;
 
 /** How an offer or an accepted counter left the review: settled on a rise, or staff's counter standing. */
@@ -642,7 +663,10 @@ function payResultLine(sim: Sim, before: GameState, after: GameState): string {
         ? `you accepted staff's counter of ${rise(settled.rise)}`
         : `no deal on the final offer, so the tribunal sat (fee ${money(settled.tribunal!.fee)}) and picked ${tribunalPickText[settled.tribunal!.pick]}, ${rise(settled.rise)}`;
   const schemes = schemesText(sim.staffSchemes(after));
-  return `pay review settled: ${how}. Pay ×${after.payMultiplier.toFixed(3)} of the day rates from day ${settled.startDay}: the team costs ${money(sim.dailyStaffCost(after))}/day (was ${money(sim.dailyStaffCost(before))})${schemes ? `; schemes held: ${schemes}` : ""}`;
+  const shares = settled.shareSaveShares
+    ? `; share save issued ${settled.shareSaveShares.toLocaleString("en-GB")} new shares to the staff share scheme, so you own ${stake(yourShare(sim, after))} (was ${stake(yourShare(sim, before))})`
+    : "";
+  return `pay review settled: ${how}. Pay ×${after.payMultiplier.toFixed(3)} of the day rates from day ${settled.startDay}: the team costs ${money(sim.dailyStaffCost(after))}/day (was ${money(sim.dailyStaffCost(before))})${schemes ? `; schemes held: ${schemes}` : ""}${shares}`;
 }
 
 /** The IPO in a line: how many readiness conditions are met and what's next. */
@@ -882,7 +906,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
   if (review) {
     lines.push(
       `  pay   (the pay review in full; changes nothing)`,
-      `  offer <${rise(review.minOffer)}–${rise(review.maxAsk)}> [pension=0-3] [health=0-3] [death=on] [discount=on]   (offer staff a pay rise, e.g. offer 3.5, or cash with schemes, e.g. offer 2.5 pension=1 death=on: the offer's worth to staff is within the range; they accept or counter with a roll; the third offer is final, and short of a deal goes to a tribunal)`,
+      `  offer <${rise(review.minOffer)}–${rise(review.maxAsk)}> [pension=0-3] [health=0-3] [death=on] [discount=on] [shares=0-3]   (offer staff a pay rise, e.g. offer 3.5, or cash with schemes, e.g. offer 2.5 pension=1 death=on: the offer's worth to staff is within the range; they accept or counter with a roll; the third offer is final, and short of a deal goes to a tribunal)`,
       `  payodds <rise %> [schemes]   (what an offer would cost, its worth to staff, and the odds on staff's counter; changes nothing)`,
     );
     if (review.canAcceptCounter) lines.push(`  accept pay   (agree staff's counter of ${rise(review.staffFigure)})`);

@@ -1,18 +1,18 @@
 import { STAFF_GRADES, STAFF_POOLS, type GameConfig } from "./config.ts";
 import { gradeDayRate, NO_PAY_RISE } from "./staff.ts";
-import { SimError, type GameState, type LogEntry } from "./state.ts";
+import { SimError, type GameState, type LogEntry, type Shareholder } from "./state.ts";
 
 /**
- * Staff schemes the student can offer in a pay review alongside a cash rise. Share save (#194) joins them later.
- * Pension top-up and the health cash plan are sliders; death in service and the discount scheme are on or off (their
- * most level is 1).
+ * Staff schemes the student can offer in a pay review alongside a cash rise. Pension top-up, the health cash plan and
+ * share save are sliders; death in service and the discount scheme are on or off (their most level is 1). Share save is
+ * paid for in ownership: each level added issues new shares to the staff share scheme (see shareSaveIssue).
  */
-export const STAFF_SCHEMES = ["pension", "health", "deathInService", "discount"] as const;
+export const STAFF_SCHEMES = ["pension", "health", "deathInService", "discount", "shareSave"] as const;
 export type StaffSchemeId = (typeof STAFF_SCHEMES)[number];
 /** The level of each scheme: 0 is none. Levels only go up. */
 export type SchemeLevels = Record<StaffSchemeId, number>;
 
-export const noSchemes = (): SchemeLevels => ({ pension: 0, health: 0, deathInService: 0, discount: 0 });
+export const noSchemes = (): SchemeLevels => ({ pension: 0, health: 0, deathInService: 0, discount: 0, shareSave: 0 });
 
 /** A staff scheme as the student sees it: its level, what it costs a day now, and what staff make of a level. */
 export interface StaffSchemeView {
@@ -28,6 +28,8 @@ export interface StaffSchemeView {
   perPerson: number;
   /** A level's worth to staff, as a rise (0.0075 = three quarters of a point), before the valuation. */
   staffValue: number;
+  /** Share save: the new shares each level issues, as a share of those in issue then (0.01 = 1%). 0 for the others. */
+  sharesPerLevel: number;
   /** What it costs a day at today's team. */
   costPerDay: number;
 }
@@ -138,6 +140,7 @@ export function schemeViews(config: GameConfig, state: GameState): StaffSchemeVi
       wageShare: s.wageShare,
       perPerson: s.perPerson,
       staffValue: s.staffValue,
+      sharesPerLevel: id === "shareSave" ? config.payReview.shareSavePerLevel : 0,
       costPerDay: schemeCost(config, state, id, state.staffSchemes[id]),
     };
   });
@@ -151,4 +154,55 @@ export function schemeRaisesText(config: GameConfig, held: SchemeLevels, levels:
       return s.maxLevel > 1 ? `${s.name} to level ${levels[id]}` : s.name;
     })
     .join(", ");
+}
+
+/** What share save raised from `held` to `levels` would issue: new shares, and who'd own what after. */
+export interface ShareSaveIssue {
+  /** New shares for the staff share scheme: sharesPerLevel of those in issue now, for each level added. */
+  newShares: number;
+  sharesInIssue: number;
+  sharesAfter: number;
+  /** The student's share of the company now and after, 0–1. */
+  yourShareBefore: number;
+  yourShareAfter: number;
+  /** The staff share scheme's share after, 0–1: what it held, plus the new shares. */
+  schemeShareAfter: number;
+}
+
+/**
+ * The new shares raising share save from `held` to `levels` issues: each level added is worth shareSavePerLevel of the
+ * company at the time, as new shares, so they dilute every holder as a funding round does. Null when it isn't raised.
+ */
+export function shareSaveIssue(
+  config: GameConfig,
+  state: Pick<GameState, "shareholders">,
+  held: SchemeLevels,
+  levels: SchemeLevels,
+): ShareSaveIssue | null {
+  const added = levels.shareSave - held.shareSave;
+  if (added <= 0) return null;
+  const shares = state.shareholders.reduce((sum, h) => sum + h.shares, 0);
+  const newShares = Math.max(1, Math.round(shares * config.payReview.shareSavePerLevel * added));
+  const sharesAfter = shares + newShares;
+  const yours = state.shareholders.find((h) => h.id === "student")?.shares ?? 0;
+  const theirs = state.shareholders.find((h) => h.id === "staffScheme")?.shares ?? 0;
+  return {
+    newShares,
+    sharesInIssue: shares,
+    sharesAfter,
+    yourShareBefore: yours / shares,
+    yourShareAfter: yours / sharesAfter,
+    schemeShareAfter: (theirs + newShares) / sharesAfter,
+  };
+}
+
+/**
+ * The cap table once share save's new shares are issued: they go to the staff share scheme, a holder of its own that
+ * later levels add to. It holds them for the staff, so it's no part of any C-suite equity package or its cap.
+ */
+export function withShareSave(shareholders: Shareholder[], newShares: number, day: number): Shareholder[] {
+  if (newShares <= 0) return shareholders;
+  return shareholders.some((h) => h.id === "staffScheme")
+    ? shareholders.map((h) => (h.id === "staffScheme" ? { ...h, shares: h.shares + newShares } : h))
+    : [...shareholders, { id: "staffScheme", shares: newShares, day }];
 }

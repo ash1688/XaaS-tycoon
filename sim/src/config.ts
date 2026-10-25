@@ -1505,6 +1505,11 @@ export interface PayReviewConfig {
   schemeValuation: number;
   /** The staff schemes an offer can raise alongside the cash rise. See StaffSchemeConfig. */
   schemes: Record<StaffSchemeId, StaffSchemeConfig>;
+  /**
+   * Share save is paid for in ownership: each level added issues new shares worth this share of the company at the
+   * time (0.01 = 1%) to the staff share scheme, diluting every holder. Its wageShare and perPerson are the admin.
+   */
+  shareSavePerLevel: number;
 }
 
 /**
@@ -2707,7 +2712,17 @@ export const defaultConfig: GameConfig = {
         perPerson: 0.05,
         staffValue: 0.0025,
       },
+      // The cheapest in cash and the most to staff: it's paid for in ownership, 1% of the company a level.
+      shareSave: {
+        name: "Share save",
+        blurb: "Staff save from their pay to buy company shares cheaply: new shares for the staff share scheme, diluting you.",
+        maxLevel: 3,
+        wageShare: 0,
+        perPerson: 0.02,
+        staffValue: 0.01,
+      },
     },
+    shareSavePerLevel: 0.01,
   },
   // Placeholders from the design: about 30 days of breathing space for about 75% of the company. Buying it back costs
   // at least twice what the vulture VC put in.
