@@ -80,6 +80,8 @@ export function createGame(code: string, id: string) {
   const floated = computed(() => company.value?.ipo.status === "floated");
   // Once the game is over, liquidated, played to the end, floated or retired, it's read-only and Home shows its summary.
   const over = computed(() => liquidated.value || finished.value || retired.value);
+  // A pay review open: the game holds until it's settled, as it does for the opening bell.
+  const payReviewOpen = computed(() => !!company.value?.payReview && !over.value);
   const summary = ref<SummaryView>();
 
   // Staff by grade. Needs (ops needed, the configuration team, support to keep up) count work in mids, so a team of
@@ -249,7 +251,7 @@ export function createGame(code: string, id: string) {
 
   /** Plays one tick: a day, or a week in a career, which stops early on the day something needs the student. */
   async function continueDay() {
-    if (over.value || ipoApproved.value) return;
+    if (over.value || ipoApproved.value || payReviewOpen.value) return;
     busy.value = true;
     error.value = "";
     pauses.value = [];
@@ -348,7 +350,7 @@ export function createGame(code: string, id: string) {
   }
 
   function play() {
-    if (!timedFlow.value || over.value || ipoApproved.value) return;
+    if (!timedFlow.value || over.value || ipoApproved.value || payReviewOpen.value) return;
     playing.value = true;
     pauses.value = [];
     if (!timer && !ticking) schedule();
@@ -371,6 +373,7 @@ export function createGame(code: string, id: string) {
 
   watch(over, (isOver) => isOver && pause());
   watch(ipoApproved, (approved) => approved && pause());
+  watch(payReviewOpen, (open) => open && pause());
   document.addEventListener("visibilitychange", onVisibilityChange);
   onUnmounted(() => {
     pause();
@@ -404,6 +407,7 @@ export function createGame(code: string, id: string) {
     finished,
     retired,
     ipoApproved,
+    payReviewOpen,
     floated,
     over,
     summary,

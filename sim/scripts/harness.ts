@@ -583,9 +583,23 @@ function mvpTeam(sim: Sim, state: GameState, strategy: Strategy): GameState {
   return state;
 }
 
-/** What the bot does before each day: price, migration, servers, staff, the MVP team, research, Campaigns, features and the slider. */
+/**
+ * The pay review policy every bot plays, so its games get past the reviews: offer inflation (pay held level in real
+ * terms) and, if staff counter, accept their counter.
+ */
+function settlePay(sim: Sim, state: GameState): GameState {
+  const review = sim.payReview(state);
+  if (!review) return state;
+  const offered = tryAction(sim, state, { type: "offerPayRise", rise: review.inflation });
+  return sim.payReview(offered) ? tryAction(sim, offered, { type: "acceptPayCounter" }) : offered;
+}
+
+/**
+ * What the bot does before each day: any pay review, price, migration, servers, staff, the MVP team, research,
+ * Campaigns, features and the slider.
+ */
 export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameState {
-  let s = state;
+  let s = settlePay(sim, state);
   if (s.day === 1 && strategy.priceFactor !== 1) {
     // On the payments app the transaction fee moves with the monthly fee.
     const fairRate = sim.payments(s)?.fairRate;

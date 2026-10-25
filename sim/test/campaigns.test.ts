@@ -23,7 +23,8 @@ import {
 // product's market for good (#200, brand awareness), up to a cap, so its users are extra and keep paying.
 
 /** No events and no holidays, so the only thing moving a campaign is the campaign. */
-const quiet: GameConfig = { ...defaultConfig, events: [], calendar: { ...defaultConfig.calendar, holidays: [] } };
+// No pay reviews either: they have their own tests (payReview.test.ts).
+const quiet: GameConfig = { ...defaultConfig, events: [], calendar: { ...defaultConfig.calendar, holidays: [] }, payReview: { ...defaultConfig.payReview, on: 0 } };
 const sim = createSim(quiet);
 const { costPerUser } = quiet.campaigns;
 const marketSize = quiet.productTypes.social.growth.marketSize;

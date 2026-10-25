@@ -590,6 +590,27 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   }
   add("support.ticketsPerPerson", "People", "", "Tickets per support person", "Tickets one support person clears a day.", range(1, 1_000, 1));
   add("addons.minConfigDevelopers", "People", "", "Developers to configure add-ons", "On SaaS, add-ons can't be bought with fewer developers than this.", HEADCOUNT);
+  add("payReview.on", "People", "Pay reviews", "Pay reviews", "Staff come about pay at the start of quarters 2, 3 and 4 (a quarter of the game each), and the clock waits until it's settled. Off, pay stays at the day rates all game.", TOGGLE);
+  add("payReview.openEndedYearDays", "People", "Pay reviews", "Year until IPO", "A game with no last day (until IPO) has its reviews in the quarters of a year this many days long.", range(4, 3650, 1));
+  add("payReview.inflation.min", "People", "Pay reviews", "Least inflation", "Each review rolls its own inflation from the least to the most (0.02 = 2%).", range(0, 0.2, 0.001));
+  add("payReview.inflation.max", "People", "Pay reviews", "Most inflation", "The most inflation a review can roll.", range(0, 0.2, 0.001));
+  add("payReview.minOfferBelow", "People", "Pay reviews", "Least offer below inflation", "The student can't offer less than inflation less this (0.01 = one point), and never below 0%.", range(0, 0.2, 0.001));
+  add("payReview.maxAskAbove", "People", "Pay reviews", "Most ask above inflation", "Staff open at inflation plus this, and never ask for more.", range(0, 0.2, 0.001));
+  add("payReview.fairRise.days", "People", "Pay reviews", "Days of growth compared", "The fair rise looks at income over this many days against the same number before them.", GAME_DAY);
+  add("payReview.fairRise.growthWeight", "People", "Pay reviews", "Rise per 100% growth", "Added to inflation for the fair rise per 100% income growth (0.02 = two points), and taken off for a fall.", range(0, 0.2, 0.001));
+  add("payReview.fairRise.maxGrowthAdjust", "People", "Pay reviews", "Most for growth", "Income growth moves the fair rise by at most this either way.", range(0, 0.2, 0.001));
+  add("payReview.fairRise.profitBonus", "People", "Pay reviews", "Rise for a profit", "Added to the fair rise when those days made a profit.", range(0, 0.2, 0.001));
+  add("payReview.fairRise.tightCashDays", "People", "Pay reviews", "Tight cash below", "With fewer days of cash than this at today's burn, the fair rise is cut.", GAME_DAY);
+  add("payReview.fairRise.tightCashCut", "People", "Pay reviews", "Cut when cash is tight", "Taken off the fair rise when cash is tight.", range(0, 0.2, 0.001));
+  add("payReview.walkAwaySpread", "People", "Pay reviews", "Walk-away spread", "Staff accept any offer at or above a hidden figure within this of the fair rise.", range(0, 0.05, 0.001));
+  add("payReview.negotiation.dieSides", "People", "Pay review rolls", "Sides on the die", "Each offer staff counter is answered by a roll of a die with this many sides.", range(2, 100, 1));
+  add("payReview.negotiation.highFrom", "People", "Pay review rolls", "High roll from", "A roll of this or more, after the penalty, brings staff most of the way down to the offer.", range(1, 100, 1));
+  add("payReview.negotiation.middleFrom", "People", "Pay review rolls", "Middle roll from", "A roll of this or more, but below a high roll, brings them about halfway.", range(1, 100, 1));
+  add("payReview.negotiation.greedPenalty", "People", "Pay review rolls", "Penalty per 100% asked", "Taken off the roll for an offer asking staff to come all the way down to nothing, and in step for less: 10 is 1 per 10% below their figure.", range(0, 200, 1));
+  add("payReview.negotiation.maxAsk", "People", "Pay review rolls", "Most an offer can ask", "The furthest below staff's figure an offer can be, as a share of it (1 = any offer from the least).", range(0.05, 5, 0.05));
+  add("payReview.negotiation.moves.high", "People", "Pay review rolls", "High roll moves", "Share of the way from staff's figure to the offer their counter moves on a high roll.", SHARE);
+  add("payReview.negotiation.moves.middle", "People", "Pay review rolls", "Middle roll moves", "Share of the way their counter moves on a middle roll.", SHARE);
+  add("payReview.negotiation.moves.low", "People", "Pay review rolls", "Low roll moves", "Share of the way their counter moves on a low roll. Below 0 they ask for more instead, never above their opening ask.", range(-1, 1, 0.01));
   add("addons.setupFeePerDevDay", "Money", "", "Add-on set-up fee per developer-day", "On SaaS, an add-on costs this × the developer-days it would take to build, once, when it's bought.", range(0, 10_000, 10));
 
   // Migration
@@ -743,6 +764,11 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
     ["negotiation.highFrom", "negotiation.dieSides", "A high roll has to be possible on the die."],
     ["negotiation.moves.low", "negotiation.moves.middle", "A middle roll can't move less than a low one."],
     ["negotiation.moves.middle", "negotiation.moves.high", "A high roll can't move less than a middle one."],
+    ["payReview.inflation.min", "payReview.inflation.max", "A review's most inflation can't be below its least."],
+    ["payReview.negotiation.middleFrom", "payReview.negotiation.highFrom", "A high roll can't start below a middle one."],
+    ["payReview.negotiation.highFrom", "payReview.negotiation.dieSides", "A high roll has to be possible on the die."],
+    ["payReview.negotiation.moves.low", "payReview.negotiation.moves.middle", "A middle roll can't move less than a low one."],
+    ["payReview.negotiation.moves.middle", "payReview.negotiation.moves.high", "A high roll can't move less than a middle one."],
     ["rivals.minPriceMultiple", "rivals.maxPriceMultiple", "A rival's highest price can't be below its lowest."],
     ["investors.angel.premium.min", "investors.angel.premium.max", "The angel's most premium can't be below the least."],
     ["investors.angel.share.min", "investors.angel.share.max", "The most share the angel asks can't be below the least."],

@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { formatCash } from "../api";
+import PayReviewModal from "../components/PayReviewModal.vue";
 import { days, provideGame } from "../game";
 
 // The game's frame on every page: the nav bar with the day and Continue, the company's name and the teaching line.
@@ -28,6 +29,14 @@ const onFinance = computed(() => route.name === "game-finance");
 const onBell = computed(() => route.name === "game-ipo");
 // An investor who has approached and is waiting for an answer: a notification on every page, and a badge on Finance.
 const approach = computed(() => game.company?.investors.offer ?? null);
+// A pay review opens its modal by itself, on any page. Closed to look around, a note opens it again; the game holds
+// either way. It stays open after settling, to show what was agreed, until it's closed.
+const payModal = ref(false);
+watch(
+  () => game.payReviewOpen,
+  (open) => open && (payModal.value = true),
+  { immediate: true },
+);
 
 // Each page visit goes in the playtest log, by its route name: "game-finance" is "finance".
 watch(
@@ -92,7 +101,7 @@ async function closeMenu() {
           <strong data-testid="day">{{ game.company.day }} <small v-if="game.company.finalDay !== null">of {{ game.company.finalDay }}</small></strong>
           <span class="date" data-testid="date">{{ game.company.calendar.today.text }}</span>
         </span>
-        <div v-if="game.timedFlow && !game.over && !game.ipoApproved" class="timed-flow" data-testid="timed-flow">
+        <div v-if="game.timedFlow && !game.over && !game.ipoApproved && !game.payReviewOpen" class="timed-flow" data-testid="timed-flow">
           <!-- One button whose label changes, so keyboard focus stays on it. -->
           <button class="ghost play-pause" @click="togglePlay">
             {{ game.playing ? "Pause" : "Play" }}
@@ -113,8 +122,16 @@ async function closeMenu() {
         </div>
         <button
           class="continue"
-          :disabled="game.busy || game.over || game.playing || game.ipoApproved"
-          :title="game.over ? 'This game has ended' : game.ipoApproved ? 'Ring the opening bell first' : undefined"
+          :disabled="game.busy || game.over || game.playing || game.ipoApproved || game.payReviewOpen"
+          :title="
+            game.over
+              ? 'This game has ended'
+              : game.ipoApproved
+                ? 'Ring the opening bell first'
+                : game.payReviewOpen
+                  ? 'Settle the pay review first'
+                  : undefined
+          "
           :aria-label="game.tickName === 'week' ? 'Continue a week' : 'Continue'"
           @click="game.continueDay()"
         >
@@ -173,6 +190,12 @@ async function closeMenu() {
         <RouterLink v-if="!onFinance" :to="`${game.base}/finance`">See their offer on Finance</RouterLink>
         <template v-else>Their offer is below.</template>
       </p>
+      <p v-if="game.payReviewOpen && !payModal" class="ipo-note" role="status" data-testid="pay-review-note">
+        <span class="badge">Pay review</span>
+        Your staff want to talk about pay before quarter {{ game.company.payReview!.quarter }}: the game waits until you've
+        agreed a rise.
+        <button class="ghost" data-testid="pay-review-open" @click="payModal = true">Open the pay review</button>
+      </p>
       <p v-if="game.ipoApproved && !onBell" class="ipo-note" role="status" data-testid="ipo-approved-note">
         <span class="badge">IPO approved</span>
         Your company is ready to float. Choose your float and ring the opening bell: the game waits for you.
@@ -184,6 +207,7 @@ async function closeMenu() {
         <RouterLink :to="game.base">See how it went on Home</RouterLink>.
       </p>
       <RouterView />
+      <PayReviewModal :open="payModal" @close="payModal = false" />
     </template>
   </main>
 </template>

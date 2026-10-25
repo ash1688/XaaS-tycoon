@@ -17,7 +17,8 @@ const outageOn = (days: number[], hours: number): EventConfig => ({
 
 /** No MVP to build, so a game launches as soon as it has somewhere to serve users: the MVP has its own tests. */
 const NO_MVP: GameConfig["mvp"] = { ...defaultConfig.mvp, baseDevDays: { ecommerce: 0, social: 0, video: 0, payments: 0, assistant: 0, games: 0 } };
-const quiet: GameConfig = { ...defaultConfig, mvp: NO_MVP, events: [] };
+// No pay reviews either: they have their own tests (payReview.test.ts).
+const quiet: GameConfig = { ...defaultConfig, mvp: NO_MVP, events: [], payReview: { ...defaultConfig.payReview, on: 0 } };
 const sim = createSim(quiet);
 const begin = (s: Sim = sim, shares?: number) =>
   s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 42, ...(shares && { shares }) });

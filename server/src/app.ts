@@ -66,6 +66,7 @@ import { endTeacherSession, isTeacher, passwordMatches, startTeacherSession } fr
 import type {
   ActionBody,
   CounterOddsView,
+  PayOfferView,
   ApiError,
   CodeView,
   CompanyStatus,
@@ -218,7 +219,7 @@ const MAX_CACHED_SIMS = 20;
  * last change, or a day played while an approved IPO waits for the bell. The request was fine, but the game can't take
  * it now.
  */
-const CONFLICT = new Set(["liquidated", "finished", "retired", "price_locked", "ring_the_bell"]);
+const CONFLICT = new Set(["liquidated", "finished", "retired", "price_locked", "ring_the_bell", "pay_review"]);
 
 /** The SimError code for a game saved by an older version of the sim, which can't be loaded any more. */
 const OLD_VERSION = "old_version";
@@ -427,6 +428,8 @@ export async function buildApp(opts: AppOptions) {
       capTable: sim.capTable(state),
       funding: sim.funding(state),
       investors: sim.investors(state),
+      payReview: sim.payReview(state),
+      payMultiplier: state.payMultiplier,
       ipo: sim.ipo(state),
       rescue: sim.rescue(state),
       features: sim.features(state),
@@ -738,6 +741,27 @@ export async function buildApp(opts: AppOptions) {
     },
   );
 
+  // What offering staff a rise in the open pay review would do, for the pay review modal's live cost and odds. Changes
+  // nothing.
+  app.get<{ Params: { code: string; id: string }; Querystring: { rise: number } }>(
+    "/api/codes/:code/companies/:id/pay-offer",
+    {
+      schema: {
+        querystring: {
+          type: "object",
+          required: ["rise"],
+          properties: { rise: { type: "number", minimum: 0, maximum: 1 } },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (req, reply) => {
+      const row = await findCompany(req.params.code, req.params.id);
+      if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      return simOf(row).payOfferPreview(row.state, req.query.rise) satisfies PayOfferView;
+    },
+  );
+
   // How the company did: shown when the game ends, and available any time as a summary so far.
   app.get<{ Params: { code: string; id: string } }>("/api/codes/:code/companies/:id/summary", async (req, reply) => {
     const row = await findCompany(req.params.code, req.params.id);
@@ -799,6 +823,8 @@ export async function buildApp(opts: AppOptions) {
                 "unlockItem",
                 "startCampaign",
                 "stopCampaign",
+                "offerPayRise",
+                "acceptPayCounter",
               ],
             },
             pool: { enum: [...STAFF_POOLS] },
@@ -853,6 +879,8 @@ export async function buildApp(opts: AppOptions) {
             float: { type: "number", minimum: 0, maximum: 1 },
             // setOptimisation: the share of developer output on optimisation rather than features.
             share: { type: "number", minimum: 0, maximum: 1 },
+            // offerPayRise: the rise offered, 0.04 = 4%. The sim checks it against the review's caps.
+            rise: { type: "number", minimum: 0, maximum: 1 },
             // counterFunding and counterInvestor: the terms asked for. The sim checks they're the offer's and how far they ask.
             terms: { type: "object", properties: COUNTER_TERMS, additionalProperties: false },
           },
@@ -879,6 +907,7 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { const: "unlockItem" } } }, then: { required: ["item"] } },
             { if: { properties: { type: { const: "startCampaign" } } }, then: { required: ["customerType", "budget", "days"] } },
             { if: { properties: { type: { const: "stopCampaign" } } }, then: { required: ["id"] } },
+            { if: { properties: { type: { const: "offerPayRise" } } }, then: { required: ["rise"] } },
             {
               if: { properties: { type: { const: "setManagedService" } } },
               then: { required: ["service", "size"] },

@@ -16,6 +16,8 @@ import {
 const quiet: GameConfig = {
   ...defaultConfig,
   events: [],
+  // No pay reviews: they have their own tests (payReview.test.ts).
+  payReview: { ...defaultConfig.payReview, on: 0 },
   productTypes: Object.fromEntries(
     Object.entries(defaultConfig.productTypes).map(([id, p]) => [id, { ...p, rivals: [] }]),
   ) as unknown as GameConfig["productTypes"],

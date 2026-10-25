@@ -113,3 +113,47 @@ test("timed flow stops when the game ends", async ({ browser, request }) => {
   await student.waitForTimeout(2_500);
   expect(continues).toBe(0);
 });
+
+test("a pay review stops timed flow and holds the game until the student settles it in its modal", async ({ browser, request }) => {
+  const { code, id } = await newCompany(browser, request, "Pay Day Ltd");
+  // Day 6 of 30, with cash to spare: the first review opens after day 7, before quarter 2 starts on day 8.
+  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
+  try {
+    await sql`update companies set state = jsonb_set(jsonb_set(state, '{day}', '6'::jsonb), '{cash}', '500000'::jsonb) where id = ${id}`;
+  } finally {
+    await sql.end();
+  }
+
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${id}`);
+  await student.getByLabel("Speed").selectOption("Fastest");
+  await student.getByRole("button", { name: "Play" }).click();
+  const modal = student.getByRole("dialog", { name: "Pay review" });
+  await expect(modal).toBeVisible({ timeout: 15_000 });
+  await expect(student.getByTestId("day")).toContainText(`7 of ${E2E_FINAL_DAY}`);
+  await expect(modal).toContainText("Quarter 2 starts on day 8, and your staff want to talk about pay.");
+  await expect(modal.getByTestId("pay-inflation")).toHaveText(/^\d\.\d%$/);
+  const maxAsk = (await modal.getByTestId("pay-max-ask").innerText()).replace("%", "");
+
+  // Closed to look around, the game still holds, and a note opens it again.
+  await modal.getByRole("button", { name: "Close" }).click();
+  await expect(student.getByRole("button", { name: "Continue" })).toBeDisabled();
+  await expect(student.getByTestId("timed-flow")).toHaveCount(0);
+  await student.getByTestId("pay-review-open").click();
+
+  // An offer below their ask shows its cost and the odds on staff's counter before it's made.
+  const minOffer = (await modal.getByTestId("pay-min-offer").innerText()).replace("%", "");
+  await modal.getByTestId("pay-rise").fill(minOffer);
+  await expect(modal.getByTestId("pay-cost")).toContainText(/That adds £[\d,]+ a day to your team's pay: £[\d,]+ a year/);
+  await expect(modal.getByTestId("pay-odds-high")).toContainText(/High roll, \d+%/);
+  // An offer of staff's whole ask is always accepted.
+  await modal.getByTestId("pay-rise").fill(maxAsk);
+  await expect(modal.getByTestId("pay-meets-ask")).toBeVisible();
+  await modal.getByTestId("pay-offer").click();
+  await expect(modal.getByTestId("pay-settled")).toContainText(`Pay review settled on a ${maxAsk}% rise.`);
+  await modal.getByTestId("pay-done").click();
+
+  // The game plays on.
+  await student.getByRole("button", { name: "Continue" }).click();
+  await expect(student.getByTestId("day")).toContainText(`8 of ${E2E_FINAL_DAY}`);
+});

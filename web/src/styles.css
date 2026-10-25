@@ -4248,3 +4248,20 @@ select:disabled {
     grid-auto-rows: auto;
   }
 }
+
+/* The pay review modal: staff's counter to agree, set apart from the next offer. */
+.pay-review .pay-counter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin: 0.75rem 0 1rem;
+}
+
+.pay-review .pay-counter p {
+  margin: 0;
+}
+
+.pay-review .warn-note {
+  margin: 0 0 1rem;
+}

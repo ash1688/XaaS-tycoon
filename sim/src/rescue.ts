@@ -74,7 +74,7 @@ export function createRescue(
             n++;
           }
           if (n) cuts.push({ pool, grade, count: n, agency });
-          if (n && !agency) severance += n * severanceFor(config, pool, grade);
+          if (n && !agency) severance += n * severanceFor(config, pool, grade, state.payMultiplier);
         }
       }
     }

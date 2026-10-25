@@ -7,6 +7,8 @@ import { createSim, defaultConfig, SimError, type GameConfig, type GameState, ty
 const quiet: GameConfig = {
   ...defaultConfig,
   events: [],
+  // No pay reviews: they have their own tests (payReview.test.ts).
+  payReview: { ...defaultConfig.payReview, on: 0 },
   allowedGameLengths: { "180-days": 1, "until-ipo": 1, "1-year": 0, career: 0 },
   // Small thresholds and a short trading history, so a company made ready below clears them comfortably.
   ipo: {

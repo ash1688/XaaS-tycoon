@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { settlingPay } from "./settlingPay.ts";
 import { createSim, defaultConfig, type GameConfig, type GameState, type ProductTypeId } from "../src/index.ts";
 
-const sim = createSim();
+// Pay reviews settled as they open, as a bot would: they have their own tests (payReview.test.ts).
+const sim = settlingPay(createSim());
 
 /** The default config with the rivals' settings changed. */
 function withRivals(rivals: Partial<GameConfig["rivals"]>): GameConfig {
@@ -69,7 +71,7 @@ describe("rivals and market share", () => {
   });
 
   it("tilts the student's new users away from the types a rival is the best deal for", () => {
-    const lone = createSim(withoutRivals("ecommerce"));
+    const lone = settlingPay(createSim(withoutRivals("ecommerce")));
     const state = running();
     const newShare = (s: typeof sim, st: GameState, id: string) => s.customerMix(st).types.find((t) => t.id === id)!.newShare;
     const tilted = sim.customerMix(state).types.map((t) => t.newShare);
@@ -83,7 +85,7 @@ describe("rivals and market share", () => {
   });
 
   it("slows the student's growth when the rivals are the better deal", () => {
-    const lone = createSim(withoutRivals("ecommerce"));
+    const lone = settlingPay(createSim(withoutRivals("ecommerce")));
     const state = running();
     expect(sim.market(state).growth).toBeLessThan(1);
     expect(lone.market(running(lone)).growth).toBe(1);
@@ -92,14 +94,14 @@ describe("rivals and market share", () => {
   });
 
   it("keeps the growth multiplier within its limits", () => {
-    const s = createSim(withRivals({ growthEffect: 2, minGrowth: 0.9, maxGrowth: 1.1 }));
+    const s = settlingPay(createSim(withRivals({ growthEffect: 2, minGrowth: 0.9, maxGrowth: 1.1 })));
     const state = running(s);
     expect(s.market({ ...state, price: 1000 }).growth).toBe(0.9);
     expect(s.market({ ...state, price: 0.5 }).growth).toBe(1.1);
   });
 
   it("answers the student's price only after the reaction delay", () => {
-    const s = createSim(withRivals({ undercutChance: 0 }));
+    const s = settlingPay(createSim(withRivals({ undercutChance: 0 })));
     const state = running(s);
     const fair = s.fairPrice(state);
     const priced = s.applyAction(state, { type: "setPrice", price: 7 });
@@ -121,7 +123,7 @@ describe("rivals and market share", () => {
   });
 
   it("sometimes undercuts the student when it answers", () => {
-    const s = createSim(withRivals({ undercutChance: 1, undercutShare: 0.2 }));
+    const s = settlingPay(createSim(withRivals({ undercutChance: 1, undercutShare: 0.2 })));
     const state = s.applyAction(running(s), { type: "setPrice", price: 7 });
     const answered = s.advance(state, defaultConfig.rivals.reactionDays + 1);
     // Every rival prices 20% under the student's £7, or lower if its stance is cheaper still.
@@ -130,7 +132,7 @@ describe("rivals and market share", () => {
   });
 
   it("keeps a rival's price within its band, however far the student goes", () => {
-    const s = createSim(withRivals({ undercutChance: 0 }));
+    const s = settlingPay(createSim(withRivals({ undercutChance: 0 })));
     const state = s.applyAction(running(s), { type: "setPrice", price: 500 });
     const answered = s.advance(state, defaultConfig.rivals.reactionDays + 1).state;
     const fair = s.fairPrice(state);
@@ -138,7 +140,7 @@ describe("rivals and market share", () => {
   });
 
   it("sends staff the student lets go to a rival sometimes, raising its quality", () => {
-    const s = createSim(withRivals({ joinChance: 1 }));
+    const s = settlingPay(createSim(withRivals({ joinChance: 1 })));
     const state = running(s);
     const before = s.market(state).companies.slice(1).map((c) => c.quality);
     const lettingGo = s.applyAction(state, { type: "letGo", pool: "support", count: 1 });
@@ -147,7 +149,7 @@ describe("rivals and market share", () => {
     expect(gain).toBeCloseTo(defaultConfig.rivals.qualityPerStaff, 6);
     expect(texts(s.advance(lettingGo, 1).log).some((t) => /^A mid support person you let go joined (CartCraft|Tillbox)/.test(t))).toBe(true);
 
-    const never = createSim(withRivals({ joinChance: 0 }));
+    const never = settlingPay(createSim(withRivals({ joinChance: 0 })));
     const kept = never.applyAction(running(never), { type: "letGo", pool: "support", count: 1 });
     expect(never.market(kept).companies.slice(1).map((c) => c.quality)).toEqual(before);
   });
@@ -184,7 +186,7 @@ describe("the market's size", () => {
     const { marketSize } = defaultConfig.productTypes.ecommerce.growth;
     const state = running();
     expect(sim.market(state).reach).toEqual({ size: marketSize, filled: state.users / marketSize });
-    const alone = createSim(withoutRivals("ecommerce"));
+    const alone = settlingPay(createSim(withoutRivals("ecommerce")));
     expect(alone.market(running(alone)).reach.size).toBe(marketSize);
     // Never shown past full, whatever a migration or wave of users leaves.
     expect(sim.market({ ...state, users: marketSize * 2 }).reach.filled).toBe(1);

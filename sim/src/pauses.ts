@@ -16,9 +16,9 @@ export const LOW_CASH_DAYS = 5;
 
 /**
  * What kind of thing stopped the clock: an event that hurt, a holiday that hits the product, an alert, an offer, low
- * cash or something finished.
+ * cash, something finished or a pay review, which holds the clock until it's settled.
  */
-export type PauseKind = "event" | "calendar" | "alert" | "offer" | "lowCash" | "finished";
+export type PauseKind = "event" | "calendar" | "alert" | "offer" | "lowCash" | "finished" | "payReview";
 
 /** Why time stopped by itself after a day: shown to the student, who decides what to do before playing on. */
 export interface PauseReason {
@@ -76,6 +76,11 @@ export function createPauses(config: GameConfig, views: PauseViews) {
   function pauseReasons(before: GameState, after: GameState): PauseReason[] {
     const reasons: PauseReason[] = [];
     const add = (kind: PauseKind, id: string, text: string) => reasons.push({ kind, id, text });
+
+    // A pay review opening: the day can't go on until it's settled.
+    if (after.payReview && !before.payReview) {
+      add("payReview", "pay-review", `Pay review: your staff want to talk about pay before quarter ${after.payReview.quarter} starts`);
+    }
 
     // Cash ran out and a vulture VC rescued the company: it now owns most of it, and the next cash-out is liquidation.
     if (after.rescue && !before.rescue) {

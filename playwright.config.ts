@@ -45,9 +45,10 @@ export default defineConfig({
       url: `http://localhost:${PORT}/api/meta`,
       reuseExistingServer: false,
       timeout: 120_000,
-      // No MVP, so a game launches as soon as it can serve users: the specs here are about what comes after. The timed
-      // server below keeps the MVP; the sim tests cover it.
-      env: { ...serverEnv, PORT: String(PORT), GAME_MVP: "off" },
+      // No MVP, so a game launches as soon as it can serve users: the specs here are about what comes after. No pay
+      // reviews either, which hold a 30-day game's clock after days 7, 15 and 22. The timed server below keeps both: its
+      // spec plays a pay review, and the sim tests cover the MVP.
+      env: { ...serverEnv, PORT: String(PORT), GAME_MVP: "off", GAME_PAY_REVIEWS: "off" },
     },
     {
       command: "npx tsx server/src/index.ts",

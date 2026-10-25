@@ -4,7 +4,8 @@ import { advanceUntil, parseCommand, renderCommands, renderStatus, renderSummary
 
 /** No MVP to build, so a game launches as soon as it has somewhere to serve users: the MVP has its own tests. */
 const NO_MVP: GameConfig["mvp"] = { ...defaultConfig.mvp, baseDevDays: { ecommerce: 0, social: 0, video: 0, payments: 0, assistant: 0, games: 0 } };
-const sim = createSim({ ...defaultConfig, mvp: NO_MVP, finalDay: 40 });
+// No pay reviews, which would hold the clock every ten days of a 40-day game: they have their own tests below.
+const sim = createSim({ ...defaultConfig, mvp: NO_MVP, finalDay: 40, payReview: { ...defaultConfig.payReview, on: 0 } });
 const who = { player: "test", playstyle: "average-joe" };
 const start = (): GameState =>
   sim.newGame({ companyName: "Test Co", productType: "social", model: "paas", seed: 3, takeLoan: true });
@@ -196,7 +197,7 @@ describe("advanceUntil", () => {
 
   it("stops for viral growth, and shows whose job it is to carry the new users", () => {
     const viral = defaultConfig.events.find((e) => e.id === "viralGrowth")!;
-    const s = createSim({ ...defaultConfig, mvp: NO_MVP, finalDay: 40, events: [{ ...viral, encounter: undefined, schedule: { type: "fixed", days: [10] } }] });
+    const s = createSim({ ...defaultConfig, mvp: NO_MVP, finalDay: 40, payReview: { ...defaultConfig.payReview, on: 0 }, events: [{ ...viral, encounter: undefined, schedule: { type: "fixed", days: [10] } }] });
     const begun = s.newGame({ companyName: "Test Co", productType: "social", model: "paas", seed: 3, takeLoan: true });
     let state = runCommand(s, begun, parseCommand("instances 3"), who).state;
     state = runCommand(s, state, parseCommand("managed database medium"), who).state;
@@ -483,6 +484,7 @@ describe("the angel investor", () => {
   // A low hidden target, so an angel approaches within days of the launch.
   const early = createSim({
     ...defaultConfig,
+    payReview: { ...defaultConfig.payReview, on: 0 },
     finalDay: 60,
     investors: { ...defaultConfig.investors, angel: { ...defaultConfig.investors.angel, target: { dailyRevenue: 300, days: 3 } } },
   });
@@ -724,7 +726,7 @@ describe("rescue buyout and liquidation", () => {
   });
 
   it("ends in liquidation the second time, and still shows the rescue after", () => {
-    const long = createSim({ ...defaultConfig, finalDay: 120 });
+    const long = createSim({ ...defaultConfig, finalDay: 120, payReview: { ...defaultConfig.payReview, on: 0 } });
     const begun = long.newGame({ companyName: "Test Co", productType: "social", model: "paas", seed: 3, takeLoan: true });
     let turn = advanceUntil(long, long.applyAction(begun, { type: "hire", pool: "developers", grade: "senior", count: 40 }), 120, who);
     while (turn.state.status === "playing") turn = advanceUntil(long, turn.state, 120, who);
