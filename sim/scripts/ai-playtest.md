@@ -179,9 +179,19 @@ Play the whole game in character as your playstyle:
 Whatever your playstyle, use the company's whole pipeline at least once, in character: how many developers build the
 MVP, where the slider sits, what you research and when, and whether marketers and Campaigns earn their keep.
 
+Every game has three **pay reviews** (before days 46, 91 and 136 in a 180-day game), and you must settle each one, so
+negotiate them in character too. Before you offer, read `pay` and try `payodds` at a figure or two. Across the three
+reviews, try at least two different approaches, and use at least one staff scheme in at least one review, for example:
+- cash only, around inflation, taking a counter when it's reasonable
+- a smaller cash rise topped up with schemes (share save included), and watch your stake and the daily scheme costs
+- a lowball that runs to the tribunal, so you see its odds, its pick and its fee
+
+Run `payhistory` at the end, and judge each approach by what it cost you in cash and ownership over the rest of the
+game, not just on the day.
+
 ## What to hand back
 
-When the game is over, reply with a **game summary** of no more than about 300 words:
+When the game is over, reply with a **game summary** of no more than about 350 words:
 
 1. **Setup:** playstyle, product, model, loan or not, seed.
 2. **Ending:** finished, liquidated or floated (and whether you were rescued, and when), on which day, final cash, paying and free users, satisfaction and uptime (from `summary`),
@@ -191,8 +201,11 @@ When the game is over, reply with a **game summary** of no more than about 300 w
    declined, any rescue or buy-back, what you researched and unlocked, Campaigns you ran (spend, users, cost per user),
    where you kept the developer slider, events and how you handled them (and what the danger meter was doing), any
    crisis.
-4. **What you tried** and whether it worked.
-5. **Anything that felt broken, unfair, confusing or exploitable**, with the day and the commands that caused it.
-6. **One change you'd make** to the game.
+4. **Pay reviews** (from `payhistory`): for each review, inflation, what you offered (cash and schemes), how it ended
+   (offer taken, counter taken, or the tribunal's pick and fee) and the rise against inflation; the schemes you hold and
+   their cost a day, the staff share scheme's stake, and which approach you'd use again, and why.
+5. **What you tried** and whether it worked.
+6. **Anything that felt broken, unfair, confusing or exploitable**, with the day and the commands that caused it.
+7. **One change you'd make** to the game.
 
 Your game file and its log (`<game>.log.json`, in the same format as the classroom playtest log) stay on disk for analysis.

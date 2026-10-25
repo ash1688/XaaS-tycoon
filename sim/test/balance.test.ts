@@ -40,6 +40,32 @@ describe("balance harness", () => {
     expect(playGame(sim, { model: "onprem", productType: "video", strategy: noLoan, seed: 1 }).outcome).toBe("cant-start");
   });
 
+  it("plays the pay review strategies to an ending, settling every review their way", () => {
+    const pay = STRATEGIES.filter((s) => ["cash-only", "scheme-heavy", "tribunal-gambler"].includes(s.id));
+    expect(pay).toHaveLength(3);
+    const played = runAll(short, { seeds: [1], strategies: pay });
+    expect(played).toHaveLength(MODEL_IDS.length * PRODUCT_TYPE_IDS.length * 3);
+    for (const r of played.filter((x) => x.outcome !== "cant-start")) {
+      if (r.outcome === "finished") expect(r.pay.reviews).toBe(3);
+      if (r.strategy === "tribunal-gambler") {
+        // It never takes a counter: staff take the least allowed (when cash is tight, it can be fair) or a tribunal sits.
+        expect(r.pay.outcomes.counterAccepted).toBe(0);
+        expect(r.pay.tribunalFees).toBe(r.pay.outcomes.tribunal * short.payReview.tribunal.fee);
+      }
+      if (r.strategy !== "scheme-heavy") expect(r.pay.schemeSpend).toBe(0);
+    }
+    const gambler = played.filter((r) => r.strategy === "tribunal-gambler");
+    expect(gambler.reduce((sum, r) => sum + r.pay.outcomes.tribunal, 0)).toBeGreaterThan(0);
+    // Share save dilutes the student whenever a scheme-heavy offer or a tribunal pick of it or the middle stands.
+    const heavy = played.filter((r) => r.strategy === "scheme-heavy" && r.pay.outcomes.offerAccepted > 0);
+    expect(heavy.length).toBeGreaterThan(0);
+    for (const r of heavy) {
+      expect(r.pay.staffSchemeShare).toBeGreaterThan(0);
+      expect(r.pay.studentShare).toBeLessThan(1);
+    }
+    expect(renderReport(played, { seeds: [1], strategies: pay })).toContain("## Pay reviews by strategy");
+  });
+
   it("renders a Markdown report with the headline tables and a section per strategy", () => {
     const report = renderReport(results, { seeds: [1, 2], strategies, title: "Test report" });
     expect(report).toMatch(/^# Test report\n/);

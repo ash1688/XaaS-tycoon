@@ -8,12 +8,14 @@ import {
   PRODUCT_TYPE_IDS,
   SimError,
   SPEND_CATEGORIES,
+  STAFF_SCHEMES,
   type Action,
   type DayLog,
   type GameConfig,
   type GameState,
   type ModelId,
   type SchemeLevels,
+  type StaffSchemeId,
   type ProductTypeId,
   type ServerSize,
   type ServerType,
@@ -75,6 +77,34 @@ export interface Strategy {
    * schemes raised are worth to staff. Left out, none: cash only.
    */
   schemes?: Partial<SchemeLevels>;
+  /** How it bargains in pay reviews, in place of the default policy (see settlePay). */
+  pay?: PayPolicy;
+}
+
+/**
+ * A way of bargaining in pay reviews: what it opens with, what it adds in schemes, when it takes staff's counter and
+ * how far it comes up when it doesn't. Its offers are judged on their worth to staff, schemes included.
+ */
+export interface PayPolicy {
+  /** The opening offer's worth: inflation plus this many points (0.01 = 1 point), or "min", the least allowed. */
+  opening: number | "min";
+  /**
+   * The staff schemes it raises a level each review (a toggle goes on in the first), offering their worth in place of
+   * cash: the cash rise is the offer's worth less what the schemes raised are worth to staff. Left out, cash only.
+   */
+  schemes?: readonly StaffSchemeId[];
+  /**
+   * Takes staff's counter when it's no more than inflation plus this many points: staff's counters are cash only, so
+   * taking one drops any schemes offered. Null never takes a counter.
+   */
+  acceptWithin: number | null;
+  /** A counter it doesn't take: its next offer comes this share of the way from its last towards staff's figure. */
+  step: number;
+  /**
+   * Takes staff's counter rather than make a final offer when the tribunal's fee would leave less than this many days
+   * of running costs in the bank. Left out, it risks the tribunal whatever its cash.
+   */
+  feeCushionDays?: number;
 }
 
 export const STRATEGIES: Strategy[] = [
@@ -192,6 +222,35 @@ export const STRATEGIES: Strategy[] = [
     loan: "onprem",
     slider: { building: 0, idle: false },
   },
+  {
+    id: "cash-only",
+    description:
+      "As sensible, but bargains in pay reviews with cash alone: opens at inflation, takes a counter up to 1.5 points over it, and otherwise comes halfway to staff's figure, as far as the tribunal unless its fee would leave less than two weeks' running costs.",
+    priceFactor: 1,
+    support: true,
+    scaling: "ahead",
+    loan: "onprem",
+    pay: { opening: 0, acceptWithin: 0.015, step: 0.5, feeCushionDays: 14 },
+  },
+  {
+    id: "scheme-heavy",
+    description:
+      "As sensible, but raises every staff scheme a level each pay review, share save included, for a cash rise of inflation less their worth; comes halfway to staff's figure in cash rather than take a cash-only counter, as far as the tribunal unless its fee would leave less than two weeks' running costs.",
+    priceFactor: 1,
+    support: true,
+    scaling: "ahead",
+    loan: "onprem",
+    pay: { opening: 0, schemes: STAFF_SCHEMES, acceptWithin: null, step: 0.5, feeCushionDays: 14 },
+  },
+  {
+    id: "tribunal-gambler",
+    description: "As sensible, but offers the least allowed three times in every pay review, never takes a counter, and lets the tribunal settle it.",
+    priceFactor: 1,
+    support: true,
+    scaling: "ahead",
+    loan: "onprem",
+    pay: { opening: "min", acceptWithin: null, step: 0 },
+  },
 ];
 
 /** Where the migrate strategy moves each model to. */
@@ -235,6 +294,31 @@ export interface GameResult {
   /** Spend by category, and staff at the end. */
   spend: Record<string, number>;
   staff: { developers: number; ops: number; support: number; moderators: number };
+  /** The pay reviews settled. */
+  pay: PayResult;
+}
+
+/** How a game's pay reviews went. */
+export interface PayResult {
+  reviews: number;
+  /** Every cash rise agreed, compounded: pay as a multiple of the day rates at the end, less 1 (0.12 = 12% up). */
+  rise: number;
+  /** The agreed cash rises less each review's inflation, added up: below 0, pay fell in real terms. */
+  realTerms: number;
+  /** How each review was settled. */
+  outcomes: Record<"offerAccepted" | "counterAccepted" | "tribunal", number>;
+  /** What the tribunals picked, and their fees in all. */
+  tribunalPicks: Record<"student" | "middle" | "staff", number>;
+  tribunalFees: number;
+  /** What the staff schemes cost in cash over the game. */
+  schemeSpend: number;
+  /** The staff share scheme's share of the company at the end, and the student's. */
+  staffSchemeShare: number;
+  studentShare: number;
+  /** The student's shares' worth at the end, at the final share price: their score, short of an IPO. */
+  score: number;
+  /** What the staff share scheme's shares are worth at the end, at the final share price: what share save cost in ownership. */
+  staffSchemeValue: number;
 }
 
 /** Applies an action, or leaves the state as it was if the rules refuse it (can't afford it, price locked…). */
@@ -590,18 +674,56 @@ function mvpTeam(sim: Sim, state: GameState, strategy: Strategy): GameState {
 }
 
 /**
- * The pay review policy every bot plays, so its games get past the reviews: offer inflation (pay held level in real
- * terms), as cash or, with `schemes`, as those schemes and the rest in cash, and if staff counter, accept their counter
- * (cash only).
+ * The pay review policy every bot plays without a PayPolicy of its own (see bargain), so its games get past the
+ * reviews: offer inflation (pay held level in real terms), as cash or, with `schemes`, as those schemes and the rest in
+ * cash, and if staff counter, accept their counter (cash only).
  */
 function settlePay(sim: Sim, state: GameState, strategy: Strategy): GameState {
   const review = sim.payReview(state);
   if (!review) return state;
+  if (strategy.pay) return bargain(sim, state, strategy.pay);
   const schemes = strategy.schemes;
   const worth = schemes ? sim.payOfferPreview(state, review.minOffer, schemes).schemeValue : 0;
   const rise = Math.max(0, Math.round((review.inflation - worth) * 1000) / 1000);
   const offered = tryAction(sim, state, schemes ? { type: "offerPayRise", rise, schemes } : { type: "offerPayRise", rise });
   return sim.payReview(offered) ? tryAction(sim, offered, { type: "acceptPayCounter" }) : offered;
+}
+
+/** A rise to the tenth of a point, as the sim rounds them. */
+const toTenth = (rise: number) => Math.round(rise * 1000) / 1000;
+
+/**
+ * Settles an open pay review with a PayPolicy: up to three offers, each worth more than the last by the policy's step
+ * towards staff's figure (and less than it, as an offer at their counter is refused), taking a counter within the
+ * policy's reach. A failed third offer goes to the tribunal. Should the rules refuse an offer, it takes the counter.
+ */
+function bargain(sim: Sim, state: GameState, policy: PayPolicy): GameState {
+  let s = state;
+  const first = sim.payReview(s)!;
+  // The scheme levels for this review, the same in every offer it makes.
+  const raised = first.schemes.filter((v) => policy.schemes?.includes(v.id));
+  const schemes: Partial<SchemeLevels> | undefined = raised.length
+    ? Object.fromEntries(raised.map((v) => [v.id, Math.min(v.maxLevel, v.level + 1)]))
+    : undefined;
+  const schemeWorth = schemes ? sim.payOfferPreview(s, first.minOffer, schemes).schemeValue : 0;
+  let worth = policy.opening === "min" ? first.minOffer : toTenth(first.inflation + policy.opening);
+  for (;;) {
+    const rise = Math.max(0, toTenth(worth - schemeWorth));
+    const offered = tryAction(sim, s, schemes ? { type: "offerPayRise", rise, schemes } : { type: "offerPayRise", rise });
+    if (offered === s) return tryAction(sim, s, { type: "acceptPayCounter" });
+    s = offered;
+    const next = sim.payReview(s);
+    if (!next) return s;
+    if (policy.acceptWithin !== null && next.staffFigure <= toTenth(next.inflation + policy.acceptWithin)) {
+      return tryAction(sim, s, { type: "acceptPayCounter" });
+    }
+    const daily = sim.dailyStaffCost(s) + sim.monthlyInfrastructureCost(s) / 30;
+    if (next.final && policy.feeCushionDays !== undefined && s.cash - next.tribunalFee < policy.feeCushionDays * daily) {
+      return tryAction(sim, s, { type: "acceptPayCounter" });
+    }
+    const last = next.studentOffers.at(-1)!;
+    worth = Math.max(next.minOffer, Math.min(toTenth(next.staffFigure - 0.001), toTenth(last + policy.step * (next.staffFigure - last))));
+  }
 }
 
 /**
@@ -698,6 +820,7 @@ export function playGame(sim: Sim, { model, productType, strategy, seed }: GameS
   let minCash = state.cash;
   let firstOverload: GameResult["firstOverload"] = null;
   let migrationDay: number | null = null;
+  let schemeSpend = 0;
   while (state.status === "playing") {
     state = playDay(sim, state, strategy);
     if (state.migration && migrationDay === null) migrationDay = state.day;
@@ -705,6 +828,7 @@ export function playGame(sim: Sim, { model, productType, strategy, seed }: GameS
     state = next;
     minCash = Math.min(minCash, state.cash);
     firstOverload ??= overloadIn(log);
+    schemeSpend += schemeSpendIn(sim, log);
   }
   const summary = sim.summarise(state);
   return {
@@ -734,6 +858,41 @@ export function playGame(sim: Sim, { model, productType, strategy, seed }: GameS
     migrationDay,
     spend: { ...summary.spend },
     staff: Object.fromEntries(sim.staff(state).map((p) => [p.pool, p.headcount])) as Record<StaffPool, number>,
+    pay: payResult(sim, state, schemeSpend),
+  };
+}
+
+/** What the staff schemes charged in a log: their daily lines, which start with the scheme's name. */
+function schemeSpendIn(sim: Sim, log: DayLog[]): number {
+  const names = Object.values(sim.config.payReview.schemes).map((s) => s.name);
+  let spend = 0;
+  for (const { entries } of log) {
+    for (const e of entries) if (e.category === "staff" && names.some((n) => e.text.startsWith(n))) spend -= e.cashDelta;
+  }
+  return spend;
+}
+
+function payResult(sim: Sim, state: GameState, schemeSpend: number): PayResult {
+  const records = state.pastPayReviews;
+  const outcomes = { offerAccepted: 0, counterAccepted: 0, tribunal: 0 };
+  const tribunalPicks = { student: 0, middle: 0, staff: 0 };
+  for (const r of records) {
+    outcomes[r.outcome]++;
+    if (r.tribunal) tribunalPicks[r.tribunal.pick]++;
+  }
+  const rows = sim.capTable(state).rows;
+  return {
+    reviews: records.length,
+    rise: state.payMultiplier - 1,
+    realTerms: records.reduce((sum, r) => sum + r.rise - r.inflation, 0),
+    outcomes,
+    tribunalPicks,
+    tribunalFees: records.reduce((sum, r) => sum + (r.tribunal?.fee ?? 0), 0),
+    schemeSpend,
+    staffSchemeShare: rows.find((r) => r.id === "staffScheme")?.share ?? 0,
+    studentShare: rows.find((r) => r.id === "student")?.share ?? 0,
+    score: rows.find((r) => r.id === "student")?.value ?? 0,
+    staffSchemeValue: rows.find((r) => r.id === "staffScheme")?.value ?? 0,
   };
 }
 
@@ -779,6 +938,19 @@ function emptyResult(model: ModelId, productType: ProductTypeId, strategy: strin
     migrationDay: null,
     spend: {},
     staff: { developers: 0, ops: 0, support: 0, moderators: 0 },
+    pay: {
+      reviews: 0,
+      rise: 0,
+      realTerms: 0,
+      outcomes: { offerAccepted: 0, counterAccepted: 0, tribunal: 0 },
+      tribunalPicks: { student: 0, middle: 0, staff: 0 },
+      tribunalFees: 0,
+      schemeSpend: 0,
+      staffSchemeShare: 0,
+      studentShare: 0,
+      score: 0,
+      staffSchemeValue: 0,
+    },
   };
 }
 
@@ -952,6 +1124,37 @@ export function renderReport(results: GameResult[], { title = "Balance report", 
     if (!days.length) return [s.id, "never", "", "", "", "", `${started.length}/${started.length}`];
     const late = days.filter((d) => d > 90).length;
     return [s.id, `d${whole(mean(days))}`, `d${whole(median(days))}`, `d${Math.min(...days)}`, `d${Math.max(...days)}`, `${late}/${started.length}`, `${started.length - days.length}/${started.length}`];
+  })), "");
+
+  out.push("## Pay reviews by strategy", "");
+  out.push(
+    "Across every game that started. Score: the student's shares' worth at the end (their stake × the valuation), a median. Pay rise: every cash rise compounded, and against inflation added up (below 0 is a real-terms cut), as medians. How the reviews were settled: staff took the offer, the student took a counter, or a tribunal (and what it picked: student / middle / staff). Scheme spend: what the staff schemes cost in cash over the game, a median. Stake: the student's median final share of the company, and the staff share scheme's, with what its shares are worth at the final share price (what share save cost in ownership). Rescued / liquidated: games a vulture VC rescued, and games liquidated, of those that started (a tribunal's fee is charged even when it takes cash below zero).",
+    "",
+  );
+  out.push(table(["Strategy", "Final cash", "Score", "Pay rise", "Against inflation", "Offer taken", "Counter taken", "Tribunal (S/M/St)", "Tribunal fees", "Scheme spend", "Your stake", "Staff scheme", "Its shares' worth", "Rescued / liquidated"], used.map((s) => {
+    const g = results.filter((r) => r.strategy === s.id && r.outcome !== "cant-start");
+    const reviews = g.reduce((sum, r) => sum + r.pay.reviews, 0);
+    const count = (k: keyof PayResult["outcomes"]) => g.reduce((sum, r) => sum + r.pay.outcomes[k], 0);
+    const picks = (k: keyof PayResult["tribunalPicks"]) => g.reduce((sum, r) => sum + r.pay.tribunalPicks[k], 0);
+    const share = (n: number) => `${reviews ? Math.round((n / reviews) * 100) : 0}%`;
+    const pct = (n: number) => `${n >= 0 ? "" : "-"}${(Math.abs(n) * 100).toFixed(1)}%`;
+    const pts = (n: number) => `${n >= 0 ? "+" : "-"}${(Math.abs(n) * 100).toFixed(1)} pts`;
+    return [
+      s.id,
+      money(median(g.map((r) => r.cash))),
+      money(median(g.map((r) => r.pay.score))),
+      pct(median(g.map((r) => r.pay.rise))),
+      pts(median(g.map((r) => r.pay.realTerms))),
+      share(count("offerAccepted")),
+      share(count("counterAccepted")),
+      `${share(count("tribunal"))} (${picks("student")}/${picks("middle")}/${picks("staff")})`,
+      money(median(g.map((r) => r.pay.tribunalFees))),
+      money(median(g.map((r) => r.pay.schemeSpend))),
+      pct(median(g.map((r) => r.pay.studentShare))),
+      pct(median(g.map((r) => r.pay.staffSchemeShare))),
+      money(median(g.map((r) => r.pay.staffSchemeValue))),
+      `${g.filter((r) => r.rescueDay !== null).length} / ${g.filter((r) => r.outcome === "liquidated").length}`,
+    ];
   })), "");
 
   if (used.some((s) => s.id === "sensible")) {
