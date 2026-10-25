@@ -80,17 +80,17 @@ describe("the developer slider", () => {
   });
 
   it("splits developer output between the feature build and optimisation after launch", () => {
-    const building = act(begin(), { type: "buildFeature", feature: "reviews" });
+    const building = act(begin(), { type: "buildFeature", feature: "wishlists" });
     const at = (share: number) => {
       const day = sim.advance(act(building, { type: "setOptimisation", share })).state;
-      return { feature: day.features.reviews!.progress, optimisation: day.optimisationDays };
+      return { feature: day.features.wishlists!.progress, optimisation: day.optimisationDays };
     };
     // The starting two developers: two developer-days a day.
     expect(at(0)).toEqual({ feature: 2, optimisation: 0 });
     expect(at(0.25)).toEqual({ feature: 1.5, optimisation: 0.5 });
     expect(at(1)).toEqual({ feature: 0, optimisation: 2 });
     // The days left on the build follow what the slider leaves it.
-    const reviews = (s: GameState) => sim.features(s).find((f) => f.id === "reviews")!;
+    const reviews = (s: GameState) => sim.features(s).find((f) => f.id === "wishlists")!;
     const { devDays } = reviews(building);
     expect(reviews(building).daysLeft).toBe(Math.ceil(devDays / 2));
     expect(reviews(act(building, { type: "setOptimisation", share: 0.5 })).daysLeft).toBe(devDays);

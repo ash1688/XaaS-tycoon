@@ -177,14 +177,22 @@ const activeCount = computed(
             <strong :id="`feature-${feature.id}`">{{ feature.name }}</strong>
             <span class="muted">{{ feature.blurb }}</span>
             <span v-if="game.onSaas" class="muted feature-cost" :data-testid="`addon-price-${feature.id}`">
-              {{ formatPrice(feature.addonPricePerUser) }} per user a month · {{ growthBoost(feature.growthMultiplier) }}{{ pulls(feature.appeal) }}
+              Tier {{ feature.tier }} · {{ formatPrice(feature.addonPricePerUser) }} per user a month · {{ growthBoost(feature.growthMultiplier) }}{{ pulls(feature.appeal) }}
             </span>
             <span v-else class="muted feature-cost">
-              {{ feature.devDays }} developer-days · {{ growthBoost(feature.growthMultiplier) }}{{ pulls(feature.appeal) }}
+              Tier {{ feature.tier }} · {{ feature.devDays }} developer-days · {{ growthBoost(feature.growthMultiplier) }}{{ pulls(feature.appeal) }}
             </span>
           </div>
           <span v-if="feature.status === 'built'" class="badge built-badge">Built</span>
           <span v-else-if="feature.status === 'addon'" class="badge built-badge">Active</span>
+          <span
+            v-else-if="feature.status === 'notStarted' && !feature.unlocked"
+            class="badge"
+            :title="`Unlocks with tier ${feature.tier}: see Tiers below`"
+            :data-testid="`feature-locked-${feature.id}`"
+          >
+            Tier {{ feature.tier }}
+          </span>
           <button
             v-else-if="feature.status === 'notStarted' && game.onSaas"
             class="ghost"

@@ -1,3 +1,4 @@
+import { cuDemand } from "./benefits.ts";
 import type { GameConfig, ModelId } from "./config.ts";
 import type { GameState } from "./state.ts";
 
@@ -35,16 +36,17 @@ export const optimisedShare = (config: GameConfig, state: Pick<GameState, "optim
 
 /**
  * CU and DBU each user needs on a model, after optimisation: the product's demand per user × what optimisation leaves.
- * Fewer per user means fewer servers (and so fewer ops) on-prem and on IaaS, and fewer instances on PaaS.
+ * Fewer per user means fewer servers (and so fewer ops) on-prem and on IaaS, and fewer instances on PaaS. A model
+ * benefit (a CDN) can take some CU off on top.
  */
 export function demandPerUser(
   config: GameConfig,
-  state: Pick<GameState, "productType" | "optimisationDays">,
+  state: Pick<GameState, "productType" | "optimisationDays" | "benefits" | "model">,
   model: ModelId,
 ): { cuPerUser: number; dbuPerUser: number } {
   const { cuPerUser, dbuPerUser } = config.productTypes[state.productType].demand;
   const left = optimisedShare(config, state, model);
-  return { cuPerUser: cuPerUser * left, dbuPerUser: dbuPerUser * left };
+  return { cuPerUser: cuPerUser * left * cuDemand(config, state, model), dbuPerUser: dbuPerUser * left };
 }
 
 /**

@@ -379,6 +379,9 @@ export async function buildApp(opts: AppOptions) {
       mvp: sim.mvp(state),
       optimisation: sim.optimisation(state),
       research: sim.research(state),
+      tiers: sim.tiers(state),
+      benefits: sim.benefits(state),
+      monthlyBenefitCost: sim.monthlyBenefitCost(state),
       users: state.users,
       paidUsers: state.paidUsers,
       freeUsers: state.users - state.paidUsers,
@@ -522,6 +525,7 @@ export async function buildApp(opts: AppOptions) {
       conversionUptimeDays: config.conversion.uptimeDays,
       loadBalancerFrom: config.servers.loadBalancerFrom,
       cacheableShare: config.servers.cacheableShare,
+      maxPerformance: config.hardware.maxPerformance,
       migrationPhases: MIGRATION_PHASES.map((id) => ({ id, ...config.migration.phases[id] })),
       startLoan: sim.startLoanQuote(),
       shares: { ...config.shares },
@@ -787,6 +791,9 @@ export async function buildApp(opts: AppOptions) {
                 "repayLoan",
                 "applyForIpo",
                 "ringBell",
+                "buyBenefit",
+                "cancelBenefit",
+                "setPerformance",
               ],
             },
             pool: { enum: [...STAFF_POOLS] },
@@ -796,6 +803,11 @@ export async function buildApp(opts: AppOptions) {
             agency: { type: "boolean" },
             // Checked against the product's list by the sim.
             feature: { type: "string", maxLength: 64 },
+            // buyBenefit and cancelBenefit: a model benefit, by id. Checked against the config's list by the sim.
+            benefit: { type: "string", maxLength: 64 },
+            // setPerformance: an on-prem server's hardware slider, as a share of its normal capacity. The sim checks
+            // it's within the configured top.
+            performance: { type: "number", minimum: 0, maximum: 10 },
             // moveStaff: the pool one person moves into, and optionally the one they leave.
             to: { enum: [...STAFF_POOLS] },
             from: { enum: [...STAFF_POOLS] },
@@ -850,6 +862,8 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { const: "switchServer" } } }, then: { required: ["id", "gives"] } },
             { if: { properties: { type: { const: "ringBell" } } }, then: { required: ["float"] } },
             { if: { properties: { type: { const: "setOptimisation" } } }, then: { required: ["share"] } },
+            { if: { properties: { type: { enum: ["buyBenefit", "cancelBenefit"] } } }, then: { required: ["benefit"] } },
+            { if: { properties: { type: { const: "setPerformance" } } }, then: { required: ["id", "performance"] } },
             {
               if: { properties: { type: { const: "setManagedService" } } },
               then: { required: ["service", "size"] },

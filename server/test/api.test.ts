@@ -2536,7 +2536,8 @@ describe("features", () => {
 describe("SaaS add-ons", () => {
   // Starting staff is 0 here, so a company hires the configuration team itself.
   const { minConfigDevelopers } = defaultConfig.addons;
-  const [addon] = defaultConfig.productTypes.ecommerce.features;
+  // Tier 1's, open from the start.
+  const addon = defaultConfig.productTypes.ecommerce.features.find((f) => (f.tier ?? 1) === 1);
 
   async function setup(model = "saas", developers = minConfigDevelopers) {
     const code = await newCode();
@@ -2557,7 +2558,8 @@ describe("SaaS add-ons", () => {
     const bought = res.json<CompanyView>();
     expect(statusOf(bought)).toBe("addon");
     expect(bought).toMatchObject({ day: 1, cash: company.cash });
-    expect(bought.monthlyAddonCost).toBe(Math.round(bought.users * addon!.addonPricePerUser));
+    // The price is charged to the penny.
+    expect(bought.monthlyAddonCost).toBe(Math.round(bought.users * (Math.round(addon!.addonPricePerUser * 100) / 100)));
     // Kept across reloads, and can't be bought twice.
     expect(statusOf((await app.inject({ method: "GET", url })).json<CompanyView>())).toBe("addon");
     const again = await act(buy);
@@ -2771,6 +2773,7 @@ describe("migration quote", () => {
       total: 100 + 140 + 350 + 200,
       overrun: { chance: 0, minDays: 2, maxDays: 5 },
       lostAddons: [],
+      lostBenefits: [],
       // £1,000 less the total, which leaves under a month of running costs.
       cashLeft: 1000 - 790,
       warning: expect.stringMatching(/^This would leave you £210, about \d+ days of running costs before any income\./),
@@ -2846,6 +2849,9 @@ describe("leaving SaaS (vendor lock-in)", () => {
     const url = `/api/codes/${code}/companies/${company.id}`;
     const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
     for (let i = 0; i < minConfigDevelopers; i++) await act({ type: "hire", pool: "developers" });
+    // Every tier open, so both can be bought.
+    const open = JSON.stringify([2, 3, 4].map((tier) => ({ tier, day: 1 })));
+    await testDb.db.execute(sql`update companies set state = jsonb_set(state, '{tiers}', ${open}::jsonb) where id = ${company.id}`);
     for (const f of [checkout!, reviews!]) await act({ type: "buyAddon", feature: f.id });
     // Enough cash to pay both providers and the exit penalty.
     await testDb.db.execute(
@@ -4061,5 +4067,50 @@ describe("paid APIs", () => {
     const { company, act } = await setup("saas", "social");
     expect(company.api).toBeNull();
     expect((await act({ type: "buyApi" })).json()).toMatchObject({ error: "no_api" });
+  });
+});
+
+describe("tiers, model benefits and the hardware slider (#123)", () => {
+  async function setup(model = "iaas") {
+    const code = await newCode();
+    const company = (await newCompany(code, { name: "Acme", productType: "ecommerce", model, takeLoan: model === "onprem" })).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
+    const openTiers = async () => {
+      const open = JSON.stringify([2, 3, 4].map((tier) => ({ tier, day: 1 })));
+      await testDb.db.execute(sql`update companies set state = jsonb_set(state, '{tiers}', ${open}::jsonb) where id = ${company.id}`);
+    };
+    return { company, act, openTiers };
+  }
+
+  it("shows the tiers and benefits, and buys and cancels a benefit once its tier is open", async () => {
+    const { company, act, openTiers } = await setup();
+    expect(company.tiers.map((t) => [t.tier, t.available])).toEqual([[1, true], [2, false], [3, false], [4, false]]);
+    expect(company.benefits.find((b) => b.id === "reservedInstances")).toMatchObject({ onModel: true, unlocked: false, active: false });
+    const locked = await act({ type: "buyBenefit", benefit: "reservedInstances" });
+    expect(locked.statusCode).toBe(400);
+    expect(locked.json()).toMatchObject({ error: "locked" });
+    await openTiers();
+    await testDb.db.execute(sql`update companies set state = jsonb_set(state, '{cash}', '100000') where id = ${company.id}`);
+    const bought = await act({ type: "buyBenefit", benefit: "reservedInstances" });
+    expect(bought.statusCode).toBe(200);
+    expect(bought.json<CompanyView>().benefits.find((b) => b.id === "reservedInstances")!.active).toBe(true);
+    const cancelled = (await act({ type: "cancelBenefit", benefit: "reservedInstances" })).json<CompanyView>();
+    expect(cancelled.benefits.find((b) => b.id === "reservedInstances")!.active).toBe(false);
+    for (const payload of [{ type: "buyBenefit" }, { type: "cancelBenefit", benefit: 5 }, { type: "setPerformance", id: 1 }]) {
+      expect((await act(payload)).statusCode).toBe(400);
+    }
+  });
+
+  it("sets an on-prem server's hardware slider, and refuses it elsewhere", async () => {
+    const { company, act } = await setup("onprem");
+    const id = company.servers[0]!.id;
+    const set = await act({ type: "setPerformance", id, performance: 1.25 });
+    expect(set.statusCode).toBe(200);
+    expect(set.json<CompanyView>().servers.find((s) => s.id === id)).toMatchObject({ performance: 1.25 });
+    expect((await act({ type: "setPerformance", id, performance: 2 })).json()).toMatchObject({ error: "bad_performance" });
+    const iaas = await setup();
+    const refused = await iaas.act({ type: "setPerformance", id: iaas.company.servers[0]!.id, performance: 1.2 });
+    expect(refused.json()).toMatchObject({ error: "no_slider" });
   });
 });

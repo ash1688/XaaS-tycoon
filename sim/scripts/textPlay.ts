@@ -3,6 +3,7 @@
 // decision. Every game writes the same rows as the classroom playtest log, so the same analysis runs on both.
 // A tool for testing the game, not part of it. See play.ts for the command line.
 import {
+  defaultConfig,
   DIFFICULTIES,
   gameLengthName,
   MANAGED_SERVICES,
@@ -269,6 +270,32 @@ function marketLines(sim: Sim, state: GameState): string[] {
 }
 
 /** The company at a glance: everything a player sees on the dashboard, as short lines. */
+/** Tiers in a line: those open, and for the next one, its condition and how far the company has got. */
+function tiersLine(sim: Sim, state: GameState): string {
+  const view = sim.tiers(state);
+  const open = view.filter((t) => t.available).map((t) => t.tier);
+  const next = view.find((t) => !t.available);
+  if (!next) return `all open (${open.join(", ")})`;
+  const part = (c: (typeof next.conditions)[number]) =>
+    c.unit === "yes"
+      ? `${c.label.toLowerCase()}${c.met ? " (yes)" : ""}`
+      : `${c.label.toLowerCase()} ${c.unit === "pounds" ? money(c.value) : c.unit === "percent" ? `${c.value}%` : c.value.toLocaleString("en-GB")}/${c.unit === "pounds" ? money(c.target) : c.unit === "percent" ? `${c.target}%` : c.target.toLocaleString("en-GB")}${c.met ? " (met)" : ""}`;
+  const items = next.items.filter((i) => i.kind === "feature" || i.model === state.model).map((i) => i.id);
+  return `open ${open.join(", ")} | tier ${next.tier} needs ${next.conditions.map(part).join(next.any ? " OR " : " AND ")}${items.length ? ` (unlocks ${items.join(", ")})` : ""}`;
+}
+
+/** On-prem, a server's slider, wear and any trouble: empty at 100% with no wear to speak of on any other model. */
+function hardwareText(s: ReturnType<Sim["servers"]>[number]): string {
+  if (s.performance === null) return "";
+  const parts = [`at ${Math.round(100 * s.performance)}%`, `wear ${Math.round(100 * (s.wear ?? 0))}%`];
+  if (s.risk && (s.risk.crash > 0 || s.risk.overheat > 0)) {
+    parts.push(`risk ${(100 * s.risk.overheat).toFixed(1)}% overheat/${(100 * s.risk.crash).toFixed(1)}% crash a day`);
+  }
+  if (s.crashedDays) parts.push(`CRASHED ${s.crashedDays}d`);
+  if (s.overheatedDays) parts.push(`OVERHEATED ${s.overheatedDays}d`);
+  return ` [${parts.join(", ")}]`;
+}
+
 export function renderStatus(sim: Sim, state: GameState): string {
   const lines: string[] = [];
   const lock = sim.priceLockDaysLeft(state);
@@ -331,6 +358,11 @@ export function renderStatus(sim: Sim, state: GameState): string {
   if (research.unlocked) {
     lines.push(`research: ${+research.points.toFixed(1)} RP banked, ${research.pointsPerDay} RP a day (nothing to spend them on yet)`);
   }
+  lines.push(`tiers: ${tiersLine(sim, state)}`);
+  const benefitsOn = sim.benefits(state).filter((b) => b.active);
+  if (benefitsOn.length) {
+    lines.push(`model benefits on: ${benefitsOn.map((b) => `${b.id} (${money(b.monthlyFee)}/month)`).join(", ")} (lost if you migrate)`);
+  }
   const launch = sim.launch(state);
   if (launch.status !== "launched") {
     lines.push(
@@ -370,7 +402,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
       `servers: ${servers
         .map(
           (s) =>
-            `#${s.id} ${s.size} ${s.type} ${s.units} ${s.apiu ? "APIU (switched)" : UNIT[s.type]}${s.rack !== null ? ` in rack #${s.rack}` : ""}${s.status === "pending" ? ` (arrives in ${s.daysLeft}d)` : ""}`,
+            `#${s.id} ${s.size} ${s.type} ${s.units} ${s.apiu ? "APIU (switched)" : UNIT[s.type]}${s.rack !== null ? ` in rack #${s.rack}` : ""}${s.status === "pending" ? ` (arrives in ${s.daysLeft}d)` : ""}${hardwareText(s)}`,
         )
         .join(", ")}`,
     );
@@ -397,7 +429,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const features = sim.features(state);
   lines.push(
     `features: ${features
-      .map((f) => `${f.id} ${f.status === "notStarted" ? "not started" : f.status}${f.daysLeft ? ` (${f.daysLeft}d left)` : ""}${appeal(f.appeal)}`)
+      .map((f) => `${f.id} ${f.status === "notStarted" ? (f.unlocked ? "not started" : `locked (tier ${f.tier})`) : f.status}${f.daysLeft ? ` (${f.daysLeft}d left)` : ""}${appeal(f.appeal)}`)
       .join(", ")}`,
   );
 
@@ -682,7 +714,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
     if (sim.priceLockDaysLeft(state) === 0) lines.push(`  price <0.01–${sim.config.pricing.maxPrice}>`);
     lines.push(`  preview <price>   (what a price would do; changes nothing)`);
   }
-  const notStarted = sim.features(state).filter((f) => f.status === "notStarted");
+  const notStarted = sim.features(state).filter((f) => f.status === "notStarted" && f.unlocked);
   if (notStarted.length) {
     const verb = state.model === "saas" ? "addon" : "build";
     lines.push(
@@ -692,6 +724,19 @@ export function renderCommands(sim: Sim, state: GameState): string {
     );
   }
   lines.push(`  optimise <0–100>   (% of developer time on optimisation rather than features, once the MVP is done)`);
+  const buyable = sim.benefits(state).filter((b) => b.onModel && b.unlocked && !b.active);
+  if (buyable.length) {
+    lines.push(
+      `  benefit <${buyable.map((b) => b.id).join("|")}>   ${buyable.map((b) => `${b.id} ${money(b.setupFee)} + ${money(b.monthlyFee)}/month: ${b.blurb}`).join("; ")}`,
+    );
+  }
+  const active = sim.benefits(state).filter((b) => b.active);
+  if (active.length) lines.push(`  dropbenefit <${active.map((b) => b.id).join("|")}>   (stops its monthly fee; no refund)`);
+  if (sim.servers(state).some((x) => x.performance !== null)) {
+    lines.push(
+      `  slider <server id> <0–${Math.round(100 * sim.config.hardware.maxPerformance)}>   (% of normal capacity; power and upkeep follow it; above 100% risks overheating and crashes and wears it faster)`,
+    );
+  }
   const options = sim.serverOptions(state);
   const racks = sim.racks(state);
   if (options.length) {
@@ -850,6 +895,8 @@ export function parseCommand(text: string): Command {
     return found;
   };
   const service = (w: string | undefined) => oneOf<ManagedService>(w, MANAGED_SERVICES, "a managed service");
+  // Commands are lower-cased, so a benefit's id is matched without case ("cdn", "reservedinstances").
+  const benefitId = (w: string | undefined) => defaultConfig.tiers.benefits.find((b) => b.id.toLowerCase() === w)?.id ?? w ?? "";
   const pool = (w: string | undefined) => oneOf<StaffPool>(w, STAFF_POOLS, "a staff pool");
   // Optional "agency", then an optional grade, before the count: "hire support junior 5", "hire support 5" (mids),
   // "hire support agency 2", "letgo ops agency senior".
@@ -896,6 +943,12 @@ export function parseCommand(text: string): Command {
       return one({ type: "buyAddon", feature: args[0] ?? "" });
     case "optimise":
       return one({ type: "setOptimisation", share: number(args[0], "a percent") / 100 });
+    case "benefit":
+      return one({ type: "buyBenefit", benefit: benefitId(args[0]) });
+    case "dropbenefit":
+      return one({ type: "cancelBenefit", benefit: benefitId(args[0]) });
+    case "slider":
+      return one({ type: "setPerformance", id: number(args[0], "a server id"), performance: number(args[1], "a percent") / 100 });
     case "buy":
       return one({
         type: "buyServer",

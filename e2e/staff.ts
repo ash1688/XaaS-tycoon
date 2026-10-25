@@ -55,6 +55,20 @@ function arrivedBy(launchUsers: number, k: number) {
  * Pins a new company's launch total in the test database. Each game draws its own from a range, so a spec whose sums
  * depend on the users pins round two's number for its product instead.
  */
+/**
+ * Opens every tier for a company, as if each condition had been met on day 1, so a test about building or buying
+ * features can use any of the product's, not just tier 1's.
+ */
+export async function openTiers(id: string) {
+  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
+  try {
+    const open = [2, 3, 4].map((tier) => ({ tier, day: 1 }));
+    await sql`update companies set state = jsonb_set(state, '{tiers}', ${sql.json(open)}) where id = ${id}`;
+  } finally {
+    await sql.end();
+  }
+}
+
 export async function pinLaunchUsers(id: string, users: number) {
   const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
   try {

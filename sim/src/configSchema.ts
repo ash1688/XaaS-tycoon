@@ -270,6 +270,45 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add(`optimisation.cap.${m}`, "People", "Optimisation", `Most it saves (${MODEL_LABELS[m]})`, "The most optimisation can cut resource need per user on this model (0.5 = half): CU and DBU per user, PaaS instances, or the SaaS per-user fee. Kept through a migration, capped at the new model's.", range(0, 0.95, 0.05));
   }
   add("research.pointsPerPerson", "People", "Research", "Research points per researcher", "Research points (RP) a mid researcher earns a day. Juniors and seniors earn this × their grade's output. RP bank with no cap.", range(0, 100, 0.5));
+  const T = "Tiers";
+  const TIER = range(1, 4, 1);
+  add("tiers.tier2.users", "Infrastructure", T, "Tier 2: users", "Tier 2 opens once the company has this many users, paying or free.", range(0, 10_000_000, 100));
+  add("tiers.tier3.dailyIncome", "Infrastructure", T, "Tier 3: income a day", "Tier 3 opens once the last days played (below) average this much income a day, with the uptime below.", POUNDS);
+  add("tiers.tier3.uptime", "Infrastructure", T, "Tier 3: uptime %", "The uptime % over those days that tier 3 also needs.", range(0, 100, 0.1));
+  add("tiers.tier3.days", "Infrastructure", T, "Tier 3: days measured", "How many of the latest days played tier 3's income and uptime are averaged over.", GAME_DAY);
+  for (const p of PRODUCT_TYPE_IDS) {
+    for (const f of base.productTypes[p]?.features ?? []) {
+      add(`productTypes.${p}.features.${f.id}.tier`, "Infrastructure", T, `${base.productTypes[p].name}: ${f.name} tier`, "The tier this feature is in: it can only be built or bought once that tier is unlocked. Tier 1 is open from the start.", TIER);
+    }
+  }
+  for (const b of base.tiers?.benefits ?? []) {
+    const at = `tiers.benefits.${b.id}`;
+    const name = `${b.name} (${MODEL_LABELS[b.model]})`;
+    add(`${at}.tier`, "Infrastructure", T, `${name}: tier`, "The tier this model benefit is in: it can only be bought once that tier is unlocked.", TIER);
+    add(`${at}.setupFee`, "Infrastructure", T, `${name}: set-up fee`, "Paid once when the benefit is bought. A migration loses it with no refund.", POUNDS);
+    add(`${at}.monthlyFee`, "Infrastructure", T, `${name}: monthly fee`, "Billed a day's share at a time while the benefit is on.", POUNDS);
+    const e = b.effects;
+    if (e.powerSaving !== undefined) add(`${at}.effects.powerSaving`, "Infrastructure", T, `${name}: power saving`, "The share taken off power and cooling and every server's power and upkeep (0.2 = 20% off).", SHARE);
+    if (e.sliderRisk !== undefined) add(`${at}.effects.sliderRisk`, "Infrastructure", T, `${name}: slider risk`, "The hardware slider's chance of overheating or crashing is multiplied by this (0.5 = halved).", MULTIPLIER);
+    if (e.rentSaving !== undefined) add(`${at}.effects.rentSaving`, "Infrastructure", T, `${name}: rent saving`, "The share taken off every server's rent (0.3 = 30% off).", SHARE);
+    if (e.autoscaling) {
+      add(`${at}.effects.autoscaling.pricePerUnit`, "Infrastructure", T, `${name}: price per unit`, "What each CU or DBU over capacity costs for the day when extra VMs cover it.", range(0, 1_000, 0.5));
+      add(`${at}.effects.autoscaling.most`, "Infrastructure", T, `${name}: most extra`, "The most extra VMs can add, as a share of the servers' own units (0.5 = half as much again).", range(0, 10, 0.05));
+    }
+    if (e.managedAutoscaling) add(`${at}.effects.managedAutoscaling.headroom`, "Infrastructure", T, `${name}: headroom`, "Each night the instance count is set to the day's CU demand plus this share (0.25 = a quarter more).", range(0, 5, 0.05));
+    if (e.outageHours !== undefined) add(`${at}.effects.outageHours`, "Infrastructure", T, `${name}: outage hours`, "Hours down in any outage are multiplied by this, rounded up (0.5 = half as long).", SHARE);
+    if (e.cuDemand !== undefined) add(`${at}.effects.cuDemand`, "Infrastructure", T, `${name}: CU demand`, "CU demand is multiplied by this (0.75 = a quarter less).", SHARE);
+    if (e.eventHours) add(`${at}.effects.eventHours.multiplier`, "Infrastructure", T, `${name}: provider outage hours`, "Hours down from the provider's outages are multiplied by this, rounded up (0.5 = half as long).", SHARE);
+  }
+  const H = "Hardware slider (on-prem)";
+  add("hardware.maxPerformance", "Infrastructure", H, "Top of the slider", "The most of its normal capacity an on-prem server can be pushed to (1.5 = 150%).", range(1, 3, 0.05));
+  add("hardware.overheat.chance", "Infrastructure", H, "Overheating: chance a day at the top", "A server at the top of the slider overheats on this share of days; between 100% and the top it's this × x², where x runs from 0 to 1.", SHARE);
+  add("hardware.overheat.days", "Infrastructure", H, "Overheating: days", "How many days an overheated server gives less capacity.", range(1, 30, 1));
+  add("hardware.overheat.capacity", "Infrastructure", H, "Overheating: capacity left", "The share of its capacity an overheated server gives (0.5 = half).", SHARE);
+  add("hardware.crash.chance", "Infrastructure", H, "Crash: chance a day at the top", "A server at the top of the slider crashes on this share of days, the same curve as overheating.", SHARE);
+  add("hardware.crash.days", "Infrastructure", H, "Crash: days down", "How many days a crashed server gives nothing while ops fix it.", range(1, 30, 1));
+  add("hardware.lifespan", "Infrastructure", H, "Lifespan (days at 100%)", "Wear a server can build up before it's worn out. It wears the slider² a day: 1 at 100%, 2.25 at 150%.", range(1, 20_000, 1));
+  add("hardware.wornCrashChance", "Infrastructure", H, "Worn out: extra crash chance", "Past its lifespan a server has this × (wear − lifespan) ÷ lifespan extra chance a day of a crash, whatever its slider.", SHARE);
   for (const p of PRODUCT_TYPE_IDS) {
     for (const f of base.productTypes[p]?.features ?? []) {
       const at = `productTypes.${p}.features.${f.id}`;

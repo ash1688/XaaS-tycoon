@@ -149,6 +149,8 @@ const config: GameConfig = {
   mvp: NO_MVP,
   optimisation: defaultConfig.optimisation,
   research: defaultConfig.research,
+  tiers: defaultConfig.tiers,
+  hardware: defaultConfig.hardware,
   // Capacity far above any load here, so outages only happen where a test lowers it.
   // No upfront or per-user costs, so each model costs a flat monthly ÷ 30 a day unless a test adds them.
   models: {
@@ -1064,7 +1066,7 @@ describe("features", () => {
 
   it("lists the product's features from config, none started", () => {
     expect(sim.features(startOn())).toEqual(
-      features.map((f) => ({ ...f, status: "notStarted", progress: 0, daysLeft: null, addonSetupFee: 0 })),
+      features.map((f) => ({ ...f, status: "notStarted", progress: 0, daysLeft: null, addonSetupFee: 0, tier: 1, unlocked: true })),
     );
   });
 
@@ -1489,8 +1491,8 @@ describe("servers on IaaS", () => {
   it("starts a new IaaS game with the configured starter setup, ready for the first day", () => {
     const state = begin();
     expect(flat.servers(state)).toEqual([
-      { id: 1, type: "app", size: "massive", name: "App server", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, apiu: false, monthlyCost: 0, paid: null, sellBack: null, rack: null },
-      { id: 2, type: "database", size: "massive", name: "Database", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, apiu: false, monthlyCost: 0, paid: null, sellBack: null, rack: null },
+      { id: 1, type: "app", size: "massive", name: "App server", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, apiu: false, monthlyCost: 0, paid: null, sellBack: null, rack: null, performance: null, wear: null, risk: null, crashedDays: 0, overheatedDays: 0 },
+      { id: 2, type: "database", size: "massive", name: "Database", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, apiu: false, monthlyCost: 0, paid: null, sellBack: null, rack: null, performance: null, wear: null, risk: null, crashedDays: 0, overheatedDays: 0 },
     ]);
     expect(flat.units(state)).toMatchObject({ cu: { demand: 10, capacity: 10_000 }, dbu: { demand: 10, capacity: 10_000 } });
   });
@@ -3702,12 +3704,13 @@ describe("default config", () => {
     }
   });
 
-  it("lets a SaaS company that buys every add-on on day 1 reach day 180 with its starting developers", () => {
+  it("lets a SaaS company that buys every add-on it can on day 1 reach day 180 with its starting developers", () => {
     const { addons, staff } = defaultConfig;
     expect(staff.developers.startingCount).toBeGreaterThanOrEqual(addons.minConfigDevelopers);
     for (const p of ["ecommerce", "social", "video"] as const) {
       let state = sim180.newGame({ companyName: "Acme", productType: p, model: "saas", seed: 7 });
-      for (const f of defaultConfig.productTypes[p].features) {
+      // Only tier 1's are unlocked on day 1.
+      for (const f of defaultConfig.productTypes[p].features.filter((x) => (x.tier ?? 1) === 1)) {
         state = sim180.applyAction(state, { type: "buyAddon", feature: f.id });
       }
       const end = sim180.advance(state, defaultConfig.finalDay - 1).state;
@@ -4077,6 +4080,7 @@ describe("migration costs", () => {
         total: 1078,
         overrun: { chance: 0, minDays: 2, maxDays: 4 },
         lostAddons: [],
+        lostBenefits: [],
         // £1,000 in the bank, so it says so.
         cashLeft: -78,
         warning: "You can't afford this: it costs £1,078 and you have £1,000.",
@@ -4631,7 +4635,7 @@ describe("migration with servers", () => {
 
   it("keeps the existing rules: lost add-ons, exit penalty and staff free to move", () => {
     const saas = withStaff(on("saas", 1_000), { developers: 3 });
-    const bought = s.applyAction(saas, { type: "buyAddon", feature: calm.productTypes.social.features[0]!.id });
+    const bought = s.applyAction(saas, { type: "buyAddon", feature: calm.productTypes.social.features.find((f) => (f.tier ?? 1) === 1)!.id });
     const quote = s.migrationQuote(bought, "iaas");
     expect(quote.lostAddons).toHaveLength(1);
     expect(quote.setup.length).toBeGreaterThan(0);
