@@ -61,7 +61,7 @@ import {
   type UnitDemand,
 } from "./state.ts";
 import { createSummary, type GameSummary } from "./summary.ts";
-import { createTiers, featureTier, isUnlocked, type TierStatusView } from "./tiers.ts";
+import { createTiers, everythingUnlocked, featureTier, isUnlocked, tierAvailable, unlockItem, type TierStatusView } from "./tiers.ts";
 import { createModeration, type ModerationView } from "./moderation.ts";
 import { createSupport } from "./support.ts";
 
@@ -595,6 +595,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       optimisationShare: 0,
       optimisationDays: 0,
       researchPoints: 0,
+      unlocks: [],
       tiers: [],
       benefits: [],
       // The hardware slider has its own too, so overheating doesn't change the rest of the game.
@@ -761,6 +762,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
         return benefits.cancelBenefit(state, action.benefit);
       case "setPerformance":
         return setPerformance(config, state, action.id, action.performance);
+      case "unlockItem":
+        return unlockItem(config, state, action.item);
       default:
         throw new SimError("unknown_action", "That action isn't recognised.");
     }
@@ -1015,7 +1018,13 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const allOn = list.every((f) => ["built", "addon"].includes(state.features[f.id]?.status ?? ""));
     const locked = all.filter((f) => !isUnlocked(config, state, f.id));
     const sofar = locked.length ? "unlocked so far " : "";
-    const later = locked.length ? ` The rest open with tier ${Math.min(...locked.map(featureTier))} and above.` : "";
+    // Locked features either wait for their tier, or for research points to unlock them now it's available.
+    const toUnlock = locked.some((f) => tierAvailable(state, featureTier(f)));
+    const later = !locked.length
+      ? ""
+      : toUnlock
+        ? " Unlock more with research points."
+        : ` The rest open with tier ${Math.min(...locked.map(featureTier))} and above.`;
     const optimising = state.optimisationShare > 0;
     const spare = optimising
       ? `the ${Math.round(100 * (1 - state.optimisationShare))}% of your developers' time not on optimisation goes spare`
@@ -1044,8 +1053,20 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     return { ...state, optimisationShare: Math.round(share * 100) / 100 };
   }
 
+  /** Why researchers have nothing to do, if they haven't: every item in every tier is unlocked, any model's too. */
+  function researchersIdle(state: GameState): string | null {
+    if (staffOutput(config, state, "researchers") <= 0 || !everythingUnlocked(config, state)) return null;
+    return "Every feature and model benefit in every tier is unlocked: your researchers have nothing left to research. Let them go to save their pay.";
+  }
+
   function staffWithIdle(state: GameState): StaffPoolView[] {
-    return staff.staffView(state).map((p) => (p.pool === "developers" ? { ...p, idle: developersIdle(state) } : p));
+    return staff.staffView(state).map((p) =>
+      p.pool === "developers"
+        ? { ...p, idle: developersIdle(state) }
+        : p.pool === "researchers"
+          ? { ...p, idle: researchersIdle(state) }
+          : p,
+    );
   }
 
   function endGame(saved: GameState): GameState {

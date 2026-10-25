@@ -272,6 +272,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("research.pointsPerPerson", "People", "Research", "Research points per researcher", "Research points (RP) a mid researcher earns a day. Juniors and seniors earn this × their grade's output. RP bank with no cap.", range(0, 100, 0.5));
   const T = "Tiers";
   const TIER = range(1, 4, 1);
+  const RP = range(0, 100_000, 1);
   add("tiers.tier2.users", "Infrastructure", T, "Tier 2: users", "Tier 2 opens once the company has this many users, paying or free.", range(0, 10_000_000, 100));
   add("tiers.tier3.dailyIncome", "Infrastructure", T, "Tier 3: income a day", "Tier 3 opens once the last days played (below) average this much income a day, with the uptime below.", POUNDS);
   add("tiers.tier3.uptime", "Infrastructure", T, "Tier 3: uptime %", "The uptime % over those days that tier 3 also needs.", range(0, 100, 0.1));
@@ -279,12 +280,16 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   for (const p of PRODUCT_TYPE_IDS) {
     for (const f of base.productTypes[p]?.features ?? []) {
       add(`productTypes.${p}.features.${f.id}.tier`, "Infrastructure", T, `${base.productTypes[p].name}: ${f.name} tier`, "The tier this feature is in: it can only be built or bought once that tier is unlocked. Tier 1 is open from the start.", TIER);
+      if (f.rpPrice !== undefined) {
+        add(`productTypes.${p}.features.${f.id}.rpPrice`, "Infrastructure", T, `${base.productTypes[p].name}: ${f.name} RP price`, "Research points (RP) to unlock this feature on the Research page once its tier is available, before it can be built or bought. Tier 1 features need none.", RP);
+      }
     }
   }
   for (const b of base.tiers?.benefits ?? []) {
     const at = `tiers.benefits.${b.id}`;
     const name = `${b.name} (${MODEL_LABELS[b.model]})`;
     add(`${at}.tier`, "Infrastructure", T, `${name}: tier`, "The tier this model benefit is in: it can only be bought once that tier is unlocked.", TIER);
+    if (b.rpPrice !== undefined) add(`${at}.rpPrice`, "Infrastructure", T, `${name}: RP price`, "Research points (RP) to unlock this model benefit on the Research page once its tier is available, before it can be bought. It stays unlocked through a migration.", RP);
     add(`${at}.setupFee`, "Infrastructure", T, `${name}: set-up fee`, "Paid once when the benefit is bought. A migration loses it with no refund.", POUNDS);
     add(`${at}.monthlyFee`, "Infrastructure", T, `${name}: monthly fee`, "Billed a day's share at a time while the benefit is on.", POUNDS);
     const e = b.effects;

@@ -269,6 +269,16 @@ function marketLines(sim: Sim, state: GameState): string[] {
   ];
 }
 
+/**
+ * The items research can unlock now, in tier order: their tier is available and they aren't unlocked yet. The
+ * product's features and the company's model's benefits first, then other models' benefits, ready for a migration.
+ */
+function unlockable(sim: Sim, state: GameState) {
+  const items = sim.tiers(state).flatMap((t) => t.items).filter((i) => i.unlockable);
+  const here = (i: (typeof items)[number]) => i.kind === "feature" || i.model === state.model;
+  return [...items.filter(here), ...items.filter((i) => !here(i))];
+}
+
 /** The company at a glance: everything a player sees on the dashboard, as short lines. */
 /** Tiers in a line: those open, and for the next one, its condition and how far the company has got. */
 function tiersLine(sim: Sim, state: GameState): string {
@@ -356,7 +366,13 @@ export function renderStatus(sim: Sim, state: GameState): string {
   }
   const research = sim.research(state);
   if (research.unlocked) {
-    lines.push(`research: ${+research.points.toFixed(1)} RP banked, ${research.pointsPerDay} RP a day (nothing to spend them on yet)`);
+    const left = unlockable(sim, state);
+    const spend = left.length
+      ? `can unlock ${left.map((i) => `${i.id} ${i.rpPrice} RP`).join(", ")}`
+      : sim.tiers(state).some((t) => t.items.some((i) => !i.unlocked))
+        ? "nothing to unlock until the next tier is available"
+        : "everything is unlocked";
+    lines.push(`research: ${+research.points.toFixed(1)} RP banked, ${research.pointsPerDay} RP a day; ${spend}`);
   }
   lines.push(`tiers: ${tiersLine(sim, state)}`);
   const benefitsOn = sim.benefits(state).filter((b) => b.active);
@@ -429,7 +445,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const features = sim.features(state);
   lines.push(
     `features: ${features
-      .map((f) => `${f.id} ${f.status === "notStarted" ? (f.unlocked ? "not started" : `locked (tier ${f.tier})`) : f.status}${f.daysLeft ? ` (${f.daysLeft}d left)` : ""}${appeal(f.appeal)}`)
+      .map((f) => `${f.id} ${f.status === "notStarted" ? (f.unlocked ? "not started" : f.tierAvailable ? `locked (unlock for ${f.rpPrice} RP)` : `locked (tier ${f.tier})`) : f.status}${f.daysLeft ? ` (${f.daysLeft}d left)` : ""}${appeal(f.appeal)}`)
       .join(", ")}`,
   );
 
@@ -724,6 +740,14 @@ export function renderCommands(sim: Sim, state: GameState): string {
     );
   }
   lines.push(`  optimise <0–100>   (% of developer time on optimisation rather than features, once the MVP is done)`);
+  const toUnlock = unlockable(sim, state);
+  if (toUnlock.length) {
+    const what = (i: (typeof toUnlock)[number]) =>
+      `${i.id} ${i.rpPrice} RP (${i.kind === "feature" ? "feature" : i.model === state.model ? "model benefit" : `${sim.config.models[i.model!].name} benefit`})`;
+    lines.push(
+      `  unlock <${toUnlock.map((i) => i.id).join("|")}>   (research points; you have ${+state.researchPoints.toFixed(1)}) ${toUnlock.map(what).join(", ")}`,
+    );
+  }
   const buyable = sim.benefits(state).filter((b) => b.onModel && b.unlocked && !b.active);
   if (buyable.length) {
     lines.push(
@@ -945,6 +969,8 @@ export function parseCommand(text: string): Command {
       return one({ type: "setOptimisation", share: number(args[0], "a percent") / 100 });
     case "benefit":
       return one({ type: "buyBenefit", benefit: benefitId(args[0]) });
+    case "unlock":
+      return one({ type: "unlockItem", item: benefitId(args[0]) });
     case "dropbenefit":
       return one({ type: "cancelBenefit", benefit: benefitId(args[0]) });
     case "slider":

@@ -98,8 +98,8 @@ export interface MigrationQuote {
    */
   lostAddons: LostAddon[];
   /**
-   * The model benefits on now, which a migration loses with no refund: their tiers stay unlocked, so the new model's
-   * own can be bought straight away. These are today's; any bought before you leave go too.
+   * The model benefits on now, which a migration loses with no refund: the tiers and unlocks are kept, so the new
+   * model's own already unlocked can be bought straight away. These are today's; any bought before you leave go too.
    */
   lostBenefits: { id: string; name: string }[];
   /** Cash left once it's all paid, before any income: today's cash less the total. Below 0, it can't be paid. */
@@ -406,13 +406,13 @@ export function createMigration(
         `Rebuild them in developer-days to get them back: ${devDays} in all.`;
       entries.push({ text, cashDelta: 0, kind: "migration" });
     }
-    // Model benefits belong to the model being left, so they go with it: billing stops, with no refund. The tiers they
-    // were in stay unlocked, so the new model's benefits can be bought straight away.
+    // Model benefits belong to the model being left, so they go with it: billing stops, with no refund. The tiers and
+    // the unlocks belong to the company, so the new model's benefits already unlocked can be bought straight away.
     const lostBenefits = benefits.benefitsLostTo(state, m.to);
     if (lostBenefits.length) {
       switched.benefits = [];
       const names = lostBenefits.map((b) => b.name).join(", ");
-      const text = `Model benefits lost: ${names} stayed with ${left.name}, with no refund. Your tiers are still unlocked, so this model's own benefits can be bought on Infrastructure straight away.`;
+      const text = `Model benefits lost: ${names} stayed with ${left.name}, with no refund. Your unlocks are kept, so any of this model's own benefits you've unlocked can be bought on Infrastructure straight away.`;
       entries.push({ text, cashDelta: 0, kind: "migration" });
     }
     // Off the model a feature gap is tied to, you can build what you like, so the gap closes.

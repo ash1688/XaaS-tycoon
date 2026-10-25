@@ -56,14 +56,17 @@ function arrivedBy(launchUsers: number, k: number) {
  * depend on the users pins round two's number for its product instead.
  */
 /**
- * Opens every tier for a company, as if each condition had been met on day 1, so a test about building or buying
- * features can use any of the product's, not just tier 1's.
+ * Opens every tier for a company, as if each condition had been met on day 1, and unlocks every item in them, as if
+ * with research points, so a test about building or buying features can use any of the product's, not just tier 1's.
+ * With `unlock: false` the tiers are only available, their items still to unlock.
  */
-export async function openTiers(id: string) {
+export async function openTiers(id: string, { unlock = true } = {}) {
   const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
   try {
     const open = [2, 3, 4].map((tier) => ({ tier, day: 1 }));
-    await sql`update companies set state = jsonb_set(state, '{tiers}', ${sql.json(open)}) where id = ${id}`;
+    const features = Object.values(defaultConfig.productTypes).flatMap((p) => p.features.map((f) => f.id));
+    const unlocks = unlock ? [...new Set([...features, ...defaultConfig.tiers.benefits.map((b) => b.id)])] : [];
+    await sql`update companies set state = jsonb_set(jsonb_set(state, '{tiers}', ${sql.json(open)}), '{unlocks}', ${sql.json(unlocks)}) where id = ${id}`;
   } finally {
     await sql.end();
   }

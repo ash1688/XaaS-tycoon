@@ -396,7 +396,27 @@ function buildFeatures(sim: Sim, state: GameState): GameState {
   return next ? tryAction(sim, state, { type: "buildFeature", feature: next.id }) : state;
 }
 
-/** What the bot does before each day: price, migration, servers, staff and features. */
+/**
+ * Research, once the first angel has approached: unlocks the cheapest of the product's features whose tier is
+ * available whenever the RP are banked, and keeps one mid researcher while the RP banked fall short of every locked
+ * feature's price, letting them go once they don't. Model benefits are left alone, as the bot never buys them.
+ */
+function research(sim: Sim, state: GameState): GameState {
+  if (!sim.research(state).unlocked) return state;
+  let s = state;
+  const locked = () => sim.features(s).filter((f) => !f.unlocked);
+  for (const f of locked().filter((f) => f.tierAvailable).sort((a, b) => a.rpPrice - b.rpPrice)) {
+    if (s.researchPoints >= f.rpPrice) s = tryAction(sim, s, { type: "unlockItem", item: f.id });
+  }
+  const team = sim.staff(s).find((p) => p.pool === "researchers")!;
+  const people = team.headcount + team.hiring.reduce((sum, h) => sum + h.count, 0);
+  const short = locked().reduce((sum, f) => sum + f.rpPrice, 0) - s.researchPoints;
+  if (short > 0 && people === 0) s = tryAction(sim, s, { type: "hire", pool: "researchers", grade: "mid", count: 1 });
+  if (short <= 0 && team.headcount > 0) s = tryAction(sim, s, { type: "letGo", pool: "researchers", grade: "mid" });
+  return s;
+}
+
+/** What the bot does before each day: price, migration, servers, staff, research and features. */
 export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameState {
   let s = state;
   if (s.day === 1 && strategy.priceFactor !== 1) {
@@ -445,7 +465,7 @@ export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameSta
       s = staffTo(sim, s, "moderators", reportsNow, reportsNextWeek, moderation.backlog / 5 / perModerator);
     }
   }
-  return buildFeatures(sim, s);
+  return buildFeatures(sim, research(sim, s));
 }
 
 /** The first outage from load on a day, by the tier that ran over: read from the day's log. */

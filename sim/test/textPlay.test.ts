@@ -246,7 +246,7 @@ describe("advanceUntil", () => {
     // The launch is over on day 3, two days into the first week: time stops there.
     const launch = advanceUntil(careers, career, 7, who);
     expect(launch.state.day).toBe(3);
-    expect(launch.lines.at(-1)).toBe("stopped on day 3: Tier 2 unlocked; Your launch is over");
+    expect(launch.lines.at(-1)).toBe("stopped on day 3: Tier 2 available; Your launch is over");
     // A quiet stretch then plays whole weeks: "next 10" is two of them, one Continue each.
     const weeks = advanceUntil(careers, launch.state, 10, who);
     expect(weeks.state.day).toBe(17);
@@ -938,15 +938,25 @@ describe("tiers, model benefits and the hardware slider (#123)", () => {
     expect(parseCommand("benefit reservedinstances")).toEqual({ kind: "action", action: { type: "buyBenefit", benefit: "reservedInstances" }, times: 1 });
     expect(parseCommand("dropbenefit cdn")).toMatchObject({ action: { type: "cancelBenefit", benefit: "cdn" } });
     expect(parseCommand("slider 3 125")).toMatchObject({ action: { type: "setPerformance", id: 3, performance: 1.25 } });
+    expect(parseCommand("unlock managedmonitoring")).toMatchObject({ action: { type: "unlockItem", item: "managedMonitoring" } });
+    expect(parseCommand("unlock photos")).toMatchObject({ action: { type: "unlockItem", item: "photos" } });
   });
 
-  it("shows the tiers, locked features and the next tier's condition, and offers benefits once their tier is open", () => {
+  it("shows the tiers, locked features and the next tier's condition, and offers unlocks then benefits once their tier is open", () => {
     const state = start();
     expect(renderStatus(sim, state)).toMatch(/^tiers: open 1 \| tier 2 needs users 0\/5,000 \(unlocks photos, managedMonitoring\)$/m);
     expect(renderStatus(sim, state)).toMatch(/messaging locked \(tier 3\)/);
     expect(renderCommands(sim, state)).not.toMatch(/^ {2}benefit /m);
     expect(renderCommands(sim, state)).toMatch(/^ {2}build <notifications> /m);
-    const open = { ...state, tiers: [{ tier: 2 as const, day: 1 }] };
+    // Tier 2 available: its items are unlocked with research points (#179) before they can be had.
+    const available = { ...state, tiers: [{ tier: 2 as const, day: 1 }], researchPoints: 20 };
+    expect(renderStatus(sim, available)).toMatch(/photos locked \(unlock for 15 RP\)/);
+    expect(renderCommands(sim, available)).not.toMatch(/^ {2}benefit /m);
+    expect(renderCommands(sim, available)).toMatch(
+      /^ {2}unlock <photos\|managedMonitoring\|hardwareEfficiency1\|reservedInstances> {3}\(research points; you have 20\) photos 15 RP \(feature\), managedMonitoring 15 RP \(model benefit\), /m,
+    );
+    const open = run(available, "unlock managedmonitoring").state;
+    expect(open.researchPoints).toBe(5);
     expect(renderCommands(sim, open)).toMatch(/^ {2}benefit <managedMonitoring> {3}managedMonitoring £500 \+ £300\/month: /m);
     const bought = run(open, "benefit managedmonitoring").state;
     expect(renderStatus(sim, bought)).toMatch(/^model benefits on: managedMonitoring \(£300\/month\) \(lost if you migrate\)$/m);

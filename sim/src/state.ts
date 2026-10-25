@@ -31,7 +31,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 42;
+export const GAME_STATE_VERSION = 43;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -616,8 +616,14 @@ export interface GameState {
    * company's code, so kept through migrations, where the new model's cap applies.
    */
   optimisationDays: number;
-  /** Research points (RP) banked: researchers earn them each day, with no cap. Nothing spends them yet. */
+  /** Research points (RP) banked: researchers earn them each day, with no cap, and unlocking tier items spends them. */
   researchPoints: number;
+  /**
+   * The tier items above tier 1 unlocked with RP, by id, in the order they were unlocked: product features and model
+   * benefits, for any model. They belong to the company, so a migration keeps them. Tier 1's are unlocked from the
+   * start, so aren't listed.
+   */
+  unlocks: string[];
   /**
    * Tiers above 1 whose condition has been met, in order: each stays available once met. They belong to the company,
    * so a migration keeps them.
@@ -891,7 +897,12 @@ export type Action =
    * Sets one of the company's bought servers' hardware slider, on-prem: 0 to the configured top (1.5 = 150%), from the
    * next day played.
    */
-  | { type: "setPerformance"; id: number; performance: number };
+  | { type: "setPerformance"; id: number; performance: number }
+  /**
+   * Unlocks an item above tier 1 (a product feature or any model's benefit, by id) with research points, once its tier
+   * is available: its RP price comes off the bank at once. It can then be built or bought, at its own cost.
+   */
+  | { type: "unlockItem"; item: string };
 
 export interface NewGameParams {
   companyName: string;

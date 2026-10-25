@@ -188,10 +188,14 @@ const activeCount = computed(
           <span
             v-else-if="feature.status === 'notStarted' && !feature.unlocked"
             class="badge"
-            :title="`Unlocks with tier ${feature.tier}: see Tiers below`"
+            :title="
+              feature.tierAvailable
+                ? `Unlock it with ${feature.rpPrice} research points: see Tiers below`
+                : `Unlocks with tier ${feature.tier}: see Tiers below`
+            "
             :data-testid="`feature-locked-${feature.id}`"
           >
-            Tier {{ feature.tier }}
+            {{ feature.tierAvailable ? `${feature.rpPrice} RP to unlock` : `Tier ${feature.tier}` }}
           </span>
           <button
             v-else-if="feature.status === 'notStarted' && game.onSaas"
