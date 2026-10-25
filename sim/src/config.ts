@@ -406,6 +406,11 @@ export interface FeatureConfig {
    * tier 1, open from the start.
    */
   tier?: TierNumber;
+  /**
+   * Research points (RP) to unlock it once its tier is available, before it can be built or bought. Tier 1 needs none;
+   * left out above tier 1, it's free.
+   */
+  rpPrice?: number;
   /** On SaaS, the add-on's price per user per month, billed a day at a time like the model's per-user fee. */
   addonPricePerUser: number;
   /**
@@ -1105,6 +1110,11 @@ export interface ModelBenefitConfig {
   id: string;
   model: ModelId;
   tier: TierNumber;
+  /**
+   * Research points (RP) to unlock it once its tier is available, before it can be bought. Tier 1 needs none; left out
+   * above tier 1, it's free. Unlocked, it stays unlocked through a migration, ready for when the company is on its model.
+   */
+  rpPrice?: number;
   name: string;
   /** One line on what it does. */
   blurb: string;
@@ -1118,7 +1128,8 @@ export interface ModelBenefitConfig {
 /**
  * Tiers: the benefits a company can have are grouped in tiers 1–4, each holding product features (see
  * FeatureConfig.tier) and model benefits. A tier is available once its condition is met, and stays available. Tiers
- * open in order: a tier can't be available before the one below it. Every item in an available tier is unlocked.
+ * open in order: a tier can't be available before the one below it. Each item in an available tier above tier 1 is
+ * then unlocked with research points, in any order (its rpPrice); tier 1's are unlocked from the start.
  */
 export interface TiersConfig {
   /** Tier 2 opens at this many users, paying or free. (A CTO will meet it too, once the C-suite exists.) */
@@ -1597,7 +1608,8 @@ export const defaultConfig: GameConfig = {
   optimisation: { k: 60, cap: { onprem: 0.5, iaas: 0.35, paas: 0.35, saas: 0.35 } },
   // Placeholder for the balance pass.
   research: { pointsPerPerson: 2 },
-  // Conditions and benefits signed off for #123; every number is a placeholder for the balance pass.
+  // Conditions and benefits signed off for #123; every number is a placeholder for the balance pass. RP prices (#179)
+  // come to about 30, 100 and 250 RP a tier for one model's items: 15, 50 and 125 RP an item.
   tiers: {
     tier2: { users: 5_000 },
     tier3: { dailyIncome: 2_000, uptime: 99, days: 30 },
@@ -1606,6 +1618,7 @@ export const defaultConfig: GameConfig = {
         id: "hardwareEfficiency1",
         model: "onprem",
         tier: 2,
+        rpPrice: 15,
         name: "Hardware efficiency I",
         blurb: "Better cooling and power supplies: 20% off power and cooling, and off every server's power and upkeep.",
         setupFee: 2_000,
@@ -1616,6 +1629,7 @@ export const defaultConfig: GameConfig = {
         id: "hardwareEfficiency2",
         model: "onprem",
         tier: 4,
+        rpPrice: 125,
         name: "Hardware efficiency II",
         blurb: "Liquid cooling: another 20% off power and upkeep, and pushing servers past 100% is half as risky.",
         setupFee: 5_000,
@@ -1626,6 +1640,7 @@ export const defaultConfig: GameConfig = {
         id: "reservedInstances",
         model: "iaas",
         tier: 2,
+        rpPrice: 15,
         name: "Reserved instances",
         blurb: "Commit to your VMs for longer and the provider takes 30% off their rent.",
         setupFee: 2_000,
@@ -1636,6 +1651,7 @@ export const defaultConfig: GameConfig = {
         id: "iaasAutoscaling",
         model: "iaas",
         tier: 3,
+        rpPrice: 50,
         name: "Autoscaling",
         blurb: "Extra VMs start when traffic spikes past your servers, up to half as much again, paid by the unit.",
         setupFee: 1_000,
@@ -1646,6 +1662,7 @@ export const defaultConfig: GameConfig = {
         id: "managedMonitoring",
         model: "paas",
         tier: 2,
+        rpPrice: 15,
         name: "Managed monitoring",
         blurb: "The platform warns before things break: outages last half as long.",
         setupFee: 500,
@@ -1656,6 +1673,7 @@ export const defaultConfig: GameConfig = {
         id: "paasAutoscaling",
         model: "paas",
         tier: 3,
+        rpPrice: 50,
         name: "Managed autoscaling",
         blurb: "The platform sets your instance count each night to the day's demand plus a quarter.",
         setupFee: 1_000,
@@ -1666,6 +1684,7 @@ export const defaultConfig: GameConfig = {
         id: "cdn",
         model: "paas",
         tier: 4,
+        rpPrice: 125,
         name: "CDN",
         blurb: "A content delivery network serves pages and media in front of your app: a quarter less CU.",
         setupFee: 1_500,
@@ -1676,6 +1695,7 @@ export const defaultConfig: GameConfig = {
         id: "premiumSupport",
         model: "saas",
         tier: 3,
+        rpPrice: 50,
         name: "Premium support plan",
         blurb: "Your provider puts you first in a crisis: its outages last half as long for you.",
         setupFee: 500,
@@ -1854,6 +1874,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Customers pay without filling in a long form.",
           devDays: 20,
           tier: 3,
+          rpPrice: 50,
           growthMultiplier: 1.15,
           addonPricePerUser: 0.04,
           appeal: { businesses: 1.5 },
@@ -1864,6 +1885,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Shoppers trust what other customers say.",
           devDays: 12,
           tier: 2,
+          rpPrice: 15,
           growthMultiplier: 1.1,
           addonPricePerUser: 0.025,
           appeal: { professionals: 1.5 },
@@ -1874,6 +1896,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Suggests products each shopper is likely to want.",
           devDays: 30,
           tier: 4,
+          rpPrice: 125,
           growthMultiplier: 1.2,
           addonPricePerUser: 0.05,
           appeal: { casual: 1.5 },
@@ -1936,6 +1959,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Users chat privately with friends.",
           devDays: 20,
           tier: 3,
+          rpPrice: 50,
           growthMultiplier: 1.15,
           addonPricePerUser: 0.08,
           appeal: { casual: 1.5 },
@@ -1946,6 +1970,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Users post photos to their feed.",
           devDays: 16,
           tier: 2,
+          rpPrice: 15,
           growthMultiplier: 1.12,
           addonPricePerUser: 0.06,
           appeal: { enthusiasts: 1.5 },
@@ -1956,6 +1981,7 @@ export const defaultConfig: GameConfig = {
           blurb: "People with shared interests gather in one place.",
           devDays: 24,
           tier: 4,
+          rpPrice: 125,
           growthMultiplier: 1.15,
           addonPricePerUser: 0.08,
           appeal: { professionals: 1.5 },
@@ -2010,6 +2036,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Videos play in sharp high definition.",
           devDays: 20,
           tier: 2,
+          rpPrice: 15,
           growthMultiplier: 1.12,
           addonPricePerUser: 0.14,
           appeal: { enthusiasts: 1.5 },
@@ -2030,6 +2057,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Suggests the next video to keep viewers watching.",
           devDays: 30,
           tier: 3,
+          rpPrice: 50,
           growthMultiplier: 1.2,
           addonPricePerUser: 0.2,
           appeal: { casual: 1.5 },
@@ -2040,6 +2068,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Creators broadcast live to their followers.",
           devDays: 36,
           tier: 4,
+          rpPrice: 125,
           growthMultiplier: 1.2,
           addonPricePerUser: 0.2,
           appeal: { professionals: 1.5, businesses: 1.5 },
@@ -2095,6 +2124,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Stops stolen cards before the money moves.",
           devDays: 24,
           tier: 3,
+          rpPrice: 50,
           growthMultiplier: 1.15,
           addonPricePerUser: 0.3,
         },
@@ -2104,6 +2134,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Businesses get their money the same day.",
           devDays: 20,
           tier: 2,
+          rpPrice: 15,
           growthMultiplier: 1.12,
           addonPricePerUser: 0.25,
         },
@@ -2113,6 +2144,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Charges customers every month without them lifting a finger.",
           devDays: 30,
           tier: 4,
+          rpPrice: 125,
           growthMultiplier: 1.2,
           addonPricePerUser: 0.35,
         },
@@ -2181,6 +2213,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Users upload files and ask questions about them.",
           devDays: 20,
           tier: 2,
+          rpPrice: 15,
           growthMultiplier: 1.12,
           addonPricePerUser: 0.25,
         },
@@ -2190,6 +2223,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Users talk to the assistant out loud.",
           devDays: 24,
           tier: 3,
+          rpPrice: 50,
           growthMultiplier: 1.12,
           addonPricePerUser: 0.3,
         },
@@ -2199,6 +2233,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Draws pictures from a description.",
           devDays: 30,
           tier: 4,
+          rpPrice: 125,
           growthMultiplier: 1.2,
           addonPricePerUser: 0.4,
         },
@@ -2256,6 +2291,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Friends talk to each other while they play.",
           devDays: 18,
           tier: 3,
+          rpPrice: 50,
           growthMultiplier: 1.12,
           addonPricePerUser: 0.1,
         },
@@ -2265,6 +2301,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Players pick up their game on any device.",
           devDays: 14,
           tier: 2,
+          rpPrice: 15,
           growthMultiplier: 1.08,
           addonPricePerUser: 0.08,
         },
@@ -2274,6 +2311,7 @@ export const defaultConfig: GameConfig = {
           blurb: "Play big games on a phone or an old laptop: your servers run them.",
           devDays: 34,
           tier: 4,
+          rpPrice: 125,
           growthMultiplier: 1.2,
           addonPricePerUser: 0.25,
         },

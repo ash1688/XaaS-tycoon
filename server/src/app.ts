@@ -794,6 +794,7 @@ export async function buildApp(opts: AppOptions) {
                 "buyBenefit",
                 "cancelBenefit",
                 "setPerformance",
+                "unlockItem",
               ],
             },
             pool: { enum: [...STAFF_POOLS] },
@@ -805,6 +806,8 @@ export async function buildApp(opts: AppOptions) {
             feature: { type: "string", maxLength: 64 },
             // buyBenefit and cancelBenefit: a model benefit, by id. Checked against the config's list by the sim.
             benefit: { type: "string", maxLength: 64 },
+            // unlockItem: a feature or model benefit in a tier, by id. Checked against the config's lists by the sim.
+            item: { type: "string", maxLength: 64 },
             // setPerformance: an on-prem server's hardware slider, as a share of its normal capacity. The sim checks
             // it's within the configured top.
             performance: { type: "number", minimum: 0, maximum: 10 },
@@ -864,6 +867,7 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { const: "setOptimisation" } } }, then: { required: ["share"] } },
             { if: { properties: { type: { enum: ["buyBenefit", "cancelBenefit"] } } }, then: { required: ["benefit"] } },
             { if: { properties: { type: { const: "setPerformance" } } }, then: { required: ["id", "performance"] } },
+            { if: { properties: { type: { const: "unlockItem" } } }, then: { required: ["item"] } },
             {
               if: { properties: { type: { const: "setManagedService" } } },
               then: { required: ["service", "size"] },

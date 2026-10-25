@@ -49,11 +49,18 @@ const refusal = (fn: () => unknown) => {
 
 const texts = (log: DayLog[]) => log.flatMap((d) => d.entries.map((e) => e.text));
 
-/** The same company with tiers up to `tier` already open, as if their conditions had been met on day 1. */
-const opened = (state: GameState, tier: TierNumber): GameState => ({
+/** The same company with tiers up to `tier` available, as if their conditions had been met on day 1, none unlocked. */
+const available = (state: GameState, tier: TierNumber): GameState => ({
   ...state,
   tiers: ([2, 3, 4] as const).filter((t) => t <= tier).map((t) => ({ tier: t, day: 1 })),
 });
+
+/** The same company with tiers up to `tier` available and every item in them unlocked, as if with research points. */
+const opened = (state: GameState, tier: TierNumber): GameState => {
+  const open = available(state, tier);
+  const ids = sim.tiers(open).filter((t) => t.tier > 1 && t.tier <= tier).flatMap((t) => t.items.map((i) => i.id));
+  return { ...open, unlocks: ids };
+};
 
 /** The last `days` days played made to have this income and these hours down each, for tier 3's averages. */
 function withHistory(state: GameState, days: number, income: number, hoursDown = 0): GameState {
@@ -132,9 +139,10 @@ describe("tiers", () => {
     const turn = sim.tick(state);
     expect(tier(turn.state, 2)).toMatchObject({ available: true, day: 5 });
     expect(turn.state.tiers).toEqual([{ tier: 2, day: 5 }]);
-    expect(texts(turn.log)).toContain("Tier 2 unlocked: Product reviews can now be had.");
-    expect(turn.pauses).toContainEqual({ kind: "finished", id: "tier-2", text: "Tier 2 unlocked" });
-    expect(sim.features(turn.state).find((f) => f.id === "reviews")!.unlocked).toBe(true);
+    expect(texts(turn.log)).toContain("Tier 2 available: Product reviews can now be unlocked with research points.");
+    expect(turn.pauses).toContainEqual({ kind: "finished", id: "tier-2", text: "Tier 2 available" });
+    // Available, but each item still needs unlocking with RP.
+    expect(sim.features(turn.state).find((f) => f.id === "reviews")).toMatchObject({ tierAvailable: true, unlocked: false });
     // Losing the users doesn't close it again.
     const fewer = sim.advance({ ...turn.state, users: 100, paidUsers: 10 }).state;
     expect(tier(fewer, 2).available).toBe(true);
@@ -149,7 +157,7 @@ describe("tiers", () => {
     // With the users too, both open on the same day.
     const both = sim.advance({ ...rich, users: 6_000, paidUsers: 1_000 });
     expect(both.state.tiers.map((t) => t.tier)).toEqual([2, 3]);
-    expect(texts(both.log)).toContain("Tier 3 unlocked: One-click checkout, Premium support plan can now be had.");
+    expect(texts(both.log)).toContain("Tier 3 available: One-click checkout, Premium support plan can now be unlocked with research points.");
     // Too little income, or more than 1% of the hours down, and tier 3 stays shut.
     const poor = withHistory({ ...base, users: 6_000 }, 30, 1_500);
     expect(sim.advance(poor).state.tiers.map((t) => t.tier)).toEqual([2]);
@@ -180,7 +188,7 @@ describe("tiers", () => {
 });
 
 describe("model benefits", () => {
-  it("are listed for every model, unlocked with their tier", () => {
+  it("are listed for every model, each unlocked with research points once its tier is available", () => {
     const state = begin();
     expect(sim.benefits(state).find((b) => b.id === "reservedInstances")).toEqual({
       id: "reservedInstances",
@@ -190,10 +198,13 @@ describe("model benefits", () => {
       tier: 2,
       setupFee: 2_000,
       monthlyFee: 0,
+      rpPrice: 15,
+      tierAvailable: false,
       unlocked: false,
       onModel: true,
       active: false,
     });
+    expect(sim.benefits(available(state, 2)).find((b) => b.id === "reservedInstances")).toMatchObject({ tierAvailable: true, unlocked: false });
     expect(sim.benefits(opened(state, 2)).find((b) => b.id === "reservedInstances")!.unlocked).toBe(true);
     expect(sim.benefits(state).find((b) => b.id === "cdn")).toMatchObject({ onModel: false, unlocked: false });
   });
@@ -225,7 +236,7 @@ describe("model benefits", () => {
     expect(texts(sim.advance(off).log).some((t) => t.startsWith("Model benefit:"))).toBe(false);
   });
 
-  it("are lost on a migration with no refund, while the tiers stay unlocked for the new model's", () => {
+  it("are lost on a migration with no refund, while the tiers and unlocks stay for the new model's", () => {
     let state = act(opened(iaasSetup(begin()), 2), { type: "buyBenefit", benefit: "reservedInstances" });
     expect(sim.migrationQuote(state, "paas").lostBenefits).toEqual([{ id: "reservedInstances", name: "Reserved instances" }]);
     expect(sim.migrationQuote(begin(), "paas").lostBenefits).toEqual([]);
@@ -240,7 +251,7 @@ describe("model benefits", () => {
     }
     expect(state.benefits).toEqual([]);
     expect(texts(log)).toContain(
-      "Model benefits lost: Reserved instances stayed with Rent VMs (IaaS), with no refund. Your tiers are still unlocked, so this model's own benefits can be bought on Infrastructure straight away.",
+      "Model benefits lost: Reserved instances stayed with Rent VMs (IaaS), with no refund. Your unlocks are kept, so any of this model's own benefits you've unlocked can be bought on Infrastructure straight away.",
     );
     expect(act(state, { type: "buyBenefit", benefit: "managedMonitoring" }).benefits).toEqual(["managedMonitoring"]);
   });
@@ -333,6 +344,127 @@ describe("model benefits", () => {
   });
 });
 
+// Research point unlocks (#179): once a tier is available, each item above tier 1 is unlocked with its own RP price,
+// in any order, before it can be built or bought at its own cost. Unlocks belong to the company.
+describe("research point unlocks", () => {
+  const unlock = (item: string): Action => ({ type: "unlockItem", item });
+  /** Research points banked, as if researchers had earned them. */
+  const withRp = (state: GameState, researchPoints: number): GameState => ({ ...state, researchPoints });
+  const item = (state: GameState, id: string) => sim.tiers(state).flatMap((t) => t.items).find((i) => i.id === id)!;
+
+  it("price each item above tier 1 in RP, from config, and need none in tier 1", () => {
+    const state = begin();
+    expect(item(state, "wishlists")).toMatchObject({ tier: 1, rpPrice: 0, unlocked: true, unlockable: false });
+    expect(item(state, "reviews")).toMatchObject({ tier: 2, rpPrice: 15, unlocked: false, unlockable: false });
+    expect(item(state, "checkout")).toMatchObject({ tier: 3, rpPrice: 50 });
+    expect(item(state, "cdn")).toMatchObject({ kind: "benefit", tier: 4, rpPrice: 125 });
+    // Tier 1 is built with no RP at all, and there's nothing to unlock.
+    expect(state.researchPoints).toBe(0);
+    expect(act(state, { type: "buildFeature", feature: "wishlists" }).features.wishlists?.status).toBe("building");
+    expect(refusal(() => act(state, unlock("wishlists")))).toBe("already_unlocked");
+    // A price set on the config page is the one charged.
+    const pricey: GameConfig = {
+      ...quiet,
+      tiers: { ...quiet.tiers, benefits: quiet.tiers.benefits.map((b) => (b.id === "reservedInstances" ? { ...b, rpPrice: 40 } : b)) },
+    };
+    const s = createSim(pricey);
+    const game = withRp(available(begin("iaas", "ecommerce", s), 2), 50);
+    expect(s.applyAction(game, unlock("reservedInstances")).researchPoints).toBe(10);
+  });
+
+  it("refuse an item whose tier isn't available, when RP are short, or one that isn't in a tier", () => {
+    const rich = withRp(begin(), 1_000);
+    expect(refusal(() => act(rich, unlock("reviews")))).toBe("tier_unavailable");
+    expect(refusal(() => act(available(rich, 2), unlock("checkout")))).toBe("tier_unavailable");
+    const short = withRp(available(begin(), 2), 14);
+    expect(refusal(() => act(short, unlock("reviews")))).toBe("not_enough_rp");
+    expect(refusal(() => act(rich, unlock("teleporter")))).toBe("unknown_item");
+    // Nothing changes on a refusal.
+    expect(item(short, "reviews").unlocked).toBe(false);
+  });
+
+  it("unlock items in an available tier in any order, taking the RP off the bank", () => {
+    const state = withRp(available(begin(), 3), 100);
+    expect(item(state, "checkout").unlockable).toBe(true);
+    // Tier 3 before tier 2, and a benefit before a feature.
+    const first = act(state, unlock("checkout"));
+    expect(first.researchPoints).toBe(50);
+    const second = act(first, unlock("reservedInstances"), unlock("reviews"));
+    expect(second.researchPoints).toBe(20);
+    expect(second.unlocks).toEqual(["checkout", "reservedInstances", "reviews"]);
+    expect(item(second, "reviews")).toMatchObject({ unlocked: true, unlockable: false });
+    expect(refusal(() => act(second, unlock("reviews")))).toBe("already_unlocked");
+    // Any model's benefits can be unlocked, ready for a migration; unlocking them costs no cash.
+    const paas = act(withRp(second, 15), unlock("managedMonitoring"));
+    expect(paas.cash).toBe(state.cash);
+    expect(sim.benefits(paas).find((b) => b.id === "managedMonitoring")).toMatchObject({ onModel: false, unlocked: true });
+  });
+
+  it("keep a locked item from being built or bought until it's unlocked, then charge its own cost", () => {
+    const state = withRp(iaasSetup(available(begin(), 2)), 30);
+    expect(refusal(() => act(state, { type: "buildFeature", feature: "reviews" }))).toBe("locked");
+    expect(refusal(() => act(state, { type: "buyBenefit", benefit: "reservedInstances" }))).toBe("locked");
+    try {
+      act(state, { type: "buildFeature", feature: "reviews" });
+      expect.unreachable();
+    } catch (e) {
+      expect((e as SimError).message).toBe("Product reviews needs unlocking first: 15 RP once researchers join, when your first angel investor approaches.");
+    }
+    const unlocked = act(state, unlock("reviews"), unlock("reservedInstances"));
+    // Building takes developer-days and buying takes cash, as before.
+    expect(act(unlocked, { type: "buildFeature", feature: "reviews" }).features.reviews?.status).toBe("building");
+    expect(act(unlocked, { type: "buyBenefit", benefit: "reservedInstances" }).cash).toBe(unlocked.cash - 2_000);
+    // On SaaS, an add-on the same way.
+    const saas = withRp(available(sim.advance(begin("saas"), 2).state, 2), 15);
+    expect(refusal(() => act(saas, { type: "buyAddon", feature: "reviews" }))).toBe("locked");
+    expect(act(saas, unlock("reviews"), { type: "buyAddon", feature: "reviews" }).features.reviews?.status).toBe("addon");
+  });
+
+  it("are kept through a migration, though the model benefits themselves are lost", () => {
+    let state = withRp(iaasSetup(available(begin(), 2)), 45);
+    state = act(state, unlock("reviews"), unlock("reservedInstances"), unlock("managedMonitoring"));
+    state = act(state, { type: "buyBenefit", benefit: "reservedInstances" }, { type: "startMigration", model: "paas" });
+    while (state.migration) state = sim.advance(state).state;
+    expect(state.model).toBe("paas");
+    expect(state.benefits).toEqual([]);
+    expect(state.unlocks).toEqual(["reviews", "reservedInstances", "managedMonitoring"]);
+    // The benefit unlocked for PaaS before the move can be bought straight away, with no more RP.
+    expect(sim.benefits(state).find((b) => b.id === "managedMonitoring")).toMatchObject({ onModel: true, unlocked: true });
+    expect(act(state, { type: "buyBenefit", benefit: "managedMonitoring" }).benefits).toEqual(["managedMonitoring"]);
+    expect(sim.features(state).find((f) => f.id === "reviews")!.unlocked).toBe(true);
+  });
+
+  it("flag researchers idle once every item in every tier is unlocked", () => {
+    const researchersOf = (s: GameState) => sim.staff(s).find((p) => p.pool === "researchers");
+    const team = (s: GameState): GameState => ({
+      ...s,
+      investors: { ...s.investors, firstApproachDay: 1 },
+      staff: { ...s.staff, researchers: { junior: 0, mid: 1, senior: 0 } },
+    });
+    const state = team(available(begin(), 4));
+    expect(researchersOf(state)!.idle).toBeNull();
+    // Everything but one other model's benefit: still something to research.
+    const ids = sim.tiers(state).flatMap((t) => t.items).filter((i) => i.tier > 1).map((i) => i.id);
+    expect(researchersOf({ ...state, unlocks: ids.filter((id) => id !== "premiumSupport") })!.idle).toBeNull();
+    const done = { ...state, unlocks: ids };
+    expect(researchersOf(done)!.idle).toBe(
+      "Every feature and model benefit in every tier is unlocked: your researchers have nothing left to research. Let them go to save their pay.",
+    );
+    // With nobody researching, there's no one to flag.
+    expect(researchersOf({ ...done, staff: { ...done.staff, researchers: { junior: 0, mid: 0, senior: 0 } } })!.idle).toBeNull();
+  });
+
+  it("are refused on the Research page's terms once researchers have joined", () => {
+    const state = { ...available(begin(), 2), investors: { ...begin().investors, firstApproachDay: 1 } };
+    try {
+      act(state, { type: "buyBenefit", benefit: "reservedInstances" });
+      expect.unreachable();
+    } catch (e) {
+      expect((e as SimError).message).toBe("Reserved instances needs unlocking first: 15 RP on the Research page.");
+    }
+  });
+});
+
 describe("the hardware slider", () => {
   const running = onpremRunning();
   const set = (state: GameState, performance: number, id = appServer(state).id) =>
@@ -409,7 +541,7 @@ describe("the hardware slider", () => {
 });
 
 describe("config", () => {
-  it("puts every tier condition, benefit number and hardware number on the config page", () => {
+  it("puts every tier condition, RP price, benefit number and hardware number on the config page", () => {
     const paths = new Set(configFields().map((f) => f.path));
     for (const p of [
       "tiers.tier2.users",
@@ -422,6 +554,8 @@ describe("config", () => {
       "tiers.benefits.iaasAutoscaling.effects.autoscaling.most",
       "tiers.benefits.premiumSupport.effects.eventHours.multiplier",
       "productTypes.ecommerce.features.checkout.tier",
+      "productTypes.ecommerce.features.checkout.rpPrice",
+      "tiers.benefits.cdn.rpPrice",
       "hardware.maxPerformance",
       "hardware.crash.chance",
       "hardware.lifespan",

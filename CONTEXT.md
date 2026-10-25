@@ -99,15 +99,19 @@ One slot in a rack. Each server size takes a set number of them.
 _Avoid_: SU, slot
 
 **Tier**:
-A level of benefits, 1 to 4. Tier 1 is open from the start; each later tier becomes available once its condition is met, in order, and stays available. Each holds product features and model benefits, each with a stable id; for now every item in an available tier is unlocked.
+A level of benefits, 1 to 4. Tier 1 is open from the start; each later tier becomes available once its condition is met, in order, and stays available. Each holds product features and model benefits, each with a stable id. Tier 1's items are unlocked from the start; above tier 1, each item in an available tier is unlocked with its own RP price, in any order.
 _Avoid_: Level, plan (there are no pricing plans)
+
+**Unlock**:
+Spending research points on one item in an available tier so it can be built or bought, which still costs its own developer-days or cash. Unlocks belong to the company and survive a migration, for any model's benefits.
+_Avoid_: Research (that's what researchers do), buy (that's paying cash)
 
 **Product feature**:
 A benefit that belongs to the product, such as messaging or checkout. Survives a migration.
 _Avoid_: Add-on (an add-on is a product feature bought from a SaaS provider)
 
 **Model benefit**:
-A benefit that belongs to the deployment model, such as on-prem hardware efficiency or a PaaS CDN, bought with a set-up fee and billed monthly. Lost on migration, though its tier stays unlocked.
+A benefit that belongs to the deployment model, such as on-prem hardware efficiency or a PaaS CDN, bought with a set-up fee and billed monthly. Lost on migration, though its unlock stays.
 _Avoid_: Upgrade, perk
 
 ### Customers

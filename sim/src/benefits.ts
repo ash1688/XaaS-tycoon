@@ -1,6 +1,6 @@
 import type { GameConfig, ModelBenefitConfig, ModelBenefitEffects, ModelId, TierNumber } from "./config.ts";
 import { pounds, type Finance } from "./finance.ts";
-import { isUnlocked, lockedMessage } from "./tiers.ts";
+import { isUnlocked, itemRpPrice, lockedMessage, tierAvailable } from "./tiers.ts";
 import { SimError, type GameState, type LogEntry } from "./state.ts";
 
 /** A model benefit, for the screen: every model's, so the student sees what the others offer. */
@@ -12,7 +12,11 @@ export interface BenefitView {
   tier: TierNumber;
   setupFee: number;
   monthlyFee: number;
-  /** Its tier is unlocked. */
+  /** Research points (RP) to unlock it: 0 in tier 1. */
+  rpPrice: number;
+  /** Its tier's condition is met, so it can be unlocked with RP if it isn't already. */
+  tierAvailable: boolean;
+  /** Unlocked with RP (or in tier 1), so it can be bought on its model. Unlocks are kept through a migration. */
   unlocked: boolean;
   /** It belongs to the company's current model, so it can be bought here. */
   onModel: boolean;
@@ -86,7 +90,7 @@ export function createBenefits(config: GameConfig, finance: Finance) {
       throw new SimError("wrong_model", `${benefit.name} is a benefit of ${its}, and you're on ${here}.`);
     }
     if (state.benefits.includes(id)) throw new SimError("benefit_active", `${benefit.name} is already on.`);
-    if (!isUnlocked(config, state, id)) throw new SimError("locked", lockedMessage(config, benefit.name, benefit.tier));
+    if (!isUnlocked(config, state, id)) throw new SimError("locked", lockedMessage(config, state, id));
     if (benefit.setupFee > state.cash) {
       throw new SimError(
         "cant_afford",
@@ -135,6 +139,8 @@ export function createBenefits(config: GameConfig, finance: Finance) {
       tier: b.tier,
       setupFee: b.setupFee,
       monthlyFee: b.monthlyFee,
+      rpPrice: itemRpPrice(config, state, b.id),
+      tierAvailable: tierAvailable(state, b.tier),
       unlocked: isUnlocked(config, state, b.id),
       onModel: b.model === state.model,
       active: state.benefits.includes(b.id) && b.model === state.model,

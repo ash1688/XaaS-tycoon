@@ -1066,7 +1066,7 @@ describe("features", () => {
 
   it("lists the product's features from config, none started", () => {
     expect(sim.features(startOn())).toEqual(
-      features.map((f) => ({ ...f, status: "notStarted", progress: 0, daysLeft: null, addonSetupFee: 0, tier: 1, unlocked: true })),
+      features.map((f) => ({ ...f, status: "notStarted", progress: 0, daysLeft: null, addonSetupFee: 0, tier: 1, rpPrice: 0, tierAvailable: true, unlocked: true })),
     );
   });
 

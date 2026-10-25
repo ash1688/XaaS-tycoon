@@ -3,7 +3,8 @@ import { computed } from "vue";
 import { formatCash } from "../api";
 import { useGame } from "../game";
 
-// Model benefits for the company's model: each unlocks with its tier (see Tiers on Product), then is bought with a
+// Model benefits for the company's model: each is unlocked with research points once its tier is available (see
+// Tiers on Product and Research), then is bought with a
 // set-up fee and billed monthly. They belong to the model, so a migration loses them, with no refund.
 const game = useGame();
 const benefits = computed(() => game.company?.benefits.filter((b) => b.onModel) ?? []);
@@ -18,8 +19,8 @@ const benefits = computed(() => game.company?.benefits.filter((b) => b.onModel) 
       </span>
     </div>
     <p class="muted">
-      What {{ game.modelName(game.company.model) }} offers on top. Each unlocks with its tier, then costs a set-up fee
-      and a monthly fee. They belong to this model: migrating loses them, with no refund.
+      What {{ game.modelName(game.company.model) }} offers on top. Each is unlocked with research points once its tier
+      is available, then costs a set-up fee and a monthly fee. They belong to this model: migrating loses them, with no refund.
     </p>
     <ul class="features">
       <li v-for="b in benefits" :key="b.id" :data-benefit="b.id" :data-active="b.active">
@@ -50,7 +51,9 @@ const benefits = computed(() => game.company?.benefits.filter((b) => b.onModel) 
           >
             Buy
           </button>
-          <span v-else class="badge">Tier {{ b.tier }}</span>
+          <span v-else class="badge" :data-testid="`benefit-locked-${b.id}`">
+            {{ b.tierAvailable ? `${b.rpPrice} RP to unlock` : `Tier ${b.tier}` }}
+          </span>
         </div>
       </li>
     </ul>

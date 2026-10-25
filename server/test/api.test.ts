@@ -2849,9 +2849,12 @@ describe("leaving SaaS (vendor lock-in)", () => {
     const url = `/api/codes/${code}/companies/${company.id}`;
     const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
     for (let i = 0; i < minConfigDevelopers; i++) await act({ type: "hire", pool: "developers" });
-    // Every tier open, so both can be bought.
+    // Every tier open and both unlocked with research points, so both can be bought.
     const open = JSON.stringify([2, 3, 4].map((tier) => ({ tier, day: 1 })));
-    await testDb.db.execute(sql`update companies set state = jsonb_set(state, '{tiers}', ${open}::jsonb) where id = ${company.id}`);
+    const unlocks = JSON.stringify([checkout!.id, reviews!.id]);
+    await testDb.db.execute(
+      sql`update companies set state = jsonb_set(jsonb_set(state, '{tiers}', ${open}::jsonb), '{unlocks}', ${unlocks}::jsonb) where id = ${company.id}`,
+    );
     for (const f of [checkout!, reviews!]) await act({ type: "buyAddon", feature: f.id });
     // Enough cash to pay both providers and the exit penalty.
     await testDb.db.execute(
@@ -4080,11 +4083,40 @@ describe("tiers, model benefits and the hardware slider (#123)", () => {
       const open = JSON.stringify([2, 3, 4].map((tier) => ({ tier, day: 1 })));
       await testDb.db.execute(sql`update companies set state = jsonb_set(state, '{tiers}', ${open}::jsonb) where id = ${company.id}`);
     };
-    return { company, act, openTiers };
+    const withRp = async (points: number) => {
+      await testDb.db.execute(sql`update companies set state = jsonb_set(state, '{researchPoints}', ${String(points)}::jsonb) where id = ${company.id}`);
+    };
+    return { company, act, openTiers, withRp };
   }
 
-  it("shows the tiers and benefits, and buys and cancels a benefit once its tier is open", async () => {
-    const { company, act, openTiers } = await setup();
+  it("unlocks a tier item with research points once its tier is available, in any order (#179)", async () => {
+    const { company, act, openTiers, withRp } = await setup();
+    const item = (view: CompanyView, id: string) => view.tiers.flatMap((t) => t.items).find((i) => i.id === id)!;
+    expect(item(company, "wishlists")).toMatchObject({ rpPrice: 0, unlocked: true });
+    expect(item(company, "checkout")).toMatchObject({ rpPrice: 50, unlocked: false, unlockable: false });
+    await withRp(65);
+    expect((await act({ type: "unlockItem", item: "checkout" })).json()).toMatchObject({ error: "tier_unavailable" });
+    await openTiers();
+    expect((await act({ type: "unlockItem", item: "recommendations" })).json()).toMatchObject({ error: "not_enough_rp" });
+    // Tier 3 before tier 2: the RP come off the bank.
+    const done = await act({ type: "unlockItem", item: "checkout" });
+    expect(done.statusCode).toBe(200);
+    const view = done.json<CompanyView>();
+    expect(view.research.points).toBe(15);
+    expect(item(view, "checkout")).toMatchObject({ unlocked: true, unlockable: false });
+    expect(view.features.find((f) => f.id === "checkout")).toMatchObject({ unlocked: true });
+    const second = (await act({ type: "unlockItem", item: "reviews" })).json<CompanyView>();
+    expect(second.research.points).toBe(0);
+    expect(item(second, "reviews").unlocked).toBe(true);
+    expect((await act({ type: "unlockItem", item: "wishlists" })).json()).toMatchObject({ error: "already_unlocked" });
+    expect((await act({ type: "unlockItem", item: "teleporter" })).json()).toMatchObject({ error: "unknown_item" });
+    for (const payload of [{ type: "unlockItem" }, { type: "unlockItem", item: 5 }, { type: "unlockItem", item: "x".repeat(65) }]) {
+      expect((await act(payload)).statusCode).toBe(400);
+    }
+  });
+
+  it("shows the tiers and benefits, and buys and cancels a benefit once it's unlocked", async () => {
+    const { company, act, openTiers, withRp } = await setup();
     expect(company.tiers.map((t) => [t.tier, t.available])).toEqual([[1, true], [2, false], [3, false], [4, false]]);
     expect(company.benefits.find((b) => b.id === "reservedInstances")).toMatchObject({ onModel: true, unlocked: false, active: false });
     const locked = await act({ type: "buyBenefit", benefit: "reservedInstances" });
@@ -4092,6 +4124,10 @@ describe("tiers, model benefits and the hardware slider (#123)", () => {
     expect(locked.json()).toMatchObject({ error: "locked" });
     await openTiers();
     await testDb.db.execute(sql`update companies set state = jsonb_set(state, '{cash}', '100000') where id = ${company.id}`);
+    // Its tier is available, but it needs unlocking with research points first (#179).
+    expect((await act({ type: "buyBenefit", benefit: "reservedInstances" })).json()).toMatchObject({ error: "locked" });
+    await withRp(15);
+    expect((await act({ type: "unlockItem", item: "reservedInstances" })).statusCode).toBe(200);
     const bought = await act({ type: "buyBenefit", benefit: "reservedInstances" });
     expect(bought.statusCode).toBe(200);
     expect(bought.json<CompanyView>().benefits.find((b) => b.id === "reservedInstances")!.active).toBe(true);

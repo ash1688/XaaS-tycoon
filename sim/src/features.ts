@@ -2,7 +2,7 @@ import { CUSTOMER_TYPE_IDS, type CustomerTypeId, type FeatureConfig, type GameCo
 import { count, pounds, risen, type Finance } from "./finance.ts";
 import { staffOutput } from "./staff.ts";
 import { SimError, type FeatureProgress, type GameState, type LogEntry } from "./state.ts";
-import { featureTier, isUnlocked, lockedMessage } from "./tiers.ts";
+import { featureTier, isUnlocked, itemRpPrice, lockedMessage, tierAvailable } from "./tiers.ts";
 
 export type FeatureStatus = "notStarted" | FeatureProgress["status"];
 
@@ -17,7 +17,11 @@ export interface FeatureView extends FeatureConfig {
   addonSetupFee: number;
   /** The tier it's in. */
   tier: TierNumber;
-  /** Its tier is unlocked, so it can be built or bought. */
+  /** Research points (RP) to unlock it: 0 in tier 1. */
+  rpPrice: number;
+  /** Its tier's condition is met, so it can be unlocked with RP if it isn't already. */
+  tierAvailable: boolean;
+  /** In tier 1, or unlocked with RP, so it can be built or bought. */
   unlocked: boolean;
 }
 
@@ -40,10 +44,10 @@ export function createFeatures(config: GameConfig, finance: Finance) {
    */
   const featureOutput = (state: GameState) => staffOutput(config, state, "developers") * (1 - state.optimisationShare);
 
-  /** Refuses a feature whose tier isn't unlocked yet. One already started or active is never refused. */
+  /** Refuses a feature that isn't unlocked yet. One already started or active is never refused. */
   function refuseLocked(state: GameState, feature: FeatureConfig) {
     if (!isUnlocked(config, state, feature.id)) {
-      throw new SimError("locked", lockedMessage(config, feature.name, featureTier(feature)));
+      throw new SimError("locked", lockedMessage(config, state, feature.id));
     }
   }
 
@@ -143,6 +147,8 @@ export function createFeatures(config: GameConfig, finance: Finance) {
         daysLeft,
         addonSetupFee: setupFee(state, f),
         tier: featureTier(f),
+        rpPrice: itemRpPrice(config, state, f.id),
+        tierAvailable: tierAvailable(state, featureTier(f)),
         unlocked: isUnlocked(config, state, f.id),
       };
     });

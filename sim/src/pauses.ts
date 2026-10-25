@@ -160,8 +160,8 @@ export function createPauses(config: GameConfig, views: PauseViews) {
       add("lowCash", "low-cash", left === 0 ? "Cash runs out tomorrow" : `Cash runs out in about ${left} day${left === 1 ? "" : "s"}`);
     }
 
-    // Something finished: the MVP, a tier unlocked, a feature built, the launch, servers ready, a migration step.
-    for (const t of after.tiers.slice(before.tiers.length)) add("finished", `tier-${t.tier}`, `Tier ${t.tier} unlocked`);
+    // Something finished: the MVP, a tier available, a feature built, the launch, servers ready, a migration step.
+    for (const t of after.tiers.slice(before.tiers.length)) add("finished", `tier-${t.tier}`, `Tier ${t.tier} available`);
     if (views.mvp(after).done && !views.mvp(before).done) add("finished", "mvp", "Your MVP is done");
     const building = new Set(views.features(before).filter((f) => f.status === "building").map((f) => f.id));
     for (const f of views.features(after)) {

@@ -1,6 +1,7 @@
 import { TIER_NUMBERS, type GameConfig, type ModelId, type TierNumber } from "./config.ts";
 import { count, pounds } from "./finance.ts";
-import type { GameState, LogEntry, TierReached } from "./state.ts";
+import { researchUnlocked } from "./research.ts";
+import { SimError, type GameState, type LogEntry, type TierReached } from "./state.ts";
 
 /** What an item in a tier is: a product feature (kept through a migration) or a model benefit (lost on one). */
 export type TierItemKind = "feature" | "benefit";
@@ -15,8 +16,12 @@ export interface TierItemView {
   tier: TierNumber;
   /** The model a benefit belongs to; null for a product feature, which works on any model. */
   model: ModelId | null;
-  /** It can be built or bought: for now, whenever its tier is available. */
+  /** Research points (RP) to unlock it: 0 in tier 1. */
+  rpPrice: number;
+  /** Unlocked: in tier 1, or unlocked with RP. It can be built or bought, at its own cost. */
   unlocked: boolean;
+  /** Its tier is available and it isn't unlocked yet, so RP can unlock it now (if there are enough banked). */
+  unlockable: boolean;
 }
 
 /** One part of a tier's condition, with how far the company has got. */
@@ -31,7 +36,7 @@ export interface TierConditionView {
 
 export interface TierStatusView {
   tier: TierNumber;
-  /** Its condition has been met (tier 1 always is): its items are unlocked. */
+  /** Its condition has been met (tier 1 always is): its items can be unlocked with RP (tier 1's already are). */
   available: boolean;
   /** The day it became available: 1 for tier 1, null until then. */
   day: number | null;
@@ -57,28 +62,91 @@ export const featureTier = (f: { tier?: TierNumber }): TierNumber => f.tier ?? 1
  * neither.
  */
 export function itemTier(config: GameConfig, state: Pick<GameState, "productType">, id: string): TierNumber | undefined {
-  const feature = config.productTypes[state.productType].features.find((f) => f.id === id);
-  if (feature) return featureTier(feature);
-  return config.tiers.benefits.find((b) => b.id === id)?.tier;
+  return findItem(config, state, id)?.tier;
 }
+
+/** An item by id, one of the product's features or a model benefit: its name, tier and RP price. */
+function findItem(config: GameConfig, state: Pick<GameState, "productType">, id: string) {
+  const feature = config.productTypes[state.productType].features.find((f) => f.id === id);
+  const item = feature ?? config.tiers.benefits.find((b) => b.id === id);
+  if (!item) return undefined;
+  const tier = featureTier(item);
+  return { name: item.name, tier, rpPrice: rpPrice(item, tier) };
+}
+
+/** An item's RP price by id: 0 in tier 1, or for an id that's in no tier. */
+export const itemRpPrice = (config: GameConfig, state: Pick<GameState, "productType">, id: string) =>
+  findItem(config, state, id)?.rpPrice ?? 0;
+
+/** An item's RP price: none in tier 1, which is unlocked from the start. */
+const rpPrice = (item: { rpPrice?: number }, tier: TierNumber) => (tier === 1 ? 0 : (item.rpPrice ?? 0));
+
+/** The state unlocking reads: the product, the tiers reached and the items unlocked. */
+type UnlockState = Pick<GameState, "productType" | "tiers" | "unlocks">;
 
 /** Whether a tier's condition has been met: tier 1 always, later tiers once reached (they stay reached). */
 export const tierAvailable = (state: Pick<GameState, "tiers">, tier: TierNumber) =>
   tier === 1 || state.tiers.some((t) => t.tier === tier);
 
 /**
- * Whether an item can be built or bought. Today that's whenever its tier is available; research will add a price to
- * each item above tier 1, so this is the one place that needs to learn about it.
+ * Whether an item can be built or bought: every tier 1 item, and above tier 1 once it's been unlocked with research
+ * points (which needs its tier available first). Unlocks belong to the company, so they hold on any model.
  */
-export function isUnlocked(config: GameConfig, state: Pick<GameState, "productType" | "tiers">, id: string): boolean {
+export function isUnlocked(config: GameConfig, state: UnlockState, id: string): boolean {
   const tier = itemTier(config, state, id);
-  return tier !== undefined && tierAvailable(state, tier);
+  return tier === 1 || (tier !== undefined && state.unlocks.includes(id));
 }
 
-/** The refusal for an item whose tier isn't available yet: what the student has to do first. */
-export function lockedMessage(config: GameConfig, name: string, tier: TierNumber): string {
-  return `${name} is in tier ${tier}, which isn't unlocked yet. ${conditionText(config, tier)}`;
+/**
+ * The refusal for an item that isn't unlocked: what the student has to do first. Either its tier isn't available
+ * yet, or it is and the item needs unlocking with research points.
+ */
+export function lockedMessage(config: GameConfig, state: UnlockState & Pick<GameState, "investors">, id: string): string {
+  const item = findItem(config, state, id);
+  if (!item) return "That isn't in any tier.";
+  if (!tierAvailable(state, item.tier)) {
+    return `${item.name} is in tier ${item.tier}, which isn't available yet. ${conditionText(config, item.tier)}`;
+  }
+  const where = researchUnlocked(state)
+    ? "on the Research page"
+    : "once researchers join, when your first angel investor approaches";
+  return `${item.name} needs unlocking first: ${count.format(item.rpPrice)} RP ${where}.`;
 }
+
+/**
+ * Unlocks an item above tier 1 with research points, once its tier is available: its RP price comes off the bank.
+ * Items in a tier can be unlocked in any order, and any model's benefits can be, ready for a migration.
+ */
+export function unlockItem(config: GameConfig, state: GameState, id: string): GameState {
+  const item = findItem(config, state, id);
+  if (!item) throw new SimError("unknown_item", "Pick a feature or model benefit from a tier.");
+  if (isUnlocked(config, state, id)) {
+    const why = item.tier === 1 ? "it's in tier 1, open from the start" : "you've unlocked it already";
+    throw new SimError("already_unlocked", `${item.name} needs no unlocking: ${why}.`);
+  }
+  if (!tierAvailable(state, item.tier)) {
+    throw new SimError("tier_unavailable", `${item.name} is in tier ${item.tier}, which isn't available yet. ${conditionText(config, item.tier)}`);
+  }
+  if (item.rpPrice > state.researchPoints) {
+    throw new SimError(
+      "not_enough_rp",
+      `Unlocking ${item.name} takes ${count.format(item.rpPrice)} RP and you have ${count.format(state.researchPoints)}.`,
+      { cost: item.rpPrice, points: state.researchPoints },
+    );
+  }
+  const points = Math.round((state.researchPoints - item.rpPrice) * 100) / 100;
+  return { ...state, researchPoints: points, unlocks: [...state.unlocks, id] };
+}
+
+/** Every item in every tier, the product's features and every model's benefits: their ids. */
+const allItems = (config: GameConfig, state: Pick<GameState, "productType">) => [
+  ...config.productTypes[state.productType].features.map((f) => f.id),
+  ...config.tiers.benefits.map((b) => b.id),
+];
+
+/** Every item in every tier is unlocked, so research has nothing left to spend RP on. */
+export const everythingUnlocked = (config: GameConfig, state: UnlockState) =>
+  allItems(config, state).every((id) => isUnlocked(config, state, id));
 
 /** A tier's condition in words, for a refusal or a log line. */
 function conditionText(config: GameConfig, tier: TierNumber): string {
@@ -143,13 +211,15 @@ const conditionMet = (list: TierConditionView[], tier: TierNumber) =>
 export function createTiers(config: GameConfig, ctx: TierContext) {
   /** Every item in a tier: the product's features, then each model's benefits. */
   function items(state: GameState, tier: TierNumber): TierItemView[] {
-    const unlocked = tierAvailable(state, tier);
+    const available = tierAvailable(state, tier);
+    const view = (i: { id: string; name: string; blurb: string; rpPrice?: number }, kind: TierItemKind, model: ModelId | null) => {
+      const unlocked = isUnlocked(config, state, i.id);
+      return { id: i.id, kind, name: i.name, blurb: i.blurb, tier, model, rpPrice: rpPrice(i, tier), unlocked, unlockable: available && !unlocked };
+    };
     const features = config.productTypes[state.productType].features
       .filter((f) => featureTier(f) === tier)
-      .map((f) => ({ id: f.id, kind: "feature" as const, name: f.name, blurb: f.blurb, tier, model: null, unlocked }));
-    const benefits = config.tiers.benefits
-      .filter((b) => b.tier === tier)
-      .map((b) => ({ id: b.id, kind: "benefit" as const, name: b.name, blurb: b.blurb, tier, model: b.model, unlocked }));
+      .map((f) => view(f, "feature", null));
+    const benefits = config.tiers.benefits.filter((b) => b.tier === tier).map((b) => view(b, "benefit", b.model));
     return [...features, ...benefits];
   }
 
@@ -178,8 +248,8 @@ export function createTiers(config: GameConfig, ctx: TierContext) {
       const names = items({ ...state, tiers: reached }, tier)
         .filter((i) => i.kind === "feature" || i.model === state.model)
         .map((i) => i.name);
-      const what = names.length ? `: ${names.join(", ")} can now be had` : "";
-      entries.push({ text: `Tier ${tier} unlocked${what}.`, cashDelta: 0, kind: "finished" });
+      const what = names.length ? `: ${names.join(", ")} can now be unlocked with research points` : "";
+      entries.push({ text: `Tier ${tier} available${what}.`, cashDelta: 0, kind: "finished" });
     }
     return { tiers: reached, entries };
   }
