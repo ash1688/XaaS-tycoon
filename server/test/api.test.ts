@@ -1444,7 +1444,7 @@ describe("ledger, rescue buyout and liquidation", () => {
       { text: expect.stringContaining("running costs"), cashDelta: -25, category: "infrastructure" },
       { text: "Ops staff pay (1 mid)", cashDelta: -4, category: "staff" },
     ]);
-    const spend = { staff: 8, infrastructure: 50, cabling: 0, power: 0, addons: 0, debt: 0 };
+    const spend = { staff: 8, infrastructure: 50, cabling: 0, power: 0, addons: 0, campaigns: 0, debt: 0 };
     expect(body!.company).toMatchObject({ cash: 1000 - 58, spend });
     expect((await app.inject({ method: "GET", url })).json<CompanyView>().spend).toEqual(spend);
   });
@@ -2065,7 +2065,7 @@ describe("game end and summary", () => {
       cash: 1000 - 116,
       uptime: 100,
       migrations: 0,
-      spend: { staff: 16, infrastructure: 100, addons: 0, debt: 0 },
+      spend: { staff: 16, infrastructure: 100, addons: 0, campaigns: 0, debt: 0 },
       totalSpend: 116,
     });
     expect(summary.users).toBeGreaterThan(0);
@@ -2077,6 +2077,7 @@ describe("game end and summary", () => {
       cabling: 0,
       power: 0,
       addons: 0,
+      campaigns: 0,
       debt: 0,
     });
     expect(summary.days.map((d) => [d.day, d.staff, d.infrastructure, d.cash])).toEqual([
@@ -4148,5 +4149,63 @@ describe("tiers, model benefits and the hardware slider (#123)", () => {
     const iaas = await setup();
     const refused = await iaas.act({ type: "setPerformance", id: iaas.company.servers[0]!.id, performance: 1.2 });
     expect(refused.json()).toMatchObject({ error: "no_slider" });
+  });
+});
+
+describe("campaigns (#115)", () => {
+  async function setup() {
+    const code = await newCode();
+    const company = (await newCompany(code)).json<CompanyView>();
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
+    const next = async () => (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    // The first angel investor has approached, as Campaigns open.
+    const approached = async () => {
+      await testDb.db.execute(sql`update companies set state = jsonb_set(state, '{investors,firstApproachDay}', '1'::jsonb) where id = ${company.id}`);
+    };
+    return { company, act, next, approached };
+  }
+
+  it("keeps campaigns locked until the first angel approaches", async () => {
+    const { company, act } = await setup();
+    expect(company.campaigns).toMatchObject({ unlocked: false, canStart: false, campaigns: [] });
+    const refused = await act({ type: "startCampaign", customerType: "casual", budget: 700, days: 7 });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toMatchObject({ error: "not_yet" });
+  });
+
+  it("starts a campaign, runs it with its spend, users and cost per user, and stops it", async () => {
+    const { act, next, approached } = await setup();
+    await approached();
+    const started = await act({ type: "startCampaign", customerType: "casual", budget: 700, days: 7 });
+    expect(started.statusCode).toBe(200);
+    const view = started.json<CompanyView>().campaigns;
+    expect(view).toMatchObject({ unlocked: true, running: 1, campaigns: [{ id: 1, customerType: "casual", budget: 700, days: 7, status: "starting", spent: 0 }] });
+    const { company, log } = await next();
+    const [campaign] = company.campaigns.campaigns;
+    expect(campaign).toMatchObject({ status: "running", daysRun: 1, spent: 100 });
+    expect(campaign!.users).toBeGreaterThan(0);
+    expect(campaign!.costPerUser).toBe(Math.round((100 * 100) / campaign!.users) / 100);
+    expect(company.spend.campaigns).toBe(100);
+    expect(log.flatMap((d) => d.entries)).toContainEqual(expect.objectContaining({ category: "campaigns", cashDelta: -100 }));
+    const stopped = await act({ type: "stopCampaign", id: 1 });
+    expect(stopped.json<CompanyView>().campaigns).toMatchObject({ running: 0, campaigns: [{ id: 1, status: "stopped", spent: 100 }] });
+  });
+
+  it("refuses a bad campaign, and checks the action's fields", async () => {
+    const { act, approached } = await setup();
+    await approached();
+    expect((await act({ type: "startCampaign", customerType: "casual", budget: 50, days: 7 })).json()).toMatchObject({ error: "bad_budget" });
+    expect((await act({ type: "startCampaign", customerType: "casual", budget: 700, days: 2 })).json()).toMatchObject({ error: "bad_length" });
+    expect((await act({ type: "startCampaign", customerType: "casual", budget: 5_000, days: 7 })).json()).toMatchObject({ error: "cant_afford" });
+    expect((await act({ type: "stopCampaign", id: 9 })).json()).toMatchObject({ error: "unknown_campaign" });
+    for (const payload of [
+      { type: "startCampaign", customerType: "pensioners", budget: 700, days: 7 },
+      { type: "startCampaign", customerType: "casual", days: 7 },
+      { type: "startCampaign", customerType: "casual", budget: 700.5, days: 7 },
+      { type: "stopCampaign" },
+    ]) {
+      expect((await act(payload)).statusCode).toBe(400);
+    }
   });
 });

@@ -24,6 +24,7 @@ import type {
   MvpView,
   OptimisationView,
   ResearchView,
+  CampaignsView,
   TierStatusView,
   BenefitView,
   LoanQuote,
@@ -270,6 +271,12 @@ export interface CompanyView {
    * features and model benefits in it.
    */
   tiers: TierStatusView[];
+  /**
+   * Campaigns, for the Marketing page: whether they've opened (at the first angel investor's approach) and one can be
+   * started now, what a pound buys of each customer type, any holiday a new one would be timed for, and every campaign
+   * with its spend, users brought in and cost per user.
+   */
+  campaigns: CampaignsView;
   /** Every model's benefits: tier, fees, whether unlocked, on the company's model and on. */
   benefits: BenefitView[];
   /** What the model benefits that are on cost a month. */

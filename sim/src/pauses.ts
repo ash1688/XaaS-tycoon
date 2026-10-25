@@ -174,6 +174,9 @@ export function createPauses(config: GameConfig, views: PauseViews) {
     const migAfter = views.migration(after);
     if (migBefore && !migAfter) add("finished", "migration", "Your migration is complete");
     else if (migBefore && migAfter && migAfter.phase !== migBefore.phase) add("finished", "migration", `Migration: ${migAfter.phase} phase started`);
+    for (const c of after.campaigns.filter((c) => c.endDay === after.day && !c.stopped && c.endDay > before.day)) {
+      add("finished", `campaign-${c.id}`, `Your campaign for ${config.customerTypes[c.customerType].name.toLowerCase()} has finished`);
+    }
     const pending = (s: GameState) => views.servers(s).filter((x) => x.status === "pending").length;
     if (pending(after) < pending(before)) add("finished", "servers", "New servers are ready");
 

@@ -28,6 +28,7 @@ import {
   createSim,
   diffFromDefaults,
   DIFFICULTIES,
+  CUSTOMER_TYPE_IDS,
   FUNDER_IDS,
   GAME_STATE_VERSION,
   gameLengthDays,
@@ -380,6 +381,7 @@ export async function buildApp(opts: AppOptions) {
       optimisation: sim.optimisation(state),
       research: sim.research(state),
       tiers: sim.tiers(state),
+      campaigns: sim.campaigns(state),
       benefits: sim.benefits(state),
       monthlyBenefitCost: sim.monthlyBenefitCost(state),
       users: state.users,
@@ -795,6 +797,8 @@ export async function buildApp(opts: AppOptions) {
                 "cancelBenefit",
                 "setPerformance",
                 "unlockItem",
+                "startCampaign",
+                "stopCampaign",
               ],
             },
             pool: { enum: [...STAFF_POOLS] },
@@ -808,6 +812,11 @@ export async function buildApp(opts: AppOptions) {
             benefit: { type: "string", maxLength: 64 },
             // unlockItem: a feature or model benefit in a tier, by id. Checked against the config's lists by the sim.
             item: { type: "string", maxLength: 64 },
+            // startCampaign: the customer type it aims at, its budget in pounds and its length in days. The sim checks
+            // them against the config's limits.
+            customerType: { enum: [...CUSTOMER_TYPE_IDS] },
+            budget: { type: "integer", minimum: 0 },
+            days: { type: "integer", minimum: 1, maximum: 3650 },
             // setPerformance: an on-prem server's hardware slider, as a share of its normal capacity. The sim checks
             // it's within the configured top.
             performance: { type: "number", minimum: 0, maximum: 10 },
@@ -868,6 +877,8 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { enum: ["buyBenefit", "cancelBenefit"] } } }, then: { required: ["benefit"] } },
             { if: { properties: { type: { const: "setPerformance" } } }, then: { required: ["id", "performance"] } },
             { if: { properties: { type: { const: "unlockItem" } } }, then: { required: ["item"] } },
+            { if: { properties: { type: { const: "startCampaign" } } }, then: { required: ["customerType", "budget", "days"] } },
+            { if: { properties: { type: { const: "stopCampaign" } } }, then: { required: ["id"] } },
             {
               if: { properties: { type: { const: "setManagedService" } } },
               then: { required: ["service", "size"] },

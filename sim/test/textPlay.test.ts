@@ -972,3 +972,37 @@ describe("tiers, model benefits and the hardware slider (#123)", () => {
     expect(renderCommands(sim, start())).not.toMatch(/slider/);
   });
 });
+
+describe("campaigns (#115)", () => {
+  /** Launched, with the first angel's approach behind it, so campaigns are open. */
+  function grownUp() {
+    let state = sim.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 });
+    while (sim.launch(state).status !== "launched") state = sim.advance(state).state;
+    return { ...state, cash: 100_000, investors: { ...state.investors, firstApproachDay: state.day } };
+  }
+
+  it("reads starting and stopping a campaign", () => {
+    expect(parseCommand("campaign professionals £5,000 30")).toEqual({
+      kind: "action",
+      action: { type: "startCampaign", customerType: "professionals", budget: 5_000, days: 30 },
+      times: 1,
+    });
+    expect(parseCommand("stopcampaign 2")).toMatchObject({ action: { type: "stopCampaign", id: 2 } });
+    expect(() => parseCommand("campaign pensioners 5000 30")).toThrow(/a customer type/);
+  });
+
+  it("shows nothing of campaigns until they open, then offers one, runs it and shows its results", () => {
+    expect(renderStatus(sim, start())).not.toMatch(/^campaigns:/m);
+    expect(renderCommands(sim, start())).not.toMatch(/campaign/);
+    const state = grownUp();
+    expect(renderStatus(sim, state)).toMatch(/^campaigns: 0\/2 running, market \d+% full$/m);
+    expect(renderCommands(sim, state)).toMatch(/^ {2}campaign <casual\|enthusiasts\|professionals\|businesses> <budget £100–1000000> <days 7–90> {3}\(spent evenly from tomorrow; brings users of that type: casual £2\.\d\d a user now, /m);
+    const started = run(state, "campaign businesses 1600 10");
+    expect(started.rows[0]).toMatchObject({ type: "startCampaign", ok: true });
+    expect(renderCommands(sim, started.state)).toMatch(/^ {2}stopcampaign <1> /m);
+    const played = run(started.state, "next 2").state;
+    const users = sim.campaigns(played).campaigns[0]!.users;
+    expect(users).toBeGreaterThan(0);
+    expect(renderStatus(sim, played)).toMatch(new RegExp(String.raw`^ {2}#1 businesses £\d+/£1600, day \d+/10, ${users} users at £\d+\.\d\d running$`, "m"));
+  });
+});
