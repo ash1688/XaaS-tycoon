@@ -157,3 +157,49 @@ test("a pay review stops timed flow and holds the game until the student settles
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).toContainText(`8 of ${E2E_FINAL_DAY}`);
 });
+
+test("a pay review with no deal after the final offer warns of the tribunal, shows its odds, and goes to it", async ({ browser, request }) => {
+  const { code, id } = await newCompany(browser, request, "Tribunal Ltd");
+  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
+  try {
+    await sql`update companies set state = jsonb_set(jsonb_set(state, '{day}', '6'::jsonb), '{cash}', '500000'::jsonb) where id = ${id}`;
+    const student = await (await browser.newContext()).newPage();
+    await student.goto(`/play/${code}/${id}`);
+    await student.getByRole("button", { name: "Continue" }).click();
+    const modal = student.getByRole("dialog", { name: "Pay review" });
+    await expect(modal).toBeVisible();
+    // Staff hold out for their whole ask, so no lower offer reaches a deal.
+    await sql`update companies set state = jsonb_set(state, '{payReview,walkAway}', state #> '{payReview,maxAsk}') where id = ${id}`;
+    await student.reload();
+    await expect(modal).toBeVisible();
+
+    const minOffer = (await modal.getByTestId("pay-min-offer").innerText()).replace("%", "");
+    for (const left of ["3 offers left", "2 offers left"]) {
+      await expect(modal.getByTestId("pay-final-warning")).toHaveCount(0);
+      await modal.getByTestId("pay-rise").fill(minOffer);
+      await expect(modal.getByTestId("pay-offer")).toContainText(left);
+      await expect(modal.getByTestId("pay-odds-high")).toBeVisible();
+      await modal.getByTestId("pay-offer").click();
+      await expect(modal.getByTestId("pay-counter")).toBeVisible();
+    }
+    // Before the final offer: a clear warning that the next step is a tribunal, with its fee, and its odds.
+    await expect(modal.getByTestId("pay-final-warning")).toContainText("next is a tribunal");
+    await expect(modal.getByTestId("pay-final-warning")).toContainText("£2,000");
+    await modal.getByTestId("pay-rise").fill(minOffer);
+    await expect(modal.getByTestId("pay-tribunal-odds")).toBeVisible();
+    for (const [pick, label] of [["student", "Your offer"], ["middle", "The middle"], ["staff", "Staff's figure"]]) {
+      await expect(modal.getByTestId(`pay-tribunal-${pick}`)).toContainText(new RegExp(`${label}, \\d+%\\s*a \\d\\.\\d% rise`));
+    }
+    await modal.getByTestId("pay-offer").click();
+    await expect(modal.getByTestId("pay-tribunal-result")).toContainText(/the tribunal sat and picked (your offer|the middle|staff's figure)\. Its fee of £2,000/);
+    await expect(modal.getByTestId("pay-settled")).toContainText(/Pay review settled on a \d\.\d% rise\./);
+    await modal.getByTestId("pay-done").click();
+
+    // The clock is free again, and the next day's log says what the tribunal did.
+    await student.getByRole("button", { name: "Continue" }).click();
+    await expect(student.getByTestId("day")).toContainText(`8 of ${E2E_FINAL_DAY}`);
+    await expect(student.getByText(/The tribunal settled quarter 2's pay review on/)).toBeVisible();
+  } finally {
+    await sql.end();
+  }
+});

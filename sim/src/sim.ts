@@ -94,8 +94,8 @@ export type { NewUserFactor } from "./mix.ts";
 export type { RackOption, RackView, RacksView } from "./racks.ts";
 export type { CounterOdds, NegotiationRound, RollResult, TermSpec, Terms } from "./negotiation.ts";
 export { MAX_OFFERS, ROLL_RESULTS } from "./negotiation.ts";
-export type { PayOfferPreview, PayReviewView } from "./payReview.ts";
-export { inflationNow, REVIEW_QUARTERS } from "./payReview.ts";
+export type { PayOfferPreview, PayReviewView, TribunalOdds } from "./payReview.ts";
+export { inflationNow, REVIEW_QUARTERS, TRIBUNAL_PICKS } from "./payReview.ts";
 export type { RescueView } from "./rescue.ts";
 export type { TicketOutlook } from "./support.ts";
 export type { MarketCompanyView, MarketView, TypeContestView } from "./rivals.ts";
@@ -186,6 +186,7 @@ export {
   type PayReview,
   type PayReviewOutcome,
   type PayReviewRecord,
+  type TribunalPick,
   type Server,
   type Shareholder,
   type Spend,
@@ -564,7 +565,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const rescue = createRescue(config, finance, shares, (s) => runway(s), (s) => infra.opsNeededNow(s));
   const investors = createInvestors(config, finance, shares);
   const campaigns = createCampaigns(config, calendar);
-  const payReview = createPayReview(config, { runwayDays: (s) => runway(s).days });
+  const payReview = createPayReview(config, { runwayDays: (s) => runway(s).days, chargeNow: finance.chargeNow });
 
   function newGame({
     companyName,
@@ -997,7 +998,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     // Last of all, a pay review if the next day starts a quarter that has one: it holds the clock until it's settled.
     const quarter = payReview.reviewDue(tiered);
     const reviewed = quarter === null ? { state: tiered, entries: [] } : payReview.openReview(tiered, quarter);
-    const entriesToday = [...settled.entries, ...released.entries, ...funded.entries, ...opened.entries, ...reviewed.entries];
+    const entriesToday = [
+      // First, what a tribunal settled before today.
+      ...payReview.tribunalEntries(yesterday, day),
+      ...settled.entries, ...released.entries, ...funded.entries, ...opened.entries, ...reviewed.entries];
     return { state: reviewed.state, log: [{ day, entries: entriesToday }] };
   }
 

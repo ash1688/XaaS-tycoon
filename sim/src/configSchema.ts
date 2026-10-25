@@ -611,6 +611,8 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("payReview.negotiation.moves.high", "People", "Pay review rolls", "High roll moves", "Share of the way from staff's figure to the offer their counter moves on a high roll.", SHARE);
   add("payReview.negotiation.moves.middle", "People", "Pay review rolls", "Middle roll moves", "Share of the way their counter moves on a middle roll.", SHARE);
   add("payReview.negotiation.moves.low", "People", "Pay review rolls", "Low roll moves", "Share of the way their counter moves on a low roll. Below 0 they ask for more instead, never above their opening ask.", range(-1, 1, 0.01));
+  add("payReview.tribunal.fee", "People", "Pay review tribunal", "Tribunal fee", "Charged in cash every time a pay review goes to the tribunal, after a final offer with no deal.", POUNDS);
+  add("payReview.tribunal.sharpness", "People", "Pay review tribunal", "Leans to the fair figure", "How strongly the tribunal picks whichever figure (the final offer, staff's, or the middle) is closest to a fair rise. 0 picks each equally; at 3 a figure on the fair rise wins about 78% of the time.", range(0, 20, 0.1));
   add("addons.setupFeePerDevDay", "Money", "", "Add-on set-up fee per developer-day", "On SaaS, an add-on costs this × the developer-days it would take to build, once, when it's bought.", range(0, 10_000, 10));
 
   // Migration

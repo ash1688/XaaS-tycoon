@@ -429,6 +429,7 @@ export async function buildApp(opts: AppOptions) {
       funding: sim.funding(state),
       investors: sim.investors(state),
       payReview: sim.payReview(state),
+      lastPayReview: state.pastPayReviews.at(-1) ?? null,
       payMultiplier: state.payMultiplier,
       ipo: sim.ipo(state),
       rescue: sim.rescue(state),

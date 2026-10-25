@@ -14,7 +14,7 @@ import {
 
 // Pay reviews, through the sim's public interface: the schedule (quarters 2, 3 and 4 of any game length), the clock
 // held until a review is settled, inflation on its own RNG, the caps, staff accepting or countering an offer with the
-// negotiation roll the other way round, the student accepting a counter, the final offer's midpoint, and the agreed
+// negotiation roll the other way round, the student accepting a counter, the tribunal after a final offer with no deal, and the agreed
 // rise lifting every pool's pay, new hires and agency staff included.
 
 /** A rich company with no events, on any game length, so it plays a whole year without running out of cash. */
@@ -194,7 +194,7 @@ describe("offers", () => {
     expect(refusal(() => offer(plain, open, Number.NaN))).toBe("bad_offer");
     expect(refusal(() => plain.payOfferPreview(open, review.minOffer - 0.001))).toBe("offer_too_low");
     // Staff's whole ask is no counter: nothing to roll for.
-    expect(plain.payOfferPreview(open, review.maxAsk)).toMatchObject({ meetsAsk: true, odds: null, midpoint: null });
+    expect(plain.payOfferPreview(open, review.maxAsk)).toMatchObject({ meetsAsk: true, odds: null, tribunal: null });
     expect(plain.payOfferPreview(open, review.minOffer)).toMatchObject({ meetsAsk: false });
     // And with no review open.
     expect(refusal(() => offer(plain, begin(plain), 0.03))).toBe("no_pay_review");
@@ -271,20 +271,15 @@ describe("accepting a counter", () => {
 });
 
 describe("the final offer", () => {
-  it("is the third: short of a deal, the review settles midway between it and staff's last counter", () => {
+  it("is the third, and the review warns that short of a deal it goes to the tribunal, with its fee", () => {
     let state = untilReview(plain, begin(plain));
     const { minOffer } = state.payReview!;
-    state = offer(plain, state, minOffer);
-    state = offer(plain, state, minOffer);
-    const talks = plain.payReview(state)!;
-    expect(talks).toMatchObject({ offersLeft: 1, final: true });
-    const last = talks.staffFigure;
-    const midpoint = Math.round(((minOffer + last) / 2) * 1000) / 1000;
-    // The preview says so, and has no roll to show.
-    expect(plain.payOfferPreview(state, minOffer)).toMatchObject({ odds: null, midpoint });
-    const settled = offer(plain, state, minOffer);
-    expect(settled.payReview).toBeNull();
-    expect(settled.pastPayReviews.at(-1)).toMatchObject({ outcome: "midpoint", rise: midpoint, studentOffers: [minOffer, minOffer, minOffer] });
+    expect(plain.payReview(state)).toMatchObject({ final: false, tribunalFee: 2_000 });
+    expect(plain.payOfferPreview(state, minOffer).tribunal).toBeNull();
+    state = offer(plain, offer(plain, state, minOffer), minOffer);
+    expect(plain.payReview(state)).toMatchObject({ offersLeft: 1, final: true, tribunalFee: 2_000 });
+    // No counter roll to show: the tribunal's odds instead.
+    expect(plain.payOfferPreview(state, minOffer)).toMatchObject({ odds: null, tribunal: { fee: 2_000 } });
   });
 
   it("is still accepted if it reaches the walk-away figure", () => {
@@ -293,7 +288,132 @@ describe("the final offer", () => {
     const { inflation } = state.payReview!;
     state = offer(plain, offer(plain, state, inflation - 0.001), inflation - 0.001);
     const settled = offer(plain, state, inflation);
-    expect(settled.pastPayReviews.at(-1)).toMatchObject({ outcome: "offerAccepted", rise: inflation });
+    expect(settled.pastPayReviews.at(-1)).toMatchObject({ outcome: "offerAccepted", rise: inflation, tribunal: null });
+  });
+});
+
+describe("the tribunal", () => {
+  // Two low offers, so the third is final. In `plain` the fair rise is inflation and staff walk away there.
+  const atFinal = (() => {
+    const open = untilReview(plain, begin(plain));
+    const { minOffer } = open.payReview!;
+    return offer(plain, offer(plain, open, minOffer), minOffer);
+  })();
+  const review = plain.payReview(atFinal)!;
+  const fair = atFinal.payReview!.fairRise;
+  /** A final offer of `rise` on the reviews' RNG started at `seed`: short of a deal, so the tribunal settles it. */
+  const tribunalOn = (seed: number, rise: number, s: Sim = plain) => offer(s, { ...atFinal, payReviewRng: seed }, rise);
+  const PICKS = ["student", "middle", "staff"] as const;
+  /** How often the tribunal picks each figure on a final offer of `rise`, over `seeds` seeds. */
+  const tally = (rise: number, seeds = 500) => {
+    const picks = { student: 0, middle: 0, staff: 0 };
+    for (let seed = 0; seed < seeds; seed++) picks[tribunalOn(seed, rise).pastPayReviews.at(-1)!.tribunal!.pick]++;
+    return picks;
+  };
+
+  it("settles a final offer short of a deal on the offer, staff's figure or the middle, and charges its fee", () => {
+    const final = review.minOffer;
+    const odds = plain.payOfferPreview(atFinal, final).tribunal!;
+    expect(odds.rises).toEqual({
+      student: final,
+      middle: Math.round(((final + review.staffFigure) / 2) * 1000) / 1000,
+      staff: review.staffFigure,
+    });
+    expect(odds.chances.student + odds.chances.middle + odds.chances.staff).toBeCloseTo(1, 10);
+    const settled = tribunalOn(1, final);
+    expect(settled.payReview).toBeNull();
+    const record = settled.pastPayReviews.at(-1)!;
+    expect(record).toMatchObject({
+      outcome: "tribunal",
+      studentOffers: [final, final, final],
+      tribunal: { fee: 2_000, chances: odds.chances },
+    });
+    // What it picked is recorded, and is the rise.
+    expect(record.rise).toBe(odds.rises[record.tribunal!.pick]);
+    expect(settled.payMultiplier).toBeCloseTo(atFinal.payMultiplier * (1 + record.rise), 10);
+    // The fee comes out of cash at once, counted as staff spend in the day just played.
+    expect(settled.cash).toBe(atFinal.cash - 2_000);
+    expect(settled.spend.staff).toBe(atFinal.spend.staff + 2_000);
+    expect(settled.spendByDay.at(-1)!.staff).toBe(atFinal.spendByDay.at(-1)!.staff + 2_000);
+  });
+
+  it("charges the configured fee on every tribunal, whatever it picks", () => {
+    const dear = createSim({ ...plain.config, payReview: { ...plain.config.payReview, tribunal: { fee: 5_000, sharpness: 3 } } });
+    for (let seed = 0; seed < 20; seed++) {
+      const settled = tribunalOn(seed, review.minOffer, dear);
+      expect(settled.cash).toBe(atFinal.cash - 5_000);
+      expect(settled.pastPayReviews.at(-1)!.tribunal!.fee).toBe(5_000);
+    }
+  });
+
+  it("rolls on the reviews' own RNG, as its odds say, and picks all three over many seeds", () => {
+    const final = review.minOffer;
+    const odds = plain.payOfferPreview(atFinal, final).tribunal!;
+    const picks = tally(final, 2_000);
+    for (const p of PICKS) {
+      expect(picks[p]).toBeGreaterThan(0);
+      expect(picks[p] / 2_000).toBeCloseTo(odds.chances[p], 1);
+    }
+    // The game's other rolls don't move.
+    expect(tribunalOn(3, final).rng).toBe(atFinal.rng);
+  });
+
+  it("favours staff's figure over a lowball further from the fair rise", () => {
+    // Here staff's counters have come down to the fair rise itself.
+    expect(fair - review.minOffer).toBeGreaterThan(review.staffFigure - fair);
+    const lowball = tally(review.minOffer);
+    expect(lowball.staff).toBeGreaterThan(lowball.middle);
+    expect(lowball.middle).toBeGreaterThan(lowball.student);
+  });
+
+  it("favours a final offer closer to the fair rise, and the middle when both are about as close", () => {
+    // Each counter comes 40% of the way down whatever the roll, so after two offers at the least staff ask 0.8 points
+    // over the fair rise: inflation + 4 − 2, then − 1.2.
+    const moves = { high: 0.4, middle: 0.4, low: 0.4 };
+    const steady = createSim({ ...plain.config, payReview: { ...plain.config.payReview, negotiation: { ...plain.config.payReview.negotiation, moves } } });
+    const open = untilReview(steady, begin(steady));
+    const { minOffer, fairRise } = open.payReview!;
+    const final = offer(steady, offer(steady, open, minOffer), minOffer);
+    const staff = steady.payReview(final)!.staffFigure;
+    expect(staff).toBeCloseTo(fairRise + 0.008, 6);
+    const picks = (rise: number) => {
+      const counts = { student: 0, middle: 0, staff: 0 };
+      for (let seed = 0; seed < 500; seed++) counts[offer(steady, { ...final, payReviewRng: seed }, rise).pastPayReviews.at(-1)!.tribunal!.pick]++;
+      return counts;
+    };
+    // Just short of the fair rise: the student's figure is the closer.
+    const near = picks(fairRise - 0.001);
+    expect(near.student).toBeGreaterThan(near.middle);
+    expect(near.middle).toBeGreaterThan(near.staff);
+    // As far below the fair rise as staff are above it: the middle sits on it, and is likeliest.
+    const even = Math.round((fairRise - 0.008) * 1000) / 1000;
+    const { chances } = steady.payOfferPreview(final, even).tribunal!;
+    expect(chances.middle).toBeGreaterThan(0.5);
+    expect(chances.student).toBeCloseTo(chances.staff, 6);
+    const middle = picks(even);
+    expect(middle.middle).toBeGreaterThan(middle.student + middle.staff);
+  });
+
+  it("picks each figure equally with no lean to the fair rise", () => {
+    const flat = createSim({ ...plain.config, payReview: { ...plain.config.payReview, tribunal: { fee: 2_000, sharpness: 0 } } });
+    const { chances } = flat.payOfferPreview(atFinal, review.minOffer).tribunal!;
+    for (const p of PICKS) expect(chances[p]).toBeCloseTo(1 / 3, 10);
+  });
+
+  it("unblocks the clock, and the next day's log says what it picked, the rise and the fee", () => {
+    expect(refusal(() => plain.advance(atFinal))).toBe("pay_review");
+    const settled = tribunalOn(7, review.minOffer);
+    const record = settled.pastPayReviews.at(-1)!;
+    const next = plain.advance(settled);
+    expect(next.state.day).toBe(review.startDay);
+    const picked = { student: "your final offer", middle: "the middle", staff: "your staff's figure" }[record.tribunal!.pick];
+    const [first] = next.log[0]!.entries;
+    expect(first).toMatchObject({ cashDelta: 0, kind: "staff" });
+    expect(first!.text).toContain(`The tribunal settled quarter ${review.quarter}'s pay review on ${picked}`);
+    expect(first!.text).toContain(`${Math.round(record.rise * 1000) / 10}% rise`);
+    expect(first!.text).toContain("£2,000");
+    // Only on that day.
+    expect(plain.advance(next.state).log[0]!.entries.some((e) => e.text.includes("tribunal"))).toBe(false);
   });
 });
 
@@ -445,5 +565,20 @@ describe("the bots and text play", () => {
     expect(settled.lines[1]).toMatch(/^pay review settled: you accepted staff's counter of [\d.]+%\. Pay ×1\.0\d\d of the day rates from day 46/);
     expect(settled.lines.join("\n")).toMatch(/pay: pay ×1\.0\d\d of the day rates \(rises: Q2 [\d.]+%\); next review before day 91/);
     expect(settled.state.day).toBe(46);
+  });
+
+  it("warns in text play before the final offer, shows the tribunal's odds, and reports what it picked", () => {
+    const who = { player: "test" };
+    const open = untilReview(plain, begin(plain));
+    const { minOffer } = open.payReview!;
+    const pct = (n: number) => (n * 100).toFixed(1);
+    const final = runScript(plain, open, `offer ${pct(minOffer)}; offer ${pct(minOffer)}; pay`, who);
+    expect(final.lines.join("\n")).toMatch(/your next offer is FINAL: if staff don't accept it, it goes to a TRIBUNAL, which charges £2,000/);
+    const odds = runScript(plain, final.state, `payodds ${pct(minOffer)}`, who).lines.join("\n");
+    expect(odds).toMatch(/the tribunal sits for £2,000 and picks:/);
+    expect(odds).toMatch(/your offer \d+% → [\d.]+%\n {4}the middle \d+% → [\d.]+%\n {4}staff's figure \d+% → [\d.]+%/);
+    const settled = runScript(plain, final.state, `offer ${pct(minOffer)}; next 1`, who);
+    expect(settled.lines[1]).toMatch(/^pay review settled: no deal on the final offer, so the tribunal sat \(fee £2,000\) and picked (your final offer|the middle|staff's figure), [\d.]+%/);
+    expect(settled.lines.join("\n")).toMatch(/The tribunal settled quarter 2's pay review on/);
   });
 });

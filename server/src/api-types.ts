@@ -41,6 +41,7 @@ import type {
   ModelComparison,
   PauseReason,
   PayOfferPreview,
+  PayReviewRecord,
   PayReviewView,
   PricePreview,
   PaymentsView,
@@ -440,6 +441,11 @@ export interface CompanyView {
    * stays hidden.
    */
   payReview: PayReviewView | null;
+  /**
+   * The last pay review settled, null before the first: how it was settled, the rise, and for a tribunal what it
+   * picked and its fee.
+   */
+  lastPayReview: PayReviewRecord | null;
   /** Every pool's pay as a multiple of the config's day rates: each agreed pay rise multiplies it. */
   payMultiplier: number;
   /**
@@ -517,8 +523,8 @@ export type CounterOddsView = CounterOdds;
 
 /**
  * GET .../pay-offer?rise=: what offering staff that rise (0.04 = 4%) in the open pay review would do, before it's made:
- * what it adds to pay a day and a year at today's team, and the odds on staff's counter (or, on the final offer, where
- * it settles if it falls short). Changes nothing. Refused as the offer would be.
+ * what it adds to pay a day and a year at today's team, and the odds on staff's counter (or, on the final offer, the
+ * tribunal's odds and fee if it falls short). Changes nothing. Refused as the offer would be.
  */
 export type PayOfferView = PayOfferPreview;
 

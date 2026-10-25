@@ -93,7 +93,7 @@ Staff coming to the student about pay before quarters 2, 3 and 4 of a game (a ga
 _Avoid_: Pay rise round, wage negotiation, salary review
 
 **Tribunal**:
-What settles a pay review with no deal after the student's third offer: it picks the student's figure, staff's or the middle, favouring whichever is closer to a fair rise, and charges a fee. Until it's built, a failed third offer settles midway.
+What settles a pay review with no deal after the student's third offer: it picks the student's figure, staff's or the middle, favouring whichever is closer to a fair rise (the middle when they're about as close), and charges a fee. It always settles the review: there's no declining it.
 _Avoid_: Arbitration, court
 
 ### Infrastructure

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import type { RollResult } from "@xaas/sim";
+import { TRIBUNAL_PICKS, type RollResult, type TribunalPick } from "@xaas/sim";
 import type { PayOfferView } from "@xaas/server/api-types";
 import { api, formatCash } from "../api";
 import { useGame } from "../game";
@@ -8,7 +8,8 @@ import AppModal from "./AppModal.vue";
 
 // A pay review: before quarters 2, 3 and 4 the staff come to the student about pay, and the game holds until it's
 // settled. It shows this review's inflation and the caps, the offers and counters so far, a cash rise to offer with
-// what it costs and the odds on staff's counter, and their counter to accept. It opens by itself; closed to look
+// what it costs and the odds on staff's counter, and their counter to accept. Before the final offer it warns that the
+// next step is the tribunal, with its fee and odds, and once settled says what the tribunal picked. It opens by itself; closed to look
 // around, the note in the shell opens it again, and the day still can't go on.
 const props = defineProps<{ open: boolean }>();
 const emit = defineEmits<{ close: [] }>();
@@ -83,6 +84,13 @@ watch(
   { immediate: true },
 );
 
+// The review just settled, if a tribunal settled it: what it picked and its fee.
+const tribunal = computed(() => {
+  const last = game.company?.lastPayReview;
+  return settled.value && last?.startDay === settled.value.startDay ? last.tribunal : null;
+});
+const PICK: Record<TribunalPick, string> = { student: "Your offer", middle: "The middle", staff: "Staff's figure" };
+
 const RESULT: Record<RollResult, string> = { high: "a high roll", middle: "a middle roll", low: "a low roll" };
 /**
  * How far staff came down on a roll: most of the way, halfway, barely, or (a low roll) they asked for more, or held at
@@ -147,8 +155,10 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
         <p v-else class="muted">Staff open at their ask of {{ pct(review.staffFigure) }}. Make the first offer.</p>
 
         <p v-if="review.final" class="warn-note" role="status" data-testid="pay-final-warning">
-          <span class="badge warn-badge">Final offer</span> This is your last offer. If staff don't accept it, the rise is set
-          midway between it and their {{ pct(review.staffFigure) }}.
+          <span class="badge warn-badge">Final offer: next is a tribunal</span> This is your last offer. If staff don't accept
+          it, the review goes to a <strong>tribunal</strong>, which charges a <strong>{{ formatCash(review.tribunalFee) }}</strong>
+          fee and sets the rise: your offer, their {{ pct(review.staffFigure) }} or the middle. It favours whichever is closest
+          to a fair rise for how your company is doing, so a lowball offer is likely to lose.
         </p>
 
         <form class="counter-form" novalidate @submit.prevent="offer">
@@ -189,9 +199,20 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
                 </tbody>
               </table>
             </template>
-            <p v-else-if="preview.midpoint !== null" data-testid="pay-midpoint">
-              If staff don't accept it, the rise is set at {{ pct(preview.midpoint) }}.
-            </p>
+            <template v-else-if="preview.tribunal">
+              <p>
+                Staff accept an offer close to a fair rise. If they don't, the tribunal sits for
+                {{ formatCash(preview.tribunal.fee) }} and picks:
+              </p>
+              <table class="quote" data-testid="pay-tribunal-odds">
+                <tbody>
+                  <tr v-for="p in TRIBUNAL_PICKS" :key="p" :data-testid="`pay-tribunal-${p}`">
+                    <th scope="row">{{ PICK[p] }}, {{ percent(preview.tribunal.chances[p]) }}</th>
+                    <td>a {{ pct(preview.tribunal.rises[p]) }} rise</td>
+                  </tr>
+                </tbody>
+              </table>
+            </template>
           </div>
           <p v-else-if="previewError" class="error" data-testid="pay-preview-error">{{ previewError }}</p>
           <p v-else class="muted">Type a rise from {{ pct(review.minOffer) }} to {{ pct(review.maxAsk) }} to see what it costs.</p>
@@ -201,6 +222,10 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
         </form>
       </template>
       <template v-else-if="settled">
+        <p v-if="tribunal" class="warn-note" data-testid="pay-tribunal-result">
+          <span class="badge warn-badge">Tribunal</span> With no deal, the tribunal sat and picked
+          <strong>{{ PICK[tribunal.pick].toLowerCase() }}</strong>. Its fee of {{ formatCash(tribunal.fee) }} came out of your cash.
+        </p>
         <p data-testid="pay-settled">
           <strong>Pay review settled on a {{ pct(settled.rise) }} rise.</strong> Every team is paid it from day
           {{ settled.startDay }}: pay is now {{ (game.company?.payMultiplier ?? 1).toFixed(3) }}× the starting day rates.

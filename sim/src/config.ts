@@ -1454,7 +1454,7 @@ export interface NegotiationConfig {
  *   hidden figure within walkAwaySpread of it.
  * - The student offers first; below the walk-away figure staff counter, and a roll on `negotiation` decides how far
  *   they come down from their ask towards the offer (see NegotiationConfig, with the student's offer as the counter).
- *   The third offer is final: short of the walk-away figure, it settles midway between it and staff's last counter.
+ *   The third offer is final: short of the walk-away figure, it goes to the tribunal (see `tribunal`).
  * - The agreed rise multiplies every staff pool's day rate from the next day, compounding with each review.
  */
 export interface PayReviewConfig {
@@ -1485,6 +1485,18 @@ export interface PayReviewConfig {
   walkAwaySpread: number;
   /** The rolls on staff's counters: the student's offer is the counter, staff's figure the offer. */
   negotiation: NegotiationConfig;
+  /**
+   * The tribunal, which settles a review with no deal after the final offer by picking the student's final offer,
+   * staff's last counter or midway between them. Each is weighted exp(−sharpness × its distance from the fair rise ÷
+   * the gap between the two figures): the closer, the likelier, and the middle when the fair rise is about halfway.
+   * With sharpness 3, a figure on the fair rise is picked about 78% of the time, the middle 17% and the other 5%.
+   */
+  tribunal: {
+    /** Charged in cash every time it sits. */
+    fee: number;
+    /** How strongly it favours the figure closest to the fair rise: 0 picks each of the three equally. */
+    sharpness: number;
+  };
 }
 
 /**
@@ -2628,6 +2640,8 @@ export const defaultConfig: GameConfig = {
       // A low roll hardens staff: they ask for a fifth of the gap more, never above their opening ask.
       moves: { high: 0.8, middle: 0.5, low: -0.2 },
     },
+    // About £2k a sitting, so the tribunal is never a free gamble.
+    tribunal: { fee: 2_000, sharpness: 3 },
   },
   // Placeholders from the design: about 30 days of breathing space for about 75% of the company. Buying it back costs
   // at least twice what the vulture VC put in.

@@ -620,8 +620,11 @@ export interface PayReview {
   negotiation: Negotiation;
 }
 
-/** How a pay review was settled. */
-export type PayReviewOutcome = "offerAccepted" | "counterAccepted" | "midpoint";
+/** How a pay review was settled: staff accepted the student's offer, the student staff's counter, or a tribunal. */
+export type PayReviewOutcome = "offerAccepted" | "counterAccepted" | "tribunal";
+
+/** What a tribunal picked: the student's final offer, staff's last counter, or midway between them. */
+export type TribunalPick = "student" | "middle" | "staff";
 
 /** A pay review settled, for the pay history. */
 export interface PayReviewRecord {
@@ -638,6 +641,11 @@ export interface PayReviewRecord {
   outcome: PayReviewOutcome;
   /** The rise agreed, 0.04 = 4%. */
   rise: number;
+  /**
+   * Set when a tribunal settled it: what it picked, the fee charged and the odds it had. Schemes (#193) apply on the
+   * student's figure or the middle, but not staff's, which is cash only.
+   */
+  tribunal: { pick: TribunalPick; fee: number; chances: Record<TribunalPick, number> } | null;
 }
 
 export interface GameState {
