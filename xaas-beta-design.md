@@ -460,7 +460,8 @@ Products that would have one in real life (AI assistant, payments app, e-commerc
   - Rivals never go bankrupt or IPO. They're market pressure, not opponents in a race.
 - **Marketing campaigns** as a growth lever, so customer growth feels less random. The student picks a **customer type**, a **budget** and a **length** (e.g. professionals, £5k, 30 days), and the campaign brings extra new users of that type over its length.
   - **Marketers run them:** campaigns unlock with marketers at the first angel approach, and each marketer runs one campaign at a time. Headcount decides how many campaigns run and how good they are (marketer grade scales users per pound); budget decides how big each is.
-  - **Users are added directly**, about (budget ÷ length) ÷ the customer type's cost per user each day (e.g. casual users about £2, businesses £15+), on top of normal growth, so a campaign works even for a small company. Market saturation still slows it. *Costs are placeholders.*
+  - **Users are added directly**, about (budget ÷ length) ÷ the customer type's cost per user each day (casual users £1, businesses £8, tuned in #200), on top of normal growth, so a campaign works even for a small company. Market saturation still slows it.
+  - **Brand awareness (#200):** each user a campaign brings in grows the product's market size for good (5 each, up to +30% of its base market), so campaign users are extra rather than ones who'd have joined within weeks, and the bigger market keeps paying after the campaign ends. The Marketing page shows the growth so far against the cap, and what each campaign added.
   - **Diminishing returns:** running two campaigns for the same type at once brings fewer users per pound.
   - **A CMO** makes every campaign more effective.
   - **Results as it runs:** spend, users brought in and cost per user, teaching cost per acquisition.

@@ -10,7 +10,8 @@ import { useGame } from "../../game";
 // and when another campaign targets the same type; one started just before a holiday works better. Each campaign shows
 // its spend, users brought in and cost per user as it runs. Marketers (hired on People) run them, one each: a new
 // campaign gets the most senior free marketer, and a senior brings more users per pound than a junior. With no free
-// marketer the form is disabled and says why.
+// marketer the form is disabled and says why. Each user a campaign brings in also grows the market for good (brand
+// awareness), up to a cap: the page shows how far campaigns have grown it, and what each campaign added.
 const game = useGame();
 const id = useId();
 const view = computed(() => game.company?.campaigns ?? null);
@@ -83,6 +84,11 @@ const stop = (c: CampaignView) => game.actFrom("campaign-stop", { type: "stopCam
             <small>a fuller market brings fewer users per pound</small>
           </div>
           <div class="stat">
+            <span class="label">Market grown</span>
+            <span class="value" data-testid="campaigns-market-grown">+{{ formatCount(view.market.added) }} of +{{ formatCount(view.market.cap) }}</span>
+            <small>by campaigns, for good: now {{ formatCount(view.market.size) }} users</small>
+          </div>
+          <div class="stat">
             <span class="label">Spent on campaigns</span>
             <span class="value" data-testid="campaigns-spent">{{ formatCash(game.company.spend.campaigns) }}</span>
             <small>so far</small>
@@ -94,6 +100,12 @@ const stop = (c: CampaignView) => game.actFrom("campaign-stop", { type: "stopCam
           dear. Two campaigns on the same type at once each bring fewer users per pound, and a campaign started just
           before a holiday brings more. Each campaign needs a free marketer to run it until it ends: a senior brings more
           users per pound, a junior fewer.
+        </p>
+        <p class="muted" data-testid="campaigns-market-note">
+          Campaigns also make your product better known. Each user one brings in grows your market by
+          {{ view.market.perUser }}, for good, up to +{{ formatCount(view.market.cap) }} on its
+          {{ formatCount(view.market.base) }} users: so they're extra users, and the bigger market keeps paying after the
+          campaign ends.<template v-if="view.market.added >= view.market.cap"> Your campaigns have grown it as far as they can.</template>
         </p>
         <p v-if="marketers?.idle" class="features-note" data-testid="marketers-idle-note">{{ marketers.idle }}</p>
       </template>
@@ -169,6 +181,7 @@ const stop = (c: CampaignView) => game.actFrom("campaign-stop", { type: "stopCam
             <th scope="col">Spent</th>
             <th scope="col">Users brought in</th>
             <th scope="col">Cost per user</th>
+            <th scope="col">Market grown</th>
             <th scope="col">Status</th>
           </tr>
         </thead>
@@ -183,6 +196,7 @@ const stop = (c: CampaignView) => game.actFrom("campaign-stop", { type: "stopCam
             <td data-testid="campaign-spent">{{ formatCash(c.spent) }} of {{ formatCash(c.budget) }}</td>
             <td data-testid="campaign-users">{{ formatCount(c.users) }}</td>
             <td data-testid="campaign-cost-per-user">{{ each(c) }}</td>
+            <td data-testid="campaign-market-added">+{{ formatCount(c.marketAdded) }}</td>
             <td>
               {{ STATUS[c.status] }}
               <button

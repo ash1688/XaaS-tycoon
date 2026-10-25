@@ -19,7 +19,8 @@ import {
 // (budget ÷ length) ÷ the type's cost per user, scaled by how full the market is, the overlap with other campaigns on
 // the type, and a bonus when started just before a holiday. They open at the first angel approach, never before the
 // MVP is done, and show their spend, users brought in and cost per user as they run. Marketers (#180) run them, one
-// campaign each, and the marketer's grade scales its users per pound.
+// campaign each, and the marketer's grade scales its users per pound. Each user a campaign brings in also grows the
+// product's market for good (#200, brand awareness), up to a cap, so its users are extra and keep paying.
 
 /** No events and no holidays, so the only thing moving a campaign is the campaign. */
 const quiet: GameConfig = { ...defaultConfig, events: [], calendar: { ...defaultConfig.calendar, holidays: [] } };
@@ -64,8 +65,8 @@ const refusal = (fn: () => unknown) => {
 /** Users of one customer type. */
 const ofType = (state: GameState, t: CustomerTypeId) => state.customerMix[t] * state.users;
 
-/** The share of new users each pound still brings at a company's users. */
-const saturation = (state: GameState) => 1 - state.users / marketSize;
+/** The share of new users each pound still brings at a company's users, in the market its campaigns have grown. */
+const saturation = (state: GameState) => 1 - state.users / (marketSize + state.campaigns.reduce((sum, c) => sum + c.marketAdded, 0));
 
 describe("before Campaigns open", () => {
   it("are locked and refused until the first angel approaches", () => {
@@ -178,7 +179,7 @@ describe("a running campaign", () => {
     const empty = sim.campaigns(sim.advance(sim.applyAction(ready, start("casual", 7_000, 7))).state).campaigns[0]!.users;
     const full = sim.campaigns(sim.advance(sim.applyAction(busy, start("casual", 7_000, 7))).state).campaigns[0]!.users;
     expect(sim.campaigns(busy).saturation).toBe(0.25);
-    expect(full).toBe(Math.floor(500 * 0.25));
+    expect(full).toBe(Math.floor((1_000 / costPerUser.casual) * 0.25));
     expect(full).toBeLessThan(empty / 3);
   });
 
@@ -205,6 +206,69 @@ describe("a running campaign", () => {
     expect(sim.campaigns(state)).toMatchObject({ running: 0, canStart: true });
     // Finished, it spends nothing more.
     expect(sim.campaigns(sim.advance(state, 2).state).campaigns[0]!.spent).toBe(1_000);
+  });
+});
+
+describe("growing the market (#200)", () => {
+  const { marketPerUser, marketGrowthCap } = quiet.campaigns;
+  const cap = Math.floor(marketGrowthCap * marketSize);
+
+  /** Plays a campaign to its end. */
+  function playOut(state: GameState): GameState {
+    let current = state;
+    while (sim.campaigns(current).running > 0) current = sim.advance(current).state;
+    return current;
+  }
+
+  it("adds marketPerUser to the market size for each user a campaign brings in", () => {
+    expect(sim.campaigns(ready).market).toEqual({ base: marketSize, added: 0, cap, size: marketSize, perUser: marketPerUser });
+    const played = sim.advance(sim.applyAction(ready, start("casual", 7_000, 7))).state;
+    const { users, marketAdded } = sim.campaigns(played).campaigns[0]!;
+    expect(users).toBeGreaterThan(400);
+    expect(marketAdded).toBe(Math.round(users * marketPerUser));
+    expect(sim.campaigns(played).market).toMatchObject({ added: marketAdded, size: marketSize + marketAdded });
+    // The market page reaches as far.
+    expect(sim.market(played).reach.size).toBe(marketSize + marketAdded);
+  });
+
+  it("stops growing the market at the cap, however many users campaigns bring", () => {
+    const tuned = createSim({ ...quiet, campaigns: { ...quiet.campaigns, marketPerUser: 50 } });
+    let state = sim.applyAction(ready, start("casual", 7_000, 7));
+    state = tuned.advance(state).state;
+    expect(tuned.campaigns(state).market).toMatchObject({ added: cap, size: marketSize + cap });
+    // A second campaign still brings users, but adds nothing more to the market.
+    state = playOut(state);
+    state = tuned.advance(tuned.applyAction(state, start("enthusiasts", 7_000, 7))).state;
+    const [second] = tuned.campaigns(state).campaigns;
+    expect(second!.users).toBeGreaterThan(0);
+    expect(second!.marketAdded).toBe(0);
+    expect(tuned.campaigns(state).market.added).toBe(cap);
+  });
+
+  it("keeps the grown market after the campaign ends", () => {
+    const done = playOut(sim.applyAction(ready, start("casual", 3_500, 7)));
+    const { added } = sim.campaigns(done).market;
+    expect(sim.campaigns(done).campaigns[0]).toMatchObject({ status: "finished", marketAdded: added });
+    expect(added).toBeGreaterThan(1_000);
+    expect(sim.campaigns(sim.advance(done, 30).state).market.added).toBe(added);
+  });
+
+  it("slows growth and campaigns by how full the grown market is, not the base one", () => {
+    const done = playOut(sim.applyAction(ready, start("casual", 3_500, 7)));
+    const { size } = sim.campaigns(done).market;
+    expect(sim.campaigns(done).saturation).toBe(Math.round((1 - done.users / size) * 1e4) / 1e4);
+    // The same company without the market its campaign grew fills up sooner, so gains fewer users the next day.
+    const unGrown: GameState = { ...done, campaigns: done.campaigns.map((c) => ({ ...c, marketAdded: 0 })) };
+    expect(sim.campaigns(unGrown).saturation).toBeLessThan(sim.campaigns(done).saturation);
+    expect(sim.advance(done).state.users).toBeGreaterThan(sim.advance(unGrown).state.users);
+  });
+
+  it("is set in the config, with schema entries", () => {
+    const paths = configFields().map((f) => f.path);
+    expect(paths).toEqual(expect.arrayContaining(["campaigns.marketPerUser", "campaigns.marketGrowthCap"]));
+    const off = createSim({ ...quiet, campaigns: { ...quiet.campaigns, marketPerUser: 0 } });
+    const played = off.advance(off.applyAction(ready, start("casual", 7_000, 7))).state;
+    expect(off.campaigns(played).market.added).toBe(0);
   });
 });
 

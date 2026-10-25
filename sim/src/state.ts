@@ -592,6 +592,8 @@ export interface Campaign {
   /** Users it has earned so far, to the fraction, so small days add up; `users` is the whole ones that have arrived. */
   earned: number;
   users: number;
+  /** What it has added to the product's market size (brand awareness), to the fraction: it stays after it ends. */
+  marketAdded: number;
 }
 
 /** Plain, JSON-serialisable game state. The server stores it as-is. */

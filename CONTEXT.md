@@ -133,7 +133,7 @@ A computer-run company in the same market, described only by its price, quality 
 _Avoid_: Competitor, AI company, opponent
 
 **Campaign**:
-Marketing aimed at one customer type, with a budget and a length, that brings in extra new users of that type. Its budget is spent evenly over its days, and each pound brings fewer users as the market fills up and when another campaign targets the same type at once; one started just before a holiday brings more. Each needs a free marketer to run it, so headcount decides how many run at once and the marketer's grade how well each does. Campaigns open once the first angel investor approaches, and never before launch.
+Marketing aimed at one customer type, with a budget and a length, that brings in extra new users of that type. Its budget is spent evenly over its days, and each pound brings fewer users as the market fills up and when another campaign targets the same type at once; one started just before a holiday brings more. Each user it brings in also grows the product's market for good (brand awareness), up to a cap, so its users are extra rather than ones who'd have joined anyway. Each needs a free marketer to run it, so headcount decides how many run at once and the marketer's grade how well each does. Campaigns open once the first angel investor approaches, and never before launch.
 _Avoid_: Advert, marketing spend, ad
 
 **Transaction fee**:

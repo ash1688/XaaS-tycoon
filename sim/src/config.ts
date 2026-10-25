@@ -1085,6 +1085,13 @@ export interface CampaignsConfig {
   holidayLeadDays: number;
   /** Users per pound are multiplied by this for the whole of a campaign timed for a holiday. */
   holidayBonus: number;
+  /**
+   * Brand awareness: each user a campaign brings in adds this to the product's market size, for good. So campaign users
+   * are extra, not ones who'd have joined anyway, and the bigger market keeps paying after the campaign ends.
+   */
+  marketPerUser: number;
+  /** The most campaigns can add to the market, all told, as a share of the product's base market size (0.5: +50%). */
+  marketGrowthCap: number;
 }
 
 export interface OptimisationConfig {
@@ -1640,9 +1647,11 @@ export const defaultConfig: GameConfig = {
   optimisation: { k: 30, cap: { onprem: 0.5, iaas: 0.35, paas: 0.35, saas: 0.35 } },
   // Tuned in the balance pass (#181): with a researcher at £80 a day, research about pays for itself over a game.
   research: { pointsPerPerson: 4 },
-  // Placeholders for the balance pass (#181): casual users about £2 each up to businesses £15+.
+  // Tuned for #200 once campaigns grew the market: casual users £1 each up to businesses £8. With each campaign user
+  // growing the market by 5, up to +30% of its base size, two marketers running campaigns from the angel approach end a
+  // game with at least careful play's cash on most models and products.
   campaigns: {
-    costPerUser: { casual: 2, enthusiasts: 4, professionals: 8, businesses: 16 },
+    costPerUser: { casual: 1, enthusiasts: 2, professionals: 4, businesses: 8 },
     minBudget: 100,
     maxBudget: 1_000_000,
     minDays: 7,
@@ -1650,6 +1659,8 @@ export const defaultConfig: GameConfig = {
     overlapMultiplier: 0.6,
     holidayLeadDays: 14,
     holidayBonus: 1.5,
+    marketPerUser: 5,
+    marketGrowthCap: 0.3,
   },
   // Conditions and benefits signed off for #123. In the balance pass (#181) tier 2 became a share of the product's market,
   // so the payments app (a 4,000-user market) can reach it and social and video don't open it at launch. RP prices

@@ -1,6 +1,7 @@
 import type { Calendar } from "./calendar.ts";
 import { CUSTOMER_TYPE_IDS, STAFF_GRADES, type CustomerTypeId, type GameConfig, type StaffGrade } from "./config.ts";
 import { count, pounds } from "./finance.ts";
+import { marketGrowth, marketGrowthCap, marketSize } from "./market.ts";
 import type { UsersLost } from "./mix.ts";
 import { SimError, type Campaign, type GameState, type LogEntry } from "./state.ts";
 
@@ -23,6 +24,8 @@ export interface CampaignView {
   users: number;
   /** Spent ÷ users, to the penny: null until it has brought anyone in. */
   costPerUser: number | null;
+  /** Users it has added to the product's market size (brand awareness), to the whole user: they stay after it ends. */
+  marketAdded: number;
   /** The holiday it was timed for, which boosts it, or null. */
   holiday: string | null;
   /** The grade of the marketer running it: "senior", and "Senior". */
@@ -86,6 +89,11 @@ export interface CampaignsView {
   holiday: { name: string; startDay: number; daysUntil: number; bonus: number } | null;
   /** How full the market is: the share of new users each pound still brings (1 for an empty market). */
   saturation: number;
+  /**
+   * The market Campaigns have grown (brand awareness), to the whole user: the product's base size, what Campaigns have
+   * added so far, and the most they can add all told. Each user a campaign brings in adds `perUser`, until the cap.
+   */
+  market: { base: number; added: number; cap: number; size: number; perUser: number };
   /** The marketers, and how many are free. */
   marketers: MarketersView;
   /** Every campaign started, newest first. */
@@ -153,9 +161,8 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
   const effectiveness = (state: GameState, campaign: Pick<Campaign, "grade">) =>
     config.staffGrades[campaign.grade].output * cmoBonus(state);
 
-  /** The share of new users each pound still brings as the market fills: 1 − users ÷ the market's size. */
-  const saturation = (state: GameState) =>
-    Math.max(0, 1 - state.users / config.productTypes[state.productType].growth.marketSize);
+  /** The share of new users each pound still brings as the market fills: 1 − users ÷ the market's size, grown included. */
+  const saturation = (state: GameState) => Math.max(0, 1 - state.users / marketSize(config, state));
 
   /** The overlap with n campaigns on one type running on a day: each brings overlapMultiplier^(n − 1) per pound. */
   const overlap = (n: number) => settings.overlapMultiplier ** Math.max(0, n - 1);
@@ -260,6 +267,7 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
       spent: 0,
       earned: 0,
       users: 0,
+      marketAdded: 0,
     };
     return { ...state, campaigns: [...state.campaigns, campaign], nextCampaignId: state.nextCampaignId + 1 };
   }
@@ -277,7 +285,8 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
    * A day of campaigns. Each running one spends its share of the budget (the last day what's left, so it spends exactly
    * its budget) and earns users: the spend ÷ the type's cost per user, × how full the market was at the start of the
    * day, × the overlap with the type's campaigns running today, × any holiday bonus, × how well it's run. Whole users
-   * arrive as they're earned, as the targeted type.
+   * arrive as they're earned, as the targeted type. Each grows the market by marketPerUser, for good, until campaigns
+   * have added marketGrowthCap of its base size: so the users it brings are extra, not ones who'd have joined anyway.
    */
   function campaignsDay(state: GameState, day: number): CampaignsDay {
     const running = state.campaigns.filter((c) => runsOn(c, day));
@@ -287,6 +296,7 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
     const entries: LogEntry[] = [];
     const joined: UsersLost[] = [];
     let users = 0;
+    let room = Math.max(0, marketGrowthCap(config, state) - marketGrowth(state));
     const campaigns = state.campaigns.map((c) => {
       if (!runsOn(c, day)) return c;
       const lastDay = day === c.startDay + c.days - 1;
@@ -298,7 +308,9 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
       const arrived = Math.floor(earned) - c.users;
       users += arrived;
       if (arrived > 0) joined.push({ users: arrived, weights: oneType(c.customerType) });
-      const after: Campaign = { ...c, spent: c.spent + spend, earned, users: c.users + arrived };
+      const added = Math.min(room, arrived * settings.marketPerUser);
+      room -= added;
+      const after: Campaign = { ...c, spent: c.spent + spend, earned, users: c.users + arrived, marketAdded: tidy(c.marketAdded + added) };
       const name = typeName(c.customerType).toLowerCase();
       if (spend > 0) {
         const text = `Campaign for ${name} (day ${day - c.startDay + 1} of ${c.days}): ${count.format(arrived)} new ${arrived === 1 ? "user" : "users"}`;
@@ -329,6 +341,7 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
       spent: c.spent,
       users: c.users,
       costPerUser: c.users > 0 ? Math.round((100 * c.spent) / c.users) / 100 : null,
+      marketAdded: Math.round(c.marketAdded),
       holiday: c.holiday,
       grade: c.grade,
       gradeName: gradeName(c.grade),
@@ -362,6 +375,13 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
       types,
       holiday,
       saturation: Math.round(full * 1e4) / 1e4,
+      market: {
+        base: config.productTypes[state.productType].growth.marketSize,
+        added: Math.round(marketGrowth(state)),
+        cap: marketGrowthCap(config, state),
+        size: Math.round(marketSize(config, state)),
+        perUser: settings.marketPerUser,
+      },
       marketers: {
         count: capacity(state),
         free: freeMarketers(state),
