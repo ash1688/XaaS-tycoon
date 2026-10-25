@@ -1159,8 +1159,11 @@ export interface ModelBenefitConfig {
  * then unlocked with research points, in any order (its rpPrice); tier 1's are unlocked from the start.
  */
 export interface TiersConfig {
-  /** Tier 2 opens at this many users, paying or free. (A CTO will meet it too, once the C-suite exists.) */
-  tier2: { users: number };
+  /**
+   * Tier 2 opens once users, paying or free, reach this share of the product's market size, to the nearest 100: so
+   * every product gets there, the payments app's small market included. (A CTO will meet it too, once the C-suite exists.)
+   */
+  tier2: { marketShare: number };
   /** Tier 3 opens once the last `days` days played averaged this much income a day and this uptime %. */
   tier3: { dailyIncome: number; uptime: number; days: number };
   /** Tier 4 opens on an angel deal taken or every IPO condition met. It has no numbers of its own. */
@@ -1625,17 +1628,18 @@ export const defaultConfig: GameConfig = {
   // Users trickle in over 3 days, building up, from the day the MVP is done and servers are ready. On-prem kit bought on
   // day 1 arrives on day 5, well inside the MVP, so its delivery overlaps the build.
   launch: { rampShares: [0.2, 0.3, 0.5] },
-  // Placeholders for the balance pass: the starting two developers (2 developer-days a day) finish on-prem in 11–15
-  // days played, SaaS in 4–6.
+  // Tuned in the balance pass (#181): the starting two developers (2 developer-days a day) finish on-prem in 8–11 days
+  // played, SaaS in 4–5. A shorter opening burn brought careful play's break-even into day 60–75.
   mvp: {
-    baseDevDays: { ecommerce: 22, social: 28, video: 30, payments: 26, assistant: 24, games: 26 },
+    baseDevDays: { ecommerce: 16, social: 20, video: 21, payments: 18, assistant: 17, games: 18 },
     modelShare: { onprem: 1, iaas: 0.85, paas: 0.65, saas: 0.4 },
   },
-  // Placeholders for the balance pass: a developer on optimisation full time gets about 63% of the cap in 60 days. On-prem
-  // owns the whole stack and its hardware costs the most, so it has the most to gain.
-  optimisation: { k: 60, cap: { onprem: 0.5, iaas: 0.35, paas: 0.35, saas: 0.35 } },
-  // Placeholder for the balance pass.
-  research: { pointsPerPerson: 2 },
+  // Tuned in the balance pass (#181): a developer on optimisation full time gets about 63% of the cap in 30 days, so
+  // developers with nothing to build pay their way within the game. On-prem owns the whole stack and its hardware costs
+  // the most, so it has the most to gain.
+  optimisation: { k: 30, cap: { onprem: 0.5, iaas: 0.35, paas: 0.35, saas: 0.35 } },
+  // Tuned in the balance pass (#181): with a researcher at £80 a day, research about pays for itself over a game.
+  research: { pointsPerPerson: 4 },
   // Placeholders for the balance pass (#181): casual users about £2 each up to businesses £15+.
   campaigns: {
     costPerUser: { casual: 2, enthusiasts: 4, professionals: 8, businesses: 16 },
@@ -1647,10 +1651,11 @@ export const defaultConfig: GameConfig = {
     holidayLeadDays: 14,
     holidayBonus: 1.5,
   },
-  // Conditions and benefits signed off for #123; every number is a placeholder for the balance pass. RP prices (#179)
-  // come to about 30, 100 and 250 RP a tier for one model's items: 15, 50 and 125 RP an item.
+  // Conditions and benefits signed off for #123. In the balance pass (#181) tier 2 became a share of the product's market,
+  // so the payments app (a 4,000-user market) can reach it and social and video don't open it at launch. RP prices
+  // (#179) come to about 30, 100 and 250 RP a tier for one model's items: 15, 50 and 125 RP an item.
   tiers: {
-    tier2: { users: 5_000 },
+    tier2: { marketShare: 0.35 },
     tier3: { dailyIncome: 2_000, uptime: 99, days: 30 },
     benefits: [
       {
@@ -2406,8 +2411,9 @@ export const defaultConfig: GameConfig = {
     support: { name: "Support staff", personName: "support person", dayRate: 100, startingCount: 1 },
     // None to start: only content products need them, and not until the users are posting.
     moderators: { name: "Moderators", personName: "moderator", dayRate: 60, startingCount: 0 },
-    // None to start, and none to hire until the first angel investor approaches. Placeholder pay for the balance pass.
-    researchers: { name: "Researchers", personName: "researcher", dayRate: 130, startingCount: 0 },
+    // None to start, and none to hire until the first angel investor approaches. Tuned in the balance pass (#181) so
+    // research about pays for itself over a game.
+    researchers: { name: "Researchers", personName: "researcher", dayRate: 80, startingCount: 0 },
     // None to start, and none to hire until the first angel investor approaches: each runs one campaign at a time.
     // Placeholder pay for the balance pass.
     marketers: { name: "Marketers", personName: "marketer", dayRate: 110, startingCount: 0 },

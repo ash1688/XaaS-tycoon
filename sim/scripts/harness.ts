@@ -52,12 +52,30 @@ export interface Strategy {
   funding?: boolean;
   /** Accepts the first angel investor's opening offer the day they approach. */
   angel?: boolean;
+  /**
+   * Who builds the MVP. "rush" adds two agency mid developers on day 1 and lets them go once it's done; "lean" builds it
+   * with one developer, letting the second go on day 1 and hiring a mid back once it's done. Left out, the starting two.
+   */
+  mvp?: "rush" | "lean";
+  /**
+   * The developer slider once the MVP is done: the share on optimisation while there's a feature to build, and whether
+   * developers go wholly onto optimisation when there's nothing to build. Left out, 0 and yes.
+   */
+  slider?: { building: number; idle: boolean };
+  /**
+   * Researchers: how many mids to keep while a feature whose tier is available is still to unlock, from how many days
+   * after the first angel approach. Left out, one from the approach.
+   */
+  research?: { team: number; from: number };
+  /** Marketers: how many mids run Campaigns, from how many days after the first angel approach. Left out, none. */
+  marketing?: { team: number; from: number };
 }
 
 export const STRATEGIES: Strategy[] = [
   {
     id: "sensible",
-    description: "Fair price, staff to needs, servers ahead of demand, support to clear the backlog, loan on on-prem.",
+    description:
+      "Fair price, staff to needs, servers ahead of demand, support to clear the backlog, loan on on-prem; one researcher while there's a feature to unlock, and developers on optimisation when there's nothing to build. Careful play.",
     priceFactor: 1,
     support: true,
     scaling: "ahead",
@@ -111,6 +129,62 @@ export const STRATEGIES: Strategy[] = [
     scaling: "ahead",
     loan: "onprem",
     migrateDay: 60,
+  },
+  {
+    id: "mvp-rush",
+    description: "As sensible, and rushes the MVP with two agency mid developers on day 1, let go once it's done.",
+    priceFactor: 1,
+    support: true,
+    scaling: "ahead",
+    loan: "onprem",
+    mvp: "rush",
+  },
+  {
+    id: "lean-launch",
+    description: "As sensible, but builds the MVP with one developer: lets the second go on day 1 and hires a mid back at launch.",
+    priceFactor: 1,
+    support: true,
+    scaling: "ahead",
+    loan: "onprem",
+    mvp: "lean",
+  },
+  {
+    id: "researchers-first",
+    description: "As sensible, with two researchers from the angel approach, and one marketer running Campaigns 30 days later.",
+    priceFactor: 1,
+    support: true,
+    scaling: "ahead",
+    loan: "onprem",
+    research: { team: 2, from: 0 },
+    marketing: { team: 1, from: 30 },
+  },
+  {
+    id: "marketers-first",
+    description: "As sensible, with two marketers running Campaigns from the angel approach, and one researcher 30 days later.",
+    priceFactor: 1,
+    support: true,
+    scaling: "ahead",
+    loan: "onprem",
+    research: { team: 1, from: 30 },
+    marketing: { team: 2, from: 0 },
+  },
+  {
+    id: "slider-high",
+    description: "As sensible, with the developer slider at 75% optimisation from launch, even while features are to build.",
+    priceFactor: 1,
+    support: true,
+    scaling: "ahead",
+    loan: "onprem",
+    slider: { building: 0.75, idle: true },
+  },
+  {
+    id: "slider-low",
+    description: "As sensible, but never optimises: the developer slider stays at 0%, even with nothing to build.",
+    priceFactor: 1,
+    support: true,
+    scaling: "ahead",
+    loan: "onprem",
+    slider: { building: 0, idle: false },
   },
 ];
 
@@ -396,27 +470,120 @@ function buildFeatures(sim: Sim, state: GameState): GameState {
   return next ? tryAction(sim, state, { type: "buildFeature", feature: next.id }) : state;
 }
 
+/** Days since the first angel approach opened researchers and marketers, or null before it. */
+function sinceApproach(sim: Sim, state: GameState): number | null {
+  const opened = sim.research(state).unlockedDay;
+  return opened === null ? null : state.day - opened;
+}
+
+/** A pool's headcount, counting hires still to start. */
+function teamSize(sim: Sim, state: GameState, pool: StaffPool): number {
+  const team = sim.staff(state).find((p) => p.pool === pool);
+  return team ? team.headcount + team.hiring.reduce((sum, h) => sum + h.count, 0) : 0;
+}
+
 /**
- * Research, once the first angel has approached: unlocks the cheapest of the product's features whose tier is
- * available whenever the RP are banked, and keeps one mid researcher while the RP banked fall short of every locked
- * feature's price, letting them go once they don't. Model benefits are left alone, as the bot never buys them.
+ * Research, once the first angel has approached (and the strategy's wait is over): unlocks the cheapest of the
+ * product's features whose tier is available whenever the RP are banked. It keeps the strategy's mids on while the RP
+ * banked fall short of those features' prices, and lets them go once they don't, hiring again when a later tier opens.
+ * Model benefits are left alone, as the bot never buys them.
  */
-function research(sim: Sim, state: GameState): GameState {
-  if (!sim.research(state).unlocked) return state;
+function research(sim: Sim, state: GameState, strategy: Strategy): GameState {
+  const plan = strategy.research ?? { team: 1, from: 0 };
+  const since = sinceApproach(sim, state);
+  if (since === null || since < plan.from) return state;
   let s = state;
-  const locked = () => sim.features(s).filter((f) => !f.unlocked);
-  for (const f of locked().filter((f) => f.tierAvailable).sort((a, b) => a.rpPrice - b.rpPrice)) {
+  const available = () => sim.features(s).filter((f) => !f.unlocked && f.tierAvailable);
+  for (const f of available().sort((a, b) => a.rpPrice - b.rpPrice)) {
     if (s.researchPoints >= f.rpPrice) s = tryAction(sim, s, { type: "unlockItem", item: f.id });
   }
-  const team = sim.staff(s).find((p) => p.pool === "researchers")!;
-  const people = team.headcount + team.hiring.reduce((sum, h) => sum + h.count, 0);
-  const short = locked().reduce((sum, f) => sum + f.rpPrice, 0) - s.researchPoints;
-  if (short > 0 && people === 0) s = tryAction(sim, s, { type: "hire", pool: "researchers", grade: "mid", count: 1 });
-  if (short <= 0 && team.headcount > 0) s = tryAction(sim, s, { type: "letGo", pool: "researchers", grade: "mid" });
+  const short = available().reduce((sum, f) => sum + f.rpPrice, 0) - s.researchPoints;
+  const people = teamSize(sim, s, "researchers");
+  if (short > 0 && people < plan.team) s = tryAction(sim, s, { type: "hire", pool: "researchers", grade: "mid", count: plan.team - people });
+  if (short <= 0) {
+    while (sim.staff(s).find((p) => p.pool === "researchers")!.headcount > 0) {
+      const next = tryAction(sim, s, { type: "letGo", pool: "researchers", grade: "mid" });
+      if (next === s) break;
+      s = next;
+    }
+  }
   return s;
 }
 
-/** What the bot does before each day: price, migration, servers, staff, research and features. */
+/** What a user brings in a month at today's price and paying share: what a Campaign's cost per user is weighed against. */
+function monthlyValue(state: GameState): number {
+  return state.users > 0 ? (state.price * state.paidUsers) / state.users : 0;
+}
+
+/**
+ * Campaigns, once the first angel has approached (and the strategy's wait is over): keeps the strategy's mid marketers
+ * while a Campaign would pay for itself within two months, and has every free one start a 14-day Campaign on the type
+ * a pound buys most users of, with what cash it can spare over a month's running costs (up to £5,000). Once
+ * Campaigns stop paying (the market fills), it lets free marketers go.
+ */
+function marketing(sim: Sim, state: GameState, strategy: Strategy): GameState {
+  const plan = strategy.marketing;
+  const since = sinceApproach(sim, state);
+  if (!plan || since === null || since < plan.from || state.launchDay === null) return state;
+  let s = state;
+  const best = () => sim.campaigns(s).types.reduce((a, b) => (b.usersPerPound > a.usersPerPound ? b : a));
+  const pays = () => best().usersPerPound > 0 && 1 / best().usersPerPound <= 2 * monthlyValue(s);
+  // A quarter of the last day's income for each of its days, up to £5,000, keeping a week's running costs in the bank.
+  const budget = () => {
+    const week = 7 * (sim.dailyStaffCost(s) + sim.monthlyInfrastructureCost(s) / 30);
+    const income = s.spendByDay.at(-1)?.income ?? 0;
+    return Math.floor(Math.min(5_000, 0.25 * income * 14, s.cash - week) / 100) * 100;
+  };
+  const enough = () => budget() >= Math.max(500, sim.config.campaigns.minBudget);
+  const people = teamSize(sim, s, "marketers");
+  if (pays() && enough() && people < plan.team) s = tryAction(sim, s, { type: "hire", pool: "marketers", grade: "mid", count: plan.team - people });
+  while (sim.campaigns(s).canStart && pays() && enough()) {
+    const next = tryAction(sim, s, { type: "startCampaign", customerType: best().id, budget: budget(), days: 14 });
+    if (next === s) break;
+    s = next;
+  }
+  if (!pays()) {
+    while (sim.campaigns(s).marketers.free > 0) {
+      const next = tryAction(sim, s, { type: "letGo", pool: "marketers", grade: "mid" });
+      if (next === s) break;
+      s = next;
+    }
+  }
+  return s;
+}
+
+/**
+ * The developer slider once the MVP is done: the strategy's share while there's a feature being built or to build, and
+ * with nothing to build (every unlocked feature built, or on SaaS, where features are bought), all on optimisation if
+ * the strategy does that.
+ */
+function optimise(sim: Sim, state: GameState, strategy: Strategy): GameState {
+  if (!sim.mvp(state).done) return state;
+  const plan = strategy.slider ?? { building: 0, idle: true };
+  const toBuild = state.model !== "saas" && sim.features(state).some((f) => f.status === "building" || (f.status === "notStarted" && f.unlocked));
+  const share = toBuild || !plan.idle ? plan.building : 1;
+  return share === sim.optimisation(state).share ? state : tryAction(sim, state, { type: "setOptimisation", share });
+}
+
+/** The MVP rush's agency developers, or the lean launch's single developer (see Strategy.mvp). */
+function mvpTeam(sim: Sim, state: GameState, strategy: Strategy): GameState {
+  if (!strategy.mvp) return state;
+  const done = sim.mvp(state).done;
+  const devs = sim.staff(state).find((p) => p.pool === "developers")!;
+  const agency = devs.agency.find((g) => g.grade === "mid")!.count;
+  if (strategy.mvp === "rush") {
+    if (state.day === 1 && !done) return tryAction(sim, state, { type: "hire", pool: "developers", grade: "mid", count: 2, agency: true });
+    if (done && agency > 0) return tryAction(sim, state, { type: "letGo", pool: "developers", grade: "mid", agency: true, count: agency });
+    return state;
+  }
+  if (state.day === 1 && !done) return tryAction(sim, state, { type: "letGo", pool: "developers", grade: "mid" });
+  if (done && state.launchDay !== null && teamSize(sim, state, "developers") < sim.config.staff.developers.startingCount) {
+    return tryAction(sim, state, { type: "hire", pool: "developers", grade: "mid", count: 1 });
+  }
+  return state;
+}
+
+/** What the bot does before each day: price, migration, servers, staff, the MVP team, research, Campaigns, features and the slider. */
 export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameState {
   let s = state;
   if (s.day === 1 && strategy.priceFactor !== 1) {
@@ -465,7 +632,9 @@ export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameSta
       s = staffTo(sim, s, "moderators", reportsNow, reportsNextWeek, moderation.backlog / 5 / perModerator);
     }
   }
-  return buildFeatures(sim, research(sim, s));
+  s = mvpTeam(sim, s, strategy);
+  s = marketing(sim, research(sim, s, strategy), strategy);
+  return optimise(sim, buildFeatures(sim, s), strategy);
 }
 
 /** The first outage from load on a day, by the tier that ran over: read from the day's log. */
@@ -750,6 +919,16 @@ export function renderReport(results: GameResult[], { title = "Balance report", 
   out.push(`${results.length} games: ${models.length} models × ${products.length} products × ${used.length} strategies × ${seeds.length} seeds (${seeds.join(", ")}).`);
   out.push("Money and users are medians across seeds; satisfaction and uptime are means. † = at least one seed was liquidated; ‡ = at least one was rescued by a vulture VC.");
   out.push("Models are compared on final cash: profit counts loan repayments as costs, the amount borrowed included.", "");
+
+  out.push("## Break-even by strategy", "");
+  out.push("The day profit so far first reached zero, across every model, product and seed that started. The target for careful play (sensible): an average around day 60–75, and no game later than about day 90.", "");
+  out.push(table(["Strategy", "Average", "Median", "Earliest", "Latest", "Later than d90", "Never"], used.map((s) => {
+    const started = results.filter((r) => r.strategy === s.id && r.outcome !== "cant-start");
+    const days = started.flatMap((r) => (r.breakEvenDay === null ? [] : [r.breakEvenDay]));
+    if (!days.length) return [s.id, "never", "", "", "", "", `${started.length}/${started.length}`];
+    const late = days.filter((d) => d > 90).length;
+    return [s.id, `d${whole(mean(days))}`, `d${whole(median(days))}`, `d${Math.min(...days)}`, `d${Math.max(...days)}`, `${late}/${started.length}`, `${started.length - days.length}/${started.length}`];
+  })), "");
 
   if (used.some((s) => s.id === "sensible")) {
     out.push("## Sensible play: median final cash", "");

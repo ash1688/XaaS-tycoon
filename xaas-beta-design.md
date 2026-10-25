@@ -377,7 +377,7 @@ In the alpha every feature and add-on was available from day 1, and SaaS student
 | Tier | Example unlock conditions |
 |---|---|
 | 1 | Available from the start |
-| 2 | A user count (e.g. 5,000 users), or a CTO hired |
+| 2 | A user count (35% of the product's market: 7,000 on the shop, 1,400 on the payments app), or a CTO hired |
 | 3 | Revenue and uptime targets (e.g. £2k a day and 99% uptime over 30 days) |
 | 4 | A funding round or IPO readiness |
 

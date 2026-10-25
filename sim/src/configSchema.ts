@@ -285,7 +285,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   const T = "Tiers";
   const TIER = range(1, 4, 1);
   const RP = range(0, 100_000, 1);
-  add("tiers.tier2.users", "Infrastructure", T, "Tier 2: users", "Tier 2 opens once the company has this many users, paying or free.", range(0, 10_000_000, 100));
+  add("tiers.tier2.marketShare", "Infrastructure", T, "Tier 2: share of the market", "Tier 2 opens once the company's users, paying or free, reach this share of its product's market size (0.35 = 35%), to the nearest 100 users.", SHARE);
   add("tiers.tier3.dailyIncome", "Infrastructure", T, "Tier 3: income a day", "Tier 3 opens once the last days played (below) average this much income a day, with the uptime below.", POUNDS);
   add("tiers.tier3.uptime", "Infrastructure", T, "Tier 3: uptime %", "The uptime % over those days that tier 3 also needs.", range(0, 100, 0.1));
   add("tiers.tier3.days", "Infrastructure", T, "Tier 3: days measured", "How many of the latest days played tier 3's income and uptime are averaged over.", GAME_DAY);

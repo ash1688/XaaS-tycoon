@@ -49,6 +49,29 @@ npm run -s play -- summary <game>
   the next day, cost 1.25× and do half the work of permanent staff of the same grade, and go with no severance. They're
   listed apart from permanent staff. Letting go **permanent staff** pays their severance at once (shown per grade under
   staff, and on the `letgo` line); it's refused if you haven't the cash. `move` only moves permanent staff.
+- Every game opens with an **MVP**: no users arrive, and nothing earns, until your developers have built it, while
+  everyone is paid from day 1. The status shows its progress in developer-days and the day it'll be done. More
+  developers finish it sooner (agency developers count at half), and on SaaS it's much shorter. Your first users
+  arrive the day it's done and your servers are ready, over a 3-day launch ramp. Hosting bills start then too, though
+  on-prem kit is still paid for when you buy it.
+- Once the MVP is done, the **developer slider** splits developer time between features and **optimisation**:
+  `optimise <0–100>` sets the % on optimisation. Optimisation builds up for good and cuts what each user needs (CU and
+  DBU on on-prem and IaaS, instances on PaaS, the per-user fee on SaaS), quickly at first and then flattening out
+  under a cap (higher on on-prem). The status shows the saving so far and the cap.
+- Features sit in **tiers** 1–4. Tier 1 is open from the start; each later tier becomes available on a condition the
+  status shows (users, then income and uptime, then an angel's money or IPO readiness), in order. Each feature and
+  model benefit in an available tier then needs **research points (RP)** to unlock, in any order: `unlock <id>`
+  (the status lists what you can unlock and its price), then you build or buy it as usual. Unlocks are kept for good,
+  through migrations.
+- **Researchers** and **marketers** are two more staff pools that open when your first angel investor approaches,
+  whatever you do with the offer. Both are permanent hires only (no agency). Researchers earn RP every day, banked with
+  no cap: `hire researchers [grade] [n]`. They're flagged idle once there's nothing left to unlock.
+- **Campaigns** bring new users of one customer type directly, on top of normal growth:
+  `campaign <type> <budget> <days>` (the `look` line shows what a user of each type costs today), and
+  `stopcampaign <id>` stops one. Each needs a free marketer (`hire marketers [grade] [n]`), the most senior free one
+  runs it, and their grade scales the users per pound. Campaigns bring fewer users as your market fills, when two aim
+  at the same type, and more when started just before a holiday that boosts your product. A busy marketer can't be let
+  go; marketers with no Campaign are flagged idle.
 - On a social network or video platform, users post content and report some of it. **Moderators** are a fourth
   staff pool there (not on an e-commerce shop): `hire moderators [grade] [n]`. The status shows the reports a day,
   what your moderators handle and what's left unhandled. Unhandled reports pull satisfaction down and raise the odds
@@ -129,6 +152,9 @@ Play the whole game in character as your playstyle:
 | `reamu-keaves` | Breathtakingly wholesome: keep prices fair, never let anyone go, keep customers happy. Can doing right by everyone still win? |
 | `hodd-toward` | "It just works!" Ship every feature as fast as you can, scale nothing until it breaks, overpromise. |
 
+Whatever your playstyle, use the company's whole pipeline at least once, in character: how many developers build the
+MVP, where the slider sits, what you research and when, and whether marketers and Campaigns earn their keep.
+
 ## What to hand back
 
 When the game is over, reply with a **game summary** of no more than about 300 words:
@@ -137,8 +163,10 @@ When the game is over, reply with a **game summary** of no more than about 300 w
 2. **Ending:** finished, liquidated or floated (and whether you were rescued, and when), on which day, final cash, paying and free users, satisfaction and uptime (from `summary`),
    and your valuation and the share of the company you still own (from `valuation`). After an IPO: the float, cash
    raised, the close and market value, and your stake (from `ipo`).
-3. **Key moments:** first profit, price changes, migrations, funding taken or declined, any rescue or buy-back, events and how you handled
-   them (and what the danger meter was doing), any crisis.
+3. **Key moments:** the launch day (when the MVP was done), first profit, price changes, migrations, funding taken or
+   declined, any rescue or buy-back, what you researched and unlocked, Campaigns you ran (spend, users, cost per user),
+   where you kept the developer slider, events and how you handled them (and what the danger meter was doing), any
+   crisis.
 4. **What you tried** and whether it worked.
 5. **Anything that felt broken, unfair, confusing or exploitable**, with the day and the commands that caused it.
 6. **One change you'd make** to the game.
