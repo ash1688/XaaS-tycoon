@@ -144,8 +144,10 @@ To float, the company must pass a readiness check:
 - **Profitability**, or a clear path to it
 - **Customer satisfaction record**, e.g. above 70% over the last 30 days. In the alpha, satisfaction at 0% had no consequence: one student sat there for 143 days and still finished.
 - **A minimum paying customer base**, so a company with 300 payers at $1,000 each can't float.
+- **All four Series rounds have approached.** Series A, B, C and D must each have approached the company. Accepting their money is optional, so it's growth that qualifies a company, not dilution.
+- **Required executives:** a CFO, a CISO and legal counsel are hired.
 
-- **No VC needed.** The readiness check is the only requirement; the funding ladder is optional. Growing without investors and floating is harder but keeps far more of the company.
+- **No VC money needed.** The rounds must approach, but the student can decline every one. Growing without investors and floating is harder but keeps far more of the company.
 - **Visible checklist.** The Finance page shows each condition turning green. The student can apply once all are green.
 - **Market mood.** Applying still carries a small hidden chance of a cold market: the IPO is postponed by about 30 days and some reputation is lost, but the student can try again. A company comfortably over every condition is less likely to hit one.
 - In a 180-day game a float will be rare. A game that reaches its last day without floating is scored by its valuation (see Scoring).
@@ -257,7 +259,7 @@ In the game, launches and releases use made-up names, not real ones.
 
 ## Pay reviews
 
-Each game counts internally as one year, split into **four equal quarters** (game length ÷ 4). At the start of quarters 2, 3 and 4, staff come to the student about pay: three reviews a game, whatever its length.
+A 180-day game counts internally as one year, split into **four equal quarters** (game length ÷ 4). At the start of quarters 2, 3 and 4, staff come to the student about pay: three reviews a game. A 1-year game works the same way. **Until IPO** and **Career** games follow that pattern in year 1, then hold a review **every quarter** from year 2 onwards.
 
 - **It stops the clock.** A notification appears and the student can't continue until the review is settled.
 - **What the student sees:**
@@ -299,30 +301,31 @@ A leadership team the student hires one role at a time. Each role gives a lastin
   | Stage | Roles |
   |---|---|
   | Day 1 | Head of development, head of ops, head of support |
-  | On taking outside money (friends and family, a grant or any investor), which can be day 1. The bank loan doesn't count: it's the seed money. | CFO |
-  | After the angel | CTO, head of people |
-  | After Series A | COO, CIO, CMO, CISO, legal counsel |
+  | On taking outside money (friends and family, a grant or any investor), which can be day 1, or at the first angel approach if that comes first. The bank loan doesn't count: it's the seed money. | CFO |
+  | After the first angel approach | CTO, head of people |
+  | After the Series A approach | COO, CIO, CMO, CISO, legal counsel |
 
-  A student who never takes investors unlocks the same roles at matching hidden targets instead.
-- **Equity cap:** the whole C-suite together asks for no more than about 10% of the company. Candidates' equity asks shrink as the cap fills.
+  Like the angel, a round unlocks its roles when it **approaches**, whether the student accepts or declines.
+- **Equity cap:** the whole C-suite together asks for no more than about 10% of the company. Candidates' equity asks shrink as the cap fills. The staff share scheme from pay reviews is a separate pot and doesn't count.
+- **No pay reviews:** executives' pay is their own package, so pay review rises don't apply to them.
 - **Hired for good (beta):** once hired, an executive can't be let go or replaced, and doesn't resign. Their salary is a permanent cost, so picking from the shortlist is a weighty decision. A rescue buyout's cost cuts don't touch the C-suite.
 
-| Role | Helps with |
+| Role | Effect (each candidate's stats vary it) |
 |---|---|
 | CEO | **The student**, as founder-CEO. Not hired. |
-| CFO | Better investor terms and negotiation rolls, cheaper loans, cost forecasts, the IPO's predictable-costs check |
-| COO | Everyday running costs and staff productivity |
-| CTO | Faster feature builds; meets the tier 2 condition and boosts research |
-| CIO | Cheaper, faster migrations and better infrastructure decisions |
-| Legal counsel | Lawsuits and the IPO compliance audit |
-| CISO | Patching and security breaches |
-| CMO | Gets more out of marketing spend |
-| Head of people | Shorter hiring lead times, desk planning, friendlier pay reviews (better rolls, schemes valued more, tribunal leans your way) |
+| CFO | Better rolls in investor and deal negotiations; cheaper loans. **Required to IPO.** No part in pay reviews. |
+| COO | About −8% everyday running costs (hosting, rent, provider fees; not staff pay) |
+| CTO | Opens tier 2 straight away (as well as the market-share route); about +25% research points |
+| CIO | Migrations about 30% cheaper and faster |
+| Legal counsel | No gameplay effect. **Required to IPO**, as a compliance box to tick. |
+| CISO | Faster patching and a lower breach chance. **Required to IPO**, which shows the market the company takes cybersecurity seriously. |
+| CMO | About +10% campaign effectiveness |
+| Head of people | Pay reviews only: a better roll (in place of the penalty for dealing with staff directly), a softer walk-away point, schemes valued fully or more, and a slight tribunal lean |
 | Head of ops | Ops staff cover more servers; better uptime |
 | Head of support | Support staff clear more tickets; satisfaction recovers faster |
-| Head of development | Developers build faster |
+| Head of development | About +20% developer output on all developer work: the MVP, features and optimisation |
 
-CISO, CMO and head of people were added to fit the new events, marketing spend and hiring lead time. *Stats, pay and effects are placeholders for balancing.*
+Some executives earn their keep and some are there because going public needs them: the CFO, CISO and legal counsel are all required to float. *Stats, pay and the exact figures are placeholders for balancing.*
 
 ## More products
 
@@ -518,11 +521,11 @@ A game ends on liquidation, on an IPO, or when its **game length** runs out. **T
 
 Long games change slowly rather than in eras (eras are kept for later):
 
-- **Inflation:** prices rise each year. Wages rise only through pay reviews, which show the same inflation figure.
-- **Cheaper hardware:** servers and VMs give more CU for the money each year.
-- **Server wear:** servers wear out and need replacing after about 5 years. Running a server below 100% on the hardware-tuning slider makes it last longer; running it above 100% wears it faster.
+- **Inflation:** at the end of each 365-day year, running prices (servers and VMs, rent, provider fees) rise by a fresh random 2–6%. The student's own price never rises by itself. Wages rise only through pay reviews, which roll their own 2–6% each time.
+- **Cheaper hardware:** at each year's end, newly bought servers and VMs give about 10% more units for the money. Kit already owned keeps its units, so upgrading old kit is a real decision.
+- **Server wear:** the hardware slider's wear, scaled to the game length. In a 180-day game a server at 100% never wears out, but pushing it hard wears it out within a few months. In longer games a server lasts about 5 years at 100%. Below 100% it lasts longer and above it wears faster, and the student is warned before a server is likely to fail.
 
-Drift applies to every game length but only shows in the long ones; a 180-day game barely notices it. *Rates are placeholders.*
+180-day and 1-year games never reach a year's end, so prices and hardware don't drift in them. *Rates are placeholders.*
 
 ## Onboarding
 
