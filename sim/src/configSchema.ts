@@ -613,7 +613,14 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("payReview.negotiation.moves.middle", "People", "Pay review rolls", "Middle roll moves", "Share of the way their counter moves on a middle roll.", SHARE);
   add("payReview.negotiation.moves.low", "People", "Pay review rolls", "Low roll moves", "Share of the way their counter moves on a low roll. Below 0 they ask for more instead, never above their opening ask.", range(-1, 1, 0.01));
   add("payReview.tribunal.fee", "People", "Pay review tribunal", "Tribunal fee", "Charged in cash every time a pay review goes to the tribunal, after a final offer with no deal.", POUNDS);
-  add("payReview.schemeValuation", "People", "Staff schemes", "Scheme valuation", "How much of a staff scheme's value staff count in a pay review: an offer is worth its cash rise plus each level it adds × the scheme's worth to staff × this. About 0.7 without a head of people.", range(0, 3, 0.05));
+  for (const [key, who] of [["none", "No head of people"], ["headOfPeople", "Head of people"]] as const) {
+    const p = `payReview.peopleLead.${key}`;
+    const g = `People lead: ${who.toLowerCase()}`;
+    add(`${p}.rollBonus`, "People", g, `${who}: roll bonus`, "Added to the d20 on each staff counter in a pay review: below 0 staff are stricter and come down less, above 0 friendlier.", range(-10, 10, 1));
+    add(`${p}.walkAwaySoftening`, "People", g, `${who}: walk-away softening`, "Taken off staff's hidden walk-away figure when a pay review opens (0.005 = half a point), so they accept a lower offer.", range(0, 0.05, 0.001));
+    add(`${p}.schemeValuation`, "People", g, `${who}: scheme valuation`, "How much of a staff scheme's value staff count in a pay review: an offer is worth its cash rise plus each level it adds × the scheme's worth to staff × this. About 0.7 without a head of people, 1 or more with one.", range(0, 3, 0.05));
+    add(`${p}.tribunalLean`, "People", g, `${who}: tribunal lean`, "How far the tribunal leans the student's way: it weighs each pick by its distance from the fair rise moved this share of the gap towards the student's offer. 0 is no lean.", range(0, 1, 0.01));
+  }
   for (const id of STAFF_SCHEMES) {
     const name = base.payReview.schemes[id].name;
     const p = `payReview.schemes.${id}`;

@@ -179,12 +179,17 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
           </tbody>
         </table>
         <p class="muted">A rise below inflation is a pay cut in real terms: your staff's money buys less than it did.</p>
+        <p v-if="!review.headOfPeople" class="muted" data-testid="pay-dealing-directly">
+          You're dealing with staff directly: with no head of people, they're stricter on the roll ({{ signed(review.rollBonus) }}
+          on each counter) and want cash, counting staff schemes at {{ percent(review.schemeValuation) }} of their worth.
+        </p>
 
         <ol v-if="review.rounds.length" class="negotiation-rounds" data-testid="pay-rounds">
           <li v-for="(r, i) in review.rounds" :key="i" data-testid="pay-round">
             You offered {{ offerText(review.offerTerms[i], review.studentOffers[i]!) }}. Rolled {{ r.die }}<template v-if="r.penalty">
               − {{ r.penalty }} for asking them down {{ percent(r.ask) }}</template
-            ><template v-if="r.bonus"> + {{ r.bonus }} bonus</template> = {{ signed(r.total) }}:
+            ><template v-if="r.bonus > 0"> + {{ r.bonus }} bonus</template
+            ><template v-else-if="r.bonus < 0"> − {{ -r.bonus }} for dealing with staff directly</template> = {{ signed(r.total) }}:
             <strong>{{ RESULT[r.result] }}: {{ moveText(r.move, review.staffFigures[i]!, review.staffFigures[i + 1]!) }}</strong>. They now ask {{ pct(review.staffFigures[i + 1]!) }}.
           </li>
         </ol>
@@ -225,8 +230,8 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
             <legend>Staff schemes</legend>
             <p class="muted">
               Benefits instead of cash: each costs you every day from now on, for every permanent member of staff, and can't be
-              taken away once given. Without a head of people, staff count {{ percent(review.schemeValuation) }} of a scheme's
-              worth.
+              taken away once given. <template v-if="!review.headOfPeople">Without a head of people, staff</template
+              ><template v-else>Staff</template> count {{ percent(review.schemeValuation) }} of a scheme's worth.
             </p>
             <div v-for="s in review.schemes" :key="s.id" class="pay-scheme" :data-testid="`pay-scheme-${s.id}`">
               <label v-if="s.toggle">
@@ -293,8 +298,9 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
               <p>
                 Staff accept an offer close to a fair rise for how your company is doing. Short of it, they counter, and a d20
                 decides how far they come down: −{{ preview.odds.penalty }} for asking them down {{ percent(preview.odds.ask) }}<template
-                  v-if="preview.odds.bonus"
-                >, +{{ preview.odds.bonus }} bonus</template>.
+                  v-if="preview.odds.bonus > 0"
+                >, +{{ preview.odds.bonus }} bonus</template
+                ><template v-else-if="preview.odds.bonus < 0">, −{{ -preview.odds.bonus }} for dealing with staff directly</template>.
               </p>
               <table class="quote" data-testid="pay-odds">
                 <tbody>

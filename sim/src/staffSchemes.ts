@@ -1,6 +1,7 @@
 import { STAFF_GRADES, STAFF_POOLS, type GameConfig } from "./config.ts";
 import { gradeDayRate, NO_PAY_RISE } from "./staff.ts";
 import { SimError, type GameState, type LogEntry, type Shareholder } from "./state.ts";
+import { peopleLead } from "./peopleLead.ts";
 
 /**
  * Staff schemes the student can offer in a pay review alongside a cash rise. Pension top-up, the health cash plan and
@@ -34,11 +35,8 @@ export interface StaffSchemeView {
   costPerDay: number;
 }
 
-/**
- * How much of a scheme's value staff count in a pay review: about 0.7 without a head of people. The one place it's
- * read, so the people-lead seam (#195) can change it.
- */
-export const schemeValuation = (config: GameConfig, _state: GameState): number => config.payReview.schemeValuation;
+/** How much of a scheme's value staff count in a pay review, from the people-lead modifier: about 0.7 without a head of people. */
+export const schemeValuation = (config: GameConfig, state: GameState): number => peopleLead(config, state).schemeValuation;
 
 /**
  * The staff schemes are paid on: permanent staff on the team, not agency staff (the agency's), nor the C-suite (who

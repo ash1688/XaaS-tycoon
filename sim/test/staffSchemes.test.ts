@@ -19,7 +19,14 @@ const plainConfig: GameConfig = {
   },
 };
 const plain = createSim(plainConfig);
-const withValuation = (schemeValuation: number) => createSim({ ...plainConfig, payReview: { ...plainConfig.payReview, schemeValuation } });
+const withValuation = (schemeValuation: number) =>
+  createSim({
+    ...plainConfig,
+    payReview: {
+      ...plainConfig.payReview,
+      peopleLead: { ...plainConfig.payReview.peopleLead, none: { ...plainConfig.payReview.peopleLead.none, schemeValuation } },
+    },
+  });
 const begin = (s: Sim = plain, seed = 42) => s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed });
 const schemes = plainConfig.payReview.schemes;
 const round = (n: number) => Math.round(n * 1000) / 1000;

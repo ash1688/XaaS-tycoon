@@ -97,7 +97,7 @@ describe("share save", () => {
       schemeShareAfter: holder(settled, "staffScheme") / inIssue(settled),
     });
     // Its worth to staff: a point a level, at the valuation.
-    expect(preview.schemeValue).toBeCloseTo(2 * 0.01 * plainConfig.payReview.schemeValuation, 12);
+    expect(preview.schemeValue).toBeCloseTo(2 * 0.01 * plainConfig.payReview.peopleLead.none.schemeValuation, 12);
   });
 
   it("says so in the next day's log, and charges its admin every day as staff spend", () => {

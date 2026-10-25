@@ -1499,10 +1499,10 @@ export interface PayReviewConfig {
     sharpness: number;
   };
   /**
-   * How much of a staff scheme's value staff count: an offer is worth its cash rise plus each scheme level it adds ×
-   * that scheme's staff value × this. About 0.7 without a head of people, as staff want cash.
+   * The people-lead modifier: what a head of people (a C-suite role, #108) changes in a review, and what their absence
+   * does. `none` applies until one is hired; without one the student deals with staff directly. See PeopleLeadConfig.
    */
-  schemeValuation: number;
+  peopleLead: { none: PeopleLeadConfig; headOfPeople: PeopleLeadConfig };
   /** The staff schemes an offer can raise alongside the cash rise. See StaffSchemeConfig. */
   schemes: Record<StaffSchemeId, StaffSchemeConfig>;
   /**
@@ -1510,6 +1510,27 @@ export interface PayReviewConfig {
    * time (0.01 = 1%) to the staff share scheme, diluting every holder. Its wageShare and perPerson are the admin.
    */
   shareSavePerLevel: number;
+}
+
+/**
+ * One set of the people-lead modifier's values, with or without a head of people. Every head-of-people effect on a pay
+ * review reads them through peopleLead (sim/src/peopleLead.ts).
+ */
+export interface PeopleLeadConfig {
+  /** Added to the d20 on each staff counter: below 0 staff are stricter and come down less, above 0 friendlier. */
+  rollBonus: number;
+  /** Taken off staff's hidden walk-away figure when a review opens (0.005 = half a point), so they accept less. */
+  walkAwaySoftening: number;
+  /**
+   * How much of a staff scheme's value staff count: an offer is worth its cash rise plus each scheme level it adds ×
+   * that scheme's staff value × this. About 0.7 without a head of people, as staff want cash; 1 or more with one.
+   */
+  schemeValuation: number;
+  /**
+   * How far the tribunal leans the student's way: it weighs each pick by its distance from the fair rise moved this
+   * share of the gap towards the student's final offer. 0 is no lean.
+   */
+  tribunalLean: number;
 }
 
 /**
@@ -2673,12 +2694,17 @@ export const defaultConfig: GameConfig = {
     },
     // About £2k a sitting, so the tribunal is never a free gamble.
     tribunal: { fee: 2_000, sharpness: 3 },
-    // Placeholders from the design (#189). Without a head of people, staff count a scheme at about 70% of its value.
-    // Each scheme costs a different amount for what staff see in it, against the cash rise it stands in for (at a
+    // Placeholders from the design (#189). Without a head of people the student deals with staff directly: staff take
+    // a point off the roll on their counters, and count a scheme at about 70% of its value, as they want cash. A head of
+    // people (#108) adds two points to the roll, takes half a point off staff's walk-away figure, has schemes counted at
+    // full value and leans the tribunal a little the student's way. Each scheme costs a different amount for what staff see in it, against the cash rise it stands in for (at a
     // mean day rate of about £105): the pension about 0.76 of it, the health plan about 0.82, death in service about
     // 0.57 and the discount scheme about 0.27. Cheaper than cash per point, but paid on every head for good, and the
     // per-person ones cost more on a lower-paid team.
-    schemeValuation: 0.7,
+    peopleLead: {
+      none: { rollBonus: -1, walkAwaySoftening: 0, schemeValuation: 0.7, tribunalLean: 0 },
+      headOfPeople: { rollBonus: 2, walkAwaySoftening: 0.005, schemeValuation: 1, tribunalLean: 0.15 },
+    },
     schemes: {
       pension: {
         name: "Pension top-up",
