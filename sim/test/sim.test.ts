@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { settlingPay } from "./settlingPay.ts";
 import {
   createSim,
   defaultConfig,
@@ -247,6 +248,8 @@ const config: GameConfig = {
   funding: defaultConfig.funding,
   ipo: defaultConfig.ipo,
   negotiation: defaultConfig.negotiation,
+  // No pay reviews, so pay stays at the day rates: they have their own tests (payReview.test.ts).
+  payReview: { ...defaultConfig.payReview, on: 0 },
   rescue: defaultConfig.rescue,
   investors: defaultConfig.investors,
   // No price waves unless a test says otherwise, so a price change only has its ongoing effect on growth and payers.
@@ -2675,7 +2678,7 @@ describe("rescue buyout and liquidation", () => {
   });
 
   it("prices a trading business at the premium on its share of the valuation, leaving out the cash", () => {
-    const real = createSim(defaultConfig);
+    const real = settlingPay(createSim(defaultConfig));
     const begun = real.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 3 });
     let state = withStaff(real.advance(begun, 40).state, { developers: 30 });
     while (!state.rescue) state = real.advance(state).state;
@@ -3550,7 +3553,7 @@ describe("game end and summary", () => {
 });
 
 describe("default config", () => {
-  const sim180 = createSim(roomyDefaults);
+  const sim180 = settlingPay(createSim(roomyDefaults));
   const run = (productType: string, model: string, ops?: number) => {
     const start = setUp(sim180, sim180.newGame({ companyName: "Acme", productType, model, seed: 7 }));
     return sim180.advance(ops === undefined ? start : withStaff(start, { ops }), defaultConfig.finalDay - 1).state;
@@ -5209,7 +5212,7 @@ describe("encounters", () => {
   });
 
   it("doesn't rise before launch, when nothing is running", () => {
-    const s = createSim({ ...roomyDefaults, events: [patch] });
+    const s = settlingPay(createSim({ ...roomyDefaults, events: [patch] }));
     const state = s.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 42 });
     // No servers rented, so no launch: the meter stays at 0.
     expect(s.advance(state, 5).state.dangerMeter).toBe(0);
@@ -5337,7 +5340,7 @@ describe("encounters", () => {
   });
 
   // Default games on PaaS with a first setup that's never grown: they get overloaded as users grow.
-  const defaults = createSim(roomyDefaults);
+  const defaults = settlingPay(createSim(roomyDefaults));
   const defaultGame = (seed: number) => {
     const state = setUp(defaults, defaults.newGame({ companyName: "Acme", productType: "social", model: "paas", seed }));
     return defaults.advance(withStaff(state, { ops: 1 }), 179).state.schedule;
@@ -5440,7 +5443,7 @@ describe("default events", () => {
   });
 
   it("let a SaaS company that never leaves still reach day 180 with the feature gap", () => {
-    const s = createSim(roomyDefaults);
+    const s = settlingPay(createSim(roomyDefaults));
     const state = s.advance(s.newGame({ companyName: "Acme", productType: "video", model: "saas", seed: 7 }), 179).state;
     expect(state).toMatchObject({ day: 180, status: "finished" });
     expect(s.featureGaps(state)).toHaveLength(1);
@@ -5450,7 +5453,7 @@ describe("default events", () => {
     // By day 30 a social network has grown into its first kit enough that tripled demand is too much for it. PaaS
     // runs plenty of instances and the biggest database, so only the spike could take it over. One ops person runs
     // either.
-    const s = createSim({ ...roomyDefaults, events: [{ ...event("trafficSpike"), encounter: undefined, schedule: { type: "fixed", days: [30] } }] });
+    const s = settlingPay(createSim({ ...roomyDefaults, events: [{ ...event("trafficSpike"), encounter: undefined, schedule: { type: "fixed", days: [30] } }] }));
     const run = (model: (typeof MODEL_IDS)[number]) => {
       let start = setUp(s, s.newGame({ companyName: "Acme", productType: "social", model, seed: 7 }));
       if (model === "paas") {
@@ -5585,7 +5588,7 @@ describe("the beta's new events", () => {
   it("explain whose job it was on each model", () => {
     for (const id of NEW) {
       const e = event(id);
-      const s = createSim({ ...roomyDefaults, events: [{ ...e, encounter: undefined, schedule: { type: "fixed", days: [6] } }] });
+      const s = settlingPay(createSim({ ...roomyDefaults, events: [{ ...e, encounter: undefined, schedule: { type: "fixed", days: [6] } }] }));
       for (const model of MODEL_IDS) {
         const start = setUp(s, s.newGame({ companyName: "Acme", productType: "social", model, seed: 7 }));
         const { state } = s.advance(withStaff(start, { ops: 2 }), 5);
@@ -5600,7 +5603,7 @@ describe("the beta's new events", () => {
 
   it("lead into the rescue buyout when one empties the cash, not straight to the end", () => {
     const fraud = { ...event("fraud"), encounter: undefined, schedule: { type: "fixed" as const, days: [6] } };
-    const s = createSim({ ...roomyDefaults, events: [fraud] });
+    const s = settlingPay(createSim({ ...roomyDefaults, events: [fraud] }));
     const start = setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 7 }));
     // Just less cash than the fraud takes, the day before it.
     const before = s.advance(start, 4).state;
@@ -5611,7 +5614,7 @@ describe("the beta's new events", () => {
   });
 
   it("each fire in some games, with a lawsuit only ever soon after a breach", () => {
-    const s = createSim(roomyDefaults);
+    const s = settlingPay(createSim(roomyDefaults));
     const fired = new Set<string>();
     for (let seed = 1; seed <= 30; seed++) {
       const { schedule } = s.advance(s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed }), 179).state;

@@ -5,6 +5,7 @@ import type {
   CodeView,
   CompanyView,
   CounterOddsView,
+  PayOfferView,
   EndGamesResult,
   ContinueResult,
   LogDeleteResult,
@@ -97,6 +98,10 @@ export const api = {
       "GET",
       `/api/codes/${enc(code)}/companies/${enc(id)}/investor-odds?${new URLSearchParams(Object.fromEntries(Object.entries(terms).map(([k, v]) => [k, String(v)])))}`,
     ),
+
+  // What offering staff a rise in the open pay review would do, for the pay review modal's live cost and odds.
+  payOffer: (code: string, id: string, rise: number) =>
+    request<PayOfferView>("GET", `/api/codes/${enc(code)}/companies/${enc(id)}/pay-offer?${new URLSearchParams({ rise: String(rise) })}`),
 
   teacherLogin: (password: string) => request<{ ok: true }>("POST", "/api/teacher/login", { password }),
   teacherLogout: () => request<{ ok: true }>("POST", "/api/teacher/logout"),

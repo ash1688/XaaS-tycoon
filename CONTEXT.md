@@ -88,6 +88,14 @@ _Avoid_: Marketing team, agency (agencies supply other staff, not marketers)
 What researchers earn each day, more for higher grades. They bank with no cap, to be spent unlocking items in a tier.
 _Avoid_: Science, research credits, XP
 
+**Pay review**:
+Staff coming to the student about pay before quarters 2, 3 and 4 of a game (a game counts as one year of four equal quarters). The clock holds until it's settled. Each review rolls its own inflation, from 2% to 6%; the student offers a rise from inflation less a point, and staff, who open at inflation plus four points, accept an offer near a fair rise for how the company is doing or counter with a roll. The agreed rise lifts every staff pool's day rate, new hires and agency staff included, and compounds with each review. The C-suite is left out.
+_Avoid_: Pay rise round, wage negotiation, salary review
+
+**Tribunal**:
+What settles a pay review with no deal after the student's third offer: it picks the student's figure, staff's or the middle, favouring whichever is closer to a fair rise, and charges a fee. Until it's built, a failed third offer settles midway.
+_Avoid_: Arbitration, court
+
 ### Infrastructure
 
 **Rack**:

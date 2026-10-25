@@ -17,7 +17,8 @@ import {
 // the first angel investor approaches, then open whatever the student makes of the angel; they're permanent hires only;
 // and each day they earn research points (RP), by output and grade, banked with no cap.
 
-const quiet: GameConfig = { ...defaultConfig, events: [] };
+// No pay reviews either: they have their own tests (payReview.test.ts).
+const quiet: GameConfig = { ...defaultConfig, events: [], payReview: { ...defaultConfig.payReview, on: 0 } };
 const sim = createSim(quiet);
 const sensible = STRATEGIES.find((s) => s.id === "sensible")!;
 const begin = (s: Sim = sim) => s.newGame({ companyName: "Lab Co", productType: "social", model: "saas", seed: 42 });

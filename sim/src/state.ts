@@ -31,7 +31,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 45;
+export const GAME_STATE_VERSION = 46;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -597,6 +597,49 @@ export interface Campaign {
 }
 
 /** Plain, JSON-serialisable game state. The server stores it as-is. */
+/**
+ * A pay review that's open: the clock is held until it's settled. Staff's figure is the negotiation's offer, and each
+ * student offer that falls short is the counter a roll answers (see payReview.ts).
+ */
+export interface PayReview {
+  /** The quarter it opens: 2, 3 or 4. */
+  quarter: number;
+  /** The quarter's first day: the first day played at the agreed rise. */
+  startDay: number;
+  /** This review's inflation, 0.03 = 3%. */
+  inflation: number;
+  /** The least the student can offer, and the most staff ask: their opening figure. */
+  minOffer: number;
+  maxAsk: number;
+  /** Kept from the student: the fair rise for how the company is doing, and staff's walk-away figure near it. */
+  fairRise: number;
+  walkAway: number;
+  /** The student's offers so far, oldest first: the third is final. */
+  studentOffers: number[];
+  /** Staff's figures, oldest first, as negotiation offers on `rise`: their opening ask, then each counter. */
+  negotiation: Negotiation;
+}
+
+/** How a pay review was settled. */
+export type PayReviewOutcome = "offerAccepted" | "counterAccepted" | "midpoint";
+
+/** A pay review settled, for the pay history. */
+export interface PayReviewRecord {
+  quarter: number;
+  startDay: number;
+  /** The day played when it was settled: the rise applies from the next. */
+  settledDay: number;
+  inflation: number;
+  minOffer: number;
+  maxAsk: number;
+  studentOffers: number[];
+  /** Staff's figures: their opening ask, then each counter. */
+  staffFigures: number[];
+  outcome: PayReviewOutcome;
+  /** The rise agreed, 0.04 = 4%. */
+  rise: number;
+}
+
 export interface GameState {
   version: typeof GAME_STATE_VERSION;
   status: GameStatus;
@@ -810,6 +853,17 @@ export interface GameState {
   rivalRng: number;
   /** Staff let go since the last day played who joined a rival. */
   rivalJoins: RivalJoin[];
+  /** The pay review open now, holding the clock; null between reviews. */
+  payReview: PayReview | null;
+  /** Pay reviews settled, oldest first. */
+  pastPayReviews: PayReviewRecord[];
+  /**
+   * Every staff pool's pay as a multiple of the config's day rates: each agreed rise multiplies it (1.04 after a 4%
+   * rise). New hires and agency staff are paid at it too.
+   */
+  payMultiplier: number;
+  /** Pay reviews' own seeded RNG, for inflation and staff's walk-away figure, so they don't change the rest of the game. */
+  payReviewRng: number;
 }
 
 /** Something the player does between days. */
@@ -945,7 +999,14 @@ export type Action =
    */
   | { type: "startCampaign"; customerType: string; budget: number; days: number }
   /** Stops a running campaign, by id, after the day just played: the rest of its budget isn't spent. */
-  | { type: "stopCampaign"; id: number };
+  | { type: "stopCampaign"; id: number }
+  /**
+   * Offers staff a pay rise in the open pay review (0.04 = 4%), from the least offer to the most staff ask. Staff accept
+   * one at or above their hidden walk-away figure, or counter with a roll. The third offer is final.
+   */
+  | { type: "offerPayRise"; rise: number }
+  /** Accepts staff's counter in the open pay review: their figure is the rise. */
+  | { type: "acceptPayCounter" };
 
 export interface NewGameParams {
   companyName: string;

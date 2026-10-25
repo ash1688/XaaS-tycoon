@@ -37,6 +37,7 @@ import { createCustomerMix } from "./mix.ts";
 import { isNameAllowed } from "./nameFilter.ts";
 import type { CounterOdds, Terms } from "./negotiation.ts";
 import { createPauses, type TickResult } from "./pauses.ts";
+import { createPayReview, type PayOfferPreview, type PayReviewView } from "./payReview.ts";
 import { createPricing, type CustomerMixView, type PaymentsView, type PricePreview, type PriceWaveView } from "./pricing.ts";
 import { createRacks, type RacksView } from "./racks.ts";
 import { createRescue, type RescueView } from "./rescue.ts";
@@ -93,6 +94,8 @@ export type { NewUserFactor } from "./mix.ts";
 export type { RackOption, RackView, RacksView } from "./racks.ts";
 export type { CounterOdds, NegotiationRound, RollResult, TermSpec, Terms } from "./negotiation.ts";
 export { MAX_OFFERS, ROLL_RESULTS } from "./negotiation.ts";
+export type { PayOfferPreview, PayReviewView } from "./payReview.ts";
+export { inflationNow, REVIEW_QUARTERS } from "./payReview.ts";
 export type { RescueView } from "./rescue.ts";
 export type { TicketOutlook } from "./support.ts";
 export type { MarketCompanyView, MarketView, TypeContestView } from "./rivals.ts";
@@ -180,6 +183,9 @@ export {
   type RoundId,
   type RivalState,
   type ScheduledEvent,
+  type PayReview,
+  type PayReviewOutcome,
+  type PayReviewRecord,
   type Server,
   type Shareholder,
   type Spend,
@@ -396,6 +402,19 @@ export interface Sim {
   /** What countering the open approach's offer with `terms` would do, as counterOdds does for a funder. */
   investorCounterOdds(state: GameState, terms: Partial<Terms>): CounterOdds;
   /**
+   * The pay review open now, holding the clock, with its inflation, caps, the student's offers and staff's figures and
+   * rolls so far. Null between reviews. Staff's walk-away figure stays hidden.
+   */
+  payReview(state: GameState): PayReviewView | null;
+  /**
+   * What offering staff `rise` in the open review would do, before it's made: what it adds to pay a day and a year, and
+   * the odds of each roll if they counter (or, on the final offer, where it settles if it falls short). Refused as
+   * offerPayRise would refuse it.
+   */
+  payOfferPreview(state: GameState, rise: number): PayOfferPreview;
+  /** The first day of quarters 2, 3 and 4: the days pay reviews start, in order. */
+  payReviewDays(state: GameState): number[];
+  /**
    * Where the company is with its launch: waiting for capacity, its first users due, arriving over the ramp, or
    * launched; the day they started (or will start) arriving, and the launch total.
    */
@@ -545,6 +564,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const rescue = createRescue(config, finance, shares, (s) => runway(s), (s) => infra.opsNeededNow(s));
   const investors = createInvestors(config, finance, shares);
   const campaigns = createCampaigns(config, calendar);
+  const payReview = createPayReview(config, { runwayDays: (s) => runway(s).days });
 
   function newGame({
     companyName,
@@ -642,6 +662,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       addonPriceRise: 1,
       featureGaps: [],
       api: null,
+      ...payReview.startingPayReview(seed),
     };
     // The loan arrives with the upfront bill. A model that costs more up front than the company has would run it out
     // of cash on day 1, so it's refused instead: on-prem needs the loan.
@@ -785,6 +806,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
         return campaigns.startCampaign(state, action.customerType, action.budget, action.days);
       case "stopCampaign":
         return campaigns.stopCampaign(state, action.id);
+      case "offerPayRise":
+        return payReview.offer(state, action.rise);
+      case "acceptPayCounter":
+        return payReview.acceptCounter(state);
       default:
         throw new SimError("unknown_action", "That action isn't recognised.");
     }
@@ -967,9 +992,13 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     });
     // Then any tier whose condition is now met opens, for good.
     const opened = tiers.tiersDay(funded.state);
-    const final: GameState =
+    const tiered: GameState =
       opened.tiers.length > funded.state.tiers.length ? { ...funded.state, tiers: opened.tiers } : funded.state;
-    return { state: final, log: [{ day, entries: [...settled.entries, ...released.entries, ...funded.entries, ...opened.entries] }] };
+    // Last of all, a pay review if the next day starts a quarter that has one: it holds the clock until it's settled.
+    const quarter = payReview.reviewDue(tiered);
+    const reviewed = quarter === null ? { state: tiered, entries: [] } : payReview.openReview(tiered, quarter);
+    const entriesToday = [...settled.entries, ...released.entries, ...funded.entries, ...opened.entries, ...reviewed.entries];
+    return { state: reviewed.state, log: [{ day, entries: entriesToday }] };
   }
 
   /**
@@ -1005,11 +1034,17 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     return { dailyIncome, dailyCosts, dailyNet, days };
   }
 
-  /** Loads a game still being played that time can move on in: an approved IPO holds it until the bell is rung. */
+  /**
+   * Loads a game still being played that time can move on in: an approved IPO holds it until the bell is rung, and an
+   * open pay review until it's settled.
+   */
   function loadUnheld(saved: GameState): GameState {
     const state = loadPlaying(saved);
     if (state.ipo.approvedDay !== null) {
       throw new SimError("ring_the_bell", "Your IPO is approved: choose your float and ring the opening bell to go on.");
+    }
+    if (state.payReview) {
+      throw new SimError("pay_review", "Your staff want to talk about pay: settle the pay review to go on.");
     }
     return state;
   }
@@ -1020,8 +1055,9 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     }
     let current = loadUnheld(saved);
     const log: DayLog[] = [];
-    // Stops early if the game ends part-way through: liquidation, or the final day played.
-    for (let i = 0; i < days && current.status === "playing"; i++) {
+    // Stops early if the game ends part-way through (liquidation, or the final day played), or a pay review opens,
+    // which holds the clock.
+    for (let i = 0; i < days && current.status === "playing" && !current.payReview; i++) {
       const result = advanceOneDay(current);
       current = result.state;
       log.push(...result.log);
@@ -1157,6 +1193,9 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     rescue: (s) => rescue.rescueView(load(s)),
     investors: (s) => investors.investors(load(s)),
     investorCounterOdds: (s, terms) => investors.counterOdds(load(s), terms),
+    payReview: (s) => payReview.payReviewView(load(s)),
+    payOfferPreview: (s, rise) => payReview.offerPreview(load(s), rise),
+    payReviewDays: (s) => payReview.quarterStarts(load(s)),
     launch: (s) => launch.launchView(load(s)),
     mvp: (s) => mvpView(load(s)),
     optimisation: (s) => {

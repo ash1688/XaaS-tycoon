@@ -75,17 +75,31 @@ export interface StaffPoolView {
   idle: string | null;
 }
 
-/** A grade's pay in a pool, to the pound: permanent, or through an agency. */
-export const gradeDayRate = (config: GameConfig, pool: StaffPool, grade: StaffGrade, agency = false) =>
-  Math.round(config.staff[pool].dayRate * config.staffGrades[grade].payMultiplier * (agency ? config.agency.payMultiplier : 1));
+/**
+ * Pools whose pay the pay reviews' rises leave alone. The C-suite (#108), once it's built, keeps its own packages and
+ * goes here; every pool there is now takes the rise.
+ */
+const NO_PAY_RISE: readonly string[] = ["csuite"];
+
+/**
+ * A grade's pay in a pool, to the pound: permanent, or through an agency, whose premium is on top. `payMultiplier` is
+ * the pay reviews' rises so far (see GameState.payMultiplier), which every pool but the C-suite takes.
+ */
+export const gradeDayRate = (config: GameConfig, pool: StaffPool, grade: StaffGrade, agency = false, payMultiplier = 1) =>
+  Math.round(
+    config.staff[pool].dayRate *
+      config.staffGrades[grade].payMultiplier *
+      (agency ? config.agency.payMultiplier : 1) *
+      (NO_PAY_RISE.includes(pool) ? 1 : payMultiplier),
+  );
 
 /** A grade's work a day against a permanent mid's: permanent, or through an agency. */
 const gradeOutput = (config: GameConfig, grade: StaffGrade, agency = false) =>
   config.staffGrades[grade].output * (agency ? config.agency.output : 1);
 
 /** Severance for one permanent member of a grade in a pool: days of their pay. */
-export const severanceFor = (config: GameConfig, pool: StaffPool, grade: StaffGrade) =>
-  gradeDayRate(config, pool, grade) * config.severance.days;
+export const severanceFor = (config: GameConfig, pool: StaffPool, grade: StaffGrade, payMultiplier = 1) =>
+  gradeDayRate(config, pool, grade, false, payMultiplier) * config.severance.days;
 
 /** No one in any grade. */
 export const noStaff = (): GradeCounts => ({ junior: 0, mid: 0, senior: 0 });
@@ -112,7 +126,10 @@ export function dailyStaffCost(config: GameConfig, state: GameState): number {
     (sum, pool) =>
       sum +
       STAFF_GRADES.reduce(
-        (s, g) => s + state.staff[pool][g] * gradeDayRate(config, pool, g) + state.agency[pool][g] * gradeDayRate(config, pool, g, true),
+        (s, g) =>
+          s +
+          state.staff[pool][g] * gradeDayRate(config, pool, g, false, state.payMultiplier) +
+          state.agency[pool][g] * gradeDayRate(config, pool, g, true, state.payMultiplier),
         0,
       ),
     0,
@@ -209,7 +226,7 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
     if (have < 1) throw new SimError("no_staff", `You have no ${name} to let go.`);
     if (have < count) throw new SimError("no_staff", `You only have ${have} ${name} to let go.`);
     const gone = adjusted(state, pool, grade, isAgency, -count);
-    const severance = isAgency ? 0 : count * severanceFor(config, pool, grade);
+    const severance = isAgency ? 0 : count * severanceFor(config, pool, grade, state.payMultiplier);
     if (severance === 0) return gone;
     if (severance > state.cash) {
       throw new SimError(
@@ -270,7 +287,7 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
           const n = counts[g];
           const grade = config.staffGrades[g].name.toLowerCase();
           const who = agency ? `Agency ${poolName(pool)}` : config.staff[pool].name;
-          return { text: `${who} pay (${n} ${grade}${plural(n, "", "s")})`, cashDelta: -n * gradeDayRate(config, pool, g, agency), category: "staff" };
+          return { text: `${who} pay (${n} ${grade}${plural(n, "", "s")})`, cashDelta: -n * gradeDayRate(config, pool, g, agency, state.payMultiplier), category: "staff" };
         });
       }),
     );
@@ -281,10 +298,10 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
       grade,
       name: config.staffGrades[grade].name,
       count: (agency ? state.agency : state.staff)[pool][grade],
-      dayRate: gradeDayRate(config, pool, grade, agency),
+      dayRate: gradeDayRate(config, pool, grade, agency, state.payMultiplier),
       output: Math.round(gradeOutput(config, grade, agency) * 100) / 100,
       leadDays: agency ? config.agency.leadDays : config.staffGrades[grade].leadDays,
-      severance: agency ? 0 : severanceFor(config, pool, grade),
+      severance: agency ? 0 : severanceFor(config, pool, grade, state.payMultiplier),
     }));
   }
 

@@ -11,6 +11,7 @@ import type {
   ContinueResult,
   MetaView,
   MigrationQuoteView,
+  PayOfferView,
   PresetsView,
   PresetView,
   PricePreviewView,
@@ -33,6 +34,8 @@ const STARTING_USERS = { ecommerce: 2000, social: 1000, video: 1000, payments: 1
 const sim = createSim({
   ...defaultConfig,
   startingCash: 1000,
+  // No pay reviews, which hold the clock each quarter, unless a test turns them on: they have their own tests below.
+  payReview: { ...defaultConfig.payReview, on: 0 },
   // Games start on a random date, so holidays are left out unless a test adds them: they'd move load and growth.
   calendar: { ...defaultConfig.calendar, holidays: [] },
   // Add-ons cost only their per-user price, so buying one fits in the starting cash.
@@ -4249,5 +4252,101 @@ describe("campaigns (#115) and marketers (#180)", () => {
     expect((await act({ type: "moveStaff", from: "marketers", to: "developers" })).json()).toMatchObject({ error: "marketer_busy" });
     await act({ type: "stopCampaign", id: 1 });
     expect((await act({ type: "letGo", pool: "marketers" })).json<CompanyView>().marketers).toBe(0);
+  });
+});
+
+describe("pay reviews", () => {
+  // A 12-day game with plenty of cash: a quarter is 3 days, so the first review opens after day 3, before day 4.
+  const paySim = createSim({
+    ...defaultConfig,
+    startingCash: 100_000,
+    finalDay: 12,
+    events: [],
+    calendar: { ...defaultConfig.calendar, holidays: [] },
+    payReview: { ...defaultConfig.payReview, walkAwaySpread: 0 },
+  });
+  let payApp: Awaited<ReturnType<typeof buildApp>>;
+
+  beforeAll(async () => {
+    payApp = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), sim: paySim });
+  });
+
+  afterAll(async () => {
+    await payApp?.close();
+  });
+
+  /** A company played until its first pay review opens. */
+  async function reviewing() {
+    const code = await newCode();
+    const created = await payApp.inject({
+      method: "POST",
+      url: `/api/codes/${code}/companies`,
+      payload: { name: "Acme", productType: "social", model: "saas" },
+    });
+    const company = created.json<CompanyView>();
+    expect(company).toMatchObject({ payReview: null, payMultiplier: 1 });
+    const url = `/api/codes/${code}/companies/${company.id}`;
+    const act = (payload: object) => payApp.inject({ method: "POST", url: `${url}/actions`, payload });
+    const next = () => payApp.inject({ method: "POST", url: `${url}/continue` });
+    let result: ContinueResult | undefined;
+    for (let i = 0; i < 5 && !result?.company.payReview; i++) result = (await next()).json<ContinueResult>();
+    return { url, act, next, result: result! };
+  }
+
+  it("opens a review that pauses time, and refuses the next day until it's settled", async () => {
+    const { result, next } = await reviewing();
+    expect(result.company.day).toBe(3);
+    expect(result.pauses).toContainEqual(expect.objectContaining({ kind: "payReview", id: "pay-review" }));
+    const review = result.company.payReview!;
+    expect(review).toMatchObject({ quarter: 2, startDay: 4, offersLeft: 3, final: false, canAcceptCounter: false, staffFigure: review.maxAsk });
+    expect(review.inflation).toBeGreaterThanOrEqual(0.02);
+    expect(review.inflation).toBeLessThanOrEqual(0.06);
+    // The hidden figures stay on the server.
+    expect(review).not.toHaveProperty("walkAway");
+    expect(review).not.toHaveProperty("fairRise");
+    const held = await next();
+    expect(held.statusCode).toBe(409);
+    expect(held.json()).toMatchObject({ error: "pay_review" });
+  });
+
+  it("previews an offer's cost and odds, refusing one outside the caps", async () => {
+    const { url, result } = await reviewing();
+    const review = result.company.payReview!;
+    const preview = await payApp.inject({ method: "GET", url: `${url}/pay-offer?rise=${review.minOffer}` });
+    expect(preview.statusCode).toBe(200);
+    const body = preview.json<PayOfferView>();
+    expect(body).toMatchObject({ rise: review.minOffer, midpoint: null, odds: { counter: { rise: review.minOffer } } });
+    expect(body.extraPerYear).toBe(body.extraPerDay * 365);
+    expect(body.extraPerDay).toBeGreaterThan(0);
+    const low = await payApp.inject({ method: "GET", url: `${url}/pay-offer?rise=${review.minOffer - 0.005}` });
+    expect(low.statusCode).toBe(400);
+    expect(low.json()).toMatchObject({ error: "offer_too_low" });
+    expect((await payApp.inject({ method: "GET", url: `${url}/pay-offer` })).statusCode).toBe(400);
+  });
+
+  it("takes offers: staff counter one short of their figure, and the counter can be accepted", async () => {
+    const { act, next, result } = await reviewing();
+    const review = result.company.payReview!;
+    expect((await act({ type: "offerPayRise" })).statusCode).toBe(400);
+    expect((await act({ type: "offerPayRise", rise: review.maxAsk + 0.01 })).json()).toMatchObject({ error: "offer_too_high" });
+    expect((await act({ type: "acceptPayCounter" })).json()).toMatchObject({ error: "no_counter" });
+    const countered = (await act({ type: "offerPayRise", rise: review.minOffer })).json<CompanyView>();
+    expect(countered.payReview).toMatchObject({ studentOffers: [review.minOffer], offersLeft: 2, canAcceptCounter: true });
+    expect(countered.payReview!.rounds).toHaveLength(1);
+    const figure = countered.payReview!.staffFigure;
+    const settled = (await act({ type: "acceptPayCounter" })).json<CompanyView>();
+    expect(settled.payReview).toBeNull();
+    expect(settled.payMultiplier).toBeCloseTo(1 + figure, 9);
+    expect(settled.dailyStaffCost).toBeGreaterThan(countered.dailyStaffCost);
+    const played = await next();
+    expect(played.statusCode).toBe(200);
+    expect(played.json<ContinueResult>().company.day).toBe(4);
+  });
+
+  it("settles at once on an offer of staff's ask", async () => {
+    const { act, result } = await reviewing();
+    const settled = (await act({ type: "offerPayRise", rise: result.company.payReview!.maxAsk })).json<CompanyView>();
+    expect(settled.payReview).toBeNull();
+    expect(settled.payMultiplier).toBeCloseTo(1 + result.company.payReview!.maxAsk, 9);
   });
 });

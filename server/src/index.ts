@@ -46,6 +46,10 @@ const mvp = mvpOff
   ? { ...defaultConfig.mvp, baseDevDays: { ecommerce: 0, social: 0, video: 0, payments: 0, assistant: 0, games: 0 } }
   : defaultConfig.mvp;
 
+// Optional: GAME_PAY_REVIEWS=off turns pay reviews off, so a game's clock never holds for one. For tests and demos about
+// something else.
+const payReview = process.env.GAME_PAY_REVIEWS === "off" ? { ...defaultConfig.payReview, on: 0 } : defaultConfig.payReview;
+
 // Timed flow: a tick every TIMED_FLOW_SECONDS at normal speed, with Pause and speeds. On unless TIMED_FLOW=off; the
 // teacher can also switch it off on the config page.
 const timedFlow = { enabled: process.env.TIMED_FLOW !== "off", seconds: DEFAULT_TIMED_FLOW_SECONDS };
@@ -91,7 +95,7 @@ const app = await buildApp({
   db,
   teacherPassword,
   sessionSecret,
-  sim: createSim({ ...defaultConfig, finalDay, mvp }),
+  sim: createSim({ ...defaultConfig, finalDay, mvp, payReview }),
   timedFlow,
   startDate,
   trustProxy,

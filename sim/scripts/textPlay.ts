@@ -28,6 +28,7 @@ import {
   type NegotiationRound,
   type NegotiationView,
   type HolidayView,
+  type PayOfferPreview,
   type ManagedService,
   type ModelId,
   type PauseReason,
@@ -484,6 +485,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
   lines.push(
     `${state.ipo.result ? `market value ${money(state.ipo.result.marketValue)} at the first day's close` : `valuation ${money(valuation.valuation)}`} | share price ${perShare(table.sharePrice)} | ${table.rows.map((r) => `${r.id === "angel" ? r.name : r.name.toLowerCase()} ${stake(r.share)}`).join(", ")} of ${table.sharesInIssue.toLocaleString("en-GB")} shares`,
   );
+  lines.push(`pay: ${payStatus(sim, state)}`);
   lines.push(`funding: ${fundingStatus(sim, state)}`);
   const investors = investorsStatus(sim, state);
   if (investors) lines.push(`investors: ${investors}`);
@@ -503,6 +505,79 @@ export function renderStatus(sim: Sim, state: GameState): string {
   for (const e of sim.events(state)) lines.push(`event today: ${e.name}. ${e.responsibility} ${e.outcome}`);
   for (const g of sim.featureGaps(state)) lines.push(`feature gap: ${g.name}. ${g.detail}`);
   return lines.join("\n");
+}
+
+/** A pay rise as a percent, to a tenth: 3.4%. */
+const rise = (n: number) => `${(Math.round(n * 1000) / 10).toFixed(1)}%`;
+
+/** Pay in a line: the open review, or the rises agreed so far and the next review's day. */
+function payStatus(sim: Sim, state: GameState): string {
+  const review = sim.payReview(state);
+  if (review) {
+    return `PAY REVIEW OPEN for quarter ${review.quarter} (from day ${review.startDay}): inflation ${rise(review.inflation)}, offer ${rise(review.minOffer)}–${rise(review.maxAsk)}, staff asking ${rise(review.staffFigure)}; ${review.offersLeft} offer${review.offersLeft === 1 ? " left (final)" : "s left"}. The day can't go on until it's settled ("pay" for the review)`;
+  }
+  const rises = state.pastPayReviews.map((r) => `Q${r.quarter} ${rise(r.rise)}`).join(", ");
+  const next = sim.config.payReview.on === 1 ? sim.payReviewDays(state).find((d) => d > state.day + 1) : undefined;
+  const multiple = `pay ×${state.payMultiplier.toFixed(3)} of the day rates`;
+  return `${rises ? `${multiple} (rises: ${rises})` : "no pay reviews yet"}${next ? `; next review before day ${next}` : ""}`;
+}
+
+/** The open pay review in full: the caps, the offers and counters so far, and what's next. */
+function payLines(sim: Sim, state: GameState): string[] {
+  const review = sim.payReview(state);
+  if (!review) return [`pay: ${payStatus(sim, state)}`];
+  const lines = [
+    `pay review, quarter ${review.quarter} (the rise applies from day ${review.startDay}): inflation ${rise(review.inflation)}. ` +
+      `You can offer from ${rise(review.minOffer)} (inflation less a point); staff ask ${rise(review.maxAsk)} at most. A rise below inflation is a pay cut in real terms.`,
+    `  the team costs ${money(review.dailyStaffCost)}/day now`,
+  ];
+  review.rounds.forEach((r, i) => {
+    lines.push(`  offer ${i + 1}: you offered ${rise(review.studentOffers[i]!)}, ${rollText(r)} → staff counter ${rise(review.staffFigures[i + 1]!)}`);
+  });
+  lines.push(
+    review.canAcceptCounter
+      ? `  staff are asking ${rise(review.staffFigure)}: "accept pay" to agree it, or offer again`
+      : `  staff open at ${rise(review.staffFigure)}: make the first offer`,
+  );
+  if (review.final) lines.push("  your next offer is FINAL: if staff don't accept it, the rise is set midway between it and their figure");
+  return lines;
+}
+
+/** What offering a rise would cost and, if staff counter, the odds on their roll. */
+function payOddsLines(p: PayOfferPreview): string[] {
+  const chance = (x: number) => pct(x * 100);
+  const real = p.realTerms < 0 ? `${rise(-p.realTerms)} below inflation: a real-terms pay cut` : `${rise(p.realTerms)} above inflation`;
+  const lines = [`offer ${rise(p.rise)} (${real}): +${money(p.extraPerDay)}/day, +${money(p.extraPerYear)} a year at today's team`];
+  if (p.meetsAsk) lines.push("  that's what staff are asking: they take it");
+  if (p.midpoint !== null) lines.push(`  final offer: staff accept it, or the rise is set midway at ${rise(p.midpoint)}`);
+  if (p.odds) {
+    const o = p.odds;
+    lines.push(
+      `  if staff don't accept it, they counter: it asks them ${pct(o.ask * 100)} lower, −${o.penalty} on the roll${o.bonus ? `, +${o.bonus} bonus` : ""}`,
+      `    high ${chance(o.chances.high)} → ${rise(o.outcomes.high.rise!)}`,
+      `    middle ${chance(o.chances.middle)} → ${rise(o.outcomes.middle.rise!)}`,
+      `    low ${chance(o.chances.low)} → ${rise(o.outcomes.low.rise!)}`,
+    );
+  }
+  return lines;
+}
+
+/** How an offer or an accepted counter left the review: settled on a rise, or staff's counter standing. */
+function payResultLine(sim: Sim, before: GameState, after: GameState): string {
+  const review = sim.payReview(after);
+  if (review) {
+    const r = review.rounds.at(-1)!;
+    const left = `${review.offersLeft} offer${review.offersLeft === 1 ? " left, final" : "s left"}`;
+    return `offer ${rise(review.studentOffers.at(-1)!)}: staff counter, ${rollText(r)} → they ask ${rise(review.staffFigure)} (${left}; "accept pay" agrees it)`;
+  }
+  const settled = after.pastPayReviews.at(-1)!;
+  const how =
+    settled.outcome === "offerAccepted"
+      ? `staff accepted your offer of ${rise(settled.rise)}`
+      : settled.outcome === "counterAccepted"
+        ? `you accepted staff's counter of ${rise(settled.rise)}`
+        : `no deal on the final offer: the rise is set midway, at ${rise(settled.rise)}`;
+  return `pay review settled: ${how}. Pay ×${after.payMultiplier.toFixed(3)} of the day rates from day ${settled.startDay}: the team costs ${money(sim.dailyStaffCost(after))}/day (was ${money(sim.dailyStaffCost(before))})`;
 }
 
 /** The IPO in a line: how many readiness conditions are met and what's next. */
@@ -738,6 +813,15 @@ function staffLines(sim: Sim, state: GameState): string[] {
 /** Every command that does something right now, with the values it takes. */
 export function renderCommands(sim: Sim, state: GameState): string {
   const lines = ["commands (join several with ';'):"];
+  const review = sim.payReview(state);
+  if (review) {
+    lines.push(
+      `  pay   (the pay review in full; changes nothing)`,
+      `  offer <${rise(review.minOffer)}–${rise(review.maxAsk)}>   (offer staff a pay rise, e.g. offer 3.5: they accept or counter with a roll; the third offer is final)`,
+      `  payodds <rise %>   (what an offer would cost, and the odds on staff's counter; changes nothing)`,
+    );
+    if (review.canAcceptCounter) lines.push(`  accept pay   (agree staff's counter of ${rise(review.staffFigure)})`);
+  }
   // Moderators only on a product with user content.
   const pools = sim.staff(state).map((p) => p.pool).join("|");
   const grades = STAFF_GRADES.join("|");
@@ -915,6 +999,8 @@ export type Command =
   | { kind: "angel" }
   | { kind: "rescue" }
   | { kind: "calendar" }
+  | { kind: "pay" }
+  | { kind: "payOdds"; rise: number }
   | { kind: "next"; days: number }
   /** The teacher ends the game, as from the staff panel. */
   | { kind: "end" };
@@ -942,6 +1028,9 @@ function count(word: string | undefined): number {
   if (!Number.isInteger(n) || n < 1 || n > 500) throw new SimError("bad_command", "How many must be a whole number from 1 to 500.");
   return n;
 }
+
+/** A pay rise typed as a percent, "3.5%" or "3.5", as a share (0.035). */
+const risePercent = (word: string | undefined) => number(word?.replace(/%$/, ""), "a pay rise in %") / 100;
 
 /** Reads one command, such as "hire support 5" or "rent app medium". Throws a SimError explaining what's wrong. */
 export function parseCommand(text: string): Command {
@@ -1054,7 +1143,14 @@ export function parseCommand(text: string): Command {
       return { kind: "funding" };
     case "calendar":
       return { kind: "calendar" };
+    case "pay":
+      return { kind: "pay" };
+    case "offer":
+      return one({ type: "offerPayRise", rise: risePercent(args[0]) });
+    case "payodds":
+      return { kind: "payOdds", rise: risePercent(args[0]) };
     case "accept": {
+      if (args[0] === "pay") return one({ type: "acceptPayCounter" });
       const from = funder(args[0]);
       return one(from === "angel" ? { type: "acceptInvestor" } : { type: "acceptFunding", funder: from });
     }
@@ -1171,6 +1267,8 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
   if (command.kind === "angel") return { state, rows: [], lines: angelLines(sim, state) };
   if (command.kind === "rescue") return { state, rows: [], lines: rescueLines(sim, state) };
   if (command.kind === "calendar") return { state, rows: [], lines: calendarLines(sim, state) };
+  if (command.kind === "pay") return { state, rows: [], lines: payLines(sim, state) };
+  if (command.kind === "payOdds") return { state, rows: [], lines: payOddsLines(sim.payOfferPreview(state, command.rise)) };
   if (command.kind === "end") {
     const ended = sim.endGame(state);
     // Logged as the classroom server logs a game the teacher ends.
@@ -1211,6 +1309,9 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
   }
   if (command.action.type === "counterFunding") return { state: current, rows, lines: [counterLine(sim, current, command.action.funder)] };
   if (command.action.type === "counterInvestor") return { state: current, rows, lines: [counterLine(sim, current, "angel")] };
+  if (command.action.type === "offerPayRise" || command.action.type === "acceptPayCounter") {
+    return { state: current, rows, lines: [payResultLine(sim, state, current)] };
+  }
   if (command.action.type === "acceptInvestor") {
     const a = sim.investors(current).angel!;
     return {

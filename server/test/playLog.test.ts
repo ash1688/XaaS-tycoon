@@ -22,6 +22,8 @@ const PASSWORD = "test-teacher-password";
 const sim = createSim({
   ...defaultConfig,
   finalDay: 4,
+  // No pay reviews, which would hold the clock every day of a 4-day game.
+  payReview: { ...defaultConfig.payReview, on: 0 },
   staffGrades: { ...defaultConfig.staffGrades, mid: { ...defaultConfig.staffGrades.mid, leadDays: 0 } },
 });
 // Distinctive, so a leak into any stored or exported text can be searched for.

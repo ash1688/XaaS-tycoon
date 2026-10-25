@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { settlingPay } from "./settlingPay.ts";
 import { createSim, defaultConfig, type Action, type DayLog, type GameConfig, type GameState } from "../src/index.ts";
 
-const sim = createSim();
+// Pay reviews settled as they open, as a bot would: they have their own tests (payReview.test.ts).
+const sim = settlingPay(createSim());
 const product = defaultConfig.productTypes.payments;
 const tx = product.transactions!;
 const perMonth = defaultConfig.billing.daysPerMonth;

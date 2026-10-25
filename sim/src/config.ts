@@ -1441,6 +1441,53 @@ export interface NegotiationConfig {
 }
 
 /**
+ * Pay reviews: a game counts as one year of four equal quarters (the game's days ÷ 4; a game with no last day counts
+ * openEndedYearDays). At the start of quarters 2, 3 and 4 the staff come to the student about pay, and the clock stops
+ * until it's settled. Every figure here is a share of pay: 0.01 is one point.
+ *
+ * - Inflation: rolled for each review from inflation.min to inflation.max, on the review's own RNG.
+ * - Caps: the student can offer no less than inflation − minOfferBelow (never below 0), and staff never ask for more
+ *   than inflation + maxAskAbove. Staff open at that ask.
+ * - Fair rise: inflation, plus growthWeight × income growth (the last fairRise.days days against the days before,
+ *   within ±maxGrowthAdjust), plus profitBonus if those days made a profit, less tightCashCut if cash would last fewer
+ *   than tightCashDays at today's burn. Kept within the caps. Staff walk away from (accept) any offer at or above a
+ *   hidden figure within walkAwaySpread of it.
+ * - The student offers first; below the walk-away figure staff counter, and a roll on `negotiation` decides how far
+ *   they come down from their ask towards the offer (see NegotiationConfig, with the student's offer as the counter).
+ *   The third offer is final: short of the walk-away figure, it settles midway between it and staff's last counter.
+ * - The agreed rise multiplies every staff pool's day rate from the next day, compounding with each review.
+ */
+export interface PayReviewConfig {
+  /** 1 if staff come about pay each quarter; 0 turns pay reviews off, and pay stays at the day rates all game. */
+  on: number;
+  /** A year for a game with no last day (until IPO), whose quarters the reviews follow. */
+  openEndedYearDays: number;
+  inflation: { min: number; max: number };
+  /** The least offer is inflation less this (0.01 = one point), never below 0. */
+  minOfferBelow: number;
+  /** The most staff ask is inflation plus this. */
+  maxAskAbove: number;
+  fairRise: {
+    /** Days of income compared, against the same number of days before them. */
+    days: number;
+    /** Points of rise per 100% income growth (0.02 = two points). */
+    growthWeight: number;
+    /** The most income growth adds or takes off the fair rise. */
+    maxGrowthAdjust: number;
+    /** Added when the recent days made a profit. */
+    profitBonus: number;
+    /** With fewer days of cash than this at today's burn, cash is tight. */
+    tightCashDays: number;
+    /** Taken off when cash is tight. */
+    tightCashCut: number;
+  };
+  /** Staff's hidden walk-away figure is within this of the fair rise. */
+  walkAwaySpread: number;
+  /** The rolls on staff's counters: the student's offer is the counter, staff's figure the offer. */
+  negotiation: NegotiationConfig;
+}
+
+/**
  * The rescue buyout: the first time cash runs out, a vulture VC rescues the company instead of the game ending. The
  * second time is liquidation, and the game ends.
  *
@@ -1602,6 +1649,7 @@ export interface GameConfig {
   funding: FundingConfig;
   ipo: IpoConfig;
   negotiation: NegotiationConfig;
+  payReview: PayReviewConfig;
   rescue: RescueConfig;
   investors: InvestorsConfig;
   pricing: PricingConfig;
@@ -2559,6 +2607,27 @@ export const defaultConfig: GameConfig = {
     maxAsk: 0.5,
     // A low roll hardens the other side: the next offer is a fifth of the counter's distance worse than the last.
     moves: { high: 0.8, middle: 0.5, low: -0.2 },
+  },
+  // Placeholders from the design (#189): inflation of 2–6% a review, offers from a point below it, asks up to four
+  // points above. A company growing and in profit is expected to pay a point or two more. The roll is gentler than an
+  // investor's: an offer is measured against staff's ask, and asking them to come down 50% costs 5 pips.
+  payReview: {
+    on: 1,
+    openEndedYearDays: 365,
+    inflation: { min: 0.02, max: 0.06 },
+    minOfferBelow: 0.01,
+    maxAskAbove: 0.04,
+    fairRise: { days: 30, growthWeight: 0.02, maxGrowthAdjust: 0.02, profitBonus: 0.005, tightCashDays: 30, tightCashCut: 0.01 },
+    walkAwaySpread: 0.005,
+    negotiation: {
+      dieSides: 20,
+      highFrom: 14,
+      middleFrom: 7,
+      greedPenalty: 10,
+      maxAsk: 1,
+      // A low roll hardens staff: they ask for a fifth of the gap more, never above their opening ask.
+      moves: { high: 0.8, middle: 0.5, low: -0.2 },
+    },
   },
   // Placeholders from the design: about 30 days of breathing space for about 75% of the company. Buying it back costs
   // at least twice what the vulture VC put in.
