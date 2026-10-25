@@ -255,6 +255,39 @@ In the game, launches and releases use made-up names, not real ones.
 - **It's code**, so it survives a migration, capped at the new model's maximum.
 - Early on, features drive growth; once the company is big, a few percent off a large server bill is worth more than another feature. *Sizes, shares and caps are placeholders.*
 
+## Pay reviews
+
+Each game counts internally as one year, split into **four equal quarters** (game length ÷ 4). At the start of quarters 2, 3 and 4, staff come to the student about pay: three reviews a game, whatever its length.
+
+- **It stops the clock.** A notification appears and the student can't continue until the review is settled.
+- **What the student sees:**
+  - the review's **inflation figure** (rolled between 2% and 6%)
+  - the **lowest offer allowed** (inflation − 1 point, never below 0) and the **most staff will ask for** (inflation + 4 points)
+  - a live **cost preview** of their offer
+- **The student offers first**, then staff respond. The rounds use the investor negotiation's roll with the sides reversed:
+  1. The student offers a cash rise plus any scheme increases.
+  2. Staff **accept** if the offer reaches their hidden walk-away point. If not, they **counter**, and a roll decides how far they come down.
+  3. The student can accept a counter at any time.
+  4. If there's still no deal after the student's **third offer**, it goes to a **tribunal**.
+- **The tribunal** picks the student's figure, the staff's figure or the middle. The roll is weighted towards whichever is closer to a hidden **fair rise** (inflation, plus more if the company is doing well), and the student pays a fee. There's no declining a review; the tribunal always settles it.
+- **Staff schemes** cost money going forward but let the student offer a smaller cash rise:
+
+  | Scheme | Control | Cost going forward | Value to staff |
+  |---|---|---|---|
+  | Share save | Slider 0–3 | New shares worth 1% of the company per level, to a "Staff share scheme" holder on the cap table (dilutes the student; outside the C-suite equity cap) | High |
+  | Pension top-up | Slider 0–3 | An extra % on the wage bill | Medium |
+  | Health cash plan (eye, dental, physio) | Slider 0–3 | £ per staff member per day | Medium |
+  | Death in service | On/off | A small % on the wage bill | Low |
+  | Discount scheme (like Blue Light Card) | On/off | A very small £ per staff member per day | Low |
+
+  - **Schemes only go up.** A slider can be raised in a later review but never lowered or removed; a toggle once on stays on. Only the increase counts towards that review's offer.
+  - If the tribunal picks the staff's figure, it's a cash rise only; if it picks the student's or the middle, the student's scheme increases apply.
+- **The rise is pool-wide.** It lifts every staff pool's day rate, so existing staff get it and new hires join at the new rate. The C-suite is left out. Pay reviews replace wage inflation from drift.
+- **Without a head of people** the student deals with staff directly: staff are stricter on the roll, want cash, and value schemes at only about 70%. **With a head of people** they're friendlier, value schemes fully or more, and the tribunal leans slightly the student's way.
+- **A pay history** on the People page lists past reviews, how each ended, the rises given and the current schemes with their running costs.
+
+The lessons: a rise below inflation is a pay cut, benefits are a permanent cost, and share schemes are paid for in ownership. *All figures are placeholders.*
+
 ## C-suite
 
 A leadership team the student hires one role at a time. Each role gives a lasting bonus to one area of the business.
@@ -284,7 +317,7 @@ A leadership team the student hires one role at a time. Each role gives a lastin
 | Legal counsel | Lawsuits and the IPO compliance audit |
 | CISO | Patching and security breaches |
 | CMO | Gets more out of marketing spend |
-| Head of people | Shorter hiring lead times, fewer staff leaving, desk planning |
+| Head of people | Shorter hiring lead times, desk planning, friendlier pay reviews (better rolls, schemes valued more, tribunal leans your way) |
 | Head of ops | Ops staff cover more servers; better uptime |
 | Head of support | Support staff clear more tickets; satisfaction recovers faster |
 | Head of development | Developers build faster |
@@ -484,7 +517,7 @@ A game ends on liquidation, on an IPO, or when its **game length** runs out. **T
 
 Long games change slowly rather than in eras (eras are kept for later):
 
-- **Inflation:** wages and prices rise each year.
+- **Inflation:** prices rise each year. Wages rise only through pay reviews, which show the same inflation figure.
 - **Cheaper hardware:** servers and VMs give more CU for the money each year.
 - **Server wear:** servers wear out and need replacing after about 5 years. Running a server below 100% on the hardware-tuning slider makes it last longer; running it above 100% wears it faster.
 
