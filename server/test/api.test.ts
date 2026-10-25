@@ -4386,6 +4386,8 @@ describe("pay reviews", () => {
       ["shareSave", 0],
     ]);
     expect(review.schemeValuation).toBe(0.7);
+    // No head of people yet (#108): the student deals with staff directly, and staff take a point off the roll.
+    expect(review).toMatchObject({ headOfPeople: false, rollBonus: -1 });
     const preview = (
       await payApp.inject({ method: "GET", url: `${url}/pay-offer?rise=${review.minOffer}&pension=2&deathInService=1` })
     ).json<PayOfferView>();

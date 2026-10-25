@@ -92,6 +92,10 @@ _Avoid_: Science, research credits, XP
 Staff coming to the student about pay before quarters 2, 3 and 4 of a game (a game counts as one year of four equal quarters). The clock holds until it's settled. Each review rolls its own inflation, from 2% to 6%; the student offers a rise from inflation less a point, and staff, who open at inflation plus four points, accept an offer near a fair rise for how the company is doing or counter with a roll. The agreed rise lifts every staff pool's day rate, new hires and agency staff included, and compounds with each review. The C-suite is left out.
 _Avoid_: Pay rise round, wage negotiation, salary review
 
+**People-lead modifier**:
+What a head of people (a C-suite role) changes in a pay review, read in one place: the roll bonus on staff's counters, a softer walk-away figure, how much of a staff scheme's worth staff count, and a tribunal lean the student's way. Without a head of people the student deals with staff directly: staff take a point off the roll and count schemes at about 70%, with no softening and no lean. No head of people can be hired yet.
+_Avoid_: HR modifier, people lead bonus
+
 **Staff scheme**:
 A benefit the student can offer in a pay review alongside or instead of some of a cash rise: a pension top-up, a health cash plan, share save (levels 0–3), death in service or a discount scheme (on or off). Staff count only the levels added in that review, at about 70% of their worth without a head of people. Each is paid every day afterwards for every permanent member of staff, and its level only goes up: once given, it can't be lowered or taken away.
 _Avoid_: Benefit (that's a model benefit), perk, package

@@ -133,6 +133,7 @@ test("a pay review stops timed flow and holds the game until the student settles
   await expect(student.getByTestId("day")).toContainText(`7 of ${E2E_FINAL_DAY}`);
   await expect(modal).toContainText("Quarter 2 starts on day 8, and your staff want to talk about pay.");
   await expect(modal.getByTestId("pay-inflation")).toHaveText(/^\d\.\d%$/);
+  await expect(modal.getByTestId("pay-dealing-directly")).toContainText("You're dealing with staff directly");
   const maxAsk = (await modal.getByTestId("pay-max-ask").innerText()).replace("%", "");
 
   // Closed to look around, the game still holds, and a note opens it again.

@@ -1,6 +1,7 @@
 import type { GameConfig } from "./config.ts";
 import { count, pounds, profitCosts } from "./finance.ts";
 import { createNegotiation, MAX_OFFERS, type CounterOdds, type NegotiationRound, type TermSpec } from "./negotiation.ts";
+import { peopleLead } from "./peopleLead.ts";
 import { nextRandom, seedRng } from "./rng.ts";
 import { dailyStaffCost } from "./staff.ts";
 import {
@@ -74,6 +75,13 @@ export interface PayReviewView {
   schemes: StaffSchemeView[];
   /** How much of a scheme's value staff count (0.7 = 70%). */
   schemeValuation: number;
+  /**
+   * Whether a head of people handles the review. Without one the student deals with staff directly, so staff are
+   * stricter on the roll (rollBonus below 0) and want cash. Always false until the C-suite (#108) is built.
+   */
+  headOfPeople: boolean;
+  /** Added to the d20 on each staff counter, from the people-lead modifier: below 0 is a penalty. */
+  rollBonus: number;
 }
 
 /** One scheme in an offer's preview: the level offered, what that adds to its worth to staff, and its cost a day. */
@@ -200,16 +208,18 @@ export function createPayReview(
 
   /**
    * Opens the review for `quarter` after the day just played: rolls inflation and staff's walk-away figure on the
-   * reviews' own RNG, and staff open at their ask. The clock is held until it's settled.
+   * reviews' own RNG, softened by the people-lead modifier, and staff open at their ask. The clock is held until it's
+   * settled.
    */
   function openReview(state: GameState, quarter: number): { state: GameState; entries: LogEntry[] } {
+    const lead = peopleLead(config, state);
     const [r1, rng1] = nextRandom(state.payReviewRng);
     const [r2, rng2] = nextRandom(rng1);
     const inflation = roundRise(c.inflation.min + r1 * (c.inflation.max - c.inflation.min));
     const minOffer = Math.max(0, roundRise(inflation - c.minOfferBelow));
     const maxAsk = roundRise(inflation + c.maxAskAbove);
     const fairRise = fairRiseFor(state, inflation, minOffer, maxAsk);
-    const walkAway = clamp(roundRise(fairRise + c.walkAwaySpread * (2 * r2 - 1)), minOffer, maxAsk);
+    const walkAway = clamp(roundRise(fairRise + c.walkAwaySpread * (2 * r2 - 1) - lead.walkAwaySoftening), minOffer, maxAsk);
     const review: PayReview = {
       quarter,
       startDay: state.day + 1,
@@ -225,7 +235,8 @@ export function createPayReview(
     const text =
       `Pay review: quarter ${quarter} starts on day ${review.startDay}, and your staff want to talk about pay. ` +
       `Inflation is ${risePercent(inflation)}, and they're asking for ${risePercent(maxAsk)}. ` +
-      `Make them an offer from ${risePercent(minOffer)}: the day can't go on until it's settled.`;
+      `Make them an offer from ${risePercent(minOffer)}: the day can't go on until it's settled.` +
+      (lead.headOfPeople ? "" : " You're dealing with staff directly: with no head of people, they're stricter and want cash.");
     return { state: { ...state, payReview: review, payReviewRng: rng2 }, entries: [{ text, cashDelta: 0, kind: "staff" }] };
   }
 
@@ -326,16 +337,18 @@ export function createPayReview(
   /**
    * The tribunal's odds on a final offer of `offered` against staff's last figure. Each pick is weighted by how far its
    * rise is from the fair rise, as a share of the gap between the two figures: the closer, the likelier, and the middle
-   * likeliest when the fair rise is about halfway. See PayReviewConfig's tribunal.
+   * likeliest when the fair rise is about halfway. The people-lead modifier's lean moves the fair rise it weighs against
+   * a share of the gap towards the student's offer. See PayReviewConfig's tribunal.
    */
-  function tribunalOdds(review: PayReview, offered: number, cash: number): TribunalOdds {
+  function tribunalOdds(state: GameState, review: PayReview, offered: number, cash: number): TribunalOdds {
     const staff = staffFigure(review);
     const rises: Record<TribunalPick, number> = { student: offered, middle: roundRise((offered + staff) / 2), staff };
     // The schemes' share of the offer stays with the middle, which tops up the cash.
     const schemes = offered - cash;
     const cashRises: Record<TribunalPick, number> = { student: cash, middle: Math.max(0, roundRise(rises.middle - schemes)), staff };
     const gap = Math.max(staff - offered, STEP);
-    const weights = TRIBUNAL_PICKS.map((p) => Math.exp((-c.tribunal.sharpness * Math.abs(rises[p] - review.fairRise)) / gap));
+    const fair = review.fairRise - peopleLead(config, state).tribunalLean * gap;
+    const weights = TRIBUNAL_PICKS.map((p) => Math.exp((-c.tribunal.sharpness * Math.abs(rises[p] - fair)) / gap));
     const total = weights.reduce((sum, w) => sum + w, 0);
     const chances = Object.fromEntries(TRIBUNAL_PICKS.map((p, i) => [p, weights[i]! / total])) as Record<TribunalPick, number>;
     return { fee: c.tribunal.fee, rises, cash: cashRises, chances };
@@ -352,7 +365,7 @@ export function createPayReview(
     offers: { studentOffers: number[]; offerTerms: PayOfferTerms[] },
   ): GameState {
     const final = offers.offerTerms.at(-1)!;
-    const odds = tribunalOdds(review, offers.studentOffers.at(-1)!, final.rise);
+    const odds = tribunalOdds(state, review, offers.studentOffers.at(-1)!, final.rise);
     const [roll, rng] = nextRandom(state.payReviewRng);
     let below = 0;
     const pick = TRIBUNAL_PICKS.find((p) => roll < (below += odds.chances[p])) ?? "staff";
@@ -366,7 +379,8 @@ export function createPayReview(
   /**
    * Offers staff a cash `rise` and any scheme levels raised. Staff weigh its worth: the rise plus the schemes raised,
    * as they value them. At or above their walk-away figure they accept. Short of it, they counter with a cash figure,
-   * with a roll on the reviews' RNG for how far they come down from their figure towards the offer; on the final
+   * with a roll on the reviews' RNG for how far they come down from their figure towards the offer, plus the
+   * people-lead modifier's roll bonus (a penalty without a head of people); on the final
    * (third) offer there's no counter, and it goes to the tribunal.
    */
   function offer(state: GameState, rise: number, schemes?: Partial<SchemeLevels>): GameState {
@@ -382,7 +396,8 @@ export function createPayReview(
     if (offers.studentOffers.length >= MAX_OFFERS) {
       return goToTribunal(state, review, offers);
     }
-    const done = negotiator.counter(review.negotiation, { rise: checked.value }, specsFor(review), state.payReviewRng);
+    const bonus = peopleLead(config, state).rollBonus;
+    const done = negotiator.counter(review.negotiation, { rise: checked.value }, specsFor(review), state.payReviewRng, bonus);
     return { ...state, payReviewRng: done.rng, payReview: { ...review, ...offers, negotiation: done.negotiation } };
   }
 
@@ -400,6 +415,7 @@ export function createPayReview(
     const review = state.payReview;
     if (!review) return null;
     const offersLeft = MAX_OFFERS - review.studentOffers.length;
+    const lead = peopleLead(config, state);
     return {
       quarter: review.quarter,
       startDay: review.startDay,
@@ -417,7 +433,9 @@ export function createPayReview(
       canAcceptCounter: review.studentOffers.length > 0,
       dailyStaffCost: teamCost(state),
       schemes: schemeViews(config, state),
-      schemeValuation: schemeValuation(config, state),
+      schemeValuation: lead.schemeValuation,
+      headOfPeople: lead.headOfPeople,
+      rollBonus: lead.rollBonus,
     };
   }
 
@@ -457,8 +475,8 @@ export function createPayReview(
       extraPerYear: extraPerDay * 365,
       realTerms: roundRise(terms.rise - review.inflation),
       meetsAsk,
-      odds: final || meetsAsk ? null : negotiator.odds(review.negotiation, { rise: value }, specsFor(review)),
-      tribunal: final && !meetsAsk ? tribunalOdds(review, value, terms.rise) : null,
+      odds: final || meetsAsk ? null : negotiator.odds(review.negotiation, { rise: value }, specsFor(review), peopleLead(config, state).rollBonus),
+      tribunal: final && !meetsAsk ? tribunalOdds(state, review, value, terms.rise) : null,
     };
   }
 

@@ -103,9 +103,12 @@ type Party = FunderId | "angel";
 const termsText = (party: Party, t: Terms) =>
   party === "grant" ? `${money(t.amount!)} for ${t.days} days of uptime` : `${money(t.amount!)} for ${stake(t.share!)}`;
 
+/** A roll's bonus in words: "+2 bonus", or below 0 (staff dealt with directly) "−1 penalty". */
+const bonusText = (bonus: number) => (bonus > 0 ? ` +${bonus} bonus` : bonus < 0 ? ` −${-bonus} penalty` : "");
+
 /** A roll in words: "rolled 15 −6 for asking 20% = 9: middle, they moved 50% of the way". */
 const rollText = (r: NegotiationRound) =>
-  `rolled ${r.die}${r.penalty ? ` −${r.penalty} for asking ${pct(r.ask * 100)}` : ""}${r.bonus ? ` +${r.bonus} bonus` : ""} = ${r.total < 0 ? `−${-r.total}` : r.total}: ${r.result}, ${r.move < 0 ? `they dug in: the offer got worse by ${pct(-r.move * 100)} of what you asked` : `they moved ${pct(r.move * 100)} of the way`}`;
+  `rolled ${r.die}${r.penalty ? ` −${r.penalty} for asking ${pct(r.ask * 100)}` : ""}${bonusText(r.bonus)} = ${r.total < 0 ? `−${-r.total}` : r.total}: ${r.result}, ${r.move < 0 ? `they dug in: the offer got worse by ${pct(-r.move * 100)} of what you asked` : `they moved ${pct(r.move * 100)} of the way`}`;
 
 /** Where a negotiation stands: offer 2 of 3, with a counter left, or the final offer. */
 const standing = (n: NegotiationView) =>
@@ -576,6 +579,11 @@ function payLines(sim: Sim, state: GameState): string[] {
     `  the team costs ${money(review.dailyStaffCost)}/day now, pay and staff schemes`,
     ...schemeLines(review.schemes, review.schemeValuation),
   ];
+  if (!review.headOfPeople) {
+    lines.push(
+      `  you're dealing with staff directly (no head of people): they're stricter, ${review.rollBonus < 0 ? `−${-review.rollBonus}` : `+${review.rollBonus}`} on every counter roll, and want cash, counting schemes at ${pct(review.schemeValuation * 100)}`,
+    );
+  }
   review.rounds.forEach((r, i) => {
     lines.push(`  offer ${i + 1}: you offered ${offerText(sim, state, review.offerTerms[i]!, review.studentOffers[i]!)}, ${rollText(r)} → staff counter ${rise(review.staffFigures[i + 1]!)}`);
   });
@@ -633,7 +641,7 @@ function payOddsLines(p: PayOfferPreview): string[] {
   if (p.odds) {
     const o = p.odds;
     lines.push(
-      `  if staff don't accept it, they counter: it asks them ${pct(o.ask * 100)} lower, −${o.penalty} on the roll${o.bonus ? `, +${o.bonus} bonus` : ""}`,
+      `  if staff don't accept it, they counter: it asks them ${pct(o.ask * 100)} lower, −${o.penalty} on the roll${o.bonus ? `,${bonusText(o.bonus)}` : ""}`,
       `    high ${chance(o.chances.high)} → ${rise(o.outcomes.high.rise!)}`,
       `    middle ${chance(o.chances.middle)} → ${rise(o.outcomes.middle.rise!)}`,
       `    low ${chance(o.chances.low)} → ${rise(o.outcomes.low.rise!)}`,

@@ -359,9 +359,16 @@ describe("the tribunal", () => {
   });
 
   it("favours staff's figure over a lowball further from the fair rise", () => {
-    // Here staff's counters have come down to the fair rise itself.
-    expect(fair - review.minOffer).toBeGreaterThan(review.staffFigure - fair);
-    const lowball = tally(review.minOffer);
+    // Each counter comes 60% of the way down whatever the roll, so after two offers at the least staff ask 0.2 points
+    // under the fair rise: inflation + 4 − 3, then − 1.2. That's nearer it than the lowball, a point under.
+    const moves = { high: 0.6, middle: 0.6, low: 0.6 };
+    const steady = createSim({ ...plain.config, payReview: { ...plain.config.payReview, negotiation: { ...plain.config.payReview.negotiation, moves } } });
+    const open = untilReview(steady, begin(steady));
+    const { minOffer, fairRise } = open.payReview!;
+    const final = offer(steady, offer(steady, open, minOffer), minOffer);
+    expect(steady.payReview(final)!.staffFigure).toBeCloseTo(fairRise - 0.002, 6);
+    const lowball = { student: 0, middle: 0, staff: 0 };
+    for (let seed = 0; seed < 500; seed++) lowball[offer(steady, { ...final, payReviewRng: seed }, minOffer).pastPayReviews.at(-1)!.tribunal!.pick]++;
     expect(lowball.staff).toBeGreaterThan(lowball.middle);
     expect(lowball.middle).toBeGreaterThan(lowball.student);
   });
