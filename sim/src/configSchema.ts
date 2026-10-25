@@ -270,6 +270,19 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add(`optimisation.cap.${m}`, "People", "Optimisation", `Most it saves (${MODEL_LABELS[m]})`, "The most optimisation can cut resource need per user on this model (0.5 = half): CU and DBU per user, PaaS instances, or the SaaS per-user fee. Kept through a migration, capped at the new model's.", range(0, 0.95, 0.05));
   }
   add("research.pointsPerPerson", "People", "Research", "Research points per researcher", "Research points (RP) a mid researcher earns a day. Juniors and seniors earn this × their grade's output. RP bank with no cap.", range(0, 100, 0.5));
+  const CAMPAIGNS = "Campaigns";
+  for (const t of CUSTOMER_TYPE_IDS) {
+    const type = base.customerTypes?.[t]?.name ?? t;
+    add(`campaigns.costPerUser.${t}`, "Customers", CAMPAIGNS, `${type}: cost per user`, "What one new user of this type costs a campaign aimed at it, before how full the market is, overlapping campaigns and a holiday bonus.", range(0.1, 10_000, 0.1));
+  }
+  add("campaigns.minBudget", "Customers", CAMPAIGNS, "Smallest budget", "The least a campaign's budget can be.", range(1, 1_000_000, 1));
+  add("campaigns.maxBudget", "Customers", CAMPAIGNS, "Biggest budget", "The most a campaign's budget can be.", range(1, 100_000_000, 100));
+  add("campaigns.minDays", "Customers", CAMPAIGNS, "Shortest (days)", "The fewest days a campaign can run.", GAME_DAY);
+  add("campaigns.maxDays", "Customers", CAMPAIGNS, "Longest (days)", "The most days a campaign can run.", GAME_DAY);
+  add("campaigns.maxRunning", "Customers", CAMPAIGNS, "Most at once", "How many campaigns can run at the same time.", range(0, 20, 1));
+  add("campaigns.overlapMultiplier", "Customers", CAMPAIGNS, "Overlap on one type", "With n campaigns on the same customer type running on a day, each brings this^(n − 1) of the users per pound it would alone (0.6: two bring 60% each).", SHARE);
+  add("campaigns.holidayLeadDays", "Customers", CAMPAIGNS, "Holiday timing window (days)", "A campaign started up to this many days before a holiday that boosts the product's growth gets the holiday bonus.", range(0, 90, 1));
+  add("campaigns.holidayBonus", "Customers", CAMPAIGNS, "Holiday bonus", "A campaign timed for a holiday brings this × the users per pound, for the whole of its run.", MULTIPLIER);
   const T = "Tiers";
   const TIER = range(1, 4, 1);
   const RP = range(0, 100_000, 1);
@@ -732,6 +745,8 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
     ["rivals.minPriceMultiple", "rivals.maxPriceMultiple", "A rival's highest price can't be below its lowest."],
     ["investors.angel.premium.min", "investors.angel.premium.max", "The angel's most premium can't be below the least."],
     ["investors.angel.share.min", "investors.angel.share.max", "The most share the angel asks can't be below the least."],
+    ["campaigns.minBudget", "campaigns.maxBudget", "A campaign's biggest budget can't be below its smallest."],
+    ["campaigns.minDays", "campaigns.maxDays", "A campaign's longest run can't be below its shortest."],
   ];
   if (GAME_LENGTH_IDS.every((l) => config.allowedGameLengths[l] !== 1)) {
     const changed = GAME_LENGTH_IDS.find((l) => `allowedGameLengths.${l}` in overrides) ?? GAME_LENGTH_IDS[0];

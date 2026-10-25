@@ -32,6 +32,9 @@
   --cabling-soft: #eceafd;
   --power: #be185d;
   --power-soft: #fce8f1;
+  /* Campaigns: growth bought with a budget */
+  --campaigns: #4d7c0f;
+  --campaigns-soft: #eef6dd;
   /* Rivals in the market pie (you are --you) */
   --rival-1: #475569;
   --rival-2: #94a3b8;
@@ -70,6 +73,8 @@
     --cabling-soft: #23244a;
     --power: #f472b6;
     --power-soft: #3b1a2b;
+    --campaigns: #a3e635;
+    --campaigns-soft: #24300f;
     --rival-1: #cbd5e1;
     --rival-2: #64748b;
     --rival-3: #334155;
@@ -470,6 +475,12 @@ fieldset > p {
 .cat-power {
   --cat: var(--power);
   --cat-soft: var(--power-soft);
+}
+
+/* Campaigns: growth the student buys. */
+.cat-campaigns {
+  --cat: var(--campaigns);
+  --cat-soft: var(--campaigns-soft);
 }
 
 /* Debt is the bank's: loan repayments. */

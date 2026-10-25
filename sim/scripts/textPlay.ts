@@ -3,6 +3,7 @@
 // decision. Every game writes the same rows as the classroom playtest log, so the same analysis runs on both.
 // A tool for testing the game, not part of it. See play.ts for the command line.
 import {
+  CUSTOMER_TYPE_IDS,
   defaultConfig,
   DIFFICULTIES,
   gameLengthName,
@@ -17,6 +18,7 @@ import {
   STAFF_POOLS,
   type Action,
   type CounterOdds,
+  type CustomerTypeId,
   type DayLog,
   type FeatureView,
   type FunderId,
@@ -279,6 +281,24 @@ function unlockable(sim: Sim, state: GameState) {
   return [...items.filter(here), ...items.filter((i) => !here(i))];
 }
 
+/**
+ * Campaigns once they've opened: how many run of how many, any holiday a new one would be timed for, and each one
+ * still to run or running, with its spend, users and cost per user so far, then the last few finished.
+ */
+function campaignLines(sim: Sim, state: GameState): string[] {
+  const view = sim.campaigns(state);
+  if (!view.unlocked) return [];
+  const holiday = view.holiday ? `; one started now is timed for ${view.holiday.name} in ${view.holiday.daysUntil}d (×${view.holiday.bonus})` : "";
+  const one = (c: (typeof view.campaigns)[number]) =>
+    `#${c.id} ${c.customerType} £${c.spent}/£${c.budget}, day ${c.daysRun}/${c.days}, ${c.users} users${c.costPerUser !== null ? ` at £${c.costPerUser.toFixed(2)}` : ""}${c.holiday ? ` (${c.holiday} bonus)` : ""} ${c.status}`;
+  const on = view.campaigns.filter((c) => c.status === "starting" || c.status === "running");
+  const done = view.campaigns.filter((c) => c.status === "finished" || c.status === "stopped").slice(0, 3);
+  return [
+    `campaigns: ${view.running}/${view.capacity} running, market ${Math.round(100 * (1 - view.saturation))}% full${holiday}`,
+    ...[...on, ...done].map((c) => `  ${one(c)}`),
+  ];
+}
+
 /** The company at a glance: everything a player sees on the dashboard, as short lines. */
 /** Tiers in a line: those open, and for the next one, its condition and how far the company has got. */
 function tiersLine(sim: Sim, state: GameState): string {
@@ -374,6 +394,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
         : "everything is unlocked";
     lines.push(`research: ${+research.points.toFixed(1)} RP banked, ${research.pointsPerDay} RP a day; ${spend}`);
   }
+  lines.push(...campaignLines(sim, state));
   lines.push(`tiers: ${tiersLine(sim, state)}`);
   const benefitsOn = sim.benefits(state).filter((b) => b.active);
   if (benefitsOn.length) {
@@ -748,6 +769,17 @@ export function renderCommands(sim: Sim, state: GameState): string {
       `  unlock <${toUnlock.map((i) => i.id).join("|")}>   (research points; you have ${+state.researchPoints.toFixed(1)}) ${toUnlock.map(what).join(", ")}`,
     );
   }
+  const campaigns = sim.campaigns(state);
+  if (campaigns.canStart) {
+    const each = campaigns.types.map((t) => `${t.id} £${t.usersPerPound > 0 ? (1 / t.usersPerPound).toFixed(2) : "∞"} a user now${t.running ? ` (${t.running} on it already)` : ""}`).join(", ");
+    lines.push(
+      `  campaign <${campaigns.types.map((t) => t.id).join("|")}> <budget £${campaigns.minBudget}–${campaigns.maxBudget}> <days ${campaigns.minDays}–${campaigns.maxDays}>   (spent evenly from tomorrow; brings users of that type: ${each})`,
+    );
+  } else if (campaigns.unlocked && campaigns.why) {
+    lines.push(`  (no new campaign: ${campaigns.why})`);
+  }
+  const stoppable = campaigns.campaigns.filter((c) => c.status === "starting" || c.status === "running");
+  if (stoppable.length) lines.push(`  stopcampaign <${stoppable.map((c) => c.id).join("|")}>   (stops it after today: the rest of its budget isn't spent)`);
   const buyable = sim.benefits(state).filter((b) => b.onModel && b.unlocked && !b.active);
   if (buyable.length) {
     lines.push(
@@ -971,6 +1003,15 @@ export function parseCommand(text: string): Command {
       return one({ type: "buyBenefit", benefit: benefitId(args[0]) });
     case "unlock":
       return one({ type: "unlockItem", item: benefitId(args[0]) });
+    case "campaign":
+      return one({
+        type: "startCampaign",
+        customerType: oneOf<CustomerTypeId>(args[0], CUSTOMER_TYPE_IDS, "a customer type"),
+        budget: number(args[1]?.replace(/^£/, "").replace(/,/g, ""), "a budget"),
+        days: number(args[2], "a length in days"),
+      });
+    case "stopcampaign":
+      return one({ type: "stopCampaign", id: number(args[0], "a campaign id") });
     case "dropbenefit":
       return one({ type: "cancelBenefit", benefit: benefitId(args[0]) });
     case "slider":

@@ -1,6 +1,7 @@
 import { createApi, type ApiView } from "./api.ts";
 import { createBenefits, managedAutoscaling, type BenefitView } from "./benefits.ts";
 import { createCalendar, isIsoDate, type CalendarView } from "./calendar.ts";
+import { createCampaigns, type CampaignsView } from "./campaigns.ts";
 import {
   allowedDifficulties,
   allowedGameLengths,
@@ -72,6 +73,7 @@ export type { BenefitView } from "./benefits.ts";
 export type { HardwareRisk } from "./hardware.ts";
 export type { TierConditionView, TierItemKind, TierItemView, TierStatusView } from "./tiers.ts";
 export type { CalendarView, GameDate, HolidayView } from "./calendar.ts";
+export type { CampaignTypeView, CampaignView, CampaignsView } from "./campaigns.ts";
 export { dayOfDate, gameDate } from "./calendar.ts";
 export type { ConversionDriver, ConversionDriverId, ConversionView } from "./conversion.ts";
 export type { DangerRiskView, DangerView } from "./encounters.ts";
@@ -145,6 +147,7 @@ export {
   type AdvanceResult,
   type AngelDeal,
   type AngelTarget,
+  type Campaign,
   type ApiState,
   type Approach,
   type DayLog,
@@ -419,6 +422,12 @@ export interface Sim {
    */
   tiers(state: GameState): TierStatusView[];
   /**
+   * Campaigns, for the Marketing page: whether they've opened (from the first angel investor's approach) and one can be
+   * started now, with why not, how many can run at once, what a pound buys of each customer type now, any holiday a
+   * campaign started now would be timed for, and every campaign started with its spend, users and cost per user.
+   */
+  campaigns(state: GameState): CampaignsView;
+  /**
    * Every model's benefits, in config order: each one's tier, fees and whether it's unlocked, on the company's model
    * and on.
    */
@@ -535,6 +544,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   });
   const rescue = createRescue(config, finance, shares, (s) => runway(s), (s) => infra.opsNeededNow(s));
   const investors = createInvestors(config, finance, shares);
+  const campaigns = createCampaigns(config, calendar);
 
   function newGame({
     companyName,
@@ -596,6 +606,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       optimisationDays: 0,
       researchPoints: 0,
       unlocks: [],
+      campaigns: [],
+      nextCampaignId: 1,
       tiers: [],
       benefits: [],
       // The hardware slider has its own too, so overheating doesn't change the rest of the game.
@@ -764,6 +776,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
         return setPerformance(config, state, action.id, action.performance);
       case "unlockItem":
         return unlockItem(config, state, action.item);
+      case "startCampaign":
+        return campaigns.startCampaign(state, action.customerType, action.budget, action.days);
+      case "stopCampaign":
+        return campaigns.stopCampaign(state, action.id);
       default:
         throw new SimError("unknown_action", "That action isn't recognised.");
     }
@@ -801,10 +817,13 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const converted = conversion.convertDay(state, wave.users, wave.paidUsers);
     // On a launch ramp day, its share of the launch users arrives at the end of the day.
     const launched = launch.arrive({ ...state, users: wave.users, paidUsers: converted.paidUsers }, day);
-    const { paidUsers, launchDay } = launched.state;
     // Last, any wave of free users from an event that fired today.
     const viral = events.newUsersToday(state, day, today, launched.state.users);
-    const users = launched.state.users + viral.reduce((sum, n) => sum + n, 0);
+    // And the users campaigns bring, of the types they aim at, on top. As many of them pay as of any new users.
+    const marketing = campaigns.campaignsDay(state, day);
+    const users = launched.state.users + viral.reduce((sum, n) => sum + n, 0) + marketing.users;
+    const paidUsers = launched.state.paidUsers + pricing.paidUsersAfter(state, state.users + marketing.users) - state.paidUsers;
+    const { launchDay } = launched.state;
     const rng = grown.rng;
     // The mix shifts with who left and joined: launch users arrive in the product's mix, the rest as newUserMix says.
     const newMix = mix.newUserMix(state);
@@ -814,7 +833,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       [
         { users: ramping ? 0 : organic.arrived, weights: newMix },
         { users: wave.joined, weights: newMix },
-        { users: users - wave.users, weights: pricing.baseMix(state.productType) },
+        { users: users - wave.users - marketing.users, weights: pricing.baseMix(state.productType) },
+        ...marketing.joined,
       ],
     );
 
@@ -867,6 +887,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       ...moderated.entries,
       ...care.entries,
       ...build.entries,
+      ...marketing.entries,
       ...pricing.incomeEntries(state, wave.refused + (ramping ? 0 : organic.pricedOut), day, served.hoursDown),
       ...calls.entries,
       // Hosting bills start at go-live: before the first users arrive there's nothing running to pay for.
@@ -899,6 +920,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       features: build.features,
       optimisationDays,
       researchPoints,
+      campaigns: marketing.campaigns,
       servers: hardware.servers,
       hardwareRng: hardware.hardwareRng,
       events: recorded.records,
@@ -1137,6 +1159,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       return researchView(config, state, staffOutput(config, state, "researchers"));
     },
     tiers: (s) => tiers.tiersView(load(s)),
+    campaigns: (s) => campaigns.campaignsView(load(s)),
     benefits: (s) => benefits.benefits(load(s)),
     monthlyBenefitCost: (s) => benefits.monthlyBenefitCost(load(s)),
     migration: (s) => migration.migration(load(s)),

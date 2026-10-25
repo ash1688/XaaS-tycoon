@@ -9,6 +9,7 @@ import ProductPage from "./views/game/ProductPage.vue";
 import InfrastructurePage from "./views/game/InfrastructurePage.vue";
 import PeoplePage from "./views/game/PeoplePage.vue";
 import ResearchPage from "./views/game/ResearchPage.vue";
+import MarketingPage from "./views/game/MarketingPage.vue";
 import CustomersPage from "./views/game/CustomersPage.vue";
 import FinancePage from "./views/game/FinancePage.vue";
 import OpeningBellPage from "./views/game/OpeningBellPage.vue";
@@ -37,6 +38,7 @@ const router = createRouter({
         { path: "infrastructure", name: "game-infrastructure", component: InfrastructurePage },
         { path: "people", name: "game-people", component: PeoplePage },
         { path: "research", name: "game-research", component: ResearchPage },
+        { path: "marketing", name: "game-marketing", component: MarketingPage },
         { path: "customers", name: "game-customers", component: CustomersPage },
         { path: "finance", name: "game-finance", component: FinancePage },
         // The opening bell, reached from the IPO readiness checklist on Finance once the IPO is approved.

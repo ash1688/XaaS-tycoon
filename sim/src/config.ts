@@ -75,7 +75,7 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyNumbers> = {
 };
 
 /** Every charge is tagged with one of these, so students can see where their money goes. */
-export const SPEND_CATEGORIES = ["staff", "infrastructure", "cabling", "power", "addons", "debt"] as const;
+export const SPEND_CATEGORIES = ["staff", "infrastructure", "cabling", "power", "addons", "campaigns", "debt"] as const;
 export type SpendCategory = (typeof SPEND_CATEGORIES)[number];
 
 /**
@@ -1060,6 +1060,34 @@ export interface ResearchConfig {
   pointsPerPerson: number;
 }
 
+/**
+ * Campaigns: the student picks a customer type, a budget and a length, and the campaign spends the budget evenly over
+ * its days, adding new users of that type directly, on top of normal growth. Each day it adds about
+ * (budget ÷ length) ÷ costPerUser(type), scaled by how full the market is, the overlap with other campaigns on the
+ * same type running that day, and the holiday bonus if it was started just before a holiday.
+ */
+export interface CampaignsConfig {
+  /** What one new user of each type costs a campaign, before any scaling: casual users cheapest, businesses dearest. */
+  costPerUser: Record<CustomerTypeId, number>;
+  /** The smallest and biggest budget a campaign can have. */
+  minBudget: number;
+  maxBudget: number;
+  /** The shortest and longest a campaign can run, in days. */
+  minDays: number;
+  maxDays: number;
+  /** How many campaigns can run at once. */
+  maxRunning: number;
+  /**
+   * With n campaigns on the same customer type running on a day, each brings this^(n − 1) of the users per pound it
+   * would alone (0.6: two bring 60% each).
+   */
+  overlapMultiplier: number;
+  /** A campaign started up to this many days before a holiday that boosts the product's growth gets the bonus. */
+  holidayLeadDays: number;
+  /** Users per pound are multiplied by this for the whole of a campaign timed for a holiday. */
+  holidayBonus: number;
+}
+
 export interface OptimisationConfig {
   /** Developer-days for the saving to reach about 63% of its cap (1 − 1/e): bigger is slower. */
   k: number;
@@ -1544,6 +1572,7 @@ export interface GameConfig {
   mvp: MvpConfig;
   optimisation: OptimisationConfig;
   research: ResearchConfig;
+  campaigns: CampaignsConfig;
   tiers: TiersConfig;
   hardware: HardwareConfig;
   models: Record<ModelId, ModelConfig>;
@@ -1608,6 +1637,18 @@ export const defaultConfig: GameConfig = {
   optimisation: { k: 60, cap: { onprem: 0.5, iaas: 0.35, paas: 0.35, saas: 0.35 } },
   // Placeholder for the balance pass.
   research: { pointsPerPerson: 2 },
+  // Placeholders for the balance pass (#181): casual users about £2 each up to businesses £15+.
+  campaigns: {
+    costPerUser: { casual: 2, enthusiasts: 4, professionals: 8, businesses: 16 },
+    minBudget: 100,
+    maxBudget: 1_000_000,
+    minDays: 7,
+    maxDays: 90,
+    maxRunning: 2,
+    overlapMultiplier: 0.6,
+    holidayLeadDays: 14,
+    holidayBonus: 1.5,
+  },
   // Conditions and benefits signed off for #123; every number is a placeholder for the balance pass. RP prices (#179)
   // come to about 30, 100 and 250 RP a tier for one model's items: 15, 50 and 125 RP an item.
   tiers: {

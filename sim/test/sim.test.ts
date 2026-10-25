@@ -149,6 +149,7 @@ const config: GameConfig = {
   mvp: NO_MVP,
   optimisation: defaultConfig.optimisation,
   research: defaultConfig.research,
+  campaigns: defaultConfig.campaigns,
   tiers: defaultConfig.tiers,
   hardware: defaultConfig.hardware,
   // Capacity far above any load here, so outages only happen where a test lowers it.
@@ -2773,6 +2774,7 @@ describe("bank loan", () => {
         cabling: 0,
         power: 0,
         addons: 0,
+        campaigns: 0,
         debt: 0,
         income: 0,
         feeIncome: 0,
@@ -3288,6 +3290,7 @@ describe("game end and summary", () => {
       cabling: charges(log, "cabling"),
       power: charges(log, "power"),
       addons: charges(log, "addons"),
+      campaigns: charges(log, "campaigns"),
       debt: 0,
     });
     expect(summary.spend.staff).toBe(29 * 10);
@@ -3315,6 +3318,7 @@ describe("game end and summary", () => {
       cabling: 0,
       power: 0,
       addons: 0,
+      campaigns: 0,
       debt: 0,
       income: 0,
       feeIncome: 0,

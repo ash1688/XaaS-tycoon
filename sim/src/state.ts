@@ -31,7 +31,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 43;
+export const GAME_STATE_VERSION = 44;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -564,6 +564,31 @@ export interface IpoState {
   result: IpoResult | null;
 }
 
+/**
+ * A campaign the student started: aimed at one customer type, its budget spent evenly over its days, bringing new users
+ * of that type. Kept once it has finished, for its results.
+ */
+export interface Campaign {
+  id: number;
+  customerType: CustomerTypeId;
+  budget: number;
+  /** Its length in days. */
+  days: number;
+  /** The first day it runs: the day after it was started. */
+  startDay: number;
+  /** The last day it runs: startDay + days − 1, or the last day played before it was stopped. */
+  endDay: number;
+  /** True if the student stopped it before its length ran out: the rest of its budget wasn't spent. */
+  stopped: boolean;
+  /** The holiday it was timed for, by name, which multiplies its users per pound: null if none. */
+  holiday: string | null;
+  /** What it has spent so far. */
+  spent: number;
+  /** Users it has earned so far, to the fraction, so small days add up; `users` is the whole ones that have arrived. */
+  earned: number;
+  users: number;
+}
+
 /** Plain, JSON-serialisable game state. The server stores it as-is. */
 export interface GameState {
   version: typeof GAME_STATE_VERSION;
@@ -624,6 +649,10 @@ export interface GameState {
    * start, so aren't listed.
    */
   unlocks: string[];
+  /** Every campaign started, oldest first: those running and those finished. */
+  campaigns: Campaign[];
+  /** The id the next campaign started gets. */
+  nextCampaignId: number;
   /**
    * Tiers above 1 whose condition has been met, in order: each stays available once met. They belong to the company,
    * so a migration keeps them.
@@ -902,7 +931,14 @@ export type Action =
    * Unlocks an item above tier 1 (a product feature or any model's benefit, by id) with research points, once its tier
    * is available: its RP price comes off the bank at once. It can then be built or bought, at its own cost.
    */
-  | { type: "unlockItem"; item: string };
+  | { type: "unlockItem"; item: string }
+  /**
+   * Starts a campaign aimed at one customer type, with a budget and a length in days, from the next day played. Its
+   * budget is spent a day at a time; it needs the MVP done and launched, and room for another campaign.
+   */
+  | { type: "startCampaign"; customerType: string; budget: number; days: number }
+  /** Stops a running campaign, by id, after the day just played: the rest of its budget isn't spent. */
+  | { type: "stopCampaign"; id: number };
 
 export interface NewGameParams {
   companyName: string;
@@ -962,7 +998,8 @@ export interface LogEntry {
     | "danger"
     | "calendar"
     | "ipo"
-    | "rival";
+    | "rival"
+    | "campaign";
 }
 
 export interface DayLog {
