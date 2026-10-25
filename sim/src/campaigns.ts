@@ -1,5 +1,5 @@
 import type { Calendar } from "./calendar.ts";
-import { CUSTOMER_TYPE_IDS, type CustomerTypeId, type GameConfig } from "./config.ts";
+import { CUSTOMER_TYPE_IDS, STAFF_GRADES, type CustomerTypeId, type GameConfig, type StaffGrade } from "./config.ts";
 import { count, pounds } from "./finance.ts";
 import type { UsersLost } from "./mix.ts";
 import { SimError, type Campaign, type GameState, type LogEntry } from "./state.ts";
@@ -25,6 +25,29 @@ export interface CampaignView {
   costPerUser: number | null;
   /** The holiday it was timed for, which boosts it, or null. */
   holiday: string | null;
+  /** The grade of the marketer running it: "senior", and "Senior". */
+  grade: StaffGrade;
+  gradeName: string;
+}
+
+/** Marketers in one grade: on the team, and free (not running a campaign). */
+export interface MarketerGradeView {
+  grade: StaffGrade;
+  name: string;
+  count: number;
+  free: number;
+  /** Their work against a mid's 1: what multiplies the users per pound of a campaign they run. */
+  output: number;
+}
+
+/** The marketers who run campaigns, one each. */
+export interface MarketersView {
+  /** Marketers on the team, and of them those not running a campaign. */
+  count: number;
+  free: number;
+  grades: MarketerGradeView[];
+  /** The grade of the marketer a campaign started now would get: the most senior free one. Null with none free. */
+  next: StaffGrade | null;
 }
 
 /** A customer type a campaign can aim at, and what a pound buys now. */
@@ -37,7 +60,8 @@ export interface CampaignTypeView {
   running: number;
   /**
    * Users each pound of a campaign started now would bring on its first day: after how full the market is, the overlap
-   * with the type's other campaigns, and any holiday bonus. Budget × this is about what it brings in all.
+   * with the type's other campaigns, any holiday bonus, and the marketer it would get (a mid's, with none free).
+   * Budget × this is about what it brings in all.
    */
   usersPerPound: number;
 }
@@ -49,7 +73,7 @@ export interface CampaignsView {
   /** Whether a campaign can be started now, and if not, why. */
   canStart: boolean;
   why: string | null;
-  /** How many campaigns can run at once, and how many are running or about to start. */
+  /** How many campaigns can run at once (a marketer each), and how many are running or about to start. */
   capacity: number;
   running: number;
   minBudget: number;
@@ -62,6 +86,8 @@ export interface CampaignsView {
   holiday: { name: string; startDay: number; daysUntil: number; bonus: number } | null;
   /** How full the market is: the share of new users each pound still brings (1 for an empty market). */
   saturation: number;
+  /** The marketers, and how many are free. */
+  marketers: MarketersView;
   /** Every campaign started, newest first. */
   campaigns: CampaignView[];
 }
@@ -95,18 +121,37 @@ const active = (state: Pick<GameState, "campaigns" | "day">) => state.campaigns.
  * ÷ the type's cost per user, scaled by how full the market is, the overlap with other campaigns on the type that day,
  * any holiday it was timed for, and how well it's run.
  *
- * Two seams are for marketers (#180): capacity says how many campaigns can run at once, and effectiveness how well
- * each is run. Both are fixed for now.
+ * Marketers run them, one campaign each: a campaign gets the most senior free marketer when it's started, who is busy
+ * with it until it ends. So headcount says how many can run at once, and the marketer's grade output how well each is
+ * run. A busy marketer can't be let go or moved by the student; one lost in a rescue's cuts stops their campaign.
  */
 export function createCampaigns(config: GameConfig, calendar: Calendar) {
   const { campaigns: settings } = config;
   const typeName = (t: CustomerTypeId) => config.customerTypes[t].name;
 
-  /** How many campaigns can run at once. */
-  const capacity = (_state: GameState) => settings.maxRunning;
+  const gradeName = (g: StaffGrade) => config.staffGrades[g].name;
 
-  /** How well a campaign is run: multiplies its users per pound. 1 until marketers and a CMO run them. */
-  const effectiveness = (_state: GameState, _campaign: Pick<Campaign, "customerType">) => 1;
+  /** How many campaigns can run at once: one for each marketer on the team. */
+  const capacity = (state: GameState) => STAFF_GRADES.reduce((sum, g) => sum + state.staff.marketers[g], 0);
+
+  /** Campaigns still to run or running with a marketer of a grade: each keeps theirs busy. */
+  const busyAt = (state: GameState, grade: StaffGrade) => active(state).filter((c) => c.grade === grade).length;
+
+  /** Marketers of a grade on the team and not running a campaign. */
+  const freeAt = (state: GameState, grade: StaffGrade) => Math.max(0, state.staff.marketers[grade] - busyAt(state, grade));
+
+  /** Marketers on the team and not running a campaign, every grade. */
+  const freeMarketers = (state: GameState) => STAFF_GRADES.reduce((sum, g) => sum + freeAt(state, g), 0);
+
+  /** The marketer a campaign started now gets: the most senior free one, or null with none free. */
+  const nextMarketer = (state: GameState) => [...STAFF_GRADES].reverse().find((g) => freeAt(state, g) > 0) ?? null;
+
+  /** What a CMO adds to every campaign. 1 until the C-suite has one. */
+  const cmoBonus = (_state: GameState) => 1;
+
+  /** How well a campaign is run: multiplies its users per pound. Its marketer's grade output, × the CMO bonus. */
+  const effectiveness = (state: GameState, campaign: Pick<Campaign, "grade">) =>
+    config.staffGrades[campaign.grade].output * cmoBonus(state);
 
   /** The share of new users each pound still brings as the market fills: 1 − users ÷ the market's size. */
   const saturation = (state: GameState) =>
@@ -131,11 +176,56 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
   function whyNot(state: GameState): string | null {
     if (!campaignsUnlocked(state)) return "Campaigns open once your company grows up: when your first angel investor approaches.";
     if (state.launchDay === null) return "Campaigns can start once your MVP is done and your first users have arrived.";
+    if (nextMarketer(state) !== null) return null;
     const most = capacity(state);
-    if (active(state).length >= most) {
-      return `You're running ${most === 1 ? "the one campaign" : `all ${most} campaigns`} you can at once: start another when one finishes or is stopped.`;
+    if (most === 0) return "Each campaign needs a marketer to run it: hire one on People.";
+    const all = most === 1 ? "Your one marketer is" : `All ${most} of your marketers are`;
+    return `${all} running a campaign: hire another, or start one when a campaign finishes or is stopped.`;
+  }
+
+  /** Why marketers are idle, if any are: they're on the team and not running a campaign. Null otherwise. */
+  function marketersIdle(state: GameState): string | null {
+    const free = freeMarketers(state);
+    if (free === 0) return null;
+    const who = free === 1 ? "1 marketer isn't" : `${free} marketers aren't`;
+    return `${who} running a campaign: start one on Marketing, or let them go to save their pay.`;
+  }
+
+  /**
+   * Refuses a team that would leave a running campaign without its marketer: the student letting go or moving a busy
+   * one. They stop the campaign first, or pick a free marketer.
+   */
+  function checkBusyMarketers(state: GameState) {
+    const short = STAFF_GRADES.find((g) => state.staff.marketers[g] < busyAt(state, g));
+    if (!short) return;
+    throw new SimError(
+      "marketer_busy",
+      `That would take a ${gradeName(short).toLowerCase()} marketer off a campaign they're running: stop the campaign on Marketing first, or pick a free marketer.`,
+    );
+  }
+
+  /**
+   * Stops the campaigns whose marketers have gone, as a rescue's cuts can let them go: at each grade, the newest
+   * campaigns past the marketers left. Ones yet to run a day are dropped, having spent nothing.
+   */
+  function release(state: GameState): { state: GameState; entries: LogEntry[] } {
+    const ending = new Set<number>();
+    for (const g of STAFF_GRADES) {
+      const over = busyAt(state, g) - state.staff.marketers[g];
+      if (over > 0) for (const c of active(state).filter((c) => c.grade === g).slice(-over)) ending.add(c.id);
     }
-    return null;
+    if (!ending.size) return { state, entries: [] };
+    const entries: LogEntry[] = state.campaigns
+      .filter((c) => ending.has(c.id))
+      .map((c) => ({
+        text: `Your campaign for ${typeName(c.customerType).toLowerCase()} has stopped: its marketer has gone.`,
+        cashDelta: 0,
+        kind: "campaign",
+      }));
+    const campaigns = state.campaigns
+      .filter((c) => !ending.has(c.id) || c.startDay <= state.day)
+      .map((c) => (ending.has(c.id) ? { ...c, endDay: state.day, stopped: true } : c));
+    return { state: { ...state, campaigns }, entries };
   }
 
   function startCampaign(state: GameState, customerType: string, budget: number, days: number): GameState {
@@ -151,8 +241,8 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
     if (!Number.isInteger(days) || days < minDays || days > maxDays) {
       throw new SimError("bad_length", `A campaign runs for ${minDays} to ${maxDays} days.`);
     }
-    const reason = whyNot(state);
-    if (reason) throw new SimError("campaigns_full", reason);
+    const grade = nextMarketer(state);
+    if (grade === null) throw new SimError("no_marketer", whyNot(state)!);
     if (budget > state.cash) {
       throw new SimError("cant_afford", `The campaign's budget is ${pounds(budget)} and you have ${pounds(state.cash)}.`, { cost: budget, cash: state.cash });
     }
@@ -166,6 +256,7 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
       endDay: startDay + days - 1,
       stopped: false,
       holiday: holidayAhead(state)?.name ?? null,
+      grade,
       spent: 0,
       earned: 0,
       users: 0,
@@ -239,6 +330,8 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
       users: c.users,
       costPerUser: c.users > 0 ? Math.round((100 * c.spent) / c.users) / 100 : null,
       holiday: c.holiday,
+      grade: c.grade,
+      gradeName: gradeName(c.grade),
     };
   }
 
@@ -247,11 +340,12 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
     const holiday = holidayAhead(state);
     const full = saturation(state);
     const tomorrow = state.campaigns.filter((c) => runsOn(c, state.day + 1));
+    const next = nextMarketer(state);
     const types = CUSTOMER_TYPE_IDS.map((t): CampaignTypeView => {
       const others = active(state).filter((c) => c.customerType === t).length;
       const sameTomorrow = tomorrow.filter((c) => c.customerType === t).length;
       const perPound =
-        (full * overlap(sameTomorrow + 1) * (holiday ? settings.holidayBonus : 1) * effectiveness(state, { customerType: t })) /
+        (full * overlap(sameTomorrow + 1) * (holiday ? settings.holidayBonus : 1) * effectiveness(state, { grade: next ?? "mid" })) /
         settings.costPerUser[t];
       return { id: t, name: typeName(t), costPerUser: settings.costPerUser[t], running: others, usersPerPound: Math.round(perPound * 1e4) / 1e4 };
     });
@@ -268,11 +362,23 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
       types,
       holiday,
       saturation: Math.round(full * 1e4) / 1e4,
+      marketers: {
+        count: capacity(state),
+        free: freeMarketers(state),
+        grades: STAFF_GRADES.map((g) => ({
+          grade: g,
+          name: gradeName(g),
+          count: state.staff.marketers[g],
+          free: freeAt(state, g),
+          output: config.staffGrades[g].output,
+        })),
+        next,
+      },
       campaigns: state.campaigns.map((c) => campaignView(state, c)).reverse(),
     };
   }
 
-  return { startCampaign, stopCampaign, campaignsDay, campaignsView };
+  return { startCampaign, stopCampaign, campaignsDay, campaignsView, marketersIdle, checkBusyMarketers, release };
 }
 
 export type Campaigns = ReturnType<typeof createCampaigns>;

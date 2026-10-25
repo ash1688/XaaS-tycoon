@@ -213,6 +213,7 @@ const config: GameConfig = {
     support: { name: "Support", personName: "support person", dayRate: 2, startingCount: 0 },
     moderators: { name: "Moderators", personName: "moderator", dayRate: 2, startingCount: 0 },
     researchers: { name: "Researchers", personName: "researcher", dayRate: 2, startingCount: 0 },
+    marketers: { name: "Marketers", personName: "marketer", dayRate: 2, startingCount: 0 },
   },
   // No lead times, so a hire joins at once unless a test sets one; mids at the pool's rate and output.
   staffGrades: {
@@ -713,6 +714,7 @@ describe("staff", () => {
         support: { ...config.staff.support, startingCount: 3 },
         moderators: { ...config.staff.moderators, startingCount: 0 },
         researchers: { ...config.staff.researchers, startingCount: 0 },
+        marketers: { ...config.staff.marketers, startingCount: 0 },
       },
     });
     const state = staffed.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 1 });
@@ -2575,6 +2577,7 @@ describe("rescue buyout and liquidation", () => {
         support: { junior: 4, mid: 0, senior: 0 },
         moderators: { junior: 0, mid: 0, senior: 0 },
         researchers: { junior: 0, mid: 0, senior: 0 },
+        marketers: { junior: 0, mid: 0, senior: 0 },
       },
       hiring: [{ pool: "developers", grade: "mid", count: 2, agency: false, arrivesOn: 999 }],
     };

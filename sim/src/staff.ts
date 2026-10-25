@@ -4,11 +4,11 @@ import { researchUnlocked } from "./research.ts";
 import { isStaffGrade, isStaffPool, SimError, type GameState, type GradeCounts, type LogEntry } from "./state.ts";
 
 /** Pools that open once the company grows up, when the first angel investor approaches. */
-const GROWN_UP_POOLS: readonly StaffPool[] = ["researchers"];
+const GROWN_UP_POOLS: readonly StaffPool[] = ["researchers", "marketers"];
 /** Pools with permanent staff only: no agency hires. */
-const PERMANENT_ONLY_POOLS: readonly StaffPool[] = ["researchers"];
+const PERMANENT_ONLY_POOLS: readonly StaffPool[] = ["researchers", "marketers"];
 
-/** Whether a pool takes agency hires: researchers are permanent only. */
+/** Whether a pool takes agency hires: researchers and marketers are permanent only. */
 export const agencyAllowed = (pool: StaffPool) => !PERMANENT_ONLY_POOLS.includes(pool);
 
 /** Pools a product can ever staff: every pool, except moderators on a product without user content. */
@@ -16,8 +16,8 @@ const productPools = (config: GameConfig, state: Pick<GameState, "productType">)
   STAFF_POOLS.filter((pool) => pool !== "moderators" || config.productTypes[state.productType].moderation !== undefined);
 
 /**
- * Pools a company can staff: every pool, except moderators on a product without user content, and researchers until
- * the first angel investor approaches.
+ * Pools a company can staff: every pool, except moderators on a product without user content, and researchers and
+ * marketers until the first angel investor approaches.
  */
 export const poolsFor = (config: GameConfig, state: Pick<GameState, "productType" | "investors">): StaffPool[] =>
   productPools(config, state).filter((pool) => !GROWN_UP_POOLS.includes(pool) || researchUnlocked(state));
@@ -68,7 +68,7 @@ export interface StaffPoolView {
   grades: GradeView[];
   /** Agency staff by grade: none for a pool that's permanent only. */
   agency: GradeView[];
-  /** Whether agency staff can be hired: not researchers, who are permanent only. */
+  /** Whether agency staff can be hired: not researchers or marketers, who are permanent only. */
   agencyAllowed: boolean;
   hiring: HireView[];
   /** Why the pool has nothing to do, in a sentence, when it hasn't: developers with nothing to build. Null otherwise. */
@@ -135,7 +135,8 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
 
   /**
    * The company's opening team: each pool's starting count, all permanent mids, on the team from day 1. No agency
-   * staff, no moderators on a product without user content and no researchers (not yet open), whatever the config says.
+   * staff, no moderators on a product without user content and no researchers or marketers (not yet open), whatever the
+   * config says.
    */
   function startingStaff(product: Pick<GameState, "productType">): Pick<GameState, "staff" | "agency" | "hiring"> {
     const pools = productPools(config, product).filter((pool) => !GROWN_UP_POOLS.includes(pool));
@@ -143,11 +144,11 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
     return { staff, agency: allPools(noStaff), hiring: [] };
   }
 
-  const PICK_POOL = "Pick developers, ops, support, moderators or researchers.";
+  const PICK_POOL = "Pick developers, ops, support, moderators, researchers or marketers.";
 
   /**
-   * Moderators handle reports on user content, so a product without any has none to hire or move. Researchers can't
-   * be hired or moved into until the first angel investor approaches.
+   * Moderators handle reports on user content, so a product without any has none to hire or move. Researchers and
+   * marketers can't be hired or moved into until the first angel investor approaches.
    */
   function checkContent(state: GameState, pool: StaffPool) {
     if (poolsFor(config, state).includes(pool)) return;
@@ -287,7 +288,10 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
     }));
   }
 
-  /** Pools the company can staff: no moderators on a product without user content, no researchers until they open. */
+  /**
+   * Pools the company can staff: no moderators on a product without user content, no researchers or marketers until
+   * they open.
+   */
   function staffView(state: GameState): StaffPoolView[] {
     return poolsFor(config, state).map((pool) => ({
       pool,

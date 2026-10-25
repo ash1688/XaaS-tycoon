@@ -40,6 +40,13 @@ const game = useGame();
             Earn research points each day, shown on Research. Permanent hires only: an agency can't supply them.
           </span>
         </li>
+        <li v-if="game.company.campaigns.unlocked" data-testid="marketers-role">
+          <strong>Marketers</strong>
+          <span class="muted">
+            Run your campaigns, one each, planned on Marketing. Seniors bring in more users per pound, juniors fewer.
+            Permanent hires only: an agency can't supply them.
+          </span>
+        </li>
       </ul>
       <table class="compare ops-by-model">
         <caption class="muted">Ops staff each model needs</caption>

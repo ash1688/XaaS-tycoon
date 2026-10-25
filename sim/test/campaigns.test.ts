@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  configFields,
   createSim,
+  CUSTOMER_TYPE_IDS,
   defaultConfig,
   SimError,
   type Action,
   type CustomerTypeId,
   type GameConfig,
   type GameState,
+  type StaffGrade,
   type HolidayConfig,
   type Sim,
 } from "../src/index.ts";
@@ -15,7 +18,8 @@ import {
 // length; each day it spends its share and adds new users of that type directly, on top of normal growth, at about
 // (budget ÷ length) ÷ the type's cost per user, scaled by how full the market is, the overlap with other campaigns on
 // the type, and a bonus when started just before a holiday. They open at the first angel approach, never before the
-// MVP is done, and show their spend, users brought in and cost per user as they run.
+// MVP is done, and show their spend, users brought in and cost per user as they run. Marketers (#180) run them, one
+// campaign each, and the marketer's grade scales its users per pound.
 
 /** No events and no holidays, so the only thing moving a campaign is the campaign. */
 const quiet: GameConfig = { ...defaultConfig, events: [], calendar: { ...defaultConfig.calendar, holidays: [] } };
@@ -33,11 +37,15 @@ function launched(s: Sim = sim, state = begin(s)): GameState {
   return current;
 }
 
-/** A company the first angel has approached, as Campaigns open, with plenty of cash. */
-const grownUp = (state: GameState): GameState => ({
+/**
+ * A company the first angel has approached, as Campaigns open, with plenty of cash and the marketers given on the team
+ * already: two mids, unless a test says otherwise.
+ */
+const grownUp = (state: GameState, marketers: Partial<Record<StaffGrade, number>> = { mid: 2 }): GameState => ({
   ...state,
   cash: 1_000_000,
   investors: { ...state.investors, firstApproachDay: state.day },
+  staff: { ...state.staff, marketers: { junior: 0, mid: 0, senior: 0, ...marketers } },
 });
 const ready = grownUp(launched());
 
@@ -105,7 +113,7 @@ describe("starting a campaign", () => {
     let state = sim.applyAction(ready, start("casual", 1_000, 10));
     state = sim.applyAction(state, start("enthusiasts", 1_000, 10));
     expect(sim.campaigns(state)).toMatchObject({ running: 2, canStart: false });
-    expect(refusal(() => sim.applyAction(state, start("businesses", 1_000, 10)))).toBe("campaigns_full");
+    expect(refusal(() => sim.applyAction(state, start("businesses", 1_000, 10)))).toBe("no_marketer");
     state = sim.advance(state, 2).state;
     const [, first] = sim.campaigns(state).campaigns;
     state = sim.applyAction(state, { type: "stopCampaign", id: first!.id });
@@ -238,5 +246,159 @@ describe("timing a campaign before a holiday", () => {
     expect(holidays.applyAction(early, start("businesses", 1_000, 10)).campaigns[0]!.holiday).toBeNull();
     const during = on(holidays, 61);
     expect(holidays.campaigns(during).holiday).toBeNull();
+  });
+});
+
+describe("marketers (#180)", () => {
+  const marketersOf = (state: GameState) => sim.staff(state).find((p) => p.pool === "marketers");
+  const hire = (grade: StaffGrade = "mid", agency = false): Action => ({ type: "hire", pool: "marketers", grade, count: 1, agency });
+  const letGo = (grade: StaffGrade = "mid", count = 1): Action => ({ type: "letGo", pool: "marketers", grade, count });
+  /** A launched company the first angel has approached, with the marketers given and no others. */
+  const withMarketers = (marketers: Partial<Record<StaffGrade, number>>) => grownUp(launched(), marketers);
+
+  it("are hidden and refused before the first angel approaches", () => {
+    const state = { ...launched(), cash: 1_000_000 };
+    expect(marketersOf(state)).toBeUndefined();
+    expect(refusal(() => sim.applyAction(state, hire()))).toBe("not_yet");
+    expect(refusal(() => sim.applyAction(state, { type: "moveStaff", to: "marketers", from: "developers" }))).toBe("not_yet");
+    // None to start, whatever the config says.
+    const staffed = createSim({ ...quiet, staff: { ...quiet.staff, marketers: { ...quiet.staff.marketers, startingCount: 3 } } });
+    expect(begin(staffed).staff.marketers).toEqual({ junior: 0, mid: 0, senior: 0 });
+  });
+
+  it("can be hired once the first angel approaches, as permanent staff only, with the usual grades, lead times and severance", () => {
+    const state = withMarketers({});
+    const row = marketersOf(state)!;
+    expect(row).toMatchObject({ name: "Marketers", headcount: 0, agencyCount: 0, agencyAllowed: false, agency: [] });
+    const pay = (g: StaffGrade) => Math.round(110 * quiet.staffGrades[g].payMultiplier);
+    expect(row.grades.map((g) => [g.grade, g.dayRate, g.leadDays, g.severance])).toEqual(
+      (["junior", "mid", "senior"] as const).map((g) => [g, pay(g), quiet.staffGrades[g].leadDays, pay(g) * quiet.severance.days]),
+    );
+    for (const grade of ["junior", "mid", "senior"] as const) expect(refusal(() => sim.applyAction(state, hire(grade, true)))).toBe("permanent_only");
+    const hired = sim.applyAction(state, hire("senior"));
+    const lead = quiet.staffGrades.senior.leadDays;
+    expect(marketersOf(hired)!.hiring).toEqual([{ grade: "senior", count: 1, agency: false, arrivesOn: state.day + lead, daysLeft: lead }]);
+    expect(sim.advance(hired, lead).state.staff.marketers.senior).toBe(1);
+  });
+
+  it("are needed to start a campaign: one free marketer each, busy with it for its length", () => {
+    const none = withMarketers({});
+    expect(sim.campaigns(none)).toMatchObject({ unlocked: true, canStart: false, capacity: 0, marketers: { count: 0, free: 0, next: null } });
+    expect(sim.campaigns(none).why).toBe("Each campaign needs a marketer to run it: hire one on People.");
+    expect(refusal(() => sim.applyAction(none, start("casual", 1_000, 7)))).toBe("no_marketer");
+
+    const one = withMarketers({ mid: 1 });
+    expect(sim.campaigns(one)).toMatchObject({ canStart: true, capacity: 1, marketers: { count: 1, free: 1, next: "mid" } });
+    let state = sim.applyAction(one, start("casual", 1_000, 7));
+    expect(sim.campaigns(state)).toMatchObject({ canStart: false, running: 1, marketers: { count: 1, free: 0, next: null } });
+    expect(sim.campaigns(state).why).toBe(
+      "Your one marketer is running a campaign: hire another, or start one when a campaign finishes or is stopped.",
+    );
+    expect(refusal(() => sim.applyAction(state, start("enthusiasts", 1_000, 7)))).toBe("no_marketer");
+    // Still busy before its last day, and free once it has finished.
+    state = sim.advance(state, 6).state;
+    expect(sim.campaigns(state).marketers.free).toBe(0);
+    state = sim.advance(state).state;
+    expect(sim.campaigns(state)).toMatchObject({ canStart: true, marketers: { free: 1 } });
+  });
+
+  it("are given to campaigns most senior first, and the grade shows on each", () => {
+    let state = withMarketers({ junior: 1, mid: 1, senior: 1 });
+    expect(sim.campaigns(state).marketers.next).toBe("senior");
+    state = sim.applyAction(state, start("casual", 1_000, 7));
+    expect(sim.campaigns(state).marketers.next).toBe("mid");
+    state = sim.applyAction(state, start("enthusiasts", 1_000, 7));
+    state = sim.applyAction(state, start("professionals", 1_000, 7));
+    expect(sim.campaigns(state).campaigns.map((c) => [c.customerType, c.grade, c.gradeName])).toEqual([
+      ["professionals", "junior", "Junior"],
+      ["enthusiasts", "mid", "Mid"],
+      ["casual", "senior", "Senior"],
+    ]);
+    expect(sim.campaigns(state).marketers.grades.map((g) => [g.grade, g.count, g.free])).toEqual([
+      ["junior", 1, 0],
+      ["mid", 1, 0],
+      ["senior", 1, 0],
+    ]);
+  });
+
+  it("scale users per pound by their grade's output", () => {
+    const run = (grade: StaffGrade) => {
+      const state = withMarketers({ [grade]: 1 });
+      const played = sim.advance(sim.applyAction(state, start("casual", 7_000, 7))).state;
+      return { state, brought: sim.campaigns(played).campaigns[0]!.users };
+    };
+    for (const grade of ["junior", "mid", "senior"] as const) {
+      const { state, brought } = run(grade);
+      const output = quiet.staffGrades[grade].output;
+      expect(brought).toBe(Math.floor((1_000 / costPerUser.casual) * saturation(state) * output));
+      // The estimate on the Marketing page is for the marketer a new campaign would get.
+      const casual = sim.campaigns(state).types.find((t) => t.id === "casual")!;
+      expect(casual.usersPerPound).toBeCloseTo((saturation(state) / costPerUser.casual) * output, 4);
+    }
+    expect(run("senior").brought).toBeGreaterThan(run("mid").brought);
+    expect(run("mid").brought).toBeGreaterThan(run("junior").brought);
+  });
+
+  it("are flagged idle on the staff page while they aren't running a campaign", () => {
+    expect(marketersOf(withMarketers({}))!.idle).toBeNull();
+    let state = withMarketers({ mid: 2 });
+    expect(marketersOf(state)!.idle).toBe("2 marketers aren't running a campaign: start one on Marketing, or let them go to save their pay.");
+    state = sim.applyAction(state, start("casual", 1_000, 7));
+    expect(marketersOf(state)!.idle).toBe("1 marketer isn't running a campaign: start one on Marketing, or let them go to save their pay.");
+    state = sim.applyAction(state, start("enthusiasts", 1_000, 7));
+    expect(marketersOf(state)!.idle).toBeNull();
+    // Idle again once their campaigns end.
+    expect(marketersOf(sim.advance(state, 7).state)!.idle).toMatch(/^2 marketers aren't/);
+  });
+
+  it("can't be let go or moved by the student while running a campaign: stop it first, or pick a free one", () => {
+    let state = withMarketers({ mid: 2, senior: 1 });
+    state = sim.applyAction(state, start("casual", 1_000, 10));
+    state = sim.applyAction(state, start("enthusiasts", 1_000, 10));
+    state = sim.advance(state, 2).state;
+    const byGrade = (g: StaffGrade) => sim.campaigns(state).campaigns.find((c) => c.grade === g)!;
+    // The senior is busy, and one of the two mids.
+    expect(refusal(() => sim.applyAction(state, letGo("senior")))).toBe("marketer_busy");
+    expect(refusal(() => sim.applyAction(state, letGo("mid", 2)))).toBe("marketer_busy");
+    const moveSenior: Action = { type: "moveStaff", from: "marketers", to: "developers", grade: "senior" };
+    expect(refusal(() => sim.applyAction(state, moveSenior))).toBe("marketer_busy");
+    // The free mid can go, or move.
+    expect(sim.applyAction(state, letGo("mid")).staff.marketers.mid).toBe(1);
+    expect(sim.applyAction(state, { type: "moveStaff", from: "marketers", to: "developers", grade: "mid" }).staff.marketers.mid).toBe(1);
+    // Stopping the senior's campaign frees them to go, and the mid's keeps running.
+    const stopped = sim.applyAction(state, { type: "stopCampaign", id: byGrade("senior").id });
+    const gone = sim.applyAction(stopped, letGo("senior"));
+    expect(gone.staff.marketers.senior).toBe(0);
+    const mid = byGrade("mid");
+    expect(sim.campaigns(sim.advance(gone).state).campaigns.find((c) => c.id === mid.id)).toMatchObject({ status: "running", daysRun: 3 });
+  });
+
+  it("stop their campaigns when a rescue's cuts let them go", () => {
+    // Little cash and big campaigns, so cash runs out and the vulture VC's cuts take a quarter of each team.
+    let state: GameState = { ...withMarketers({ senior: 4 }), cash: 20_000 };
+    for (const t of ["casual", "enthusiasts", "professionals", "businesses"] as const) state = sim.applyAction(state, start(t, 5_000, 30));
+    const texts: string[] = [];
+    for (let i = 0; i < 60 && !state.rescue; i++) {
+      const played = sim.advance(state);
+      state = played.state;
+      texts.push(...played.log.flatMap((d) => d.entries.map((e) => e.text)));
+    }
+    expect(state.rescue).not.toBeNull();
+    expect(state.staff.marketers.senior).toBe(3);
+    const ended = sim.campaigns(state).campaigns.filter((c) => c.status === "stopped");
+    // The newest of them stops, after the day just played.
+    expect(ended).toHaveLength(1);
+    expect(ended[0]).toMatchObject({ customerType: "businesses", endDay: state.day });
+    expect(texts).toContain("Your campaign for businesses has stopped: its marketer has gone.");
+    expect(sim.campaigns(state)).toMatchObject({ running: 3, marketers: { count: 3, free: 0 } });
+  });
+
+  it("are paid from the config, with schema entries", () => {
+    const tuned = createSim({ ...quiet, staff: { ...quiet.staff, marketers: { ...quiet.staff.marketers, dayRate: 200 } } });
+    const state = grownUp(launched(tuned), {});
+    expect(tuned.staff(state).find((p) => p.pool === "marketers")!.grades.find((g) => g.grade === "mid")!.dayRate).toBe(200);
+    const paths = configFields().map((f) => f.path);
+    expect(paths).toEqual(expect.arrayContaining(["staff.marketers.dayRate", ...CUSTOMER_TYPE_IDS.map((t) => `campaigns.costPerUser.${t}`)]));
+    expect(paths).not.toContain("campaigns.maxRunning");
   });
 });

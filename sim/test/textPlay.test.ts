@@ -973,7 +973,7 @@ describe("tiers, model benefits and the hardware slider (#123)", () => {
   });
 });
 
-describe("campaigns (#115)", () => {
+describe("campaigns (#115) and marketers (#180)", () => {
   /** Launched, with the first angel's approach behind it, so campaigns are open. */
   function grownUp() {
     let state = sim.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 });
@@ -994,15 +994,23 @@ describe("campaigns (#115)", () => {
   it("shows nothing of campaigns until they open, then offers one, runs it and shows its results", () => {
     expect(renderStatus(sim, start())).not.toMatch(/^campaigns:/m);
     expect(renderCommands(sim, start())).not.toMatch(/campaign/);
-    const state = grownUp();
+    // With no marketers, there's no campaign to start, and the commands say why.
+    const unstaffed = grownUp();
+    expect(renderStatus(sim, unstaffed)).toMatch(/^marketers: 0, 0 free \| a campaign needs a free marketer/m);
+    expect(renderStatus(sim, unstaffed)).toMatch(/^campaigns: 0\/0 running, market \d+% full$/m);
+    expect(renderCommands(sim, unstaffed)).toMatch(/^ {2}\(no new campaign: Each campaign needs a marketer to run it: hire one on People\.\)$/m);
+    expect(run(unstaffed, "hire marketers").rows[0]).toMatchObject({ type: "hire", ok: true });
+    expect(run(unstaffed, "hire marketers agency").rows[0]).toMatchObject({ type: "hire", ok: false });
+    const state = { ...unstaffed, staff: { ...unstaffed.staff, marketers: { junior: 0, mid: 1, senior: 1 } } };
+    expect(renderStatus(sim, state)).toMatch(/^marketers: 2, 2 free \(1 mid, 1 senior; a new campaign gets the senior\)/m);
     expect(renderStatus(sim, state)).toMatch(/^campaigns: 0\/2 running, market \d+% full$/m);
-    expect(renderCommands(sim, state)).toMatch(/^ {2}campaign <casual\|enthusiasts\|professionals\|businesses> <budget £100–1000000> <days 7–90> {3}\(spent evenly from tomorrow; brings users of that type: casual £2\.\d\d a user now, /m);
+    expect(renderCommands(sim, state)).toMatch(/^ {2}campaign <casual\|enthusiasts\|professionals\|businesses> <budget £100–1000000> <days 7–90> {3}\(spent evenly from tomorrow; brings users of that type: casual £1\.\d\d a user now, /m);
     const started = run(state, "campaign businesses 1600 10");
     expect(started.rows[0]).toMatchObject({ type: "startCampaign", ok: true });
     expect(renderCommands(sim, started.state)).toMatch(/^ {2}stopcampaign <1> /m);
     const played = run(started.state, "next 2").state;
     const users = sim.campaigns(played).campaigns[0]!.users;
     expect(users).toBeGreaterThan(0);
-    expect(renderStatus(sim, played)).toMatch(new RegExp(String.raw`^ {2}#1 businesses £\d+/£1600, day \d+/10, ${users} users at £\d+\.\d\d running$`, "m"));
+    expect(renderStatus(sim, played)).toMatch(new RegExp(String.raw`^ {2}#1 businesses \(senior marketer\) £\d+/£1600, day \d+/10, ${users} users at £\d+\.\d\d running$`, "m"));
   });
 });

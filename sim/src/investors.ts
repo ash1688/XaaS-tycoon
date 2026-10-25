@@ -189,11 +189,12 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
         cashDelta: 0,
         kind: "funding",
       },
-      // The first approach is the company growing up: researchers can be hired from now, whatever the answer.
+      // The first approach is the company growing up: researchers and marketers can be hired from now, whatever the
+      // answer.
       ...(state.investors.firstApproachDay === null
         ? [
             {
-              text: "Your company is growing up: you can hire researchers now, on People, and follow their work on Research.",
+              text: "Your company is growing up: you can hire researchers and marketers now, on People, and follow their work on Research and Marketing.",
               cashDelta: 0,
               kind: "staff" as const,
             },

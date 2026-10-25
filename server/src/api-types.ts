@@ -231,6 +231,8 @@ export interface CompanyView {
   moderators: number;
   /** Researchers: they earn research points. Always 0 until the first angel investor approaches. */
   researchers: number;
+  /** Marketers: each runs one campaign at a time. Always 0 until the first angel investor approaches. */
+  marketers: number;
   /**
    * Each pool by grade: who's on the team, their work a day in mids (what's measured against ops needed, a build's
    * developer-days and tickets cleared), and hires still to start.

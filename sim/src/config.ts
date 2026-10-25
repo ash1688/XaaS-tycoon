@@ -12,7 +12,7 @@ export const CUSTOMER_TYPE_IDS = ["casual", "enthusiasts", "professionals", "bus
 export type CustomerTypeId = (typeof CUSTOMER_TYPE_IDS)[number];
 
 /** Moderators are only hired on a product with user content (see ProductModeration). */
-export const STAFF_POOLS = ["developers", "ops", "support", "moderators", "researchers"] as const;
+export const STAFF_POOLS = ["developers", "ops", "support", "moderators", "researchers", "marketers"] as const;
 export type StaffPool = (typeof STAFF_POOLS)[number];
 export const STAFF_GRADES = ["junior", "mid", "senior"] as const;
 export type StaffGrade = (typeof STAFF_GRADES)[number];
@@ -1064,7 +1064,8 @@ export interface ResearchConfig {
  * Campaigns: the student picks a customer type, a budget and a length, and the campaign spends the budget evenly over
  * its days, adding new users of that type directly, on top of normal growth. Each day it adds about
  * (budget ÷ length) ÷ costPerUser(type), scaled by how full the market is, the overlap with other campaigns on the
- * same type running that day, and the holiday bonus if it was started just before a holiday.
+ * same type running that day, the holiday bonus if it was started just before a holiday, and the grade of the marketer
+ * running it. Each campaign needs a marketer of its own, so marketers decide how many can run at once.
  */
 export interface CampaignsConfig {
   /** What one new user of each type costs a campaign, before any scaling: casual users cheapest, businesses dearest. */
@@ -1075,8 +1076,6 @@ export interface CampaignsConfig {
   /** The shortest and longest a campaign can run, in days. */
   minDays: number;
   maxDays: number;
-  /** How many campaigns can run at once. */
-  maxRunning: number;
   /**
    * With n campaigns on the same customer type running on a day, each brings this^(n − 1) of the users per pound it
    * would alone (0.6: two bring 60% each).
@@ -1644,7 +1643,6 @@ export const defaultConfig: GameConfig = {
     maxBudget: 1_000_000,
     minDays: 7,
     maxDays: 90,
-    maxRunning: 2,
     overlapMultiplier: 0.6,
     holidayLeadDays: 14,
     holidayBonus: 1.5,
@@ -2410,6 +2408,9 @@ export const defaultConfig: GameConfig = {
     moderators: { name: "Moderators", personName: "moderator", dayRate: 60, startingCount: 0 },
     // None to start, and none to hire until the first angel investor approaches. Placeholder pay for the balance pass.
     researchers: { name: "Researchers", personName: "researcher", dayRate: 130, startingCount: 0 },
+    // None to start, and none to hire until the first angel investor approaches: each runs one campaign at a time.
+    // Placeholder pay for the balance pass.
+    marketers: { name: "Marketers", personName: "marketer", dayRate: 110, startingCount: 0 },
   },
   // A senior does about twice a junior's work for about 1.7× the pay: cheaper per unit of work, dearer up front, and
   // slowest to arrive. Placeholders from the beta design.

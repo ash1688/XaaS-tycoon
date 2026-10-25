@@ -31,7 +31,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 44;
+export const GAME_STATE_VERSION = 45;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -582,6 +582,11 @@ export interface Campaign {
   stopped: boolean;
   /** The holiday it was timed for, by name, which multiplies its users per pound: null if none. */
   holiday: string | null;
+  /**
+   * The grade of the marketer running it, who is busy with it until it ends: their output multiplies its users per
+   * pound.
+   */
+  grade: StaffGrade;
   /** What it has spent so far. */
   spent: number;
   /** Users it has earned so far, to the fraction, so small days add up; `users` is the whole ones that have arrived. */

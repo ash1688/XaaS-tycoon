@@ -290,10 +290,13 @@ function campaignLines(sim: Sim, state: GameState): string[] {
   if (!view.unlocked) return [];
   const holiday = view.holiday ? `; one started now is timed for ${view.holiday.name} in ${view.holiday.daysUntil}d (×${view.holiday.bonus})` : "";
   const one = (c: (typeof view.campaigns)[number]) =>
-    `#${c.id} ${c.customerType} £${c.spent}/£${c.budget}, day ${c.daysRun}/${c.days}, ${c.users} users${c.costPerUser !== null ? ` at £${c.costPerUser.toFixed(2)}` : ""}${c.holiday ? ` (${c.holiday} bonus)` : ""} ${c.status}`;
+    `#${c.id} ${c.customerType} (${c.grade} marketer) £${c.spent}/£${c.budget}, day ${c.daysRun}/${c.days}, ${c.users} users${c.costPerUser !== null ? ` at £${c.costPerUser.toFixed(2)}` : ""}${c.holiday ? ` (${c.holiday} bonus)` : ""} ${c.status}`;
   const on = view.campaigns.filter((c) => c.status === "starting" || c.status === "running");
   const done = view.campaigns.filter((c) => c.status === "finished" || c.status === "stopped").slice(0, 3);
+  const m = view.marketers;
+  const free = m.grades.filter((x) => x.free).map((x) => `${x.free} ${x.grade}`).join(", ");
   return [
+    `marketers: ${m.count}, ${m.free} free${free ? ` (${free}; a new campaign gets the ${m.next})` : ""} | a campaign needs a free marketer, whose grade work multiplies its users per pound`,
     `campaigns: ${view.running}/${view.capacity} running, market ${Math.round(100 * (1 - view.saturation))}% full${holiday}`,
     ...[...on, ...done].map((c) => `  ${one(c)}`),
   ];
