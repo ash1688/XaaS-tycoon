@@ -1,5 +1,6 @@
 // All balance numbers live here. Tuned with the balance harness (sim/scripts, `npm run balance -w sim`) in #55.
 import type { LayerId } from "./responsibility.ts";
+import type { StaffSchemeId } from "./staffSchemes.ts";
 
 export const MODEL_IDS = ["onprem", "iaas", "paas", "saas"] as const;
 export type ModelId = (typeof MODEL_IDS)[number];
@@ -1497,6 +1498,31 @@ export interface PayReviewConfig {
     /** How strongly it favours the figure closest to the fair rise: 0 picks each of the three equally. */
     sharpness: number;
   };
+  /**
+   * How much of a staff scheme's value staff count: an offer is worth its cash rise plus each scheme level it adds ×
+   * that scheme's staff value × this. About 0.7 without a head of people, as staff want cash.
+   */
+  schemeValuation: number;
+  /** The staff schemes an offer can raise alongside the cash rise. See StaffSchemeConfig. */
+  schemes: Record<StaffSchemeId, StaffSchemeConfig>;
+}
+
+/**
+ * A staff scheme offered in pay reviews. Its levels only go up, and it's paid every day from the day after it's
+ * agreed, for the permanent staff on the team: each level costs a share of their pay plus £ per person.
+ */
+export interface StaffSchemeConfig {
+  name: string;
+  /** One line on what it is. */
+  blurb: string;
+  /** Its most level: 3 for a slider, 1 for a scheme that's on or off. */
+  maxLevel: number;
+  /** Each level's cost a day, as a share of the permanent staff's pay (0.004 = 0.4%). */
+  wageShare: number;
+  /** Each level's cost a day, per permanent member of staff. */
+  perPerson: number;
+  /** A level's worth to staff, as a rise (0.0075 = three quarters of a point), before the scheme valuation. */
+  staffValue: number;
 }
 
 /**
@@ -2642,6 +2668,46 @@ export const defaultConfig: GameConfig = {
     },
     // About £2k a sitting, so the tribunal is never a free gamble.
     tribunal: { fee: 2_000, sharpness: 3 },
+    // Placeholders from the design (#189). Without a head of people, staff count a scheme at about 70% of its value.
+    // Each scheme costs a different amount for what staff see in it, against the cash rise it stands in for (at a
+    // mean day rate of about £105): the pension about 0.76 of it, the health plan about 0.82, death in service about
+    // 0.57 and the discount scheme about 0.27. Cheaper than cash per point, but paid on every head for good, and the
+    // per-person ones cost more on a lower-paid team.
+    schemeValuation: 0.7,
+    schemes: {
+      pension: {
+        name: "Pension top-up",
+        blurb: "The company pays more into staff pensions: a share of their pay on top.",
+        maxLevel: 3,
+        wageShare: 0.004,
+        perPerson: 0,
+        staffValue: 0.0075,
+      },
+      health: {
+        name: "Health cash plan",
+        blurb: "Eye tests, dental work and physio paid back: a flat sum per person.",
+        maxLevel: 3,
+        wageShare: 0,
+        perPerson: 0.3,
+        staffValue: 0.005,
+      },
+      deathInService: {
+        name: "Death in service",
+        blurb: "A payout to someone's family if they die while employed: cheap, and staff barely notice it.",
+        maxLevel: 1,
+        wageShare: 0.001,
+        perPerson: 0,
+        staffValue: 0.0025,
+      },
+      discount: {
+        name: "Discount scheme",
+        blurb: "Staff discounts at shops and restaurants, like a Blue Light Card: very cheap per person.",
+        maxLevel: 1,
+        wageShare: 0,
+        perPerson: 0.05,
+        staffValue: 0.0025,
+      },
+    },
   },
   // Placeholders from the design: about 30 days of breathing space for about 75% of the company. Buying it back costs
   // at least twice what the vulture VC put in.

@@ -43,6 +43,7 @@ import type {
   PayOfferPreview,
   PayReviewRecord,
   PayReviewView,
+  StaffSchemeView,
   PricePreview,
   PaymentsView,
   PriceWaveView,
@@ -449,6 +450,11 @@ export interface CompanyView {
   /** Every pool's pay as a multiple of the config's day rates: each agreed pay rise multiplies it. */
   payMultiplier: number;
   /**
+   * The staff schemes, agreed in pay reviews, at the levels held, with what each costs a day at today's team. Levels
+   * only go up.
+   */
+  staffSchemes: StaffSchemeView[];
+  /**
    * The IPO: the readiness checklist condition by condition, whether the company can apply to float and why not, a
    * cold market's wait, once approved the offer with what each float would do, and once floated the first day of
    * trading.
@@ -522,9 +528,11 @@ export type PricePreviewView = PricePreview;
 export type CounterOddsView = CounterOdds;
 
 /**
- * GET .../pay-offer?rise=: what offering staff that rise (0.04 = 4%) in the open pay review would do, before it's made:
- * what it adds to pay a day and a year at today's team, and the odds on staff's counter (or, on the final offer, the
- * tribunal's odds and fee if it falls short). Changes nothing. Refused as the offer would be.
+ * GET .../pay-offer?rise=&pension=&health=&deathInService=&discount=: what offering staff that cash rise (0.04 = 4%) and
+ * those scheme levels (left out, the levels held) in the open pay review would do, before it's made: its worth to
+ * staff, what it adds to the team's cost a day and a year at today's team with each scheme's cost, and the odds on
+ * staff's counter (or, on the final offer, the tribunal's odds and fee if it falls short). Changes nothing. Refused as
+ * the offer would be.
  */
 export type PayOfferView = PayOfferPreview;
 

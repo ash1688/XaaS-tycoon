@@ -13,6 +13,7 @@ import {
   type GameConfig,
   type GameState,
   type ModelId,
+  type SchemeLevels,
   type ProductTypeId,
   type ServerSize,
   type ServerType,
@@ -69,6 +70,11 @@ export interface Strategy {
   research?: { team: number; from: number };
   /** Marketers: how many mids run Campaigns, from how many days after the first angel approach. Left out, none. */
   marketing?: { team: number; from: number };
+  /**
+   * Staff schemes it offers in every pay review: the levels wanted, with a cash rise of inflation less what the
+   * schemes raised are worth to staff. Left out, none: cash only.
+   */
+  schemes?: Partial<SchemeLevels>;
 }
 
 export const STRATEGIES: Strategy[] = [
@@ -585,12 +591,16 @@ function mvpTeam(sim: Sim, state: GameState, strategy: Strategy): GameState {
 
 /**
  * The pay review policy every bot plays, so its games get past the reviews: offer inflation (pay held level in real
- * terms) and, if staff counter, accept their counter.
+ * terms), as cash or, with `schemes`, as those schemes and the rest in cash, and if staff counter, accept their counter
+ * (cash only).
  */
-function settlePay(sim: Sim, state: GameState): GameState {
+function settlePay(sim: Sim, state: GameState, strategy: Strategy): GameState {
   const review = sim.payReview(state);
   if (!review) return state;
-  const offered = tryAction(sim, state, { type: "offerPayRise", rise: review.inflation });
+  const schemes = strategy.schemes;
+  const worth = schemes ? sim.payOfferPreview(state, review.minOffer, schemes).schemeValue : 0;
+  const rise = Math.max(0, Math.round((review.inflation - worth) * 1000) / 1000);
+  const offered = tryAction(sim, state, schemes ? { type: "offerPayRise", rise, schemes } : { type: "offerPayRise", rise });
   return sim.payReview(offered) ? tryAction(sim, offered, { type: "acceptPayCounter" }) : offered;
 }
 
@@ -599,7 +609,7 @@ function settlePay(sim: Sim, state: GameState): GameState {
  * Campaigns, features and the slider.
  */
 export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameState {
-  let s = settlePay(sim, state);
+  let s = settlePay(sim, state, strategy);
   if (s.day === 1 && strategy.priceFactor !== 1) {
     // On the payments app the transaction fee moves with the monthly fee.
     const fairRate = sim.payments(s)?.fairRate;

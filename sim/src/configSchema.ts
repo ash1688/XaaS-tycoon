@@ -23,6 +23,7 @@ import {
   gameLengthName,
   type GameConfig,
 } from "./config.ts";
+import { STAFF_SCHEMES } from "./staffSchemes.ts";
 
 export const CONFIG_GROUPS = ["Money", "Customers", "Infrastructure", "People", "Migration", "Events"] as const;
 export type ConfigGroup = (typeof CONFIG_GROUPS)[number];
@@ -612,6 +613,15 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("payReview.negotiation.moves.middle", "People", "Pay review rolls", "Middle roll moves", "Share of the way their counter moves on a middle roll.", SHARE);
   add("payReview.negotiation.moves.low", "People", "Pay review rolls", "Low roll moves", "Share of the way their counter moves on a low roll. Below 0 they ask for more instead, never above their opening ask.", range(-1, 1, 0.01));
   add("payReview.tribunal.fee", "People", "Pay review tribunal", "Tribunal fee", "Charged in cash every time a pay review goes to the tribunal, after a final offer with no deal.", POUNDS);
+  add("payReview.schemeValuation", "People", "Staff schemes", "Scheme valuation", "How much of a staff scheme's value staff count in a pay review: an offer is worth its cash rise plus each level it adds × the scheme's worth to staff × this. About 0.7 without a head of people.", range(0, 3, 0.05));
+  for (const id of STAFF_SCHEMES) {
+    const name = base.payReview.schemes[id].name;
+    const p = `payReview.schemes.${id}`;
+    add(`${p}.maxLevel`, "People", "Staff schemes", `${name}: most level`, "The highest level it can be raised to: 1 makes it on or off.", range(1, 5, 1));
+    add(`${p}.wageShare`, "People", "Staff schemes", `${name}: share of pay`, "Each level costs this share of the permanent staff's pay a day (0.004 = 0.4%).", range(0, 0.2, 0.0005));
+    add(`${p}.perPerson`, "People", "Staff schemes", `${name}: £ per person`, "Each level costs this a day per permanent member of staff.", range(0, 50, 0.01));
+    add(`${p}.staffValue`, "People", "Staff schemes", `${name}: worth to staff`, "What staff count a level as, as a rise before the scheme valuation (0.0075 = three quarters of a point).", range(0, 0.05, 0.0005));
+  }
   add("payReview.tribunal.sharpness", "People", "Pay review tribunal", "Leans to the fair figure", "How strongly the tribunal picks whichever figure (the final offer, staff's, or the middle) is closest to a fair rise. 0 picks each equally; at 3 a figure on the fair rise wins about 78% of the time.", range(0, 20, 0.1));
   add("addons.setupFeePerDevDay", "Money", "", "Add-on set-up fee per developer-day", "On SaaS, an add-on costs this × the developer-days it would take to build, once, when it's bought.", range(0, 10_000, 10));
 

@@ -29,6 +29,11 @@ import {
   type NegotiationView,
   type HolidayView,
   type PayOfferPreview,
+  type PayOfferTerms,
+  type SchemeLevels,
+  type StaffSchemeId,
+  type StaffSchemeView,
+  STAFF_SCHEMES,
   type ManagedService,
   type ModelId,
   type PauseReason,
@@ -519,7 +524,34 @@ function payStatus(sim: Sim, state: GameState): string {
   const rises = state.pastPayReviews.map((r) => `Q${r.quarter} ${rise(r.rise)}`).join(", ");
   const next = sim.config.payReview.on === 1 ? sim.payReviewDays(state).find((d) => d > state.day + 1) : undefined;
   const multiple = `pay ×${state.payMultiplier.toFixed(3)} of the day rates`;
-  return `${rises ? `${multiple} (rises: ${rises})` : "no pay reviews yet"}${next ? `; next review before day ${next}` : ""}`;
+  const schemes = schemesText(sim.staffSchemes(state));
+  return `${rises ? `${multiple} (rises: ${rises})` : "no pay reviews yet"}${schemes ? `; schemes: ${schemes}` : ""}${next ? `; next review before day ${next}` : ""}`;
+}
+
+/** A scheme's worth to staff, to a hundredth of a point: 0.53%. */
+const fineRise = (n: number) => `${(Math.round(Math.round(n * 1e6) / 100) / 100).toFixed(2)}%`;
+
+/** The text play name of each staff scheme, as typed in an offer: "death=on". */
+const SCHEME_WORDS: Record<StaffSchemeId, string> = { pension: "pension", health: "health", deathInService: "death", discount: "discount" };
+
+/** The schemes held, with their cost a day: "Pension top-up 2 (£3.84/day), Death in service (£0.96/day)". Empty for none. */
+function schemesText(schemes: StaffSchemeView[]): string {
+  return schemes
+    .filter((s) => s.level > 0)
+    .map((s) => `${s.name}${s.toggle ? "" : ` ${s.level}`} (${money(s.costPerDay)}/day)`)
+    .join(", ");
+}
+
+/** Each scheme for an open review: held level, its range, its cost model and worth to staff. */
+function schemeLines(schemes: StaffSchemeView[], valuation: number): string[] {
+  return [
+    `  staff schemes (levels only go up; staff count ${pct(valuation * 100)} of a scheme's worth): add them to an offer, e.g. offer 2.5 pension=1 death=on`,
+    ...schemes.map((s) => {
+      const cost = [s.wageShare ? `${(s.wageShare * 100).toFixed(1)}% of pay` : "", s.perPerson ? `£${s.perPerson.toFixed(2)}/person/day` : ""].filter(Boolean).join(" + ");
+      const held = s.toggle ? (s.level ? "on" : "off") : `level ${s.level} of ${s.maxLevel}`;
+      return `    ${SCHEME_WORDS[s.id]}: ${s.name}, ${held} (${money(s.costPerDay)}/day now); ${s.toggle ? "it" : "each level"} costs ${cost} and is worth ${fineRise(s.staffValue * valuation)} to staff`;
+    }),
+  ];
 }
 
 /** The open pay review in full: the caps, the offers and counters so far, and what's next. */
@@ -529,38 +561,55 @@ function payLines(sim: Sim, state: GameState): string[] {
   const lines = [
     `pay review, quarter ${review.quarter} (the rise applies from day ${review.startDay}): inflation ${rise(review.inflation)}. ` +
       `You can offer from ${rise(review.minOffer)} (inflation less a point); staff ask ${rise(review.maxAsk)} at most. A rise below inflation is a pay cut in real terms.`,
-    `  the team costs ${money(review.dailyStaffCost)}/day now`,
+    `  the team costs ${money(review.dailyStaffCost)}/day now, pay and staff schemes`,
+    ...schemeLines(review.schemes, review.schemeValuation),
   ];
   review.rounds.forEach((r, i) => {
-    lines.push(`  offer ${i + 1}: you offered ${rise(review.studentOffers[i]!)}, ${rollText(r)} → staff counter ${rise(review.staffFigures[i + 1]!)}`);
+    lines.push(`  offer ${i + 1}: you offered ${offerText(sim, state, review.offerTerms[i]!, review.studentOffers[i]!)}, ${rollText(r)} → staff counter ${rise(review.staffFigures[i + 1]!)}`);
   });
   lines.push(
     review.canAcceptCounter
-      ? `  staff are asking ${rise(review.staffFigure)}: "accept pay" to agree it, or offer again`
+      ? `  staff are asking ${rise(review.staffFigure)} in cash: "accept pay" to agree it (cash only, no schemes), or offer again`
       : `  staff open at ${rise(review.staffFigure)}: make the first offer`,
   );
   if (review.final) {
     lines.push(
       `  your next offer is FINAL: if staff don't accept it, it goes to a TRIBUNAL, which charges ${money(review.tribunalFee)} and picks your figure, theirs or the middle, ` +
-        `favouring whichever is closest to a fair rise ("payodds <rise %>" for its odds)`,
+        `favouring whichever is closest to a fair rise ("payodds <rise %> [schemes]" for its odds). Your schemes apply if it picks your figure or the middle`,
     );
   }
   return lines;
 }
 
-/** What offering a rise would cost and, if staff counter, the odds on their roll. */
+/** An offer in words: "3.0% cash" or "2.0% cash + Pension top-up to level 1 = 2.5% to staff". */
+function offerText(sim: Sim, state: GameState, terms: PayOfferTerms, value: number): string {
+  const held = sim.staffSchemes(state);
+  const raised = held
+    .filter((s) => terms.schemes[s.id] > s.level)
+    .map((s) => (s.toggle ? s.name : `${s.name} to level ${terms.schemes[s.id]}`));
+  return raised.length ? `${rise(terms.rise)} cash + ${raised.join(", ")} = ${rise(value)} to staff` : `${rise(terms.rise)} cash`;
+}
+
+/** What offering a rise and schemes would cost and, if staff counter, the odds on their roll. */
 function payOddsLines(p: PayOfferPreview): string[] {
   const chance = (x: number) => pct(x * 100);
   const real = p.realTerms < 0 ? `${rise(-p.realTerms)} below inflation: a real-terms pay cut` : `${rise(p.realTerms)} above inflation`;
-  const lines = [`offer ${rise(p.rise)} (${real}): +${money(p.extraPerDay)}/day, +${money(p.extraPerYear)} a year at today's team`];
+  const lines = [`offer ${rise(p.rise)} cash (${real}): +${money(p.extraPerDay)}/day, +${money(p.extraPerYear)} a year at today's team, schemes included`];
+  const raised = p.schemeCosts.filter((s) => s.level > s.held);
+  if (raised.length) {
+    lines.push(`  worth ${rise(p.value)} to staff: the cash + ${fineRise(p.schemeValue)} for the schemes raised`);
+    for (const s of raised) {
+      lines.push(`    ${s.name} ${s.held} → ${s.level}: worth ${fineRise(s.value)} to staff, costs ${money(s.costPerDay)}/day (+${money(s.extraPerDay)})`);
+    }
+  }
   if (p.meetsAsk) lines.push("  that's what staff are asking: they take it");
   if (p.tribunal) {
     const t = p.tribunal;
     lines.push(
       `  final offer: if staff don't accept it, the tribunal sits for ${money(t.fee)} and picks:`,
-      `    your offer ${chance(t.chances.student)} → ${rise(t.rises.student)}`,
-      `    the middle ${chance(t.chances.middle)} → ${rise(t.rises.middle)}`,
-      `    staff's figure ${chance(t.chances.staff)} → ${rise(t.rises.staff)}`,
+      `    your offer ${chance(t.chances.student)} → ${rise(t.cash.student)} cash${raised.length ? " + your schemes" : ""}`,
+      `    the middle ${chance(t.chances.middle)} → ${rise(t.cash.middle)} cash${raised.length ? " + your schemes" : ""}`,
+      `    staff's figure ${chance(t.chances.staff)} → ${rise(t.cash.staff)} cash, no schemes`,
     );
   }
   if (p.odds) {
@@ -583,16 +632,17 @@ function payResultLine(sim: Sim, before: GameState, after: GameState): string {
   if (review) {
     const r = review.rounds.at(-1)!;
     const left = `${review.offersLeft} offer${review.offersLeft === 1 ? " left, final" : "s left"}`;
-    return `offer ${rise(review.studentOffers.at(-1)!)}: staff counter, ${rollText(r)} → they ask ${rise(review.staffFigure)} (${left}; "accept pay" agrees it)`;
+    return `offer ${offerText(sim, before, review.offerTerms.at(-1)!, review.studentOffers.at(-1)!)}: staff counter, ${rollText(r)} → they ask ${rise(review.staffFigure)} (${left}; "accept pay" agrees it)`;
   }
   const settled = after.pastPayReviews.at(-1)!;
   const how =
     settled.outcome === "offerAccepted"
-      ? `staff accepted your offer of ${rise(settled.rise)}`
+      ? `staff accepted your offer of ${offerText(sim, before, settled.offerTerms.at(-1)!, settled.studentOffers.at(-1)!)}`
       : settled.outcome === "counterAccepted"
         ? `you accepted staff's counter of ${rise(settled.rise)}`
         : `no deal on the final offer, so the tribunal sat (fee ${money(settled.tribunal!.fee)}) and picked ${tribunalPickText[settled.tribunal!.pick]}, ${rise(settled.rise)}`;
-  return `pay review settled: ${how}. Pay ×${after.payMultiplier.toFixed(3)} of the day rates from day ${settled.startDay}: the team costs ${money(sim.dailyStaffCost(after))}/day (was ${money(sim.dailyStaffCost(before))})`;
+  const schemes = schemesText(sim.staffSchemes(after));
+  return `pay review settled: ${how}. Pay ×${after.payMultiplier.toFixed(3)} of the day rates from day ${settled.startDay}: the team costs ${money(sim.dailyStaffCost(after))}/day (was ${money(sim.dailyStaffCost(before))})${schemes ? `; schemes held: ${schemes}` : ""}`;
 }
 
 /** The IPO in a line: how many readiness conditions are met and what's next. */
@@ -832,8 +882,8 @@ export function renderCommands(sim: Sim, state: GameState): string {
   if (review) {
     lines.push(
       `  pay   (the pay review in full; changes nothing)`,
-      `  offer <${rise(review.minOffer)}–${rise(review.maxAsk)}>   (offer staff a pay rise, e.g. offer 3.5: they accept or counter with a roll; the third offer is final, and short of a deal goes to a tribunal)`,
-      `  payodds <rise %>   (what an offer would cost, and the odds on staff's counter; changes nothing)`,
+      `  offer <${rise(review.minOffer)}–${rise(review.maxAsk)}> [pension=0-3] [health=0-3] [death=on] [discount=on]   (offer staff a pay rise, e.g. offer 3.5, or cash with schemes, e.g. offer 2.5 pension=1 death=on: the offer's worth to staff is within the range; they accept or counter with a roll; the third offer is final, and short of a deal goes to a tribunal)`,
+      `  payodds <rise %> [schemes]   (what an offer would cost, its worth to staff, and the odds on staff's counter; changes nothing)`,
     );
     if (review.canAcceptCounter) lines.push(`  accept pay   (agree staff's counter of ${rise(review.staffFigure)})`);
   }
@@ -1015,7 +1065,7 @@ export type Command =
   | { kind: "rescue" }
   | { kind: "calendar" }
   | { kind: "pay" }
-  | { kind: "payOdds"; rise: number }
+  | { kind: "payOdds"; rise: number; schemes: Partial<SchemeLevels> }
   | { kind: "next"; days: number }
   /** The teacher ends the game, as from the staff panel. */
   | { kind: "end" };
@@ -1046,6 +1096,20 @@ function count(word: string | undefined): number {
 
 /** A pay rise typed as a percent, "3.5%" or "3.5", as a share (0.035). */
 const risePercent = (word: string | undefined) => number(word?.replace(/%$/, ""), "a pay rise in %") / 100;
+
+/** Scheme levels in an offer: "pension=2 health=1 death=on discount=on"; "off" is 0. */
+function schemeArgs(words: string[]): Partial<SchemeLevels> {
+  const levels: Partial<SchemeLevels> = {};
+  for (const word of words) {
+    const [name, value] = word.split("=");
+    const id = STAFF_SCHEMES.find((s) => SCHEME_WORDS[s] === name);
+    if (!id || value === undefined) {
+      throw new SimError("bad_command", `Expected a scheme and its level, such as pension=2 or death=on: one of ${STAFF_SCHEMES.map((s) => SCHEME_WORDS[s]).join(", ")}.`);
+    }
+    levels[id] = value === "on" ? 1 : value === "off" ? 0 : number(value, `a level for ${name}`);
+  }
+  return levels;
+}
 
 /** Reads one command, such as "hire support 5" or "rent app medium". Throws a SimError explaining what's wrong. */
 export function parseCommand(text: string): Command {
@@ -1161,9 +1225,11 @@ export function parseCommand(text: string): Command {
     case "pay":
       return { kind: "pay" };
     case "offer":
-      return one({ type: "offerPayRise", rise: risePercent(args[0]) });
+      return args.length > 1
+        ? one({ type: "offerPayRise", rise: risePercent(args[0]), schemes: schemeArgs(args.slice(1)) })
+        : one({ type: "offerPayRise", rise: risePercent(args[0]) });
     case "payodds":
-      return { kind: "payOdds", rise: risePercent(args[0]) };
+      return { kind: "payOdds", rise: risePercent(args[0]), schemes: schemeArgs(args.slice(1)) };
     case "accept": {
       if (args[0] === "pay") return one({ type: "acceptPayCounter" });
       const from = funder(args[0]);
@@ -1283,7 +1349,7 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
   if (command.kind === "rescue") return { state, rows: [], lines: rescueLines(sim, state) };
   if (command.kind === "calendar") return { state, rows: [], lines: calendarLines(sim, state) };
   if (command.kind === "pay") return { state, rows: [], lines: payLines(sim, state) };
-  if (command.kind === "payOdds") return { state, rows: [], lines: payOddsLines(sim.payOfferPreview(state, command.rise)) };
+  if (command.kind === "payOdds") return { state, rows: [], lines: payOddsLines(sim.payOfferPreview(state, command.rise, command.schemes)) };
   if (command.kind === "end") {
     const ended = sim.endGame(state);
     // Logged as the classroom server logs a game the teacher ends.

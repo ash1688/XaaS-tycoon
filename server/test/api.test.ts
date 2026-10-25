@@ -4374,4 +4374,46 @@ describe("pay reviews", () => {
     expect(played.company.day).toBe(4);
     expect(played.log[0]!.entries[0]!.text).toMatch(/^The tribunal settled quarter 2's pay review on/);
   });
+
+  it("takes staff schemes with an offer: previews their worth and cost, settles them, charges them daily and never lowers them", async () => {
+    const { url, act, next, result } = await reviewing();
+    const review = result.company.payReview!;
+    expect(result.company.staffSchemes.map((s) => [s.id, s.level])).toEqual([
+      ["pension", 0],
+      ["health", 0],
+      ["deathInService", 0],
+      ["discount", 0],
+    ]);
+    expect(review.schemeValuation).toBe(0.7);
+    const preview = (
+      await payApp.inject({ method: "GET", url: `${url}/pay-offer?rise=${review.minOffer}&pension=2&deathInService=1` })
+    ).json<PayOfferView>();
+    expect(preview.schemes).toEqual({ pension: 2, health: 0, deathInService: 1, discount: 0 });
+    expect(preview.schemeValue).toBeCloseTo((2 * 0.0075 + 0.0025) * 0.7, 9);
+    expect(preview.value).toBeCloseTo(review.minOffer + preview.schemeValue, 3);
+    expect(preview.schemeCosts.find((s) => s.id === "pension")!.costPerDay).toBeGreaterThan(0);
+    expect((await payApp.inject({ method: "GET", url: `${url}/pay-offer?rise=${review.minOffer}&pension=x` })).statusCode).toBe(400);
+    expect((await payApp.inject({ method: "GET", url: `${url}/pay-offer?rise=${review.minOffer}&pension=4` })).json()).toMatchObject({ error: "bad_offer" });
+    expect((await act({ type: "offerPayRise", rise: review.minOffer, schemes: { pension: "two" } })).statusCode).toBe(400);
+    // Worth staff's ask, so they accept: less cash, with the schemes.
+    const cash = Math.floor((review.maxAsk - preview.schemeValue) * 1000) / 1000;
+    const settled = (await act({ type: "offerPayRise", rise: cash, schemes: { pension: 2, deathInService: 1 } })).json<CompanyView>();
+    expect(settled.payReview).toBeNull();
+    expect(settled.lastPayReview).toMatchObject({ outcome: "offerAccepted", rise: cash, schemes: { pension: 2, deathInService: 1 } });
+    expect(settled.payMultiplier).toBeCloseTo(1 + cash, 9);
+    const pension = settled.staffSchemes.find((s) => s.id === "pension")!;
+    expect(pension).toMatchObject({ level: 2, maxLevel: 3, toggle: false });
+    expect(pension.costPerDay).toBeGreaterThan(0);
+    // Charged from the next day, as staff spend.
+    const played = (await next()).json<ContinueResult>();
+    const line = played.log[0]!.entries.find((e) => e.text.startsWith("Pension top-up level 2"));
+    expect(line).toMatchObject({ cashDelta: -pension.costPerDay, category: "staff" });
+    // The next review refuses lowering them.
+    let later = played;
+    for (let i = 0; i < 5 && !later.company.payReview; i++) later = (await next()).json<ContinueResult>();
+    const lower = await act({ type: "offerPayRise", rise: later.company.payReview!.maxAsk, schemes: { pension: 1 } });
+    expect(lower.statusCode).toBe(400);
+    expect(lower.json()).toMatchObject({ error: "scheme_decrease" });
+    expect(later.company.payReview!.schemes.find((s) => s.id === "deathInService")!.level).toBe(1);
+  });
 });

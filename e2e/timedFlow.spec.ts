@@ -144,8 +144,19 @@ test("a pay review stops timed flow and holds the game until the student settles
   // An offer below their ask shows its cost and the odds on staff's counter before it's made.
   const minOffer = (await modal.getByTestId("pay-min-offer").innerText()).replace("%", "");
   await modal.getByTestId("pay-rise").fill(minOffer);
-  await expect(modal.getByTestId("pay-cost")).toContainText(/That adds £[\d,]+ a day to your team's pay: £[\d,]+ a year/);
+  await expect(modal.getByTestId("pay-cost")).toContainText(/That adds £[\d,]+ a day to your team's cost: £[\d,]+ a year/);
   await expect(modal.getByTestId("pay-odds-high")).toContainText(/High roll, \d+%/);
+  // A staff scheme with it: what it's worth to staff and what it costs a day, for good.
+  await modal.getByTestId("pay-scheme-pension-input").fill("2");
+  await expect(modal.getByTestId("pay-worth")).toContainText(/Worth \d\.\d% to your staff: [\d.]+% cash plus 1\.05% for the schemes/);
+  await expect(modal.getByTestId("pay-scheme-cost-pension")).toContainText(/£[\d,]+ a day, for good/);
+  await expect(modal.getByTestId("pay-offer")).toContainText("+ 1 scheme");
+  await modal.getByTestId("pay-scheme-deathInService-input").check();
+  await expect(modal.getByTestId("pay-offer")).toContainText("+ 2 schemes");
+  // Not given yet, so they can come back off.
+  await modal.getByTestId("pay-scheme-deathInService-input").uncheck();
+  await modal.getByTestId("pay-scheme-pension-input").fill("0");
+  await expect(modal.getByTestId("pay-worth")).toHaveCount(0);
   // An offer of staff's whole ask is always accepted.
   await modal.getByTestId("pay-rise").fill(maxAsk);
   await expect(modal.getByTestId("pay-meets-ask")).toBeVisible();
