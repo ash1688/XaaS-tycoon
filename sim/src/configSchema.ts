@@ -10,6 +10,8 @@ import {
   DIFFICULTIES,
   DIFFICULTY_IDS,
   GAME_LENGTH_IDS,
+  SERIES_IDS,
+  VC_LEANS,
   MIGRATION_PHASES,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
@@ -201,6 +203,33 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("investors.angel.usersRoomShare", "Money", "Angel investor", "Users target room", "The angel's users target is at most this share of the users the market still has room for.", SHARE);
   add("investors.angel.targetDays", "Money", "Angel investor", "Days to hit the target", "Days after accepting the angel has to hit their target.", GAME_DAY);
   add("investors.angel.missShare", "Money", "Angel investor", "Extra share if missed", "Missing the target gives the angel new shares, taking their share of the company up by this (0.05 = five points).", range(0, 0.5, 0.01));
+  {
+    const V = "Venture capital";
+    const BIG_POUNDS = range(0, 20_000_000, 1_000);
+    add("investors.vc.gapDays", "Money", V, "Days between rounds", "A Series round's VCs can't approach until this many days after the rung before first approached (the angel, for Series A).", range(0, 90, 1));
+    add("investors.vc.targetDays", "Money", V, "Days averaged", "Days of income a round's hidden target averages, and of uptime it counts.", GAME_DAY);
+    add("investors.vc.leadPremium", "Money", V, "Lead VC's extra premium", "The lead VC, back for the next round, values the business at this much more premium than they otherwise would.", range(0, 1, 0.05));
+    add("investors.vc.declinePremium", "Money", V, "Premium lost per decline", "Each approach declined in a round takes this off the most premium the round's next VCs offer (never below the least).", range(0, 1, 0.05));
+    add("investors.vc.declineShare", "Money", V, "Share added per decline", "Each approach declined in a round adds this to the least share the round's next VCs ask for (never above the most).", range(0, 0.2, 0.01));
+    const LEANS = { cash: "Most cash", conditions: "Fewest conditions", ownership: "Least ownership" } as const;
+    for (const lean of VC_LEANS) {
+      add(`investors.vc.leans.${lean}.share`, "Money", V, `${LEANS[lean]}: share asked`, "A VC leaning this way asks for the round's share multiplied by this.", range(0.1, 3, 0.05));
+      add(`investors.vc.leans.${lean}.premium`, "Money", V, `${LEANS[lean]}: premium added`, "A VC leaning this way adds this to the round's premium (below 0 values the business lower).", range(-1, 1, 0.05));
+    }
+    for (const round of SERIES_IDS) {
+      const name = `Series ${round.slice(-1)}`;
+      const r = `investors.vc.rounds.${round}`;
+      add(`${r}.target.payingUsers`, "Money", name, "Hidden target: paying users", "The round's VCs approach once paying users reach this share of the product's IPO paying users (0 leaves it out).", SHARE);
+      add(`${r}.target.dailyRevenue`, "Money", name, "Hidden target: income", "The round's VCs approach once income a day, averaged, reaches this share of the product's IPO revenue a day (0 leaves it out).", SHARE);
+      add(`${r}.target.minUptime`, "Money", name, "Hidden target: uptime %", "The round's VCs approach only with at least this uptime over the days averaged (0 leaves it out).", range(0, 100, 0.5));
+      add(`${r}.premium.min`, "Money", name, "Least premium", "The least the round's VCs value the business at, as a multiple of the formula's (cash counts at face value).", MULTIPLIER);
+      add(`${r}.premium.max`, "Money", name, "Most premium", "The most the round's VCs value the business at, as a multiple of the formula's.", MULTIPLIER);
+      add(`${r}.share.min`, "Money", name, "Least share asked", "The smallest share of the company the round's VCs ask for, before their lean.", range(0.01, 0.9, 0.01));
+      add(`${r}.share.max`, "Money", name, "Most share asked", "The biggest share of the company the round's VCs ask for, before their lean.", range(0.01, 0.9, 0.01));
+      add(`${r}.minAmount`, "Money", name, "Least cash", "The round's VCs never offer less than this.", BIG_POUNDS);
+      add(`${r}.maxAmount`, "Money", name, "Most cash", "The round's VCs never offer more than this: they ask for a smaller share instead.", BIG_POUNDS);
+    }
+  }
 
   add("billing.daysPerMonth", "Money", "", "Days in a billing month", "Monthly costs are charged a day at a time: the monthly cost ÷ this.", range(28, 31, 1));
   for (const m of MODEL_IDS) {
@@ -801,6 +830,11 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
     ["rivals.minPriceMultiple", "rivals.maxPriceMultiple", "A rival's highest price can't be below its lowest."],
     ["investors.angel.premium.min", "investors.angel.premium.max", "The angel's most premium can't be below the least."],
     ["investors.angel.share.min", "investors.angel.share.max", "The most share the angel asks can't be below the least."],
+    ...SERIES_IDS.flatMap((round): [string, string, string][] => [
+      [`investors.vc.rounds.${round}.premium.min`, `investors.vc.rounds.${round}.premium.max`, "A round's most premium can't be below its least."],
+      [`investors.vc.rounds.${round}.share.min`, `investors.vc.rounds.${round}.share.max`, "The most share a round asks can't be below the least."],
+      [`investors.vc.rounds.${round}.minAmount`, `investors.vc.rounds.${round}.maxAmount`, "A round's most cash can't be below its least."],
+    ]),
     ["campaigns.minBudget", "campaigns.maxBudget", "A campaign's biggest budget can't be below its smallest."],
     ["campaigns.minDays", "campaigns.maxDays", "A campaign's longest run can't be below its shortest."],
   ];

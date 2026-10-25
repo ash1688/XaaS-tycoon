@@ -12,6 +12,7 @@ import {
 } from "./negotiation.ts";
 import {
   isFunderId,
+  ROUND_NAMES,
   SimError,
   type FriendsAndFamilyFunding,
   type DaySpend,
@@ -188,6 +189,7 @@ const NAMES: Record<Shareholder["id"], string> = {
   student: "You",
   friendsAndFamily: "Friends and family",
   angel: "Angel investor",
+  vc: "Venture capitalist",
   vulture: "Vulture VC",
   public: "Public shareholders",
   staffScheme: "Staff share scheme",
@@ -488,7 +490,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
         id: "investor",
         label: "Investor's valuation",
         amount: Math.round((set.multiple - 1) * heldWorth),
-        detail: `${set.investor}, your angel, valued the business at ${Math.round(set.multiple * 100) / 100}× the formula's on day ${set.day}: it moves in step with the formula from then on`,
+        detail: `${set.investor}, your ${set.round === "angel" ? "angel" : `${ROUND_NAMES[set.round]} VC`}, valued the business at ${Math.round(set.multiple * 100) / 100}× the formula's on day ${set.day}: it moves in step with the formula from then on`,
       });
     }
     // Cash counts, less what's still owed on a loan: a company is worth at least what's in the bank.
@@ -537,7 +539,12 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
       sharePrice,
       rows: state.shareholders.map((h) => ({
         id: h.id,
-        name: h.id === "angel" && state.investors.angel ? `${state.investors.angel.investor} (angel)` : NAMES[h.id],
+        name:
+          h.id === "angel" && state.investors.angel
+            ? `${state.investors.angel.investor} (angel)`
+            : h.id === "vc" && h.investor
+              ? `${h.investor} (VC)`
+              : NAMES[h.id],
         shares: h.shares,
         share: h.shares / shares,
         value: Math.round((value * h.shares) / shares),
@@ -549,8 +556,12 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
   const studentShare = (state: GameState) =>
     (state.shareholders.find((h) => h.id === "student")?.shares ?? 0) / sharesInIssue(state);
 
-  /** Friends and family and the grant close once the first angel is accepted. */
-  const closed = (state: GameState) => state.investors.angel !== null;
+  /** The day friends and family and the grant closed: when the first investor on the ladder, angel or VC, was accepted. */
+  const closedDay = (state: GameState): number | null => state.investors.angel?.day ?? state.investors.vc.deals[0]?.day ?? null;
+  const closed = (state: GameState) => closedDay(state) !== null;
+  /** Who closed them: "your angel investor" or "Series A". */
+  const closedBy = (state: GameState) =>
+    state.investors.angel ? "your angel investor" : `your ${ROUND_NAMES[state.investors.vc.deals[0]!.round]} VC`;
 
   function friendsAndFamilyOffer(state: GameState): FriendsAndFamilyOffer | null {
     if (state.funding.friendsAndFamily || closed(state)) return null;
@@ -677,7 +688,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
         friendsAndFamily: negotiationView(state, "friendsAndFamily"),
         grant: negotiationView(state, "grant"),
       },
-      closedDay: state.investors.angel?.day ?? null,
+      closedDay: closedDay(state),
     };
   }
 
@@ -731,7 +742,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
     if (closed(state)) {
       throw new SimError(
         "funding_closed",
-        `${FUNDER_NAMES[funder]}'s offer closed when you took on your angel investor on day ${state.investors.angel!.day}.`,
+        `${FUNDER_NAMES[funder]}'s offer closed when you took on ${closedBy(state)} on day ${closedDay(state)}.`,
       );
     }
   }

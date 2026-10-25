@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createSim, defaultConfig, SimError, type GameConfig, type GameState, type Sim } from "../src/index.ts";
+import { createSim, defaultConfig, SimError, type GameConfig, type GameState, type SeriesId, type Sim } from "../src/index.ts";
 
 // The IPO through the sim's public interface: the readiness checklist, the cold market, the float, the first day of
 // trading, and the until-IPO game length. Anything random is tested on fixed RNG states, so results repeat.
@@ -46,6 +46,11 @@ const makeReady = (played: GameState): GameState => ({
   paidUsers: 1_000,
   price: 60,
   satisfaction: 90,
+  // Every Series round has approached (declined or not): they have their own tests (vcRounds.test.ts).
+  investors: {
+    ...played.investors,
+    vc: { ...played.investors.vc, firstApproachDay: { seriesA: 2, seriesB: 3, seriesC: 4, seriesD: 5 } },
+  },
   spendByDay: played.spendByDay.map((d) => ({
     ...d,
     staff: 100,
@@ -76,13 +81,22 @@ const lastDays = (state: GameState, days: number, change: Partial<GameState["spe
   spendByDay: state.spendByDay.map((d) => (d.day > state.day - days ? { ...d, ...change } : d)),
 });
 
+/** The state as if a Series round had never approached. */
+const notApproached = (state: GameState, round: SeriesId): GameState => ({
+  ...state,
+  investors: {
+    ...state.investors,
+    vc: { ...state.investors.vc, firstApproachDay: { ...state.investors.vc.firstApproachDay, [round]: null } },
+  },
+});
+
 const met = (s: Sim, state: GameState) => Object.fromEntries(s.ipo(state).conditions.map((c) => [c.id, c.met]));
 
 /** A sim whose cold-market chance is always this. */
 const coldAt = (chance: number) => createSim({ ...quiet, ipo: { ...quiet.ipo, coldChance: { min: chance, max: chance } } });
 
 describe("the readiness checklist", () => {
-  it("lists the eight conditions, none met by a new company, and refuses to apply", () => {
+  it("lists the twelve conditions, none met by a new company, and refuses to apply", () => {
     const state = begin();
     const ipo = sim.ipo(state);
     expect(ipo.conditions.map((c) => c.id)).toEqual([
@@ -94,6 +108,10 @@ describe("the readiness checklist", () => {
       "profit",
       "satisfaction",
       "payingUsers",
+      "seriesA",
+      "seriesB",
+      "seriesC",
+      "seriesD",
     ]);
     expect(ipo).toMatchObject({ status: "not-ready", ready: false, canApply: false, offer: null, result: null });
     expect(ipo.refusal).toMatch(/Not ready to float yet: trading history, users and revenue/);
@@ -113,6 +131,7 @@ describe("the readiness checklist", () => {
       ["satisfaction", lastDays(state, RECORD, { satisfaction: 60 })],
       ["payingUsers", { ...state, paidUsers: 499 }],
       ["profit", { ...lastDays(state, RECORD, { staff: 2_000 }), price: 0.01 }],
+      ...(["seriesA", "seriesB", "seriesC", "seriesD"] as const).map((round): [string, GameState] => [round, notApproached(state, round)]),
     ];
     for (const [id, s] of broken) {
       const conditions = met(sim, s);
@@ -175,6 +194,10 @@ describe("the readiness checklist", () => {
     expect(scraping.ready).toBe(true);
     expect(comfy.comfort).toBeGreaterThan(scraping.comfort);
     expect(scraping.conditions.find((c) => c.id === "satisfaction")!.comfort).toBeLessThan(0.2);
+    // The funding rounds are yes or no: met, they show as comfortable but leave the average to the graded conditions.
+    const graded = comfy.conditions.filter((c) => !c.id.startsWith("series"));
+    expect(comfy.conditions.filter((c) => c.id.startsWith("series")).map((c) => c.comfort)).toEqual([1, 1, 1, 1]);
+    expect(comfy.comfort).toBeCloseTo(graded.reduce((sum, c) => sum + c.comfort, 0) / graded.length, 2);
   });
 });
 

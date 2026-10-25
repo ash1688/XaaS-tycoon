@@ -1,4 +1,4 @@
-import type { GameConfig } from "./config.ts";
+import { SERIES_IDS, VC_LEANS, type GameConfig, type SeriesId, type VcLean } from "./config.ts";
 import { count, pounds, type Finance } from "./finance.ts";
 import { loanOwed } from "./loan.ts";
 import { marketSize } from "./market.ts";
@@ -6,6 +6,7 @@ import { createNegotiation, type CounterOdds, type TermSpec, type Terms } from "
 import { nextRandom } from "./rng.ts";
 import type { NegotiationView, Shares } from "./shares.ts";
 import {
+  ROUND_NAMES,
   SimError,
   type AngelDeal,
   type AngelTarget,
@@ -15,6 +16,10 @@ import {
   type Investors,
   type LogEntry,
   type RoundId,
+  type VcApproach,
+  type VcDeal,
+  type VcPitch,
+  type VentureCapital,
 } from "./state.ts";
 
 /** Users who joined and who left on a day played, free and paying: what an angel's users target counts. */
@@ -75,16 +80,81 @@ export interface AngelView extends AngelDeal {
   daysLeft: number;
 }
 
-/** The funding ladder: the approach open now and its negotiation, the angel's deal, and the valuation it set. */
+/** One VC's offer in an approach, priced today as an angel's is. */
+export interface VcOfferView {
+  investor: string;
+  lean: VcLean;
+  /** "Most cash", "Fewest conditions" or "Least ownership". */
+  leanLabel: string;
+  /** The lead VC, back from the last round the student went with. */
+  lead: boolean;
+  /** "open" until one is picked; then "picked" for that VC and "closed" for the other two. */
+  status: "open" | "picked" | "closed";
+  amount: number;
+  /** Their share of the company after, 0–1. */
+  theirShare: number;
+  preMoney: number;
+  valuation: number;
+  /** Their valuation of the business, as a multiple of the formula's. */
+  multiple: number;
+  sharePrice: number;
+  newShares: number;
+  sharesAfter: number;
+  yourShareAfter: number;
+}
+
+/** Three VCs' approach for a round, still to be answered. */
+export interface VcApproachView {
+  round: SeriesId;
+  /** "Series A". */
+  name: string;
+  day: number;
+  /** The last day it can be answered on: unanswered then, it lapses as the next day is played. */
+  lastDay: number;
+  daysLeft: number;
+  picked: string | null;
+  offers: VcOfferView[];
+  formulaValuation: number;
+  sharesInIssue: number;
+  yourShareBefore: number;
+  /** What accepting any of them does, in words. */
+  effects: string[];
+}
+
+/** A round of the ladder: the day it first approached (null until then) and its deal, if one was done. */
+export interface VcRoundView {
+  round: SeriesId;
+  name: string;
+  firstApproachDay: number | null;
+  deal: VcDeal | null;
+}
+
+/** Venture capital: the approach open now and the negotiation with the VC picked, and how each round stands. */
+export interface VcView {
+  approach: VcApproachView | null;
+  negotiation: NegotiationView | null;
+  rounds: VcRoundView[];
+  lead: VentureCapital["lead"];
+  /** Approaches turned down, failed or lapsed, oldest first. */
+  declined: VentureCapital["declined"];
+  /** After a decline, until three new VCs approach for the same round: they will, in a few days. */
+  anotherComing: boolean;
+}
+
+/**
+ * The funding ladder: the angel's approach open now and its negotiation, the angel's deal, the valuation an investor
+ * set, and venture capital.
+ */
 export interface InvestorsView {
   offer: InvestorOffer | null;
   negotiation: NegotiationView | null;
   angel: AngelView | null;
-  /** Investors turned down so far, oldest first. */
+  /** Angels turned down so far, oldest first. */
   declined: Investors["declined"];
-  /** After a decline, until the next investor approaches: one will, in a few days. */
+  /** After a decline, until the next angel approaches: one will, in a few days. */
   anotherComing: boolean;
   valuation: InvestorValuation | null;
+  vc: VcView;
 }
 
 /** What an investor's offer is negotiated on: their cash, and their share of the company after (0–1). */
@@ -113,17 +183,50 @@ const ANGEL_NAMES = [
   "Jonas Weber",
 ];
 
-const ROUND_NAMES: Record<RoundId, string> = { angel: "angel investor" };
+/** VC firms' names, drawn as they approach. */
+const VC_NAMES = [
+  "Northgate Ventures",
+  "Halcyon Capital",
+  "Redbrick Partners",
+  "Ashgrove Ventures",
+  "Lumen Capital",
+  "Foundry Bridge",
+  "Kestrel Partners",
+  "Meridian Growth",
+  "Tidewater Capital",
+  "Oakline Ventures",
+  "Silverpeak Partners",
+  "Harbourlight Capital",
+  "Brightwater Ventures",
+  "Cobalt Square",
+  "Fieldstone Growth",
+  "Juniper Lane Capital",
+  "Elmstead Ventures",
+  "Quarry Hill Partners",
+  "Blackthorn Capital",
+  "Wayfarer Ventures",
+  "Larkspur Growth",
+  "Ironbridge Partners",
+  "Sable Point Capital",
+  "Greenhythe Ventures",
+];
+
+const LEAN_LABELS: Record<VcLean, string> = { cash: "Most cash", conditions: "Fewest conditions", ownership: "Least ownership" };
+
+/** The day a VC round first approached, whatever the student made of it, or null: Series A's unlocks its C-suite roles. */
+export const seriesApproachDay = (state: Pick<GameState, "investors">, round: SeriesId) =>
+  state.investors.vc.firstApproachDay[round];
+
 const percent = (share: number) => `${Math.round(share * 1000) / 10}%`;
 const roundTo = (n: number, step: number) => Math.round(n / step) * step;
 /** The most of the company an offer can come to, however far the business falls. */
 const MAX_SHARE = 0.9;
 
 /**
- * The funding ladder's investors, who approach the student: the angel now. A rung's hidden target, once hit, brings an
- * investor approachDays later with an offer of cash for a share, which the student negotiates, accepts or declines;
- * declining brings another retryDays later. See InvestorsConfig. Series A–D will add rungs here, with the same
- * approach, offer and negotiation.
+ * The funding ladder's investors, who approach the student: the angel, then Series A–D venture capital. A rung's hidden
+ * target, once hit, brings an investor approachDays later with an offer of cash for a share (three VCs, for a VC
+ * round), which the student negotiates, accepts or declines; declining brings another retryDays later. See
+ * InvestorsConfig and VcConfig.
  */
 export function createInvestors(config: GameConfig, finance: Finance, shares: Shares) {
   const c = config.investors;
@@ -137,6 +240,14 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
     declined: [],
     angel: null,
     valuation: null,
+    vc: {
+      firstApproachDay: { seriesA: null, seriesB: null, seriesC: null, seriesD: null },
+      next: null,
+      approach: null,
+      declined: [],
+      deals: [],
+      lead: null,
+    },
   });
 
   const netCash = (state: GameState) => state.cash - loanOwed(state.loan);
@@ -215,7 +326,7 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
    * their share rises in step, and an offer can't be held open while the company sinks to sell it dear; a business
    * worth more gets the terms agreed. Cash raised or spent since moves it pound for pound.
    */
-  function priced(state: GameState, a: Approach) {
+  function priced(state: GameState, a: Pick<Approach, "negotiation" | "business" | "netCash">) {
     const terms = negotiator.latest(a.negotiation);
     const amount = terms.amount!;
     const agreed = amount / terms.share! - amount;
@@ -336,8 +447,15 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
       negotiation: negotiationView(state),
       angel: angelView(state),
       declined: i.declined,
-      anotherComing: i.declined.length > 0 && !i.approach && !i.angel && i.nextApproachDay !== null && !tooLate(state),
+      anotherComing:
+        i.declined.length > 0 &&
+        !i.approach &&
+        !i.angel &&
+        i.nextApproachDay !== null &&
+        i.vc.firstApproachDay.seriesA === null &&
+        !tooLate(state),
       valuation: i.valuation,
+      vc: vcView(state),
     };
   }
 
@@ -363,6 +481,7 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
 
   /** What countering the open approach's offer with `terms` would do: the odds on the roll, and each next offer. */
   function counterOdds(state: GameState, terms: Partial<Terms>): CounterOdds {
+    if (state.investors.vc.approach) return vcCounterOdds(state, terms);
     const a = openApproach(state);
     checkTerms(terms);
     return negotiator.odds(a.negotiation, terms, INVESTOR_TERMS, shares.rollBonus(state));
@@ -370,6 +489,7 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
 
   /** Counters the open approach's offer between days: a roll sets their next offer, which stands until answered. */
   function counterInvestor(state: GameState, terms: Partial<Terms>): GameState {
+    if (state.investors.vc.approach) return counterVc(state, terms);
     const a = openApproach(state);
     checkTerms(terms);
     const done = negotiator.counter(a.negotiation, terms, INVESTOR_TERMS, state.negotiationRng, shares.rollBonus(state));
@@ -385,6 +505,7 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
    * closes friends and family and the grant; their target starts.
    */
   function acceptInvestor(state: GameState): GameState {
+    if (state.investors.vc.approach) return acceptVc(state);
     const a = openApproach(state);
     const o = offer(state)!;
     const { multiple } = priced(state, a);
@@ -423,6 +544,7 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
 
   /** Turns the open approach down: a new investor approaches retryDays later. */
   function declineInvestor(state: GameState): GameState {
+    if (state.investors.vc.approach) return declineVc(state);
     const a = openApproach(state);
     return {
       ...state,
@@ -487,20 +609,16 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
   }
 
   /**
-   * After each day played: the angel's target, then the ladder. Before the angel is accepted, the first day the hidden
-   * target is hit sets when one approaches, and on that day one does.
+   * The angel's rung on a day played, until an angel is accepted or Series A approaches: an offer left unanswered
+   * lapses, and the first day the hidden target is hit sets when one approaches, and on that day one does.
    */
-  function investorDay(state: GameState, flows: UserFlows): { state: GameState; entries: LogEntry[] } {
-    if (state.status === "liquidated") return { state, entries: [] };
-    // A target due on the last day is settled as the game finishes on it.
-    const settled = angelDay(state, flows);
-    let s = settled.state;
+  function angelLadderDay(s: GameState): { state: GameState; entries: LogEntry[] } {
     const i = s.investors;
-    if (s.status !== "playing" || i.angel) return settled;
+    if (i.angel || i.vc.firstApproachDay.seriesA !== null) return { state: s, entries: [] };
     // An offer left unanswered lapses at the end of its last day, as if declined.
     const a = i.approach;
     if (a) {
-      if (s.day < a.day + c.offerDays) return settled;
+      if (s.day < a.day + c.offerDays) return { state: s, entries: [] };
       const lapsed: GameState = {
         ...s,
         investors: {
@@ -515,19 +633,344 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
         cashDelta: 0,
         kind: "funding",
       };
-      return { state: lapsed, entries: [...settled.entries, entry] };
+      return { state: lapsed, entries: [entry] };
     }
     if (i.nextApproachDay === null && angelTargetHit(s)) {
       s = { ...s, investors: { ...i, nextApproachDay: s.day + c.approachDays } };
     }
-    if (s.investors.nextApproachDay !== null && s.day >= s.investors.nextApproachDay && !tooLate(s)) {
-      const came = approach(s, "angel");
-      return { state: came.state, entries: [...settled.entries, ...came.entries] };
-    }
-    return { state: s, entries: settled.entries };
+    // Series A's VCs, due today, come ahead of another angel.
+    const seriesADue = i.vc.next !== null && s.day >= i.vc.next.day;
+    if (s.investors.nextApproachDay !== null && s.day >= s.investors.nextApproachDay && !tooLate(s) && !seriesADue) return approach(s, "angel");
+    return { state: s, entries: [] };
   }
 
-  return { startingInvestors, investors, counterOdds, counterInvestor, acceptInvestor, declineInvestor, investorDay };
+  /** After each day played: the angel's target, then the ladder: the angel's rung, then venture capital's. */
+  function investorDay(state: GameState, flows: UserFlows): { state: GameState; entries: LogEntry[] } {
+    if (state.status === "liquidated") return { state, entries: [] };
+    // A target due on the last day is settled as the game finishes on it.
+    const settled = angelDay(state, flows);
+    if (settled.state.status !== "playing") return settled;
+    const angelRung = angelLadderDay(settled.state);
+    const vcRung = vcDay(angelRung.state);
+    return { state: vcRung.state, entries: [...settled.entries, ...angelRung.entries, ...vcRung.entries] };
+  }
+
+  // Venture capital.
+
+  const vcConfig = c.vc;
+  const withVc = (state: GameState, vc: Partial<VentureCapital>): GameState => ({
+    ...state,
+    investors: { ...state.investors, vc: { ...state.investors.vc, ...vc } },
+  });
+
+  /** Uptime % over the last `days` days played. */
+  const uptimeOver = (state: GameState, days: number) => {
+    const recent = state.spendByDay.filter((d) => d.day > state.day - days && d.day <= state.day);
+    return 100 * (1 - recent.reduce((sum, d) => sum + d.hoursDown, 0) / (Math.max(1, recent.length) * 24));
+  };
+
+  /** A round's hidden target: every part set, as a share of the product's IPO bar, holding today. */
+  function vcTargetHit(state: GameState, round: SeriesId): boolean {
+    const t = vcConfig.rounds[round].target;
+    const bar = config.ipo.products[state.productType];
+    const days = vcConfig.targetDays;
+    if (state.launchDay === null || state.day - state.launchDay < days) return false;
+    if (t.payingUsers > 0 && state.paidUsers < t.payingUsers * bar.payingUsers) return false;
+    if (t.dailyRevenue > 0 && incomeOver(state, days) < (t.dailyRevenue * bar.annualRevenue) / 365) return false;
+    if (t.minUptime > 0 && uptimeOver(state, days) < t.minUptime) return false;
+    return true;
+  }
+
+  /** The day the rung before a round first approached: the angel for Series A. */
+  const rungBefore = (state: GameState, round: SeriesId) => {
+    const at = SERIES_IDS.indexOf(round);
+    return at === 0 ? state.investors.firstApproachDay : state.investors.vc.firstApproachDay[SERIES_IDS[at - 1]!];
+  };
+
+  /**
+   * Three VCs approach for a round. On the round's first approach the lead VC, if there is one, returns for B, C or D
+   * alongside two new VCs; otherwise all three are new. Each leans its own way, and their offers value the business at
+   * a premium over the formula's, as an angel's do.
+   */
+  function vcApproach(state: GameState, round: SeriesId): { state: GameState; entries: LogEntry[] } {
+    let rng = state.investorRng;
+    const draw = () => {
+      const [r, next] = nextRandom(rng);
+      rng = next;
+      return r;
+    };
+    const v = state.investors.vc;
+    const r = vcConfig.rounds[round];
+    const first = v.firstApproachDay[round] === null;
+    const lead = first && round !== "seriesA" ? v.lead : null;
+    // New names each time: not the lead, nor any VC turned down or gone with before, unless too few are left.
+    const used = new Set([...v.declined.flatMap((d) => d.investors), ...v.deals.map((d) => d.investor), ...(v.lead ? [v.lead.investor] : [])]);
+    let pool = VC_NAMES.filter((n) => !used.has(n));
+    if (pool.length < 3) pool = VC_NAMES.filter((n) => n !== lead?.investor);
+    // Word gets round: each approach turned down in this round makes the next VCs less generous.
+    const declines = v.declined.filter((d) => d.round === round).length;
+    const premiumMax = Math.max(r.premium.min, r.premium.max - declines * vcConfig.declinePremium);
+    const shareMin = Math.min(r.share.max, r.share.min + declines * vcConfig.declineShare);
+    const business = shares.businessWorth(state);
+    const cash = netCash(state);
+
+    const pitch = (investor: string, lean: VcLean, isLead: boolean): VcPitch => {
+      const leaning = vcConfig.leans[lean];
+      const premium =
+        Math.round((r.premium.min + draw() * (premiumMax - r.premium.min) + leaning.premium + (isLead ? vcConfig.leadPremium : 0)) * 100) / 100;
+      const asked = Math.min(MAX_SHARE, roundTo((shareMin + draw() * (r.share.max - shareMin)) * leaning.share, 0.005));
+      const preMoney = Math.max(premium * business + cash, 0.25 * premium * business);
+      const amount = Math.min(r.maxAmount, Math.max(r.minAmount, roundTo((asked * preMoney) / (1 - asked), 1000)));
+      return { investor, lean, lead: isLead, negotiation: negotiator.open({ amount, share: amount / (preMoney + amount) }) };
+    };
+    const vcs: VcPitch[] = lead ? [pitch(lead.investor, lead.lean, true)] : [];
+    while (vcs.length < 3) {
+      const investor = pool.splice(Math.floor(draw() * pool.length), 1)[0]!;
+      const lean = VC_LEANS[Math.floor(draw() * VC_LEANS.length)]!;
+      vcs.push(pitch(investor, lean, false));
+    }
+    const record: VcApproach = { round, day: state.day, business, netCash: cash, vcs, picked: null };
+    const offers = vcs
+      .map((p) => {
+        const t = negotiator.latest(p.negotiation);
+        return `${p.investor}${p.lead ? ", your lead VC," : ""} (${LEAN_LABELS[p.lean].toLowerCase()}) ${pounds(t.amount!)} for ${percent(t.share!)}`;
+      })
+      .join("; ");
+    const entries: LogEntry[] = [
+      {
+        text: `${ROUND_NAMES[round]}: three venture capitalists want to invest in ${state.companyName}. ${offers}. Their offers are on Finance: pick one to negotiate with, or decline them all.`,
+        cashDelta: 0,
+        kind: "funding",
+      },
+    ];
+    return {
+      state: {
+        ...withVc(state, {
+          approach: record,
+          next: null,
+          firstApproachDay: { ...v.firstApproachDay, [round]: v.firstApproachDay[round] ?? state.day },
+        }),
+        investorRng: rng,
+      },
+      entries,
+    };
+  }
+
+  /**
+   * Venture capital's rung on a day played: an approach left unanswered lapses; otherwise, once the rung before has
+   * approached and gapDays have passed, the first day the next round's target is hit sets when its VCs approach, ahead
+   * of any retry for the round before; and on that day they do, or once an angel's offer open then is answered.
+   */
+  function vcDay(s: GameState): { state: GameState; entries: LogEntry[] } {
+    const v = s.investors.vc;
+    const a = v.approach;
+    if (a) {
+      if (s.day < a.day + c.offerDays) return { state: s, entries: [] };
+      const entry: LogEntry = {
+        text: `The ${ROUND_NAMES[a.round]} offers lapsed: you didn't accept one within ${c.offerDays} days, so they count as declined. Three new VCs will approach in a few days, on less generous terms.`,
+        cashDelta: 0,
+        kind: "funding",
+      };
+      return {
+        state: withVc(s, {
+          approach: null,
+          declined: [...v.declined, { round: a.round, investors: a.vcs.map((p) => p.investor), day: s.day, lapsed: true }],
+          next: { round: a.round, day: s.day + c.retryDays },
+        }),
+        entries: [entry],
+      };
+    }
+    const upcoming = SERIES_IDS.find((r) => v.firstApproachDay[r] === null);
+    if (upcoming && v.next?.round !== upcoming) {
+      const before = rungBefore(s, upcoming);
+      if (before !== null && s.day >= before + vcConfig.gapDays && vcTargetHit(s, upcoming)) {
+        s = withVc(s, { next: { round: upcoming, day: s.day + c.approachDays } });
+      }
+    }
+    // They wait while an angel's offer is open, and come once it's answered.
+    const next = s.investors.vc.next;
+    if (next && s.day >= next.day && !s.investors.approach) return vcApproach(s, next.round);
+    return { state: s, entries: [] };
+  }
+
+  function openVc(state: GameState): VcApproach {
+    const a = state.investors.vc.approach;
+    if (!a) throw new SimError("no_approach", "No VCs are waiting on an answer: they come to companies that grow.");
+    return a;
+  }
+
+  /** The VC picked to negotiate with: refused until one is. */
+  function pickedVc(state: GameState): { a: VcApproach; vc: VcPitch } {
+    const a = openVc(state);
+    const vc = a.vcs.find((p) => p.investor === a.picked);
+    if (!vc) throw new SimError("pick_first", `Pick one of the three VCs to negotiate with first: ${a.vcs.map((p) => p.investor).join(", ")}.`);
+    return { a, vc };
+  }
+
+  /** Picks one of the three VCs to negotiate with alone, which closes the other two. */
+  function pickInvestor(state: GameState, investor: string): GameState {
+    const a = openVc(state);
+    if (a.picked) throw new SimError("already_picked", `You're already negotiating with ${a.picked}: the other two have closed.`);
+    if (!a.vcs.some((p) => p.investor === investor)) {
+      throw new SimError("unknown_investor", `Pick one of the VCs who approached: ${a.vcs.map((p) => p.investor).join(", ")}.`);
+    }
+    return withVc(state, { approach: { ...a, picked: investor } });
+  }
+
+  /** A VC's offer that stands, priced today. */
+  function vcTerms(state: GameState, a: VcApproach, vc: VcPitch) {
+    const { amount, preMoney, share, multiple } = priced(state, { negotiation: vc.negotiation, business: a.business, netCash: a.netCash });
+    const inIssue = shares.sharesInIssue(state);
+    const newShares = Math.max(1, Math.round((share * inIssue) / (1 - share)));
+    const sharesAfter = inIssue + newShares;
+    const yours = state.shareholders.find((h) => h.id === "student")?.shares ?? 0;
+    return {
+      amount,
+      theirShare: newShares / sharesAfter,
+      preMoney: Math.round(preMoney),
+      valuation: Math.round(preMoney + amount),
+      multiple: Math.round(multiple * 100) / 100,
+      rawMultiple: multiple,
+      sharePrice: amount / newShares,
+      newShares,
+      sharesAfter,
+      yourShareAfter: yours / sharesAfter,
+    };
+  }
+
+  function vcView(state: GameState): VcView {
+    const v = state.investors.vc;
+    const a = v.approach;
+    let approachView: VcApproachView | null = null;
+    let negotiation: NegotiationView | null = null;
+    if (a) {
+      const inIssue = shares.sharesInIssue(state);
+      const yours = state.shareholders.find((h) => h.id === "student")?.shares ?? 0;
+      const funding = shares.funding(state);
+      const closing = [funding.friendsAndFamilyOffer && "friends and family's offer", funding.grantOffer && "the grant's offer"].filter(Boolean);
+      const after = SERIES_IDS[SERIES_IDS.indexOf(a.round) + 1];
+      approachView = {
+        round: a.round,
+        name: ROUND_NAMES[a.round],
+        day: a.day,
+        lastDay: a.day + c.offerDays - 1,
+        daysLeft: a.day + c.offerDays - state.day,
+        picked: a.picked,
+        offers: a.vcs.map((vc) => {
+          const { rawMultiple: _, ...terms } = vcTerms(state, a, vc);
+          return {
+            investor: vc.investor,
+            lean: vc.lean,
+            leanLabel: LEAN_LABELS[vc.lean],
+            lead: vc.lead,
+            status: a.picked === null ? "open" : a.picked === vc.investor ? "picked" : "closed",
+            ...terms,
+          };
+        }),
+        formulaValuation: shares.valuation(state).valuation,
+        sharesInIssue: inIssue,
+        yourShareBefore: yours / inIssue,
+        effects: [
+          "The company's valuation becomes the VC's figure, with their cash, and moves in step with the formula from then on.",
+          "All their cash is paid on signing.",
+          ...(after ? [`They become your lead VC: they'll be back for ${ROUND_NAMES[after]} alongside two new VCs.`] : []),
+          ...(closing.length ? [`Friends and family and grants close for good: ${closing.join(" and ")} will be gone.`] : []),
+        ],
+      };
+      const picked = a.vcs.find((p) => p.investor === a.picked);
+      if (picked) {
+        const n = picked.negotiation;
+        negotiation = {
+          offers: n.offers,
+          rounds: n.rounds,
+          countersLeft: negotiator.countersLeft(n),
+          final: negotiator.isFinal(n),
+          terms: INVESTOR_TERMS,
+          maxAsk: config.negotiation.maxAsk,
+          bonus: shares.rollBonus(state),
+        };
+      }
+    }
+    // A retry is coming once a round's approach was turned down and the next round hasn't come first.
+    const retry = v.next !== null && v.firstApproachDay[v.next.round] !== null;
+    return {
+      approach: approachView,
+      negotiation,
+      rounds: SERIES_IDS.map((round) => ({
+        round,
+        name: ROUND_NAMES[round],
+        firstApproachDay: v.firstApproachDay[round],
+        deal: v.deals.find((d) => d.round === round) ?? null,
+      })),
+      lead: v.lead,
+      declined: v.declined,
+      anotherComing: !a && retry,
+    };
+  }
+
+  function vcCounterOdds(state: GameState, terms: Partial<Terms>): CounterOdds {
+    const { vc } = pickedVc(state);
+    checkTerms(terms);
+    return negotiator.odds(vc.negotiation, terms, INVESTOR_TERMS, shares.rollBonus(state));
+  }
+
+  function counterVc(state: GameState, terms: Partial<Terms>): GameState {
+    const { a, vc } = pickedVc(state);
+    checkTerms(terms);
+    const done = negotiator.counter(vc.negotiation, terms, INVESTOR_TERMS, state.negotiationRng, shares.rollBonus(state));
+    const vcs = a.vcs.map((p) => (p === vc ? { ...p, negotiation: done.negotiation } : p));
+    return { ...withVc(state, { approach: { ...a, vcs } }), negotiationRng: done.rng };
+  }
+
+  /**
+   * Takes the picked VC's offer that stands, at once: their cash for new shares. Their figure becomes the valuation,
+   * they become the lead VC, and friends and family and the grant close.
+   */
+  function acceptVc(state: GameState): GameState {
+    const { a, vc } = pickedVc(state);
+    const t = vcTerms(state, a, vc);
+    const entry: LogEntry = {
+      text: `${vc.investor} led your ${ROUND_NAMES[a.round]}: ${pounds(t.amount)} for ${count.format(t.newShares)} new shares, ${percent(t.theirShare)} of the company, valuing it at ${pounds(t.valuation)}. You now own ${percent(t.yourShareAfter)}.`,
+      cashDelta: t.amount,
+      kind: "funding",
+    };
+    const deal: VcDeal = {
+      round: a.round,
+      investor: vc.investor,
+      lean: vc.lean,
+      day: state.day,
+      amount: t.amount,
+      shares: t.newShares,
+      share: t.theirShare,
+      valuation: t.valuation,
+    };
+    const v = state.investors.vc;
+    const holding = state.shareholders.some((h) => h.id === "vc" && h.investor === vc.investor);
+    return {
+      ...finance.chargeNow(state, [entry]),
+      shareholders: holding
+        ? state.shareholders.map((h) => (h.id === "vc" && h.investor === vc.investor ? { ...h, shares: h.shares + t.newShares } : h))
+        : [...state.shareholders, { id: "vc", investor: vc.investor, shares: t.newShares, day: state.day }],
+      investors: {
+        ...state.investors,
+        valuation: { investor: vc.investor, round: a.round, day: state.day, multiple: t.rawMultiple },
+        vc: { ...v, approach: null, next: null, deals: [...v.deals, deal], lead: { investor: vc.investor, lean: vc.lean } },
+      },
+    };
+  }
+
+  /** Turns the approach down (all three, or the VC picked): three new VCs approach retryDays later for the same round. */
+  function declineVc(state: GameState): GameState {
+    const a = openVc(state);
+    const v = state.investors.vc;
+    return withVc(state, {
+      approach: null,
+      declined: [...v.declined, { round: a.round, investors: a.vcs.map((p) => p.investor), day: state.day, lapsed: false }],
+      next: { round: a.round, day: state.day + c.retryDays },
+    });
+  }
+
+  return { startingInvestors, investors, counterOdds, counterInvestor, acceptInvestor, declineInvestor, pickInvestor, investorDay };
 }
 
 export type InvestorsModule = ReturnType<typeof createInvestors>;

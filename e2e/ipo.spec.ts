@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
-import { E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
+import postgres from "postgres";
+import { E2E_DATABASE_URL, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
 
 // The IPO: an until-IPO game, the readiness checklist on Finance turning green, applying, the opening-bell page, and
 // the game ending with the cash raised, the market value at the close and the student's stake.
@@ -31,6 +32,16 @@ test.afterEach(async ({ request }) => {
   code = preset = null;
 });
 
+/** As if every Series round had approached the company on day 1 and been declined. */
+async function allRoundsApproached(id: string) {
+  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
+  try {
+    await sql`update companies set state = jsonb_set(state, '{investors,vc,firstApproachDay}', ${sql.json({ seriesA: 1, seriesB: 1, seriesC: 1, seriesD: 1 })}) where id = ${id}`;
+  } finally {
+    await sql.end();
+  }
+}
+
 const goTo = (page: Page, name: string) =>
   page.getByRole("navigation", { name: "Game" }).getByRole("link", { name, exact: true }).click();
 
@@ -57,18 +68,27 @@ test("float a company that's ready, ring the opening bell and watch the first da
   // Finance: the checklist, not all green yet, so Apply isn't allowed.
   await goTo(student, "Finance");
   const panel = student.getByTestId("ipo-panel");
-  await expect(panel.locator("li")).toHaveCount(8);
+  await expect(panel.locator("li")).toHaveCount(12);
+  await expect(panel.getByTestId("ipo-seriesA")).toHaveAttribute("data-met", "false");
   await expect(panel.getByTestId("ipo-status")).toHaveText("Not ready");
   await expect(panel.getByTestId("ipo-uptime")).toHaveAttribute("data-met", "false");
   await expect(panel.getByTestId("ipo-apply")).toBeDisabled();
 
-  // A day later the records are long enough, and every condition turns green.
+  // A day later the records are long enough, and every condition but the funding rounds turns green.
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).toHaveText("2");
-  await expect(panel.getByTestId("ipo-status")).toHaveText("Ready to apply");
   for (const id of ["trading", "usersAndRevenue", "uptime", "costs", "security", "profit", "satisfaction", "payingUsers"]) {
     await expect(panel.getByTestId(`ipo-${id}`)).toHaveAttribute("data-met", "true");
   }
+  await expect(panel.getByTestId("ipo-seriesD")).toContainText("Series D approached");
+  await expect(panel.getByTestId("ipo-status")).toHaveText("Not ready");
+  await expect(panel.getByTestId("ipo-apply")).toBeDisabled();
+
+  // Once every Series round has approached (declined or not), it's ready.
+  await allRoundsApproached(student.url().split("/").at(-2)!);
+  await student.reload();
+  for (const id of ["seriesA", "seriesB", "seriesC", "seriesD"]) await expect(panel.getByTestId(`ipo-${id}`)).toHaveAttribute("data-met", "true");
+  await expect(panel.getByTestId("ipo-status")).toHaveText("Ready to apply");
 
   // Applying is approved (no cold market here), and the opening-bell page takes over. The game holds until the bell.
   await panel.getByTestId("ipo-apply").click();

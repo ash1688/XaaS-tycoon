@@ -1,4 +1,4 @@
-import type { GameConfig } from "./config.ts";
+import { SERIES_IDS, type GameConfig, type SeriesId } from "./config.ts";
 import { count, pounds, type Finance } from "./finance.ts";
 import { marketSize } from "./market.ts";
 import { layerOwner } from "./responsibility.ts";
@@ -6,7 +6,7 @@ import { nextRandom } from "./rng.ts";
 import type { Servers } from "./servers.ts";
 import type { Shares } from "./shares.ts";
 import { staffOutput } from "./staff.ts";
-import { SimError, type DaySpend, type GameState, type IpoApplication, type IpoResult, type LogEntry } from "./state.ts";
+import { ROUND_NAMES, SimError, type DaySpend, type GameState, type IpoApplication, type IpoResult, type LogEntry } from "./state.ts";
 
 export type IpoConditionId =
   | "trading"
@@ -16,7 +16,8 @@ export type IpoConditionId =
   | "security"
   | "profit"
   | "satisfaction"
-  | "payingUsers";
+  | "payingUsers"
+  | SeriesId;
 
 /** One condition of the readiness check, for the checklist on the Finance page. */
 export interface IpoCondition {
@@ -27,7 +28,10 @@ export interface IpoCondition {
   needed: string;
   /** Where the company stands, in words. */
   now: string;
-  /** How far over it the company is, 0–1: 1 is comfortably. 0 while it isn't met. */
+  /**
+   * How far over it the company is, 0–1: 1 is comfortably. 0 while it isn't met. A funding round approaching is yes
+   * or no, so it doesn't count towards the comfort that sways the market.
+   */
   comfort: number;
 }
 
@@ -255,10 +259,28 @@ export function createIpo(
       },
       over(payers, product.payingUsers),
     );
+    // Every Series round must have approached, taken or not: growth qualifies a company to float, not dilution.
+    for (const round of SERIES_IDS) {
+      const day = state.investors.vc.firstApproachDay[round];
+      add(
+        {
+          id: round,
+          label: `${ROUND_NAMES[round]} approached`,
+          met: day !== null,
+          needed: `${ROUND_NAMES[round]} venture capitalists to have approached the company, whether or not you took their money: they come to companies that grow`,
+          now: day === null ? "Not yet" : `Approached on day ${day}`,
+        },
+        1,
+      );
+    }
     return list.map((condition, i) => ({ ...condition, comfort: Math.round(comforts[i]! * 100) / 100 }));
   }
 
-  const comfortOf = (list: IpoCondition[]) => list.reduce((s, x) => s + x.comfort, 0) / list.length;
+  /** The conditions' comfort averaged, leaving out the funding rounds, which are only yes or no. */
+  const comfortOf = (list: IpoCondition[]) => {
+    const graded = list.filter((x) => !(SERIES_IDS as readonly string[]).includes(x.id));
+    return graded.reduce((s, x) => s + x.comfort, 0) / graded.length;
+  };
 
   /** How far the first day might swing either way at a float: the most at the smallest float. */
   const swingAt = (float: number) =>

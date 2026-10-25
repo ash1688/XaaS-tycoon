@@ -1907,6 +1907,112 @@ describe("the angel investor", () => {
   });
 });
 
+describe("venture capital rounds", () => {
+  // An angel within days of the launch, and each round soon after the one before.
+  const vc = defaultConfig.investors.vc;
+  const vcSim = createSim({
+    ...defaultConfig,
+    events: [],
+    calendar: { ...defaultConfig.calendar, holidays: [] },
+    investors: {
+      ...defaultConfig.investors,
+      approachDays: 1,
+      angel: { ...defaultConfig.investors.angel, target: { dailyRevenue: 10, days: 1 } },
+      vc: {
+        ...vc,
+        gapDays: 2,
+        targetDays: 1,
+        rounds: {
+          seriesA: { ...vc.rounds.seriesA, target: { payingUsers: 0.001, dailyRevenue: 0, minUptime: 0 } },
+          seriesB: { ...vc.rounds.seriesB, target: { payingUsers: 0.001, dailyRevenue: 0, minUptime: 0 } },
+          seriesC: { ...vc.rounds.seriesC, target: { payingUsers: 0.001, dailyRevenue: 0, minUptime: 0 } },
+          seriesD: { ...vc.rounds.seriesD, target: { payingUsers: 0.001, dailyRevenue: 0, minUptime: 0 } },
+        },
+      },
+    },
+  });
+  let vcApp: Awaited<ReturnType<typeof buildApp>>;
+
+  beforeAll(async () => {
+    vcApp = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), sim: vcSim });
+  });
+
+  afterAll(async () => {
+    await vcApp?.close();
+  });
+
+  /** A SaaS company played on, declining every angel, until Series A's VCs approach. */
+  async function seriesA() {
+    const code = await newCode();
+    const created = await vcApp.inject({
+      method: "POST",
+      url: `/api/codes/${code}/companies`,
+      payload: { name: "Acme", productType: "social", model: "saas" },
+    });
+    const url = `/api/codes/${code}/companies/${created.json<CompanyView>().id}`;
+    const act = (payload: object) => vcApp.inject({ method: "POST", url: `${url}/actions`, payload });
+    expect(created.json<CompanyView>().investors.vc).toMatchObject({ approach: null, negotiation: null, lead: null });
+    let result: ContinueResult | undefined;
+    for (let i = 0; i < 40 && !result?.company.investors.vc.approach; i++) {
+      if (result?.company.investors.offer) await act({ type: "declineInvestor" });
+      result = (await vcApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+    }
+    return { url, act, result: result! };
+  }
+
+  it("brings three VCs for Series A, pausing time, and shows each round", async () => {
+    const { result } = await seriesA();
+    const v = result.company.investors.vc;
+    expect(v.approach).toMatchObject({ round: "seriesA", name: "Series A", day: result.company.day, picked: null });
+    expect(v.approach!.offers).toHaveLength(3);
+    for (const o of v.approach!.offers) expect(o).toMatchObject({ status: "open", lead: false, leanLabel: expect.stringMatching(/^(Most cash|Fewest conditions|Least ownership)$/) });
+    expect(v.rounds.map((r) => r.firstApproachDay)).toEqual([result.company.day, null, null, null]);
+    expect(result.pauses).toContainEqual(expect.objectContaining({ kind: "offer", id: "offer-seriesA" }));
+    expect(result.company.ipo.conditions.find((c) => c.id === "seriesA")).toMatchObject({ met: true, now: `Approached on day ${result.company.day}` });
+  });
+
+  it("picks one VC, negotiates with them alone, and accepts: their cash, their valuation, and a VC on the cap table", async () => {
+    const { url, act, result } = await seriesA();
+    const offer = result.company.investors.vc.approach!.offers[1]!;
+    expect((await act({ type: "pickInvestor" })).statusCode).toBe(400);
+    expect((await act({ type: "pickInvestor", investor: "Nobody Capital" })).json()).toMatchObject({ error: "unknown_investor" });
+    expect((await act({ type: "acceptInvestor" })).json()).toMatchObject({ error: "pick_first" });
+    const picked = (await act({ type: "pickInvestor", investor: offer.investor })).json<CompanyView>();
+    expect(picked.investors.vc.approach!.offers.map((o) => o.status)).toEqual(["closed", "picked", "closed"]);
+    expect(picked.investors.vc.negotiation).toMatchObject({ countersLeft: 2, final: false });
+
+    const share = Math.round(offer.theirShare * 900) / 1000;
+    const odds = await vcApp.inject({ method: "GET", url: `${url}/investor-odds?share=${share}` });
+    expect(odds.statusCode).toBe(200);
+    expect(odds.json<CounterOddsView>()).toMatchObject({ counter: { amount: offer.amount, share } });
+    const countered = (await act({ type: "counterInvestor", terms: { share } })).json<CompanyView>();
+    expect(countered.investors.vc.negotiation).toMatchObject({ countersLeft: 1 });
+
+    const standing = countered.investors.vc.approach!.offers[1]!;
+    const accepted = (await act({ type: "acceptInvestor" })).json<CompanyView>();
+    expect(accepted.cash).toBe(countered.cash + standing.amount);
+    expect(accepted.capTable.rows.find((r) => r.id === "vc")).toMatchObject({ name: `${standing.investor} (VC)`, shares: standing.newShares });
+    expect(Math.abs(accepted.valuation.valuation - standing.valuation)).toBeLessThanOrEqual(2);
+    expect(accepted.investors.valuation).toMatchObject({ investor: standing.investor, round: "seriesA" });
+    expect(accepted.investors.vc).toMatchObject({ approach: null, lead: { investor: standing.investor } });
+    expect(accepted.investors.vc.rounds[0]!.deal).toMatchObject({ investor: standing.investor, amount: standing.amount });
+  });
+
+  it("declines all three, and three new VCs approach a few days later for the same round", async () => {
+    const { url, act, result } = await seriesA();
+    const first = result.company.investors.vc.approach!;
+    const declined = (await act({ type: "declineInvestor" })).json<CompanyView>();
+    expect(declined.investors.vc).toMatchObject({ approach: null, declined: [{ round: "seriesA", investors: first.offers.map((o) => o.investor) }] });
+    let next: CompanyView = declined;
+    for (let i = 0; i < 10 && !next.investors.vc.approach; i++) {
+      next = (await vcApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>().company;
+    }
+    // Series B's target is low, so after the gap its VCs come ahead of a retry for Series A; either way, three new ones.
+    expect(next.investors.vc.approach!.offers.map((o) => o.investor)).not.toContain(first.offers[0]!.investor);
+    expect(next.investors.vc.rounds[0]!.firstApproachDay).toBe(first.day);
+  });
+});
+
 describe("the IPO", () => {
   // Thresholds anyone can meet after a couple of days, every user paying, and never a cold market.
   const EASY_IPO = {
@@ -1946,7 +2052,12 @@ describe("the IPO", () => {
       "profit",
       "satisfaction",
       "payingUsers",
+      "seriesA",
+      "seriesB",
+      "seriesC",
+      "seriesD",
     ]);
+    expect(company.ipo.conditions.find((c) => c.id === "seriesB")).toMatchObject({ label: "Series B approached", met: false, now: "Not yet" });
     expect(company.ipo).toMatchObject({ status: "not-ready", ready: false, canApply: false, offer: null, result: null });
     const res = await act({ type: "applyForIpo" });
     expect(res.statusCode).toBe(400);
@@ -1954,9 +2065,18 @@ describe("the IPO", () => {
   });
 
   it("applies once ready, holds the game, then floats and rings the bell, ending it", async () => {
-    const { url, act, next } = await setup();
+    const { company, url, act, next } = await setup();
     await next();
-    const ready = (await next()).json<ContinueResult>().company;
+    const waiting = (await next()).json<ContinueResult>().company;
+    // Everything else is met, but no Series round has approached yet.
+    expect(waiting.ipo.conditions.filter((c) => !c.met).map((c) => c.id)).toEqual(["seriesA", "seriesB", "seriesC", "seriesD"]);
+    expect((await act({ type: "applyForIpo" })).json()).toMatchObject({ error: "ipo_not_ready" });
+    // As if every round had approached on day 1 and been declined.
+    await testDb.db
+      .update(companies)
+      .set({ state: sql`jsonb_set(${companies.state}, '{investors,vc,firstApproachDay}', '{"seriesA":1,"seriesB":1,"seriesC":1,"seriesD":1}')` })
+      .where(eq(companies.id, company.id));
+    const ready = (await app.inject({ method: "GET", url })).json<CompanyView>();
     expect(ready.ipo).toMatchObject({ status: "ready", canApply: true });
     const approved = (await act({ type: "applyForIpo" })).json<CompanyView>();
     expect(approved.ipo).toMatchObject({ status: "approved", approvedDay: 3, offer: { minFloat: 0.15, maxFloat: 0.4 } });

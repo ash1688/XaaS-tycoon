@@ -406,7 +406,7 @@ describe("shares and funding", () => {
     expect(parseCommand("decline grant")).toMatchObject({ action: { type: "declineFunding", funder: "grant" } });
     expect(parseCommand("valuation")).toEqual({ kind: "valuation" });
     expect(parseCommand("funding")).toEqual({ kind: "funding" });
-    expect(() => parseCommand("accept vc")).toThrow(/ff \(friends and family\), grant or angel/);
+    expect(() => parseCommand("accept bank")).toThrow(/ff \(friends and family\), grant, angel or vc/);
   });
 
   it("shows the valuation, cap table and open offers, and the commands to answer them", () => {
@@ -502,7 +502,7 @@ describe("the angel investor", () => {
 
   it("reads the angel's commands", () => {
     expect(parseCommand("angel")).toEqual({ kind: "angel" });
-    expect(parseCommand("accept angel")).toEqual({ kind: "action", action: { type: "acceptInvestor" }, times: 1 });
+    expect(parseCommand("accept angel")).toEqual({ kind: "action", action: { type: "acceptInvestor" }, times: 1, party: "angel" });
     expect(parseCommand("decline angel")).toMatchObject({ action: { type: "declineInvestor" } });
     expect(parseCommand("counter angel amount 30000 share 15")).toMatchObject({
       action: { type: "counterInvestor", terms: { amount: 30_000, share: 0.15 } },
@@ -559,6 +559,99 @@ describe("the angel investor", () => {
   });
 });
 
+/** The state as if every Series round had approached on day 1 and been declined: no more VCs come, and the IPO's lines are met. */
+const allRoundsApproached = (state: GameState): GameState => ({
+  ...state,
+  investors: {
+    ...state.investors,
+    vc: { ...state.investors.vc, firstApproachDay: { seriesA: 1, seriesB: 1, seriesC: 1, seriesD: 1 }, approach: null, next: null },
+  },
+});
+
+describe("venture capital", () => {
+  // An early angel, then each round soon after the one before.
+  const vc = defaultConfig.investors.vc;
+  const early = createSim({
+    ...defaultConfig,
+    payReview: { ...defaultConfig.payReview, on: 0 },
+    finalDay: 60,
+    investors: {
+      ...defaultConfig.investors,
+      angel: { ...defaultConfig.investors.angel, target: { dailyRevenue: 300, days: 3 } },
+      vc: {
+        ...vc,
+        gapDays: 2,
+        targetDays: 1,
+        rounds: {
+          ...vc.rounds,
+          seriesA: { ...vc.rounds.seriesA, target: { payingUsers: 0.01, dailyRevenue: 0, minUptime: 0 } },
+          seriesB: { ...vc.rounds.seriesB, target: { payingUsers: 0.01, dailyRevenue: 0, minUptime: 0 } },
+        },
+      },
+    },
+  });
+  const play = (state: GameState, text: string) => {
+    const command = parseCommand(text);
+    return command.kind === "next" ? advanceUntil(early, state, command.days, who) : runCommand(early, state, command, who);
+  };
+  /** Plays on, leaving angels to lapse, until `round`'s VCs approach. */
+  const until = (round: string, state = early.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 })) => {
+    let turn = play(state, "next 30");
+    while (early.investors(turn.state).vc.approach?.round !== round) turn = play(turn.state, "next 30");
+    return turn;
+  };
+
+  it("reads the VC commands", () => {
+    expect(parseCommand("vc")).toEqual({ kind: "vc" });
+    expect(parseCommand("pick 2")).toEqual({ kind: "pick", which: "2" });
+    expect(parseCommand("accept vc")).toEqual({ kind: "action", action: { type: "acceptInvestor" }, times: 1, party: "vc" });
+    expect(parseCommand("decline vc")).toMatchObject({ action: { type: "declineInvestor" }, party: "vc" });
+    expect(parseCommand("counter vc share 15")).toMatchObject({ action: { type: "counterInvestor", terms: { share: 0.15 } }, party: "vc" });
+    expect(parseCommand("odds vc share 15")).toEqual({ kind: "odds", funder: "vc", terms: { share: 0.15 } });
+    expect(() => parseCommand("pick")).toThrow(/which VC to pick/);
+  });
+
+  it("stops time when Series A's VCs approach, and shows their three offers and the rounds", () => {
+    const turn = until("seriesA");
+    const a = early.investors(turn.state).vc.approach!;
+    expect(turn.lines.at(-1)).toMatch(new RegExp(`^stopped on day ${turn.state.day}: Series A: three VCs want to invest`));
+    const status = renderStatus(early, turn.state);
+    expect(status).toMatch(new RegExp(`vc: SERIES A: three VCs approached on day ${turn.state.day}: 1\\) ${a.offers[0]!.investor}, (most cash|fewest conditions|least ownership): £`));
+    expect(status).toMatch(/pick one to negotiate with; answer by day \d+ \(3 days left\)/);
+    expect(renderCommands(early, turn.state)).toMatch(/pick <1-3\|name>/);
+    expect(renderCommands(early, turn.state)).toMatch(/decline vc {3}\(turn all three down/);
+    const shown = play(turn.state, "vc").lines.join("\n");
+    expect(shown).toMatch(/^Series A: three VCs approached on day \d+\. pick <1-3 or name>/);
+    for (const o of a.offers) expect(shown).toContain(`${o.investor} leans to ${o.leanLabel.toLowerCase()} [open]`);
+    expect(shown).toContain(`rounds: Series A approached day ${turn.state.day}, Series B not yet, Series C not yet, Series D not yet.`);
+    expect(play(turn.state, "accept angel").lines[0]).toMatch(/refused: It's VCs who are waiting on an answer/);
+    expect(play(turn.state, "accept vc").lines[0]).toMatch(/refused: Pick one of the three VCs to negotiate with first/);
+  });
+
+  it("picks a VC by number or name, negotiates, accepts, and the lead VC returns for Series B", () => {
+    const turn = until("seriesA");
+    const a = early.investors(turn.state).vc.approach!;
+    expect(() => play(turn.state, "pick 4")).toThrow(/^Expected 1-3 or the name of one of/);
+    const picked = play(turn.state, `pick ${a.offers[1]!.investor.split(" ")[0]!.toLowerCase()}`);
+    expect(picked.lines[0]).toBe(`pickInvestor: negotiating with ${a.offers[1]!.investor}; the other two VCs have closed. "vc" for their offer in full.`);
+    expect(renderStatus(early, picked.state)).toMatch(/ CLOSED; 2\) .* PICKED; 3\) .* CLOSED\. negotiating with/);
+    const share = Math.round(a.offers[1]!.theirShare * 900) / 10;
+    expect(play(picked.state, `odds vc share ${share}`).lines[0]).toMatch(/^counter £[\d,]+ for [\d.]+% asks 10% better/);
+    const countered = play(picked.state, `counter vc share ${share}`);
+    expect(countered.lines[0]).toMatch(/Offer 2: .*\(1 counter left\)/);
+    const accepted = play(countered.state, "accept vc");
+    expect(accepted.lines[0]).toMatch(new RegExp(`^acceptInvestor: done\\. ${a.offers[1]!.investor} put in £[\\d,]+ for [\\d.]+% in your Series A; valuation now £[\\d,]+\\. They're your lead VC\\.`));
+    expect(renderStatus(early, accepted.state)).toMatch(new RegExp(`vc: Series A approached day \\d+ \\(${a.offers[1]!.investor} put in £[\\d,]+ for [\\d.]+%\\), Series B not yet.*; lead VC ${a.offers[1]!.investor}`));
+    expect(renderStatus(early, accepted.state)).toContain(`${a.offers[1]!.investor} (VC) `);
+    expect(play(accepted.state, "funding").lines[0]).toBe(`friends and family: closed on day ${accepted.state.day}, when you took on your Series A VC`);
+
+    const b = until("seriesB", accepted.state);
+    expect(renderStatus(early, b.state)).toMatch(new RegExp(`SERIES B: three VCs approached on day \\d+: 1\\) ${a.offers[1]!.investor} \\(lead VC\\)`));
+    const declined = play(b.state, "decline vc");
+    expect(renderStatus(early, declined.state)).toMatch(/you turned down the Series B VCs: three new ones approach in a few days/);
+  });
+});
+
 describe("the IPO", () => {
   const ipoSim = (cold: number) =>
     createSim({
@@ -581,6 +674,8 @@ describe("the IPO", () => {
       paidUsers: 1_000,
       price: 60,
       satisfaction: 90,
+      // Every Series round has approached, declined or not.
+      investors: { ...played.investors, vc: { ...played.investors.vc, firstApproachDay: { seriesA: 2, seriesB: 3, seriesC: 4, seriesD: 5 } } },
       spendByDay: played.spendByDay.map((d) => ({
         ...d,
         ...{ staff: 100, infrastructure: 50, cabling: 0, power: 10, addons: 0, debt: 0, interest: 0 },
@@ -600,12 +695,12 @@ describe("the IPO", () => {
   it("shows the checklist, and offers apply only once every condition is met", () => {
     const s = ipoSim(0);
     const state = start();
-    expect(renderStatus(sim, state)).toMatch(/ipo: 1\/8 readiness conditions met; still to meet: trading history, users and revenue, uptime record, predictable costs, profitability, satisfaction record, paying customer base$/m);
+    expect(renderStatus(sim, state)).toMatch(/ipo: 1\/12 readiness conditions met; still to meet: trading history, users and revenue, uptime record, predictable costs, profitability, satisfaction record, paying customer base, series a approached, series b approached, series c approached, series d approached$/m);
     expect(renderCommands(sim, state)).toMatch(/ipo {3}\(the IPO readiness checklist/);
     expect(renderCommands(sim, state)).not.toMatch(/apply/);
     expect(run(state, "ipo").lines.join("\n")).toMatch(/\[ \] Trading history: .*\n.*\[ \] Users and revenue: .*\n.*\[ \] Uptime record: /);
     const r = ready(s);
-    expect(renderStatus(s, r)).toMatch(/ipo: READY: all 8 conditions met, comfort \d+% \("apply" to float\)/);
+    expect(renderStatus(s, r)).toMatch(/ipo: READY: all 12 conditions met, comfort \d+% \("apply" to float\)/);
     expect(renderCommands(s, r)).toMatch(/apply {3}\(apply to float/);
     expect(play(s, r, "ipo").lines.join("\n")).toMatch(/\[x\] Paying customer base: 1,000, of 2,000 users in a market of about 40,000: .*\. Needs 500 paying users\. Comfort 100%\./);
   });
@@ -684,7 +779,7 @@ describe("the IPO checklist over time", () => {
       },
     });
     let state = s.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 });
-    state = s.advance(state, 25).state;
+    state = allRoundsApproached(s.advance(state, 25).state);
     expect(s.ipo(state).ready).toBe(true);
     const turn = advanceUntil(s, state, 10, who);
     expect(turn.state.day).toBe(30);
@@ -887,7 +982,8 @@ describe("the payments app", () => {
   it("announces Black Friday on the calendar, and stops time for it", () => {
     // Day 1 is 1 October 2026: Black Friday (day 58) is announced 14 days before, on day 44.
     const started = full.newGame({ companyName: "Pay Co", productType: "payments", model: "saas", seed: 3, startDate: "2026-10-01" });
-    const state = full.advance(started, 40).state;
+    // Every Series round long since approached, so no VCs stop time: this is about the calendar.
+    const state = allRoundsApproached(full.advance(started, 40).state);
     expect(renderStatus(full, state)).toMatch(/Black Friday day 58/);
     const turn = runFull(state, "next 7");
     expect(turn.state.day).toBe(44);

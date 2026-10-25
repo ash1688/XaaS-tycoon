@@ -30,6 +30,7 @@ const onFinance = computed(() => route.name === "game-finance");
 const onBell = computed(() => route.name === "game-ipo");
 // An investor who has approached and is waiting for an answer: a notification on every page, and a badge on Finance.
 const approach = computed(() => game.company?.investors.offer ?? null);
+const vcApproach = computed(() => game.company?.investors.vc.approach ?? null);
 // A pay review opens its modal by itself, on any page. Closed to look around, a note opens it again; the game holds
 // either way. It stays open after settling, to show what was agreed, until it's closed.
 const payModal = ref(false);
@@ -91,7 +92,7 @@ async function closeMenu() {
           <li v-for="page in PAGES" :key="page.name">
             <RouterLink :to="`${game.base}${page.path}`" class="nav-link">
               {{ page.name
-              }}<span v-if="page.name === 'Finance' && approach && !game.over" class="nav-badge" data-testid="finance-badge" aria-hidden="true">1</span>
+              }}<span v-if="page.name === 'Finance' && (approach || vcApproach) && !game.over" class="nav-badge" data-testid="finance-badge" aria-hidden="true">1</span>
             </RouterLink>
           </li>
         </ul>
@@ -190,6 +191,13 @@ async function closeMenu() {
         {{ formatCash(approach.amount) }}. Answer by day {{ approach.lastDay }}, or it lapses.
         <RouterLink v-if="!onFinance" :to="`${game.base}/finance`">See their offer on Finance</RouterLink>
         <template v-else>Their offer is below.</template>
+      </p>
+      <p v-if="vcApproach && !game.over" class="ipo-note investor-note" role="status" data-testid="vc-note">
+        <span class="badge">{{ vcApproach.name }}</span>
+        Three venture capitalists want to invest. Pick one to negotiate with by day {{ vcApproach.lastDay }}, or their
+        offers lapse.
+        <RouterLink v-if="!onFinance" :to="`${game.base}/finance`">See their offers on Finance</RouterLink>
+        <template v-else>Their offers are below.</template>
       </p>
       <p v-if="game.payReviewOpen && !payModal" class="ipo-note" role="status" data-testid="pay-review-note">
         <span class="badge">Pay review</span>

@@ -40,6 +40,17 @@ export const CAREER_YEARS = 65 - 18;
 export const DIFFICULTY_IDS = ["easy", "normal", "hard"] as const;
 export type DifficultyId = (typeof DIFFICULTY_IDS)[number];
 
+/** The venture capital rounds of the funding ladder, after the angel. Saved in game state, so don't rename. */
+export const SERIES_IDS = ["seriesA", "seriesB", "seriesC", "seriesD"] as const;
+export type SeriesId = (typeof SERIES_IDS)[number];
+
+/**
+ * The way a VC's offer leans: the most cash, the fewest conditions or the least of the company taken. Saved in game
+ * state, so don't rename.
+ */
+export const VC_LEANS = ["cash", "conditions", "ownership"] as const;
+export type VcLean = (typeof VC_LEANS)[number];
+
 /**
  * A difficulty's numbers: multipliers on the preset's own numbers, so a teacher's preset is just as much easier or
  * harder. A difficulty only changes numbers, never which systems a game has. Normal is all 1s: the preset as it is.
@@ -1598,7 +1609,7 @@ export interface RescueConfig {
 }
 
 /**
- * The funding ladder's investors, who approach the student rather than being asked: the angel now, Series A–D later.
+ * The funding ladder's investors, who approach the student rather than being asked: the angel, then Series A–D (VcConfig).
  * When the company first hits a rung's hidden target, the investor approaches approachDays later with an offer: cash
  * for a share of the company, which can be negotiated like any offer. Declining, or any approach left once a deal is
  * done elsewhere, brings a new investor retryDays later.
@@ -1617,6 +1628,54 @@ export interface InvestorsConfig {
    */
   offerDays: number;
   angel: AngelConfig;
+  vc: VcConfig;
+}
+
+/**
+ * Venture capital: Series A, B, C and D, after the angel, each a rung of the funding ladder.
+ *
+ * - A round's hidden target (see VcRoundConfig) counts only once the rung before it has approached (the angel for
+ *   Series A) and at least gapDays have passed since. Hit, three VCs approach approachDays later, each with an offer.
+ *   From the round's first approach the company counts as having reached it, whatever the student makes of it: the IPO
+ *   needs all four. Once Series A approaches, no more angels do.
+ * - For Series A all three VCs are new; for B, C and D the lead VC (the last the student went with) returns on the
+ *   round's first approach, alongside two new VCs, valuing the business at leadPremium more.
+ * - Each VC's lean is rolled, so two can share one, and moves their offer from the round's: their share asked is
+ *   multiplied by leans[lean].share and leans[lean].premium is added to their premium.
+ * - The student picks one VC to negotiate with, which closes the other two. Declining, failing to agree or letting the
+ *   offers lapse brings three new VCs retryDays later for the same round, unless the next round approaches first.
+ *   Each approach declined in a round makes the round's next VCs less generous: declinePremium off the most premium,
+ *   declineShare on the least share.
+ * - Accepting sets the valuation to the chosen VC's figure, as the angel's does, and closes friends and family and the
+ *   grant. All the cash is paid on signing.
+ */
+export interface VcConfig {
+  gapDays: number;
+  /** Days of income the targets average, and of uptime they count. */
+  targetDays: number;
+  leadPremium: number;
+  declinePremium: number;
+  declineShare: number;
+  leans: Record<VcLean, { share: number; premium: number }>;
+  rounds: Record<SeriesId, VcRoundConfig>;
+}
+
+/**
+ * One VC round.
+ *
+ * - Hidden target: every part set must hold on the same day. payingUsers and dailyRevenue are shares of the product's
+ *   IPO bar (its paying users, and its annual revenue ÷ 365 for income a day averaged over targetDays); 0 leaves a part
+ *   out. minUptime is the uptime % over the last targetDays days; 0 leaves it out.
+ * - Their offer, as the angel's: the business valued at a premium over the formula's, from premium.min to premium.max,
+ *   plus net cash; a share of the company after asked from share.min to share.max; and the cash that buys it, to the
+ *   nearest £1,000, from minAmount to maxAmount.
+ */
+export interface VcRoundConfig {
+  target: { payingUsers: number; dailyRevenue: number; minUptime: number };
+  premium: { min: number; max: number };
+  share: { min: number; max: number };
+  minAmount: number;
+  maxAmount: number;
 }
 
 /**
@@ -2812,6 +2871,52 @@ export const defaultConfig: GameConfig = {
       usersRoomShare: 0.5,
       targetDays: 30,
       missShare: 0.05,
+    },
+    // Placeholders, tuned on the balance harness (#101): every target is a share of the product's IPO bar, so each
+    // rung is a step towards floating. On sensible play Series A approaches about two weeks after the angel, and
+    // Series D by about day 95 (median; d148 at the latest), in 68 of 72 harness games before the IPO's trading history
+    // is met. Strategies that grow badly (over-priced, no support, no scaling) see few rounds or none.
+    vc: {
+      gapDays: 10,
+      targetDays: 14,
+      leadPremium: 0.1,
+      declinePremium: 0.1,
+      declineShare: 0.02,
+      leans: {
+        cash: { share: 1.3, premium: 0 },
+        conditions: { share: 1, premium: -0.1 },
+        ownership: { share: 0.7, premium: 0.1 },
+      },
+      rounds: {
+        seriesA: {
+          target: { payingUsers: 0.45, dailyRevenue: 0, minUptime: 0 },
+          premium: { min: 1.2, max: 1.6 },
+          share: { min: 0.2, max: 0.3 },
+          minAmount: 100_000,
+          maxAmount: 1_000_000,
+        },
+        seriesB: {
+          target: { payingUsers: 0, dailyRevenue: 0.45, minUptime: 0 },
+          premium: { min: 1.3, max: 1.7 },
+          share: { min: 0.15, max: 0.25 },
+          minAmount: 200_000,
+          maxAmount: 2_000_000,
+        },
+        seriesC: {
+          target: { payingUsers: 0.75, dailyRevenue: 0, minUptime: 99 },
+          premium: { min: 1.4, max: 1.8 },
+          share: { min: 0.12, max: 0.2 },
+          minAmount: 400_000,
+          maxAmount: 4_000_000,
+        },
+        seriesD: {
+          target: { payingUsers: 0.9, dailyRevenue: 0.7, minUptime: 0 },
+          premium: { min: 1.5, max: 2 },
+          share: { min: 0.1, max: 0.15 },
+          minAmount: 750_000,
+          maxAmount: 8_000_000,
+        },
+      },
     },
   },
   pricing: {

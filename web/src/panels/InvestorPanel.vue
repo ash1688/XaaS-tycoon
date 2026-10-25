@@ -9,7 +9,9 @@ import { formatShare, formatSharePrice } from "../shares";
 
 // Investors who come to the student: an angel approaches a company doing well, with an offer that shows its target
 // and what missing it costs. The student negotiates, accepts or declines it; declining brings another angel a few days
-// later. Accepting sets the valuation to the angel's figure and closes friends and family and grants.
+// later. Accepting sets the valuation to the angel's figure and closes friends and family and grants. Then venture
+// capital, Series A to D: three VCs approach for each round, the student picks one to negotiate with (closing the other
+// two), and accepting sets the valuation to theirs. Every round must approach before the IPO, taken or not.
 const game = useGame();
 const investors = computed(() => game.company?.investors ?? null);
 const offer = computed(() => investors.value?.offer ?? null);
@@ -24,6 +26,13 @@ const usersPercent = computed(() => (angel.value ? percentOf(angel.value.netUser
 const standsText = (daysLeft: number, lastDay: number) =>
   `Answer by day ${lastDay} (${daysLeft === 1 ? "today is the last day" : `${days(daysLeft)} left`}): unanswered, it lapses, which counts as declining it.`;
 const TARGET_STATUS = { running: "Target running", met: "Target met", missed: "Target missed" } as const;
+
+const vc = computed(() => investors.value?.vc ?? null);
+const vcApproach = computed(() => vc.value?.approach ?? null);
+const vcPicked = computed(() => vcApproach.value?.offers.find((o) => o.status === "picked") ?? null);
+const vcTalks = computed(() => vc.value?.negotiation ?? null);
+const vcLastDeclined = computed(() => vc.value?.declined.at(-1) ?? null);
+const roundName = (round: string) => vc.value?.rounds.find((r) => r.round === round)?.name ?? round;
 
 const reviewing = ref(false);
 // For the playtest log: the offer, logged as the modal closes with whether the student accepted it.
@@ -41,6 +50,33 @@ function review() {
 watch(offer, (o) => {
   if (!o) reviewing.value = false;
 });
+
+// The picked VC's offer, in a modal like the angel's.
+const reviewingVc = ref(false);
+let vcAccepted = false;
+watch(reviewingVc, (open, was) => {
+  if (open || !was) return;
+  game.track("quote", { kind: "vc", confirmed: vcAccepted });
+  vcAccepted = false;
+});
+watch(vcPicked, (o) => {
+  if (!o) reviewingVc.value = false;
+});
+async function pick(investor: string) {
+  game.error = "";
+  await game.act({ type: "pickInvestor", investor });
+  if (!game.error) reviewingVc.value = true;
+}
+async function declineVcs() {
+  game.error = "";
+  await game.act({ type: "declineInvestor" });
+}
+async function answerVc(type: "acceptInvestor" | "declineInvestor") {
+  await game.act({ type });
+  if (game.error) return;
+  vcAccepted = type === "acceptInvestor";
+  reviewingVc.value = false;
+}
 
 const FIELDS: CounterField[] = [
   { key: "amount", label: "Cash (£)", step: 100, min: 0, testid: "counter-amount" },
@@ -143,6 +179,131 @@ async function answer(type: "acceptInvestor" | "declineInvestor") {
       </p>
     </article>
 
+    <article v-if="vc" class="funder" data-testid="vc">
+      <div class="row-between">
+        <h3>Venture capital</h3>
+        <span v-if="vcApproach" class="badge warn-badge">{{ vcApproach.name }}: three VCs want to invest</span>
+      </div>
+      <ul class="vc-rounds" data-testid="vc-rounds">
+        <li v-for="r in vc.rounds" :key="r.round" :data-testid="`vc-round-${r.round}`">
+          <strong>{{ r.name }}</strong>
+          <template v-if="r.firstApproachDay === null"> not yet</template>
+          <template v-else> approached day {{ r.firstApproachDay }} ✓</template>
+          <template v-if="r.deal">: {{ r.deal.investor }} put in {{ formatCash(r.deal.amount) }} for {{ formatShare(r.deal.share) }}</template>
+        </li>
+      </ul>
+      <template v-if="vcApproach">
+        <p v-if="vcPicked" data-testid="vc-picked">
+          You're negotiating with <strong>{{ vcPicked.investor }}</strong> alone: the other two have closed.
+        </p>
+        <p v-else>Pick one VC to negotiate with. Picking one closes the other two.</p>
+        <p class="muted" data-testid="vc-days-left">{{ standsText(vcApproach.daysLeft, vcApproach.lastDay) }}</p>
+        <div class="vc-offers">
+          <div
+            v-for="o in vcApproach.offers"
+            :key="o.investor"
+            :class="['vc-offer', { closed: o.status === 'closed' }]"
+            :data-testid="`vc-offer-${o.lean}`"
+            data-vc-offer
+          >
+            <div class="row-between">
+              <strong>{{ o.investor }}</strong>
+              <span class="badge">{{ o.leanLabel }}</span>
+            </div>
+            <p v-if="o.lead" class="muted">Your lead VC, back from the last round.</p>
+            <p>
+              {{ formatCash(o.amount) }} for {{ formatShare(o.theirShare) }}, valuing the company at
+              {{ formatCash(o.valuation) }}. You'd own {{ formatShare(o.yourShareAfter) }}.
+            </p>
+            <button v-if="o.status === 'open' && !game.over" :disabled="game.busy" data-testid="vc-pick" @click="pick(o.investor)">
+              Negotiate with {{ o.investor }}
+            </button>
+            <button v-else-if="o.status === 'picked' && !game.over" data-testid="vc-review" @click="reviewingVc = true">
+              Review offer
+            </button>
+            <p v-else-if="o.status === 'closed'" class="muted">Closed</p>
+          </div>
+        </div>
+        <button v-if="!vcPicked && !game.over" class="ghost" :disabled="game.busy" data-testid="vc-decline-all" @click="declineVcs">
+          Decline all three
+        </button>
+      </template>
+      <p v-else-if="vc.anotherComing && vcLastDeclined" class="muted" data-testid="vc-coming">
+        {{ vcLastDeclined.lapsed ? "The VCs' offers lapsed unanswered" : "You turned the VCs down" }} on day
+        {{ vcLastDeclined.day }}. Three new VCs will approach for {{ roundName(vcLastDeclined.round) }} in a few days, on
+        less generous terms.
+      </p>
+      <p v-else-if="vc.lead" class="muted" data-testid="vc-lead">
+        {{ vc.lead.investor }} is your lead VC: they'll be back for the next round alongside two new VCs.
+      </p>
+      <p v-else class="muted">
+        Venture capitalists come to growing companies after the angel: Series A, then B, C and D. Every round must
+        approach before you can float, whether or not you take their money.
+      </p>
+    </article>
+
+    <AppModal :open="reviewingVc && vcPicked !== null" :title="`${vcApproach?.name ?? 'VC'} offer`" @close="reviewingVc = false">
+      <p v-if="game.error" class="error" role="alert">{{ game.error }}</p>
+      <template v-if="vcPicked && vcApproach">
+        <table class="quote" data-testid="vc-preview">
+          <tbody>
+            <tr>
+              <th scope="row">From</th>
+              <td>{{ vcPicked.investor }} ({{ vcPicked.leanLabel.toLowerCase() }})</td>
+            </tr>
+            <tr>
+              <th scope="row">They put in</th>
+              <td>{{ formatCash(vcPicked.amount) }}, now, all of it</td>
+            </tr>
+            <tr>
+              <th scope="row">They value the company at</th>
+              <td class="words" data-testid="vc-valuation">
+                {{ formatCash(vcPicked.preMoney) }} before their cash, {{ formatCash(vcPicked.valuation) }} with it
+                (today's valuation: {{ formatCash(vcApproach.formulaValuation) }})
+              </td>
+            </tr>
+            <tr>
+              <th scope="row">New shares for them</th>
+              <td>
+                {{ vcPicked.newShares.toLocaleString("en-GB") }} at {{ formatSharePrice(vcPicked.sharePrice) }}, making
+                {{ vcPicked.sharesAfter.toLocaleString("en-GB") }} in issue
+              </td>
+            </tr>
+            <tr>
+              <th scope="row">They'll own</th>
+              <td data-testid="vc-their-share">{{ formatShare(vcPicked.theirShare) }}</td>
+            </tr>
+            <tr>
+              <th scope="row">You'll own</th>
+              <td>{{ formatShare(vcApproach.yourShareBefore) }} → {{ formatShare(vcPicked.yourShareAfter) }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="muted">{{ standsText(vcApproach.daysLeft, vcApproach.lastDay) }}</p>
+        <ul class="muted" data-testid="vc-effects">
+          <li v-for="e in vcApproach.effects" :key="e">{{ e }}</li>
+        </ul>
+        <NegotiationBox
+          v-if="vcTalks"
+          :talks="vcTalks"
+          :fields="FIELDS"
+          :terms-text="termsText"
+          better="a smaller share"
+          :odds="oddsFor"
+          :counter="counter"
+        />
+      </template>
+      <div class="confirm-buttons">
+        <button :disabled="game.busy" data-testid="vc-accept" @click="answerVc('acceptInvestor')">
+          Accept {{ formatCash(vcPicked?.amount ?? 0) }}
+        </button>
+        <button class="ghost" :disabled="game.busy" data-testid="vc-decline" @click="answerVc('declineInvestor')">
+          Decline
+        </button>
+        <button class="ghost" :disabled="game.busy" @click="reviewingVc = false">Not now</button>
+      </div>
+    </AppModal>
+
     <AppModal :open="reviewing && offer !== null" title="Angel investor's offer" @close="reviewing = false">
       <p v-if="game.error" class="error" role="alert">{{ game.error }}</p>
       <template v-if="offer">
@@ -210,3 +371,28 @@ async function answer(type: "acceptInvestor" | "declineInvestor") {
     </AppModal>
   </section>
 </template>
+
+<style scoped>
+.vc-rounds {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+}
+.vc-offers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+}
+.vc-offer {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+.vc-offer.closed {
+  opacity: 0.55;
+}
+</style>
