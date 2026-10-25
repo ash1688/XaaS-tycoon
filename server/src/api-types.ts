@@ -769,8 +769,8 @@ export interface UiEventParams {
   prices?: number[];
   /** pricePreview and quote: whether the student went on to confirm it. */
   confirmed?: boolean;
-  /** quote: a migration, loan, friends and family, grant or angel investor quote. */
-  kind?: "migration" | "loan" | "friendsAndFamily" | "grant" | "angel";
+  /** quote: a migration, loan, friends and family, grant, angel investor or VC quote. */
+  kind?: "migration" | "loan" | "friendsAndFamily" | "grant" | "angel" | "vc";
   /** quote: the model a migration quote was for. */
   target?: ModelId;
   /** control: which one, such as "servers-app" or "staff-hire-ops". */

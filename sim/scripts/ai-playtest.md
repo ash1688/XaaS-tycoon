@@ -116,6 +116,14 @@ npm run -s play -- summary <game>
   the company's performance from then on, and friends and family and the grant close for good. `decline angel` turns
   them down, and another angel approaches a few days later. An offer stands for a few days only (`look` shows when
   it lapses); left unanswered, it lapses and counts as declining it.
+- **Venture capital**: after the angel, Series A, B, C and D each approach as your company grows (time stops, and
+  `look` shows them under `vc`). Three VCs come for each round, each leaning towards the most cash, the fewest
+  conditions or the least of the company taken. `vc` shows their offers in full and how every round stands. `pick 2`
+  (or the start of a name) negotiates with one alone, which closes the other two; then `counter vc ...`, `odds vc ...`,
+  `accept vc` and `decline vc` work as for the angel. `decline vc` before picking turns all three down. Turned down,
+  failed or left to lapse, three new VCs approach for the same round a few days later. Accepting sets your valuation
+  to the VC's figure, and they become your lead VC, back for the next round alongside two new VCs. The IPO needs all
+  four rounds to have approached, but you don't have to take any of their money.
 - **Pay reviews**: a game counts as one year of four quarters, and before quarters 2, 3 and 4 your staff come to you
   about pay. Until IPO and a career have years of 365 days: reviews before quarters 2, 3 and 4 of the first year, then
   before every quarter after (`Y2Q1` is quarter 1 of year 2). Time stops, and `next` is refused until the review is settled. `pay` shows it: this review's inflation

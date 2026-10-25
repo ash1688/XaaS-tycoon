@@ -820,6 +820,7 @@ export async function buildApp(opts: AppOptions) {
                 "acceptInvestor",
                 "declineInvestor",
                 "counterInvestor",
+                "pickInvestor",
                 "buyBack",
                 "buyApi",
                 "switchServer",
@@ -885,6 +886,8 @@ export async function buildApp(opts: AppOptions) {
             service: { enum: [...MANAGED_SERVICES] },
             // acceptFunding, declineFunding and counterFunding: friends and family or the grant.
             funder: { enum: [...FUNDER_IDS] },
+            // pickInvestor: the VC to negotiate with, by name. The sim checks they're one of the three who approached.
+            investor: { type: "string", minLength: 1, maxLength: 80 },
             // ringBell: the float, as a share of the company after the IPO. The sim checks it's in the allowed range.
             float: { type: "number", minimum: 0, maximum: 1 },
             // setOptimisation: the share of developer output on optimisation rather than features.
@@ -909,6 +912,7 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { enum: ["acceptFunding", "declineFunding"] } } }, then: { required: ["funder"] } },
             { if: { properties: { type: { const: "counterFunding" } } }, then: { required: ["funder", "terms"] } },
             { if: { properties: { type: { const: "counterInvestor" } } }, then: { required: ["terms"] } },
+            { if: { properties: { type: { const: "pickInvestor" } } }, then: { required: ["investor"] } },
             { if: { properties: { type: { enum: ["hire", "letGo", "setInstances"] } } }, then: { properties: { count: { type: "integer", minimum: 1 } } } },
             { if: { properties: { type: { const: "setApiInstances" } } }, then: { required: ["count"] } },
             { if: { properties: { type: { const: "switchServer" } } }, then: { required: ["id", "gives"] } },
@@ -999,7 +1003,7 @@ export async function buildApp(opts: AppOptions) {
                       ms: { type: "integer", minimum: 0 },
                       prices: { type: "array", maxItems: 20, items: { type: "number", minimum: 0 } },
                       confirmed: { type: "boolean" },
-                      kind: { enum: ["migration", "loan", "friendsAndFamily", "grant", "angel"] },
+                      kind: { enum: ["migration", "loan", "friendsAndFamily", "grant", "angel", "vc"] },
                       target: { enum: [...MODEL_IDS] },
                       control: { type: "string", pattern: "^[a-z][a-z0-9-]{0,47}$" },
                       value: { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,23}$" },

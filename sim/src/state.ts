@@ -8,6 +8,7 @@ import {
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
   RACK_SIZES,
+  SERIES_IDS,
   SERVER_SIZES,
   SERVER_TYPES,
   STAFF_GRADES,
@@ -21,6 +22,8 @@ import {
   type ProductTypeId,
   type RackSize,
   type ServerSize,
+  type SeriesId,
+  type VcLean,
   type ServerType,
   type SpendCategory,
   type StaffGrade,
@@ -32,7 +35,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 50;
+export const GAME_STATE_VERSION = 51;
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -158,10 +161,13 @@ export type FunderId = (typeof FUNDER_IDS)[number];
 export interface Shareholder {
   /**
    * "student" for the student, who owns every share at the start; otherwise the funder who bought them, "vulture" for
-   * a rescue buyout, "angel" for the angel investor, "public" for the float's new shares, sold at the IPO, or
-   * "staffScheme" for the staff share scheme, which holds the shares share save issues for the staff.
+   * a rescue buyout, "angel" for the angel investor, "vc" for a venture capitalist (one row each, named by `investor`),
+   * "public" for the float's new shares, sold at the IPO, or "staffScheme" for the staff share scheme, which holds the
+   * shares share save issues for the staff.
    */
-  id: "student" | "friendsAndFamily" | "angel" | "vulture" | "public" | "staffScheme";
+  id: "student" | "friendsAndFamily" | "angel" | "vc" | "vulture" | "public" | "staffScheme";
+  /** A VC's name: "Northgate Ventures". Only on a "vc" row. */
+  investor?: string;
   shares: number;
   /** The day they got their shares: 1 for the student. */
   day: number;
@@ -207,9 +213,18 @@ export interface Funding {
   negotiating: Record<FunderId, Negotiation | null>;
 }
 
-/** The rungs of the funding ladder. Only the angel so far: Series A–D will follow. */
-export const ROUND_IDS = ["angel"] as const;
+/** The rungs of the funding ladder: the angel, then Series A–D venture capital. */
+export const ROUND_IDS = ["angel", ...SERIES_IDS] as const;
 export type RoundId = (typeof ROUND_IDS)[number];
+
+/** Each rung's name, for the student. */
+export const ROUND_NAMES: Record<RoundId, string> = {
+  angel: "angel investor",
+  seriesA: "Series A",
+  seriesB: "Series B",
+  seriesC: "Series C",
+  seriesD: "Series D",
+};
 
 /**
  * An investor who approached the student with an offer, still to be answered: cash for a share of the company after,
@@ -264,7 +279,7 @@ export interface AngelTarget {
 
 /**
  * The valuation an investor set: from the day they invested the business is valued at `multiple` × the formula's,
- * cash at face value. Set by the first investor after friends and family: the angel.
+ * cash at face value. Set by the angel, and again by each VC the student goes with.
  */
 export interface InvestorValuation {
   investor: string;
@@ -290,6 +305,64 @@ export interface Investors {
   declined: { round: RoundId; investor: string; day: number; lapsed: boolean }[];
   angel: AngelDeal | null;
   valuation: InvestorValuation | null;
+  vc: VentureCapital;
+}
+
+/**
+ * A VC in an approach: who they are, how their offer leans, whether they're the lead VC returning, and their offers
+ * so far (just the opening until the student picks them and counters).
+ */
+export interface VcPitch {
+  investor: string;
+  lean: VcLean;
+  lead: boolean;
+  negotiation: Negotiation;
+}
+
+/**
+ * Three VCs who approached for a round, still to be answered. Their offers were made on the business's worth and net
+ * cash that day, as an angel's are. Picking one to negotiate with closes the other two.
+ */
+export interface VcApproach {
+  round: SeriesId;
+  day: number;
+  business: number;
+  netCash: number;
+  vcs: VcPitch[];
+  /** The VC picked to negotiate with; null until then. */
+  picked: string | null;
+}
+
+/** A VC round once accepted: who put in what, for what share, at what valuation (their cash included). */
+export interface VcDeal {
+  round: SeriesId;
+  investor: string;
+  lean: VcLean;
+  day: number;
+  amount: number;
+  shares: number;
+  share: number;
+  valuation: number;
+}
+
+/**
+ * The venture capital rounds: the day each first approached, which round approaches next and when, the approach open
+ * now, those turned down, the deals done, and the lead VC.
+ */
+export interface VentureCapital {
+  /**
+   * The day each round first approached, whatever the student made of it: from then the company has reached it. The
+   * IPO needs all four, and Series A's is when its C-suite roles unlock.
+   */
+  firstApproachDay: Record<SeriesId, number | null>;
+  /** The round whose VCs approach next, and the day: set when its target is hit, and again after a decline. */
+  next: { round: SeriesId; day: number } | null;
+  approach: VcApproach | null;
+  /** Approaches turned down, failed or lapsed unanswered, with all three VCs' names: each brings three new VCs. */
+  declined: { round: SeriesId; investors: string[]; day: number; lapsed: boolean }[];
+  deals: VcDeal[];
+  /** The last VC the student went with, who returns for the next round's first approach. */
+  lead: { investor: string; lean: VcLean } | null;
 }
 
 /** People of one grade let go from one team in a rescue buyout's cost cuts. */
@@ -1003,8 +1076,13 @@ export type Action =
    * friends and family and the grant, and sets the valuation.
    */
   | { type: "acceptInvestor" }
-  /** Turns the open approach down: a new investor approaches a few days later. */
+  /**
+   * Turns the open approach down: a new investor approaches a few days later. For VCs, declines all three, or the one
+   * picked (failing to reach a deal): three new VCs approach a few days later for the same round.
+   */
   | { type: "declineInvestor" }
+  /** Picks one of the three VCs in the open approach to negotiate with alone, which closes the other two. */
+  | { type: "pickInvestor"; investor: string }
   /** Counters the open approach's offer on `amount` and `share` (theirs after, 0–1), as counterFunding does. */
   | { type: "counterInvestor"; terms: Partial<Terms> }
   /** Buys all the vulture VC's shares back after a rescue buyout, at its price, at once. Refused without the cash. */

@@ -159,6 +159,16 @@ export function createPauses(config: GameConfig, views: PauseViews) {
     if (lapsed?.lapsed && investorsAfter.declined.length > investorsBefore.declined.length) {
       add("alert", `lapsed-${lapsed.round}`, `${lapsed.investor}'s offer lapsed unanswered: it counts as declined`);
     }
+    // Three VCs approaching for a round, and their offers lapsing.
+    const vcAfter = investorsAfter.vc.approach;
+    const vcBefore = investorsBefore.vc.approach;
+    if (vcAfter && (vcBefore?.round !== vcAfter.round || vcBefore.day !== vcAfter.day)) {
+      add("offer", `offer-${vcAfter.round}`, `${vcAfter.name}: three VCs want to invest: see Finance`);
+    }
+    const vcLapsed = investorsAfter.vc.declined.at(-1);
+    if (vcLapsed?.lapsed && investorsAfter.vc.declined.length > investorsBefore.vc.declined.length) {
+      add("alert", `lapsed-${vcLapsed.round}`, "The VCs' offers lapsed unanswered: they count as declined");
+    }
     const angelBefore = investorsBefore.angel?.status;
     const angelAfter = investorsAfter.angel;
     if (angelBefore === "running" && angelAfter?.status === "met") add("finished", "angel-target", `${angelAfter.investor}'s target is met`);

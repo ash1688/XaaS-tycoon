@@ -3,7 +3,8 @@ import { computed } from "vue";
 import { useRouter } from "vue-router";
 import { useGame } from "../game";
 
-// The IPO readiness checklist on Finance: eight conditions turning green one by one, and Apply once all are. Applying
+// The IPO readiness checklist on Finance: its conditions, each Series round approaching among them, turning green one
+// by one, and Apply once all are. Applying
 // rolls a hidden cold market (the IPO postponed); otherwise it's approved and the opening-bell page takes over.
 const game = useGame();
 const router = useRouter();
@@ -31,7 +32,8 @@ async function apply() {
       <span :class="['badge', `ipo-${ipo.status}`]" data-testid="ipo-status">{{ STATUS[ipo.status] }}</span>
     </div>
     <p class="muted">
-      Floating on the stock market ends the game, and no investor is needed to do it. Meet every condition to apply:
+      Floating on the stock market ends the game, and no investor's money is needed to do it: each Series round must
+      approach, but you can decline every one. Meet every condition to apply:
       {{ metCount }} of {{ ipo.conditions.length }} met.
     </p>
     <ul class="ipo-checklist">

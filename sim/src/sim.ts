@@ -84,7 +84,8 @@ export type { DangerRiskView, DangerView } from "./encounters.ts";
 export type { EventView, FeatureGapView } from "./events.ts";
 export type { FeatureStatus, FeatureView } from "./features.ts";
 export type { ProviderView } from "./infrastructure.ts";
-export type { AngelView, InvestorOffer, InvestorsView } from "./investors.ts";
+export type { AngelView, InvestorOffer, InvestorsView, VcApproachView, VcOfferView, VcRoundView, VcView } from "./investors.ts";
+export { seriesApproachDay } from "./investors.ts";
 export type { FloatPreview, IpoCondition, IpoConditionId, IpoOffer, IpoStatus, IpoView } from "./ipo.ts";
 export type { LaunchView } from "./launch.ts";
 export type { MvpView } from "./mvp.ts";
@@ -152,6 +153,7 @@ export {
   isServerType,
   isStaffPool,
   ROUND_IDS,
+  ROUND_NAMES,
   SimError,
   type Action,
   type AdvanceResult,
@@ -178,6 +180,10 @@ export {
   type IpoState,
   type InvestorValuation,
   type Investors,
+  type VcApproach,
+  type VcDeal,
+  type VcPitch,
+  type VentureCapital,
   type Loan,
   type LogEntry,
   type Migration,
@@ -817,6 +823,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
         return investors.declineInvestor(state);
       case "counterInvestor":
         return investors.counterInvestor(state, action.terms);
+      case "pickInvestor":
+        return investors.pickInvestor(state, action.investor);
       case "buyApi":
         return api.buyApi(state);
       case "switchServer":

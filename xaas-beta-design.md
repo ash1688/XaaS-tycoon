@@ -102,10 +102,14 @@ When starting a company, the student chooses how many shares it has, from **10,0
   | Rung | Who approaches | Hidden target (placeholder) |
   |---|---|---|
   | Angel | One angel investor | First steady revenue, e.g. £500/day for 14 days |
-  | Series A | Three VCs, each with a different offer | e.g. 10k paying users |
-  | Series B | The VC the student went with last round, plus two new VCs | e.g. £5k/day revenue |
-  | Series C | As Series B | e.g. 50k paying users and 99% uptime |
-  | Series D | As Series B | Placeholder; the step before IPO |
+  | Series A | Three VCs, each with a different offer | 45% of the product's IPO paying users |
+  | Series B | The VC the student went with last round, plus two new VCs | Income at 45% of the IPO's revenue a day |
+  | Series C | As Series B | 75% of the IPO's paying users and 99% uptime |
+  | Series D | As Series B | 90% of the IPO's paying users and income at 70% of its revenue a day: the step before IPO |
+
+  Each target counts only once the rung before has approached and at least 10 days have passed (#101). On sensible
+  play Series A comes about two weeks after the angel and Series D by about day 95, before the IPO's trading history
+  is met.
 
   - Each VC's offer leans one way: **most cash**, **fewest conditions** or **least ownership taken**. Each VC's lean is random, so a round can have two "most cash" offers and one "least ownership".
   - The student picks **one** VC and negotiates with them alone. Picking one closes the other two.

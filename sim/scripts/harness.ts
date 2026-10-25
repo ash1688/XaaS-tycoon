@@ -3,6 +3,8 @@
 import {
   createSim,
   FUNDER_IDS,
+  ROUND_IDS,
+  type RoundId,
   profitCosts,
   MODEL_IDS,
   PRODUCT_TYPE_IDS,
@@ -55,6 +57,8 @@ export interface Strategy {
   funding?: boolean;
   /** Accepts the first angel investor's opening offer the day they approach. */
   angel?: boolean;
+  /** In every VC round, the day the VCs approach, picks the one offering the most cash and accepts their opening offer. */
+  vc?: boolean;
   /**
    * Who builds the MVP. "rush" adds two agency mid developers on day 1 and lets them go once it's done; "lean" builds it
    * with one developer, letting the second go on day 1 and hiring a mid back once it's done. Left out, the starting two.
@@ -156,6 +160,16 @@ export const STRATEGIES: Strategy[] = [
     scaling: "ahead",
     loan: "onprem",
     angel: true,
+  },
+  {
+    id: "vc",
+    description: "As angel, and in every VC round takes the opening offer of the VC offering the most cash, the day they approach.",
+    priceFactor: 1,
+    support: true,
+    scaling: "ahead",
+    loan: "onprem",
+    angel: true,
+    vc: true,
   },
   {
     id: "migrate",
@@ -296,6 +310,9 @@ export interface GameResult {
   staff: { developers: number; ops: number; support: number; moderators: number };
   /** The pay reviews settled. */
   pay: PayResult;
+  /** The day each rung of the funding ladder first approached, or null; and the day the IPO's trading history was met. */
+  rounds: Record<RoundId, number | null>;
+  tradingDay: number | null;
 }
 
 /** How a game's pay reviews went. */
@@ -745,6 +762,11 @@ export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameSta
     if (s.cash > quote.total + month) s = tryAction(sim, s, { type: "startMigration", model: migrateTo[s.model] });
   }
   if (strategy.angel && sim.investors(s).offer) s = tryAction(sim, s, { type: "acceptInvestor" });
+  const vcs = sim.investors(s).vc.approach;
+  if (strategy.vc && vcs && !vcs.picked) {
+    const most = vcs.offers.reduce((a, b) => (b.amount > a.amount ? b : a));
+    s = tryAction(sim, tryAction(sim, s, { type: "pickInvestor", investor: most.investor }), { type: "acceptInvestor" });
+  }
   if (strategy.loan === "late" && !s.loan && s.cash < 7 * (sim.dailyStaffCost(s) + sim.monthlyInfrastructureCost(s) / 30)) {
     s = tryAction(sim, s, { type: "takeLoan" });
   }
@@ -859,6 +881,11 @@ export function playGame(sim: Sim, { model, productType, strategy, seed }: GameS
     spend: { ...summary.spend },
     staff: Object.fromEntries(sim.staff(state).map((p) => [p.pool, p.headcount])) as Record<StaffPool, number>,
     pay: payResult(sim, state, schemeSpend),
+    rounds: {
+      angel: state.investors.firstApproachDay,
+      ...state.investors.vc.firstApproachDay,
+    },
+    tradingDay: state.launchDay === null ? null : state.launchDay + sim.config.ipo.minTradingDays - 1,
   };
 }
 
@@ -951,6 +978,8 @@ function emptyResult(model: ModelId, productType: ProductTypeId, strategy: strin
       score: 0,
       staffSchemeValue: 0,
     },
+    rounds: { angel: null, seriesA: null, seriesB: null, seriesC: null, seriesD: null },
+    tradingDay: null,
   };
 }
 
@@ -1125,6 +1154,42 @@ export function renderReport(results: GameResult[], { title = "Balance report", 
     const late = days.filter((d) => d > 90).length;
     return [s.id, `d${whole(mean(days))}`, `d${whole(median(days))}`, `d${Math.min(...days)}`, `d${Math.max(...days)}`, `${late}/${started.length}`, `${started.length - days.length}/${started.length}`];
   })), "");
+
+  out.push("## Funding rounds by strategy", "");
+  out.push(
+    "The day the angel and each Series round first approached (declined or not), as medians, across every game that started. The IPO needs all four Series rounds to have approached, so strong careful play should see Series D by about the day its trading history is met (launch + the IPO's trading days), leaving time to float in a 180-day game. All four: games where every round approached. D by trading: games where Series D approached by then. Latest D: the latest Series D approach, or how many never had one.",
+    "",
+  );
+  out.push(table(["Strategy", "Angel", "Series A", "Series B", "Series C", "Series D", "All four", "D by trading", "Latest D"], used.map((s) => {
+    const g = results.filter((r) => r.strategy === s.id && r.outcome !== "cant-start");
+    const dayOf = (round: RoundId) => {
+      const days = g.flatMap((r) => (r.rounds[round] === null ? [] : [r.rounds[round]!]));
+      return days.length ? `d${whole(median(days))}${days.length < g.length ? ` (${g.length - days.length} never)` : ""}` : "never";
+    };
+    const d = g.flatMap((r) => (r.rounds.seriesD === null ? [] : [r.rounds.seriesD]));
+    const onTime = g.filter((r) => r.rounds.seriesD !== null && r.tradingDay !== null && r.rounds.seriesD <= r.tradingDay).length;
+    return [
+      s.id,
+      ...ROUND_IDS.map(dayOf),
+      `${d.length}/${g.length}`,
+      `${onTime}/${g.length}`,
+      d.length ? `d${Math.max(...d)}${d.length < g.length ? ` (${g.length - d.length} never)` : ""}` : "never",
+    ];
+  })), "");
+
+  if (used.some((s) => s.id === "sensible")) {
+    out.push("## Sensible play: Series D approach day", "");
+    out.push("Median day Series D first approached, and in brackets the day the IPO's trading history was met. – : it never did.", "");
+    out.push(table(["Product", ...models.map((m) => SHORT[m])], products.map((p) => [
+      p,
+      ...models.map((m) => {
+        const g = results.filter((r) => r.strategy === "sensible" && r.model === m && r.productType === p && r.outcome !== "cant-start");
+        const d = g.flatMap((r) => (r.rounds.seriesD === null ? [] : [r.rounds.seriesD]));
+        const t = g.flatMap((r) => (r.tradingDay === null ? [] : [r.tradingDay]));
+        return `${d.length ? `d${whole(median(d))}` : "–"}${t.length ? ` (d${whole(median(t))})` : ""}`;
+      }),
+    ])), "");
+  }
 
   out.push("## Pay reviews by strategy", "");
   out.push(
