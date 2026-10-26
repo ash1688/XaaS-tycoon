@@ -5,6 +5,7 @@ import type { EventToday, Events } from "./events.ts";
 import { outageShare, runningCostShare } from "./executives.ts";
 import { count, pounds, priceRiseOn, risen } from "./finance.ts";
 import { demandPerUser, optimisedShare } from "./optimisation.ts";
+import { layerOwner } from "./responsibility.ts";
 import { vary } from "./rng.ts";
 import type { Servers, UnitCapacity, UnitsView } from "./servers.ts";
 import { staffOutput } from "./staff.ts";
@@ -77,12 +78,17 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
   const dailyPower = (state: GameState, modelId: ModelId) =>
     risen(config.models[modelId].powerAndCooling, state.priceLevel) * (1 - powerSaving(config, state, modelId));
 
-  /** A model's power and cooling for some days, as its own charge (power). Not raised by provider price rises, only by drift. */
+  /**
+   * A model's power and cooling for some days, as its own charge (power). Not raised by provider price rises, only by
+   * drift. Where the provider runs the building, it's the provider's bill passed on, and the line says so: the stack
+   * says power and cooling are the provider's job there.
+   */
   function powerEntries(state: GameState, modelId: ModelId, days = 1): LogEntry[] {
     const { name } = config.models[modelId];
     const powerAndCooling = dailyPower(state, modelId);
     if (powerAndCooling <= 0) return [];
-    const text = `${name} power and cooling (${pounds(powerAndCooling)} a day)`;
+    const passedOn = layerOwner(modelId, "facilities") === "provider" ? ": the provider's, passed on to you" : "";
+    const text = `${name} power and cooling (${pounds(powerAndCooling)} a day)${passedOn}`;
     return [{ text, cashDelta: -Math.round(powerAndCooling * days), category: "power" }];
   }
 
@@ -215,7 +221,8 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
    */
   function units(state: GameState): UnitsView | null {
     if (!servers.hasServers(state.model)) return null;
-    const cap = unitCapacity(state, state.day + 1);
+    const factor = capacityFactor(state);
+    const cap = servers.capacityOn(state, state.day + 1, factor);
     const burst = events.scaledUp(state);
     const served = servers.serve(cap, state.demand);
     const round = (n: number) => Math.round(n * 10) / 10;
@@ -231,6 +238,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
       loadBalancer: cap.loadBalancer,
       loadBalancerOnceReady: servers.capacityOn(state, Infinity, 1).loadBalancer,
       burst,
+      opsCut: Math.round((1 - factor) * 100) / 100,
     };
   }
 

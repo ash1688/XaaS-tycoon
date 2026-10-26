@@ -20,12 +20,13 @@ function quoteOrRefusal(state: GameState, target: string) {
 }
 
 /**
- * The units view without its look-ahead at servers still being set up, added for the page after these hashes were
- * taken: it plays no part in the game, so the hashes stay those of the games themselves.
+ * The units view without its look-ahead at servers still being set up, or the ops cut it shows on each bar, both added
+ * for the page after these hashes were taken: they play no part in the game, so the hashes stay those of the games
+ * themselves.
  */
 function withoutLookahead(units: ReturnType<Sim["units"]>) {
   if (!units) return units;
-  const { loadBalancerOnceReady: _, ...rest } = units;
+  const { loadBalancerOnceReady: _, opsCut: __, ...rest } = units;
   return rest;
 }
 

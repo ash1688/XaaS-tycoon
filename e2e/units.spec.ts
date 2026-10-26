@@ -44,7 +44,7 @@ test("on IaaS, renting an app server and a load balancer grows the CU capacity b
   await expect(servers.getByTestId("size-app").locator('option[value="large"]')).toContainText("20 CU");
   await expect(servers.getByTestId("step-app-value")).toHaveText("0 large");
   await expect(servers.getByTestId("step-note-app")).toContainText("20 CU) for £800 a month");
-  await expect(servers.getByTestId("step-note-app")).toContainText("you'll need load balancers");
+  await expect(servers.getByTestId("step-note-app")).toContainText("you'll need a load balancer to serve them all");
   await expect(servers.getByRole("button", { name: "Cancel a large app server" })).toBeDisabled();
   await expect(servers.getByTestId("step-app-why")).toHaveText("You have no large app servers to cancel.");
   await servers.getByRole("button", { name: "Rent a large app server" }).click();

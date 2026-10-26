@@ -29,7 +29,7 @@ test("on IaaS, VMs rented on day 1 bring the first users on day 2, building up o
   await expect(student.getByTestId("launch-headline")).toHaveText("Waiting for capacity");
   await expect(student.getByTestId("launch-text")).toContainText("Nothing is set up to serve users yet");
   const servers = student.getByTestId("launch-step-servers");
-  await expect(servers).toContainText("Rent your first servers: an app server and a database");
+  await expect(servers).toContainText("Rent your first servers: at least one app server and one database (a cache is optional)");
   await expect(servers).toContainText("(to do)");
 
   // The checklist links to Infrastructure, where the VMs are rented.

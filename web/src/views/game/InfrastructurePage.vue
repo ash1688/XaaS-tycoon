@@ -15,7 +15,7 @@ import { useGame } from "../../game";
 // Infrastructure: load and capacity (CU, DBU and CH, and the servers that give them: bought on-prem, rented on IaaS,
 // instances and managed services on PaaS; on SaaS, the provider's), on-prem the racks they go in and each server's
 // hardware slider, the model's benefits, in a long game how prices and kit drift each year, who looks after each
-// layer, and migration. A link
+// layer, and migration. Its cards are kept dense, with the longer explanations behind "How this works". A link
 // to #layer-<id>, such as an event card's, scrolls to that layer of the stack and focuses it.
 const game = useGame();
 const route = useRoute();
@@ -33,7 +33,7 @@ watch(
 </script>
 
 <template>
-  <div class="page-grid">
+  <div class="page-grid infra-page">
     <CapacityPanel />
     <PlatformPanel v-if="game.managed" />
     <ServersPanel v-else />

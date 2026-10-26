@@ -7047,7 +7047,9 @@ describe("racks, cabling, power and cooling", () => {
         const { state, log } = sim.advance(live(begin(model)), 5);
         const power = log.flatMap((d) => d.entries.filter((e) => e.category === "power"));
         expect(power, model).toHaveLength(5);
-        expect(power[0]!.text).toBe(`${defaultConfig.models[model].name} power and cooling (£${sim.powerAndCooling(model)} a day)`);
+        // Off on-prem the provider runs the building, so its power and cooling is its bill, passed on: the line says so.
+        const passedOn = model === "onprem" ? "" : ": the provider's, passed on to you";
+        expect(power[0]!.text).toBe(`${defaultConfig.models[model].name} power and cooling (£${sim.powerAndCooling(model)} a day)${passedOn}`);
         expect(state.spend.power).toBe(5 * sim.powerAndCooling(model));
         // In the daily running costs.
         expect(sim.runway(state).dailyCosts).toBeGreaterThanOrEqual(sim.powerAndCooling(model));

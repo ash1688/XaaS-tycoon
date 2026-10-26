@@ -3,7 +3,7 @@
 import { computed, inject, onUnmounted, provide, reactive, ref, watch, type InjectionKey } from "vue";
 import type { DayLog, EventView, FeatureGapView, LayerId, ModelId, PauseReason, StaffGrade, StaffPool, UnitTier } from "@xaas/sim";
 import type { ActionBody, CompanyView, MetaView, SummaryView, TimedFlowSpeedView } from "@xaas/server/api-types";
-import { api, RequestError } from "./api";
+import { api, formatCount, RequestError } from "./api";
 import { createUiLog } from "./playLog";
 
 /** Where the student's timed flow speed is kept, in their browser. */
@@ -38,8 +38,10 @@ export interface Tier {
   capacity: number;
   percent: number;
   level: "ok" | "high" | "over";
-  /** The tier that runs out first: it sets capacity. */
+  /** The tier that runs out first: it sets capacity. A CU or DBU tier with no capacity always does: nothing is served. */
   binding: boolean;
+  /** What the servers are rated for, before any cut for missing ops: the same as capacity when nothing is cut. */
+  rated: number;
 }
 
 export function createGame(code: string, id: string) {
@@ -104,6 +106,8 @@ export function createGame(code: string, id: string) {
   const opsShortSoon = computed(() =>
     company.value && !understaffed.value ? midsShort(company.value.opsNeededOnceReady, opsWork.value) : 0,
   );
+  // "1 ops person", "2 ops staff".
+  const opsPeople = (n: number) => `${n} ops ${n === 1 ? "person" : "staff"}`;
 
   // Cash: what a usual day does to it, and how many days it lasts at that rate (null when not losing money).
   const runway = computed(() => company.value?.runway ?? null);
@@ -111,7 +115,8 @@ export function createGame(code: string, id: string) {
 
   // Servers in units, on a model with them (on-prem, IaaS and PaaS): CU, DBU and CH demand against capacity. Over 100%
   // on CU or DBU is an outage; the cache just takes what it can. A tier with no capacity and some demand shows as 999%,
-  // bar the cache: with none, nothing is waiting on it.
+  // bar the cache: with none, nothing is waiting on it. A CU or DBU tier with no capacity sets capacity even before
+  // there's demand (before launch, or with no database rented): no users can be served until it has some.
   const units = computed(() => company.value?.units ?? null);
   // PaaS: an instance count and managed services the provider runs. SaaS: no servers and no limit, billed per user.
   const managed = computed(() => company.value?.managed ?? null);
@@ -119,10 +124,15 @@ export function createGame(code: string, id: string) {
   const tiers = computed((): Tier[] => {
     const u = units.value;
     if (!u) return [];
+    const empty = (["cu", "dbu"] as const).filter((id) => u[id].capacity <= 0);
+    // On a day an event's extra VMs met demand, capacity shown includes them: the cut isn't worked back from it.
+    const cut = u.burst ? 0 : (u.opsCut ?? 0);
     return TIER_INFO.map((info) => {
       const { demand, capacity } = u[info.id];
       const percent = capacity > 0 ? Math.round((100 * demand) / capacity) : demand > 0 && info.id !== "ch" ? 999 : 0;
-      return { ...info, demand, capacity, percent, level: levelOf(percent), binding: u.binding === info.id };
+      const binding = empty.length ? empty.some((id) => id === info.id) : u.binding === info.id;
+      const rated = cut > 0 && cut < 1 ? Math.round((10 * capacity) / (1 - cut)) / 10 : capacity;
+      return { ...info, demand, capacity, percent, level: levelOf(percent), binding, rated };
     });
   });
   // The tier that runs out first sets capacity: the one to watch.
@@ -136,12 +146,36 @@ export function createGame(code: string, id: string) {
   // On-prem buys its servers rather than renting them: they're on order, adding nothing, until they arrive.
   const buysServers = computed(() => company.value?.serverOptions[0]?.price != null);
   const addVerb = computed(() => (buysServers.value ? "buy" : "rent"));
-  // What to do about a tier running short: on PaaS, scale the platform; elsewhere, rent or buy more servers.
-  const tierFix = (tier: UnitTier) => {
+  // Whether one more app server would get traffic once everything being set up is ready: from a few app servers up,
+  // only the ones a load balancer covers do, and with none, only one.
+  const nextAppCovered = computed(() => {
+    const lb = units.value?.loadBalancerOnceReady;
+    if (!lb || lb.builtIn) return true;
+    return lb.appServers + 1 < (meta.value?.loadBalancerFrom ?? 2) || Math.max(1, lb.coverage) >= lb.appServers + 1;
+  });
+  // What to do about a tier running short, with when to do it ("now", "soon"): on PaaS, scale the platform; elsewhere,
+  // rent or buy more servers. Missing ops cut every tier, so hiring them comes first: it gets back what the cut took.
+  // An app server the load balancers can't cover adds nothing, so that needs a load balancer too.
+  const tierFix = (tier: UnitTier, when = "") => {
+    const at = when ? ` ${when}` : "";
     if (managed.value) {
-      return tier === "cu" ? "raise your instance count" : "pick a bigger managed database, or add a cache";
+      return tier === "cu" ? `raise your instance count${at}` : `pick a bigger managed database, or add a cache${at}`;
     }
-    return `${addVerb.value} more ${TIER_INFO.find((t) => t.id === tier)?.servers ?? "servers"}`;
+    const t = tiers.value.find((x) => x.id === tier);
+    if (understaffed.value && t && t.rated > t.capacity) {
+      return `hire ${opsPeople(opsShort.value)}${at}, to get back the ${formatCount(Math.round(10 * (t.rated - t.capacity)) / 10)} ${t.unit} you're losing`;
+    }
+    const lb = units.value?.loadBalancerOnceReady;
+    if (tier === "cu" && lb && !lb.builtIn) {
+      const verb = addVerb.value;
+      if (lb.uncovered) {
+        return `${verb} ${lb.loadBalancers ? "another or a bigger load balancer" : "a load balancer"}${at}: ${lb.uncovered} of your app servers get no traffic without it`;
+      }
+      if (!nextAppCovered.value) {
+        return `${verb} an app server and ${lb.loadBalancers ? "another load balancer (or a bigger one)" : "a load balancer"}${at}: another app server alone gets no traffic`;
+      }
+    }
+    return `${addVerb.value} more ${TIER_INFO.find((x) => x.id === tier)?.servers ?? "servers"}${at}`;
   };
   const onOrder = computed(() => (buysServers.value ? (company.value?.servers ?? []).filter((s) => s.status === "pending") : []));
   // With no capacity limit (SaaS), load never comes close.
@@ -420,6 +454,8 @@ export function createGame(code: string, id: string) {
     understaffed,
     opsShort,
     opsShortSoon,
+    opsPeople,
+    nextAppCovered,
     runway,
     lowCash,
     lbShortSoon,

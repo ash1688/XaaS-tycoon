@@ -71,6 +71,7 @@ const orders = computed(() =>
 // Load balancers against app servers, counting ones still being set up (or on order) so a student adding a second
 // app server is told straight away. What counts today (ready servers only) is in game.units.loadBalancer.
 const lb = computed(() => game.units?.loadBalancer);
+const lbCount = computed(() => servers.value.filter((s) => s.type === "loadBalancer").length);
 const lbStatus = computed(() => {
   const from = game.meta?.loadBalancerFrom ?? 2;
   const verb = game.addVerb;
@@ -179,12 +180,13 @@ function stepNote(type: ServerType) {
   const short = game.midsShort(ops, game.opsWork);
   const opsText =
     short > 0
-      ? ` You'd need ${ops} ops in all and yours do the work of ${have}: hire ${short} more mids, or capacity is cut.`
-      : ` You'd need ${ops} ops in all; yours do the work of ${have}.`;
+      ? ` You'd need ${game.opsPeople(ops)} in all and yours do the work of ${have}: hire ${short} more mid${short === 1 ? "" : "s"}, or capacity is cut.`
+      : ` You'd need ${game.opsPeople(ops)} in all; yours do the work of ${have}.`;
+  // Only when the load balancers you have, and any on the way, couldn't cover one more app server.
   const appServers = servers.value.filter((s) => s.type === "app" && !s.apiu).length + 1;
   const lbHint =
-    type === "app" && appServers >= (game.meta?.loadBalancerFrom ?? 2)
-      ? ` With ${appServers} app servers, you'll need load balancers to serve them all.`
+    type === "app" && !game.nextAppCovered
+      ? ` With ${appServers} app servers, you'll need ${lbCount.value ? "another or a bigger load balancer" : "a load balancer"} to serve them all.`
       : "";
   if (o.price !== null) {
     const cabling = o.cabling ? ` plus ${formatCash(o.cabling)} cabling` : "";
@@ -207,6 +209,48 @@ const cancelling = ref<ServerView>();
 function pickToCancel(list: ServerView[]) {
   cancelling.value = list.findLast((s) => s.status === "pending") ?? list.at(-1);
 }
+
+// What cancelling (or selling) a ready server does to the tier it gives, worked out from today's demand: over 100%
+// means outages until there's more. A server still being set up gives nothing yet, so cancelling it changes nothing.
+// Losing a load balancer loses the app servers only it covered. Losing a cache sends its share back to the database.
+const cancelWarning = computed(() => {
+  const s = cancelling.value;
+  const u = game.units;
+  if (!s || !u || s.status === "pending" || s.apiu) return null;
+  const keep = 1 - (u.burst ? 0 : u.opsCut);
+  let tier: "cu" | "dbu";
+  let demand: number;
+  let after: number;
+  if (s.type === "app" || s.type === "loadBalancer") {
+    tier = "cu";
+    demand = u.cu.demand;
+    const l = u.loadBalancer;
+    const coverage = s.type === "loadBalancer" ? l.coverage - s.units : l.coverage;
+    const apps = s.type === "app" ? l.appServers - 1 : l.appServers;
+    const counted = l.needed || apps >= (game.meta?.loadBalancerFrom ?? 2) ? Math.min(apps, Math.max(1, coverage)) : apps;
+    // App servers counted biggest first: losing one that wasn't counted loses nothing.
+    const each = l.counted ? u.cu.capacity / l.counted : 0;
+    after = s.type === "app" && l.uncovered ? u.cu.capacity : s.type === "app" ? u.cu.capacity - s.units * keep : counted * each;
+  } else if (s.type === "database") {
+    tier = "dbu";
+    demand = u.dbu.demand;
+    after = u.dbu.capacity - s.units * keep;
+  } else if (s.type === "cache") {
+    tier = "dbu";
+    demand = u.dbu.beforeCache - Math.min(Math.max(0, u.ch.capacity - s.units * keep), u.ch.demand);
+    after = u.dbu.capacity;
+  } else return null;
+  const percent = after > 0 ? Math.round((100 * demand) / after) : 999;
+  if (demand <= 0 || percent <= 100) return null;
+  const name = tier === "cu" ? "Compute" : "Database";
+  const coming = servers.value
+    .filter((x) => x.status === "pending" && x.type === s.type && x.id !== s.id)
+    .sort((a, b) => a.readyDay - b.readyDay)[0];
+  const over = percent >= 999 ? "have no capacity" : `be at ${percent}%`;
+  return coming
+    ? `${name} would ${over} until your new ${coming.size} ${lower(coming.name)} is ready, after day ${coming.readyDay}: expect outages. Keep this one until then, and ${buying.value ? "sell" : "cancel"} it after.`
+    : `${name} would ${over}: expect outages. ${buying.value ? "Buy" : "Rent"} more first, and ${buying.value ? "sell" : "cancel"} this one once they're ready.`;
+});
 
 async function cancel() {
   if (!cancelling.value) return;
@@ -231,9 +275,11 @@ async function cancel() {
       <span>{{ lbStatus.text }}</span>
     </p>
 
+    <details class="how-it-works">
+      <summary>How this works</summary>
     <ul class="server-rules muted" data-testid="server-rules">
       <li v-if="opsRule">
-        <strong>Ops:</strong> {{ opsRule }} You need <strong>{{ game.company.opsNeeded }}</strong> now<template
+        <strong>Ops:</strong> {{ opsRule }} You need <strong>{{ game.opsPeople(game.company.opsNeeded) }}</strong> now<template
           v-if="game.company.opsNeededOnceReady > game.company.opsNeeded"
           >, <strong>{{ game.company.opsNeededOnceReady }}</strong> once your kit on order arrives</template
         >; yours do the work of {{ formatCount(game.opsWork) }}.
@@ -246,7 +292,13 @@ async function cancel() {
         <strong>API calls:</strong> your API's calls need APIU. API servers give it, or switch an app server to give
         APIU instead of CU, as many of either: that trades user capacity for API capacity.
       </li>
+      <li v-if="buying">
+        <strong>Buying:</strong> paid for up front, then a small running cost once it arrives. Delivery takes
+        {{ days(readyDays) }}.
+      </li>
+      <li v-else><strong>Renting:</strong> billed monthly, a day's share at a time. Ready the next day.</li>
     </ul>
+    </details>
 
     <p v-if="!hasServers" class="muted" data-testid="no-servers">
       You have no {{ buying ? "servers in place" : "servers" }}, so nothing can serve your users.
@@ -263,8 +315,8 @@ async function cancel() {
       </div>
       <p v-if="tierFor(g.type)" class="warn-text tier-warning" :data-testid="`tier-warning-${g.type}`">
         <span class="badge">{{ tierFor(g.type)!.level === "over" ? "Over capacity" : "Nearly full" }}</span>
-        {{ tierFor(g.type)!.name }} is at {{ tierFor(g.type)!.percent }}%: {{ game.tierFix(tierFor(g.type)!.id) }}
-        {{ tierFor(g.type)!.level === "over" ? "now" : "before it hits 100%" }}.
+        {{ tierFor(g.type)!.name }} is at {{ tierFor(g.type)!.percent }}%:
+        {{ game.tierFix(tierFor(g.type)!.id, tierFor(g.type)!.level === "over" ? "now" : "before it hits 100%") }}.
       </p>
       <ul v-if="g.sizes.length" class="server-list">
         <li v-for="s in g.sizes" :key="s.size" :data-server="`${g.type}-${s.size}`">
@@ -367,14 +419,8 @@ async function cancel() {
     </div>
 
     <p class="muted server-actions">
-      <template v-if="buying">
-        Paid for up front, then a small running cost once it arrives. Delivery takes {{ days(readyDays) }}. You need
-        <strong>{{ game.company.opsNeeded }}</strong> ops for the kit you have in place; yours do the work of {{ formatCount(game.opsWork) }}.
-      </template>
-      <template v-else>
-        Billed monthly, a day's share at a time. Ready the next day. You need
-        <strong>{{ game.company.opsNeeded }}</strong> ops for these servers; yours do the work of {{ formatCount(game.opsWork) }}.
-      </template>
+      You need <strong>{{ game.opsPeople(game.company.opsNeeded) }}</strong> for {{ buying ? "the kit you have in place" : "these servers" }};
+      yours do the work of {{ formatCount(game.opsWork) }}.
     </p>
     <p v-if="game.error && !cancelling" class="error" role="alert">{{ game.error }}</p>
 
@@ -385,6 +431,9 @@ async function cancel() {
           <p>
             Sell a {{ cancelling.size }} {{ lower(cancelling.name) }}
             ({{ formatCount(cancelling.units) }} {{ UNIT[cancelling.type] }})?
+          </p>
+          <p v-if="cancelWarning" class="warn-text cancel-warning" role="alert" data-testid="cancel-warning">
+            <span class="badge">Careful</span> {{ cancelWarning }}
           </p>
           <p class="sell-note" data-testid="sell-note">
             You get <strong>{{ formatCash(cancelling.sellBack ?? 0) }}</strong> back ({{ sellBackPercent }}% of the
@@ -406,6 +455,9 @@ async function cancel() {
             Cancel a {{ cancelling.size }} {{ lower(cancelling.name) }}
             ({{ formatCount(cancelling.units) }} {{ UNIT[cancelling.type] }}, {{ formatCash(cancelling.monthlyCost) }} a
             month)?
+          </p>
+          <p v-if="cancelWarning" class="warn-text cancel-warning" role="alert" data-testid="cancel-warning">
+            <span class="badge">Careful</span> {{ cancelWarning }}
           </p>
           <p class="muted" data-testid="pro-rata-note">
             Pro rata: its rent stops from tomorrow, so you only pay for the days you had it. It stops serving straight
