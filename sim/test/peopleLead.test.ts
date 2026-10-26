@@ -4,9 +4,9 @@ import { hasHeadOfPeople, peopleLead, peopleLeadFor } from "../src/peopleLead.ts
 import { createSim, defaultConfig, type GameConfig, type GameState, type PeopleLeadConfig, type Sim } from "../src/index.ts";
 
 // The people-lead seam: one modifier that every head-of-people effect on a pay review reads (the roll bonus or penalty
-// on staff counters, walk-away softening, the scheme valuation and the tribunal lean). There's no head of people until
-// the C-suite (#108), so it gives the "none" values; a sim whose "none" values are swapped for the head of people's
-// stands in for one, and shows each effect moving the student's way.
+// on staff counters, walk-away softening, the scheme valuation and the tribunal lean). Without a head of people it gives
+// the "none" values; a sim whose "none" values are swapped for the head of people's stands in for one, and shows each
+// effect moving the student's way. Hiring one from the C-suite is in csuite.test.ts.
 
 /** A rich company with no events, where the fair rise is inflation and staff walk away there. */
 const plainConfig: GameConfig = {
@@ -36,7 +36,7 @@ function untilReview(s: Sim, state: GameState): GameState {
 const offer = (s: Sim, state: GameState, rise: number) => s.applyAction(state, { type: "offerPayRise", rise });
 
 describe("the modifier", () => {
-  it("gives the no-head-of-people values: no head of people can be hired yet", () => {
+  it("gives the no-head-of-people values until one is hired", () => {
     const state = begin(plain);
     expect(hasHeadOfPeople(state)).toBe(false);
     expect(peopleLead(plainConfig, state)).toEqual({ headOfPeople: false, ...lead.none });

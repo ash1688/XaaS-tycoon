@@ -32,11 +32,11 @@ test.afterEach(async ({ request }) => {
   code = preset = null;
 });
 
-/** As if every Series round had approached the company on day 1 and been declined. */
+/** As if the angel and every Series round had approached the company on day 1 and been declined. */
 async function allRoundsApproached(id: string) {
   const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
   try {
-    await sql`update companies set state = jsonb_set(state, '{investors,vc,firstApproachDay}', ${sql.json({ seriesA: 1, seriesB: 1, seriesC: 1, seriesD: 1 })}) where id = ${id}`;
+    await sql`update companies set state = jsonb_set(jsonb_set(state, '{investors,vc,firstApproachDay}', ${sql.json({ seriesA: 1, seriesB: 1, seriesC: 1, seriesD: 1 })}), '{investors,firstApproachDay}', '1') where id = ${id}`;
   } finally {
     await sql.end();
   }
@@ -68,7 +68,7 @@ test("float a company that's ready, ring the opening bell and watch the first da
   // Finance: the checklist, not all green yet, so Apply isn't allowed.
   await goTo(student, "Finance");
   const panel = student.getByTestId("ipo-panel");
-  await expect(panel.locator("li")).toHaveCount(12);
+  await expect(panel.locator("li")).toHaveCount(15);
   await expect(panel.getByTestId("ipo-seriesA")).toHaveAttribute("data-met", "false");
   await expect(panel.getByTestId("ipo-status")).toHaveText("Not ready");
   await expect(panel.getByTestId("ipo-uptime")).toHaveAttribute("data-met", "false");
@@ -84,10 +84,21 @@ test("float a company that's ready, ring the opening bell and watch the first da
   await expect(panel.getByTestId("ipo-status")).toHaveText("Not ready");
   await expect(panel.getByTestId("ipo-apply")).toBeDisabled();
 
-  // Once every Series round has approached (declined or not), it's ready.
+  // Once every Series round has approached (declined or not), only the CFO, CISO and legal counsel are missing.
   await allRoundsApproached(student.url().split("/").at(-2)!);
   await student.reload();
   for (const id of ["seriesA", "seriesB", "seriesC", "seriesD"]) await expect(panel.getByTestId(`ipo-${id}`)).toHaveAttribute("data-met", "true");
+  await expect(panel.getByTestId("ipo-status")).toHaveText("Not ready");
+  // Hired on People, the first on each shortlist, it's ready.
+  await goTo(student, "People");
+  for (const role of ["cfo", "ciso", "legalCounsel"]) {
+    const first = student.getByTestId(`csuite-${role}`).locator("tbody tr").first();
+    await first.getByTestId("hire-executive").click();
+    await first.getByTestId("confirm-hire").click();
+    await expect(student.getByTestId(`csuite-${role}`).getByTestId("csuite-executive")).toBeVisible();
+  }
+  await goTo(student, "Finance");
+  for (const id of ["cfo", "ciso", "legalCounsel"]) await expect(panel.getByTestId(`ipo-${id}`)).toHaveAttribute("data-met", "true");
   await expect(panel.getByTestId("ipo-status")).toHaveText("Ready to apply");
 
   // Applying is approved (no cold market here), and the opening-bell page takes over. The game holds until the bell.
@@ -103,7 +114,9 @@ test("float a company that's ready, ring the opening bell and watch the first da
   await student.getByTestId("bell-float").fill("30");
   await expect(student.getByTestId("bell-float-value")).toHaveText("30%");
   await expect(student.getByTestId("bell-preview-cash")).toHaveText(`£${at30.cashRaised.toLocaleString("en-GB")}`);
-  await expect(student.getByTestId("bell-preview-stake")).toHaveText("100% → 70%");
+  // The C-suite took a little equity, so the student starts a little under 100%.
+  const pct = (n: number) => `${(Math.round(n * 1000) / 10).toLocaleString("en-GB")}%`;
+  await expect(student.getByTestId("bell-preview-stake")).toHaveText(`${pct(ipo.offer.studentShare)} → ${pct(at30.studentShareAfter)}`);
 
   // Ringing the bell plays the first day, then shows the result.
   await student.getByTestId("bell-ring").click();

@@ -61,7 +61,7 @@ _Avoid_: Release, ship date
 ### People
 
 **C-suite**:
-The company's senior leaders. The student is the CEO; the others (CFO, CTO and so on) are each hired once from a shortlist and kept for the rest of the game.
+The company's senior leaders. The student is the CEO; the others (CFO, CTO and so on) are each hired once from a shortlist and kept for the rest of the game. Roles open as the company grows (the heads from day 1, the CFO on outside money or the first angel approach, the CTO and head of people at the first angel approach, the rest at the Series A approach). Each candidate has a salary, fixed for good (pay reviews leave the C-suite out), and an equity ask in new shares that shrinks as the C-suite's cap (about 10%) fills. A CFO, a CISO and legal counsel are needed to IPO.
 _Avoid_: Executives, leadership team, management
 
 **Staff**:
@@ -97,7 +97,7 @@ Staff coming to the student about pay before quarters 2, 3 and 4 of a game (a ga
 _Avoid_: Pay rise round, wage negotiation, salary review
 
 **People-lead modifier**:
-What a head of people (a C-suite role) changes in a pay review, read in one place: the roll bonus on staff's counters, a softer walk-away figure, how much of a staff scheme's worth staff count, and a tribunal lean the student's way. Without a head of people the student deals with staff directly: staff take a point off the roll and count schemes at about 70%, with no softening and no lean. No head of people can be hired yet.
+What a head of people (a C-suite role) changes in a pay review, read in one place: the roll bonus on staff's counters, a softer walk-away figure, how much of a staff scheme's worth staff count, and a tribunal lean the student's way. Without a head of people the student deals with staff directly: staff take a point off the roll and count schemes at about 70%, with no softening and no lean. Each head of people candidate's strength sets how far they move it.
 _Avoid_: HR modifier, people lead bonus
 
 **Staff scheme**:

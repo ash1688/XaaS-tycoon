@@ -163,9 +163,15 @@ npm run -s play -- summary <game>
   days, takes most of the company in new shares, and forces cost cuts (staff let go, hires cancelled). Time stops
   when it happens. `rescue` shows the terms in full; `buyback` buys all its shares back from company cash, at the
   price it sets (shown in `look`). Running out of cash a second time is **liquidation**, and the game ends.
-- `ipo` shows the IPO readiness checklist: eight conditions (a trading history, users and revenue, an uptime record, predictable costs,
-  a security audit, profitability, a satisfaction record and a paying customer base), each with where you stand and
-  what's needed. The records need 30 days of trading since launch. Once every condition is met, `apply` applies to
+- `csuite` lists the C-suite: every role, when it opens, who's hired, and each open role's shortlist of three
+  candidates (id, strength, salary a day, equity ask now and what they'd do). `appoint <id>` (such as `appoint cfo-2`)
+  hires one, for good: no letting go, and pay reviews leave their pay alone. Equity asks are new shares, and shrink as
+  the C-suite's 10% cap fills. The heads open on day 1, the CFO on outside money or the first angel approach, the CTO
+  and head of people at the first angel approach, and the COO, CIO, CMO, CISO and legal counsel at the Series A
+  approach. A CFO, a CISO and legal counsel are needed to IPO.
+- `ipo` shows the IPO readiness checklist: fifteen conditions (a trading history, users and revenue, an uptime record,
+  predictable costs, a security audit, profitability, a satisfaction record, a paying customer base, all four Series
+  rounds approached, and a CFO, CISO and legal counsel hired), each with where you stand and what's needed. The records need 30 days of trading since launch. Once every condition is met, `apply` applies to
   float: there's a small hidden chance of a cold market (postponed 30 days, satisfaction lost), less the more
   comfortably you're over every condition. Once approved, time holds (no `next`) until you ring the bell: `ipo`
   shows the offer and `ring <15-40>` floats that % of

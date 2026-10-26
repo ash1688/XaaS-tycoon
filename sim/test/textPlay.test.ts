@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createSim, defaultConfig, SimError, type GameConfig, type GameState } from "../src/index.ts";
 import { advanceUntil, parseCommand, renderCommands, renderStatus, renderSummary, runCommand, runScript } from "../scripts/textPlay.ts";
+import { withIpoExecutives } from "./executives.ts";
 
 /** No MVP to build, so a game launches as soon as it has somewhere to serve users: the MVP has its own tests. */
 const NO_MVP: GameConfig["mvp"] = { ...defaultConfig.mvp, baseDevDays: { ecommerce: 0, social: 0, video: 0, payments: 0, assistant: 0, games: 0 } };
@@ -669,7 +670,8 @@ describe("the IPO", () => {
   const ready = (s: ReturnType<typeof createSim>): GameState => {
     const played = s.advance(s.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 }), 40).state;
     return {
-      ...played,
+      // The CFO, CISO and legal counsel are hired.
+      ...withIpoExecutives(played),
       users: 2_000,
       paidUsers: 1_000,
       price: 60,
@@ -695,12 +697,12 @@ describe("the IPO", () => {
   it("shows the checklist, and offers apply only once every condition is met", () => {
     const s = ipoSim(0);
     const state = start();
-    expect(renderStatus(sim, state)).toMatch(/ipo: 1\/12 readiness conditions met; still to meet: trading history, users and revenue, uptime record, predictable costs, profitability, satisfaction record, paying customer base, series a approached, series b approached, series c approached, series d approached$/m);
+    expect(renderStatus(sim, state)).toMatch(/ipo: 1\/15 readiness conditions met; still to meet: trading history, users and revenue, uptime record, predictable costs, profitability, satisfaction record, paying customer base, series a approached, series b approached, series c approached, series d approached, cfo hired, ciso hired, legal counsel hired$/m);
     expect(renderCommands(sim, state)).toMatch(/ipo {3}\(the IPO readiness checklist/);
     expect(renderCommands(sim, state)).not.toMatch(/apply/);
     expect(run(state, "ipo").lines.join("\n")).toMatch(/\[ \] Trading history: .*\n.*\[ \] Users and revenue: .*\n.*\[ \] Uptime record: /);
     const r = ready(s);
-    expect(renderStatus(s, r)).toMatch(/ipo: READY: all 12 conditions met, comfort \d+% \("apply" to float\)/);
+    expect(renderStatus(s, r)).toMatch(/ipo: READY: all 15 conditions met, comfort \d+% \("apply" to float\)/);
     expect(renderCommands(s, r)).toMatch(/apply {3}\(apply to float/);
     expect(play(s, r, "ipo").lines.join("\n")).toMatch(/\[x\] Paying customer base: 1,000, of 2,000 users in a market of about 40,000: .*\. Needs 500 paying users\. Comfort 100%\./);
   });
@@ -779,7 +781,7 @@ describe("the IPO checklist over time", () => {
       },
     });
     let state = s.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 });
-    state = allRoundsApproached(s.advance(state, 25).state);
+    state = withIpoExecutives(allRoundsApproached(s.advance(state, 25).state));
     expect(s.ipo(state).ready).toBe(true);
     const turn = advanceUntil(s, state, 10, who);
     expect(turn.state.day).toBe(30);
@@ -1043,7 +1045,7 @@ describe("tiers, model benefits and the hardware slider (#123)", () => {
 
   it("shows the tiers, locked features and the next tier's condition, and offers unlocks then benefits once their tier is open", () => {
     const state = start();
-    expect(renderStatus(sim, state)).toMatch(/^tiers: open 1 \| tier 2 needs users 0\/14,000 \(unlocks photos, managedMonitoring\)$/m);
+    expect(renderStatus(sim, state)).toMatch(/^tiers: open 1 \| tier 2 needs users 0\/14,000 OR a CTO hired \(unlocks photos, managedMonitoring\)$/m);
     expect(renderStatus(sim, state)).toMatch(/messaging locked \(tier 3\)/);
     expect(renderCommands(sim, state)).not.toMatch(/^ {2}benefit /m);
     expect(renderCommands(sim, state)).toMatch(/^ {2}build <notifications> /m);

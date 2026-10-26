@@ -10,6 +10,7 @@ import type { Benefits } from "./benefits.ts";
 import type { Events } from "./events.ts";
 import type { Features } from "./features.ts";
 import type { Infrastructure } from "./infrastructure.ts";
+import { migrationShare } from "./executives.ts";
 import { pounds } from "./finance.ts";
 import { nextRandom } from "./rng.ts";
 import type { Servers, SetupItem } from "./servers.ts";
@@ -175,7 +176,7 @@ export function createMigration(
     const started = planMigration(state, model);
     // The upfront bill lands on the first day, so a migration that costs more up front than the company has is
     // refused rather than running it out of cash.
-    const upfront = infra.upfrontCost(started.migration!.to, started.migration!);
+    const upfront = upfrontCostOf(state, started.migration!);
     if (upfront > state.cash) {
       throw new SimError(
         "cant_afford",
@@ -209,8 +210,8 @@ export function createMigration(
     const started = planMigration(state, target);
     const m = started.migration!;
     const to = m.to;
-    const days = MIGRATION_PHASES.reduce((sum, p) => sum + config.migration.phases[p].days, 0);
-    const upfrontCost = infra.upfrontCost(to, m);
+    const days = MIGRATION_PHASES.reduce((sum, p) => sum + plannedDays(state, p), 0);
+    const upfrontCost = upfrontCostOf(state, m);
     let doubleBilling = 0;
     let proRata = 0;
     for (let d = 0; d < days; d++) {
@@ -218,7 +219,7 @@ export function createMigration(
       doubleBilling -= newSetupEntries(day).reduce((sum, e) => sum + e.cashDelta, 0);
       proRata += infra.dailyInfrastructure(day, state.model, state.users);
     }
-    const exitPenalty = config.models[state.model].exitPenalty;
+    const exitPenalty = exitPenaltyOf(state);
     const sellBack = servers.sellBackTotal(state);
     const setup = servers.setupItems(started, to, m.servers);
     const room = config.migration.setupHeadroom;
@@ -297,7 +298,7 @@ export function createMigration(
     const m = state.migration;
     if (!m) return [];
     const firstDay = m.phase === MIGRATION_PHASES[0] && m.phaseDaysDone === 0;
-    return [...(firstDay ? infra.upfrontEntries(m.to, m) : []), ...newSetupEntries(state)];
+    return [...(firstDay ? upfrontEntries(state, m) : []), ...newSetupEntries(state)];
   }
 
   /** A seeded roll for whether a migration overruns, and by how many days. Always draws once, then again if so. */
@@ -309,18 +310,35 @@ export function createMigration(
     return [minDays + Math.floor(d * (maxDays - minDays + 1)), next];
   }
 
-  /** How long a phase of this migration takes: the configured days, plus any overrun on the moving phase. */
-  function phaseLength(m: Migration, phase: MigrationPhase): number {
-    return config.migration.phases[phase].days + (phase === "moving" ? m.overrunDays : 0);
+  /** A phase's planned days: the configured days, cut by a CIO's share to the nearest day, but never below 1. */
+  const plannedDays = (state: GameState, phase: MigrationPhase) => {
+    const days = config.migration.phases[phase].days;
+    return days > 0 ? Math.max(1, Math.round(days * migrationShare(config, state))) : 0;
+  };
+
+  /** How long a phase of this migration takes: its planned days, plus any overrun on the moving phase. */
+  function phaseLength(state: GameState, m: Migration, phase: MigrationPhase): number {
+    return plannedDays(state, phase) + (phase === "moving" ? m.overrunDays : 0);
   }
+
+  /** A migration's upfront bill, the new model's own and its setup's kit, cut by a CIO's share. */
+  const upfrontEntries = (state: GameState, m: Migration): LogEntry[] => {
+    const share = migrationShare(config, state);
+    const entries = infra.upfrontEntries(m.to, m);
+    return share === 1 ? entries : entries.map((e) => ({ ...e, cashDelta: Math.round(e.cashDelta * share) }));
+  };
+  const upfrontCostOf = (state: GameState, m: Migration) => -upfrontEntries(state, m).reduce((sum, e) => sum + e.cashDelta, 0);
+
+  /** The exit penalty for leaving the current model, cut by a CIO's share. */
+  const exitPenaltyOf = (state: GameState) => Math.round(config.models[state.model].exitPenalty * migrationShare(config, state));
 
   function migration(state: GameState): MigrationView | null {
     const m = state.migration;
     if (!m) return null;
     const later = MIGRATION_PHASES.slice(MIGRATION_PHASES.indexOf(m.phase) + 1);
-    const phaseDaysLeft = phaseLength(m, m.phase) - m.phaseDaysDone;
-    const daysLeft = later.reduce((sum, p) => sum + phaseLength(m, p), phaseDaysLeft);
-    const totalDays = MIGRATION_PHASES.reduce((sum, p) => sum + phaseLength(m, p), 0);
+    const phaseDaysLeft = phaseLength(state, m, m.phase) - m.phaseDaysDone;
+    const daysLeft = later.reduce((sum, p) => sum + phaseLength(state, m, p), phaseDaysLeft);
+    const totalDays = MIGRATION_PHASES.reduce((sum, p) => sum + phaseLength(state, m, p), 0);
     const { overrunDays } = m;
     const setup = servers.setupItems(state, m.to, m.servers);
     const setupMonthly = Math.round(setup.reduce((sum, item) => sum + item.monthly, 0));
@@ -336,7 +354,7 @@ export function createMigration(
     if (!m) return { state, entries: [] };
     const toName = config.models[m.to].name;
     const phaseDaysDone = m.phaseDaysDone + 1;
-    if (phaseDaysDone < phaseLength(m, m.phase)) {
+    if (phaseDaysDone < phaseLength(state, m, m.phase)) {
       return { state: { ...state, migration: { ...m, phaseDaysDone } }, entries: [] };
     }
     const done = config.migration.phases[m.phase].name;
@@ -345,7 +363,7 @@ export function createMigration(
       // Migrations slip while moving: roll for an overrun as that phase starts.
       const [extraDays, rng] = next === "moving" ? rollOverrun(state.rng) : [0, state.rng];
       const moved: Migration = { ...m, phase: next, phaseDaysDone: 0, overrunDays: m.overrunDays + extraDays };
-      const days = phaseLength(moved, next);
+      const days = phaseLength(state, moved, next);
       const nextName = config.migration.phases[next].name;
       const text = `Migration to ${toName}: ${done} done. ${nextName} next, ${days} day${days === 1 ? "" : "s"}.`;
       const entries: LogEntry[] = [{ text, cashDelta: 0, kind: "migration" }];
@@ -387,9 +405,10 @@ export function createMigration(
       entries.push({ text, cashDelta: 0, kind: "migration" });
     }
     // Charged once, on the day you leave. The old provider's pro-rata share for today was billed with the rest.
-    if (left.exitPenalty > 0) {
+    const exitPenalty = exitPenaltyOf(state);
+    if (exitPenalty > 0) {
       const text = `Exit penalty: leaving ${left.name}`;
-      entries.push({ text, cashDelta: -left.exitPenalty, category: "infrastructure" });
+      entries.push({ text, cashDelta: -exitPenalty, category: "infrastructure" });
     }
     // Vendor lock-in. Add-ons belong to the SaaS provider, so they stay active and billed for the whole migration
     // (you're still on SaaS, paying for both setups) and are left behind on the day you leave: billing and their

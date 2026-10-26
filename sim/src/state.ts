@@ -1,6 +1,7 @@
 import type { Negotiation, Terms } from "./negotiation.ts";
 import type { SchemeLevels } from "./staffSchemes.ts";
 import {
+  CSUITE_ROLES,
   DIFFICULTY_IDS,
   GAME_LENGTH_IDS,
   MANAGED_SERVICES,
@@ -13,6 +14,7 @@ import {
   SERVER_TYPES,
   STAFF_GRADES,
   STAFF_POOLS,
+  type CsuiteRole,
   type CustomerTypeId,
   type DifficultyId,
   type GameLengthId,
@@ -35,7 +37,40 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 51;
+export const GAME_STATE_VERSION = 52;
+
+/**
+ * A candidate on a C-suite role's shortlist. Strength, 0 to 1, sets each of the role's effects within its range; the
+ * salary and the equity asked for before the cap shrinks it follow strength, with some luck.
+ */
+export interface Candidate {
+  /** The role and place on the shortlist: "cfo-2". */
+  id: string;
+  name: string;
+  strength: number;
+  /** Pay a day, in pounds. */
+  salary: number;
+  /** The equity asked for with the cap empty, as a share of the company (0.015 = 1.5%). */
+  equity: number;
+}
+
+/** An executive hired for good: who they are, their pay a day, and the equity and new shares they took. */
+export interface Executive {
+  role: CsuiteRole;
+  name: string;
+  strength: number;
+  salary: number;
+  /** The share of the company they took on the day they were hired, after the cap shrank the ask. 0 for none. */
+  equity: number;
+  shares: number;
+  day: number;
+}
+
+/** The C-suite: each role's shortlist, drawn as the game starts and kept, and the executives hired, in order. */
+export interface Csuite {
+  shortlists: Record<CsuiteRole, Candidate[]>;
+  hired: Executive[];
+}
 
 /** Headcount in one pool, by grade. */
 export type GradeCounts = Record<StaffGrade, number>;
@@ -165,9 +200,11 @@ export interface Shareholder {
    * "public" for the float's new shares, sold at the IPO, or "staffScheme" for the staff share scheme, which holds the
    * shares share save issues for the staff.
    */
-  id: "student" | "friendsAndFamily" | "angel" | "vc" | "vulture" | "public" | "staffScheme";
-  /** A VC's name: "Northgate Ventures". Only on a "vc" row. */
+  id: "student" | "friendsAndFamily" | "angel" | "vc" | "vulture" | "public" | "staffScheme" | "executive";
+  /** A VC's name: "Northgate Ventures", on a "vc" row; or an executive's, on an "executive" row. */
   investor?: string;
+  /** The C-suite role, on an "executive" row (one for each executive who took equity). */
+  role?: CsuiteRole;
   shares: number;
   /** The day they got their shares: 1 for the student. */
   day: number;
@@ -988,6 +1025,8 @@ export interface GameState {
   yearEnds: YearEndRecord[];
   /** Drift's own seeded RNG, for each year's price rise, so it doesn't change the rest of the game. */
   driftRng: number;
+  /** The C-suite: every role's shortlist, drawn as the game starts, and the executives hired. */
+  csuite: Csuite;
 }
 
 /** One year's end in a long game: the price rise it rolled and where prices and new kit stood after it. */
@@ -1148,7 +1187,9 @@ export type Action =
    */
   | { type: "offerPayRise"; rise: number; schemes?: Partial<SchemeLevels> }
   /** Accepts staff's counter in the open pay review: their figure is the cash rise, with no schemes. */
-  | { type: "acceptPayCounter" };
+  | { type: "acceptPayCounter" }
+  /** Hires a candidate from an open C-suite role's shortlist, by id ("cfo-2"), for good. */
+  | { type: "hireExecutive"; role: CsuiteRole; candidate: string };
 
 export interface NewGameParams {
   companyName: string;
@@ -1277,6 +1318,10 @@ export function isManagedService(v: string): v is ManagedService {
 
 export function isFunderId(v: string): v is FunderId {
   return (FUNDER_IDS as readonly string[]).includes(v);
+}
+
+export function isCsuiteRole(v: unknown): v is CsuiteRole {
+  return typeof v === "string" && (CSUITE_ROLES as readonly string[]).includes(v);
 }
 
 export function isStaffPool(v: string): v is StaffPool {

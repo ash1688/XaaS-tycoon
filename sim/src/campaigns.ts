@@ -1,5 +1,6 @@
 import type { Calendar } from "./calendar.ts";
 import { CUSTOMER_TYPE_IDS, STAFF_GRADES, type CustomerTypeId, type GameConfig, type StaffGrade } from "./config.ts";
+import { cmoBoost } from "./executives.ts";
 import { count, pounds } from "./finance.ts";
 import { marketGrowth, marketGrowthCap, marketSize } from "./market.ts";
 import type { UsersLost } from "./mix.ts";
@@ -154,8 +155,8 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
   /** The marketer a campaign started now gets: the most senior free one, or null with none free. */
   const nextMarketer = (state: GameState) => [...STAFF_GRADES].reverse().find((g) => freeAt(state, g) > 0) ?? null;
 
-  /** What a CMO adds to every campaign. 1 until the C-suite has one. */
-  const cmoBonus = (_state: GameState) => 1;
+  /** What a CMO adds to every campaign: 1 without one. */
+  const cmoBonus = (state: GameState) => cmoBoost(config, state);
 
   /** How well a campaign is run: multiplies its users per pound. Its marketer's grade output, × the CMO bonus. */
   const effectiveness = (state: GameState, campaign: Pick<Campaign, "grade">) =>

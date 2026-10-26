@@ -1,0 +1,59 @@
+import { expect, test, type Page } from "@playwright/test";
+import { E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
+
+// The C-suite (#108) on People: the heads open from day 1 with shortlists, the rest say when they open, hiring asks
+// to confirm and is for good, the executive's pay and shares show, and the IPO checklist needs a CFO, CISO and legal
+// counsel.
+
+let code: string | null = null;
+test.afterEach(async ({ request }) => {
+  await request.post("/api/teacher/login", { data: { password: E2E_TEACHER_PASSWORD } });
+  if (code) await request.delete(`/api/teacher/codes/${code}`);
+  code = null;
+});
+
+const nav = (page: Page) => page.getByRole("navigation", { name: "Game" });
+const goTo = (page: Page, name: string) => nav(page).getByRole("link", { name, exact: true }).click();
+
+test("hires a head of development from the shortlist, for good, and the IPO checklist asks for the required three", async ({
+  browser,
+  request,
+}) => {
+  await request.post("/api/teacher/login", { data: { password: E2E_TEACHER_PASSWORD } });
+  code = (await (await request.post("/api/teacher/codes")).json()).code as string;
+
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}`);
+  await student.getByText("Social network").click();
+  await student.locator("label.choice", { hasText: "Build on a SaaS platform (SaaS)" }).click();
+  await student.getByLabel("Company name").fill("Leaders Ltd");
+  await student.getByRole("button", { name: "Start company" }).click();
+  await expect(student.getByTestId("day")).toHaveText(/^1 of/);
+
+  await goTo(student, "People");
+  const csuite = student.getByTestId("csuite");
+  await expect(csuite.getByRole("heading", { name: "C-suite" })).toBeVisible();
+  await expect(csuite).toContainText("10% left");
+  // Shut roles say when they open, and which the IPO needs.
+  await expect(csuite.getByTestId("csuite-cfo")).toContainText("Opens once you take outside money");
+  await expect(csuite.getByTestId("csuite-cfo")).toContainText("Needed to IPO");
+  await expect(csuite.getByTestId("csuite-legalCounsel")).toContainText("Opens when Series A venture capitalists approach");
+
+  const dev = csuite.getByTestId("csuite-headOfDevelopment");
+  const candidate = dev.getByTestId("candidate-headOfDevelopment-1");
+  await expect(dev.locator("tbody tr")).toHaveCount(3);
+  await expect(candidate).toContainText("developer output");
+  const name = (await candidate.locator("th").textContent())!.trim();
+  await candidate.getByTestId("hire-executive").click();
+  await candidate.getByTestId("confirm-hire").click();
+  await expect(dev.getByTestId("csuite-executive")).toContainText(`${name}, hired on day 1`);
+  await expect(dev.locator("tbody tr")).toHaveCount(0);
+  await expect(csuite.getByTestId("csuite-pay")).toContainText("a day");
+
+  await goTo(student, "Finance");
+  await expect(student.getByTestId("cap-executive")).toContainText(`${name} (Head of development)`);
+  for (const id of ["cfo", "ciso", "legalCounsel"]) {
+    await expect(student.getByTestId(`ipo-${id}`)).toHaveAttribute("data-met", "false");
+  }
+  await expect(student.getByTestId("ipo-legalCounsel")).toContainText("Legal counsel hired");
+});

@@ -1,4 +1,5 @@
 import { STAFF_GRADES, STAFF_POOLS, type GameConfig, type StaffGrade, type StaffPool } from "./config.ts";
+import { poolBoost } from "./executives.ts";
 import { pounds, type createFinance } from "./finance.ts";
 import { researchUnlocked } from "./research.ts";
 import { isStaffGrade, isStaffPool, SimError, type GameState, type GradeCounts, type LogEntry } from "./state.ts";
@@ -76,8 +77,8 @@ export interface StaffPoolView {
 }
 
 /**
- * Pools whose pay the pay reviews' rises leave alone. The C-suite (#108), once it's built, keeps its own packages and
- * goes here; every pool there is now takes the rise.
+ * Pay the pay reviews' rises leave alone: the C-suite keeps its own packages (see csuite.ts, whose pay never reads the
+ * multiplier). Every staff pool takes the rise.
  */
 export const NO_PAY_RISE: readonly string[] = ["csuite"];
 
@@ -110,14 +111,15 @@ export const headcount = (state: GameState, pool: StaffPool, agency = false) =>
 
 /**
  * A pool's work a day in mids, permanent and agency staff's together, to two decimal places so sums of grades compare
- * cleanly against whole numbers.
+ * cleanly against whole numbers. A head of the pool in the C-suite lifts it (the head of development, ops or support;
+ * the CTO for researchers).
  */
 export function staffOutput(config: GameConfig, state: GameState, pool: StaffPool): number {
   const work = STAFF_GRADES.reduce(
     (sum, g) => sum + state.staff[pool][g] * gradeOutput(config, g) + state.agency[pool][g] * gradeOutput(config, g, true),
     0,
   );
-  return Math.round(work * 100) / 100;
+  return Math.round(work * poolBoost(config, state, pool) * 100) / 100;
 }
 
 /** What everyone on the team, permanent and agency, costs a day. Hires still to start cost nothing. */

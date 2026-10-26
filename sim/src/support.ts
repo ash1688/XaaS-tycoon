@@ -1,5 +1,6 @@
 import type { GameConfig } from "./config.ts";
 import { count } from "./finance.ts";
+import { recoveryBoost } from "./executives.ts";
 import { staffOutput } from "./staff.ts";
 import type { GameState, LogEntry, WaveEffect } from "./state.ts";
 
@@ -133,7 +134,9 @@ export function createSupport(config: GameConfig) {
     const clearedToday = Math.min(open, dailyClearance(state));
     const backlog = open - clearedToday;
     const target = satisfactionTarget(backlog, state.users) * contentFactor;
-    const satisfaction = state.satisfaction + (target - state.satisfaction) * config.support.satisfactionSpeed;
+    // A head of support speeds the recovery, never the fall.
+    const speed = config.support.satisfactionSpeed * (target > state.satisfaction ? recoveryBoost(config, state) : 1);
+    const satisfaction = state.satisfaction + (target - state.satisfaction) * Math.min(1, speed);
 
     const entries: LogEntry[] = [];
     for (const b of bursts) {

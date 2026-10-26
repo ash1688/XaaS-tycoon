@@ -42,6 +42,7 @@ import type {
   PauseReason,
   PayOfferPreview,
   PayHistoryView,
+  CsuiteView,
   DriftView,
   PayReviewRecord,
   PayReviewView,
@@ -462,6 +463,11 @@ export interface CompanyView {
    * schemes held with their cost a day, the staff share scheme's holding, and the next review. Empty before the first.
    */
   payHistory: PayHistoryView;
+  /**
+   * The C-suite: every role with when it opens and whether it's needed to float, who fills it (hired for good), or
+   * while open its shortlist, each candidate's effects, salary and equity ask now; and the equity cap, used and left.
+   */
+  csuite: CsuiteView;
   /**
    * Drift in a long game: running prices and new kit's units against the start, each year's end with the price rise
    * it rolled, and the next year's end (null when the game ends first).

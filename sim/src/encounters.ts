@@ -1,4 +1,5 @@
 import { DANGER_RISKS, type DangerRisk, type EventConfig, type GameConfig } from "./config.ts";
+import { breachShare, patchingNeed } from "./executives.ts";
 import { layerOwner } from "./responsibility.ts";
 import { nextRandom } from "./rng.ts";
 import type { Servers } from "./servers.ts";
@@ -37,8 +38,11 @@ export interface DangerView {
   warning: { event: string; name: string; text: string } | null;
 }
 
-/** The situation an encounter list is rolled in, and the meter checked against. */
-type Situation = Pick<GameState, "model" | "schedule" | "featureGaps" | "dangerRisks">;
+/** The situation an encounter list is rolled in, and the meter checked against: the C-suite too, once there is one. */
+type Situation = Pick<GameState, "model" | "schedule" | "featureGaps" | "dangerRisks"> & Partial<Pick<GameState, "csuite">>;
+
+/** The event a CISO makes less likely. */
+const BREACH_EVENT = "breach";
 
 /** The danger meter and the encounter list: when random events fire, and which. See EncounterConfig. */
 export function createEncounters(config: GameConfig, servers: Servers) {
@@ -66,7 +70,8 @@ export function createEncounters(config: GameConfig, servers: Servers) {
   function chanceOf(state: Situation, event: EventConfig): number {
     const odds = event.encounter!;
     const multiplier = state.dangerRisks.reduce((m, risk) => m * (odds.risks?.[risk] ?? 1), 1);
-    return Math.min(1, odds.chance * multiplier);
+    const ciso = event.id === BREACH_EVENT && state.csuite ? breachShare(config, { csuite: state.csuite }) : 1;
+    return Math.min(1, odds.chance * multiplier * ciso);
   }
 
   /**
@@ -126,8 +131,10 @@ export function createEncounters(config: GameConfig, servers: Servers) {
   /** The risks on a day played: what made it a risky day, worked out at the end of it. */
   function risksOn(state: GameState, overloaded: boolean): DangerRisk[] {
     const on: Record<DangerRisk, boolean> = {
-      // Ops still to start after hiring aren't patching yet.
-      unpatched: layerOwner(state.model, "os") === "you" && staffOutput(config, state, "ops") < servers.opsNeeded(state),
+      // Ops still to start after hiring aren't patching yet. A CISO keeps patches up to date with fewer.
+      unpatched:
+        layerOwner(state.model, "os") === "you" &&
+        staffOutput(config, state, "ops") < servers.opsNeeded(state) * patchingNeed(config, state),
       overloaded,
       lowSatisfaction: state.satisfaction < config.support.poorSatisfaction,
     };

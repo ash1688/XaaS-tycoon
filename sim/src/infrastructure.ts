@@ -2,6 +2,7 @@ import type { GameConfig, ModelId, ProductTypeId } from "./config.ts";
 import { autoscaling, eventHours, outageHours, powerSaving } from "./benefits.ts";
 import type { Customers } from "./customers.ts";
 import type { EventToday, Events } from "./events.ts";
+import { outageShare, runningCostShare } from "./executives.ts";
 import { count, pounds, priceRiseOn, risen } from "./finance.ts";
 import { demandPerUser, optimisedShare } from "./optimisation.ts";
 import { vary } from "./rng.ts";
@@ -105,9 +106,17 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
    * A model's running costs for some days: its monthly cost, plus its per-user cost on the given users, its power and
    * cooling (a day's worth a day), plus the rent on its servers, each billed as days ÷ daysPerMonth of a month and rounded to the pound. Advance bills one day at a
    * time; billing part of a month (say when leaving a model) uses the same rule. Prices include any provider price
-   * rises. The model a migration is moving to is priced with the setup being built there (see Servers.serversOn).
+   * rises. The model a migration is moving to is priced with the setup being built there (see Servers.serversOn). A
+   * COO takes their cut off every line.
    */
   function infrastructureEntries(state: GameState, modelId: ModelId, users: number, days = 1): LogEntry[] {
+    const share = runningCostShare(config, state);
+    const entries = listPriceEntries(state, modelId, users, days);
+    return share === 1 ? entries : entries.map((e) => ({ ...e, cashDelta: Math.round(e.cashDelta * share) }));
+  }
+
+  /** A model's running costs for some days at list prices, before any COO's cut: see infrastructureEntries. */
+  function listPriceEntries(state: GameState, modelId: ModelId, users: number, days: number): LogEntry[] {
     const { name } = config.models[modelId];
     const { monthlyCost, monthlyCostPerUser } = modelPrices(state, modelId);
     const share = days / config.billing.daysPerMonth;
@@ -136,7 +145,8 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
   function monthlyInfrastructureCost(state: GameState): number {
     const { monthlyCost, monthlyCostPerUser } = modelPrices(state, state.model);
     const power = dailyPower(state, state.model) * config.billing.daysPerMonth;
-    return Math.round(monthlyCost + state.users * monthlyCostPerUser + power + servers.monthlyServerCost(state));
+    const list = monthlyCost + state.users * monthlyCostPerUser + power + servers.monthlyServerCost(state);
+    return Math.round(list * runningCostShare(config, state));
   }
 
   /**
@@ -258,7 +268,8 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
       (sum, t) => sum + Math.ceil((t.outcome.downtimeHours ?? 0) * eventHours(config, state, state.model, t.event.id)),
       0,
     );
-    const shorter = (hours: number) => Math.min(24, Math.ceil(hours * outageHours(config, state, state.model)));
+    const shorter = (hours: number) =>
+      Math.min(24, Math.ceil(hours * outageHours(config, state, state.model) * outageShare(config, state)));
     const eventCause = () => today.find((t) => t.outcome.downtimeHours)!.event.name;
 
     if (servers.hasServers(state.model)) {

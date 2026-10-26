@@ -3,6 +3,7 @@
 // decision. Every game writes the same rows as the classroom playtest log, so the same analysis runs on both.
 // A tool for testing the game, not part of it. See play.ts for the command line.
 import {
+  CSUITE_ROLES,
   CUSTOMER_TYPE_IDS,
   defaultConfig,
   DIFFICULTIES,
@@ -323,9 +324,10 @@ function tiersLine(sim: Sim, state: GameState): string {
   const open = view.filter((t) => t.available).map((t) => t.tier);
   const next = view.find((t) => !t.available);
   if (!next) return `all open (${open.join(", ")})`;
+  // "A CTO hired" reads "a CTO hired" mid-line.
   const part = (c: (typeof next.conditions)[number]) =>
     c.unit === "yes"
-      ? `${c.label.toLowerCase()}${c.met ? " (yes)" : ""}`
+      ? `${c.label[0]!.toLowerCase()}${c.label.slice(1)}${c.met ? " (yes)" : ""}`
       : `${c.label.toLowerCase()} ${c.unit === "pounds" ? money(c.value) : c.unit === "percent" ? `${c.value}%` : c.value.toLocaleString("en-GB")}/${c.unit === "pounds" ? money(c.target) : c.unit === "percent" ? `${c.target}%` : c.target.toLocaleString("en-GB")}${c.met ? " (met)" : ""}`;
   const items = next.items.filter((i) => i.kind === "feature" || i.model === state.model).map((i) => i.id);
   return `open ${open.join(", ")} | tier ${next.tier} needs ${next.conditions.map(part).join(next.any ? " OR " : " AND ")}${items.length ? ` (unlocks ${items.join(", ")})` : ""}`;
@@ -413,6 +415,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
     lines.push(`research: ${+research.points.toFixed(1)} RP banked, ${research.pointsPerDay} RP a day; ${spend}`);
   }
   lines.push(...campaignLines(sim, state));
+  lines.push(csuiteLine(sim, state));
   lines.push(`tiers: ${tiersLine(sim, state)}`);
   const benefitsOn = sim.benefits(state).filter((b) => b.active);
   if (benefitsOn.length) {
@@ -548,6 +551,39 @@ function driftStatus(sim: Sim, state: GameState): string {
 }
 
 /** Drift in full: every year's end, and what the next will do. */
+/** The C-suite in a line: who's hired, and the roles open to hire. */
+function csuiteLine(sim: Sim, state: GameState): string {
+  const view = sim.csuite(state);
+  const hired = view.roles.filter((r) => r.executive).map((r) => `${r.name} ${r.executive!.name}`);
+  const open = view.roles.filter((r) => r.open && !r.executive).map((r) => `${r.name}${r.requiredToIpo ? " (needed to IPO)" : ""}`);
+  return `c-suite: ${hired.length ? `${hired.join(", ")}; ${money(view.dailyPay)}/day` : "nobody hired"} | ${open.length ? `can hire: ${open.join(", ")} ("csuite" for shortlists)` : "no role open to hire"} | equity cap ${tenth(view.equityCap)}, ${tenth(view.equityLeft)} left`;
+}
+
+/** The C-suite in full: every role with when it opens, who fills it, or its shortlist. */
+function csuiteLines(sim: Sim, state: GameState): string[] {
+  const view = sim.csuite(state);
+  const lines = [
+    `c-suite: hired for good, no pay reviews; equity asks paid in new shares, shrinking as the ${tenth(view.equityCap)} cap fills (${tenth(view.equityUsed)} used, ${tenth(view.equityLeft)} left; the staff share scheme doesn't count)`,
+  ];
+  for (const r of view.roles) {
+    const required = r.requiredToIpo ? " [needed to IPO]" : "";
+    if (r.executive) {
+      const e = r.executive;
+      const effects = e.effects.length ? e.effects.map((x) => x.text).join("; ") : "no effect";
+      lines.push(`  ${r.name}: ${e.name} (hired day ${e.day}, ${money(e.salary)}/day, ${tenth(e.equity)} equity)${required}: ${effects}`);
+    } else if (!r.open) {
+      lines.push(`  ${r.name} (shut): ${r.opens}${required}`);
+    } else {
+      lines.push(`  ${r.name} (open): ${r.blurb}${required}`);
+      for (const c of r.shortlist) {
+        const effects = c.effects.length ? c.effects.map((x) => x.text).join("; ") : "no effect";
+        lines.push(`    ${c.id}  ${c.name}: strength ${Math.round(c.strength * 100)}%, ${money(c.salary)}/day, ${tenth(c.equity)} equity (${c.newShares.toLocaleString("en-GB")} new shares) | ${effects}`);
+      }
+    }
+  }
+  return lines;
+}
+
 function driftLines(sim: Sim, state: GameState): string[] {
   const d = sim.drift(state);
   if (!d.on) return ["drift: off in this game's config"];
@@ -1232,6 +1268,10 @@ export function renderCommands(sim: Sim, state: GameState): string {
   lines.push(`  calendar   (the holidays to come, their dates and what each does to your product)`);
   lines.push(`  payhistory   (every pay review settled: inflation, how it ended, the rise and schemes; changes nothing)`);
   lines.push(`  drift   (each year's end in a long game: running prices' rise and new kit's units; changes nothing)`);
+  lines.push(`  csuite   (every C-suite role: when it opens, who's hired, and each open role's shortlist; changes nothing)`);
+  if (sim.csuite(state).roles.some((r) => r.open && !r.executive)) {
+    lines.push(`  appoint <candidate id>   (hire a candidate from an open role's shortlist, for good: their salary a day and equity in new shares)`);
+  }
   const tick = sim.tickDays(state) === 7 ? "a week (this is a career)" : "a day";
   lines.push(
     `  next [days]   (play ticks of ${tick} until that many days have gone by, default 7; stops early, on the day, when something needs you)`,
@@ -1259,6 +1299,7 @@ export type Command =
   | { kind: "pay" }
   | { kind: "payHistory" }
   | { kind: "drift" }
+  | { kind: "csuite" }
   | { kind: "payOdds"; rise: number; schemes: Partial<SchemeLevels> }
   | { kind: "next"; days: number }
   /** The teacher ends the game, as from the staff panel. */
@@ -1425,6 +1466,15 @@ export function parseCommand(text: string): Command {
       return { kind: "payHistory" };
     case "drift":
       return { kind: "drift" };
+    case "csuite":
+      return { kind: "csuite" };
+    case "appoint": {
+      // Ids are typed lower-case: "headofops-2" is headOfOps-2.
+      const [roleWord, place] = (args[0] ?? "").split("-");
+      const role = CSUITE_ROLES.find((r) => r.toLowerCase() === roleWord);
+      if (!role || !place) throw new SimError("bad_command", `Expected a candidate's id, such as cfo-2: see "csuite".`);
+      return { kind: "action", action: { type: "hireExecutive", role, candidate: `${role}-${place}` }, times: 1 };
+    }
     case "offer":
       return args.length > 1
         ? one({ type: "offerPayRise", rise: risePercent(args[0]), schemes: schemeArgs(args.slice(1)) })
@@ -1559,6 +1609,7 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
   if (command.kind === "pay") return { state, rows: [], lines: payLines(sim, state) };
   if (command.kind === "payHistory") return { state, rows: [], lines: payHistoryLines(sim, state) };
   if (command.kind === "drift") return { state, rows: [], lines: driftLines(sim, state) };
+  if (command.kind === "csuite") return { state, rows: [], lines: csuiteLines(sim, state) };
   if (command.kind === "payOdds") return { state, rows: [], lines: payOddsLines(sim.payOfferPreview(state, command.rise, command.schemes)) };
   if (command.kind === "end") {
     const ended = sim.endGame(state);

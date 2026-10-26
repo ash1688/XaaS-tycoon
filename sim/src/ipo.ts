@@ -1,4 +1,6 @@
 import { SERIES_IDS, type GameConfig, type SeriesId } from "./config.ts";
+import { IPO_ROLES } from "./csuite.ts";
+import { executiveIn, patchingNeed } from "./executives.ts";
 import { count, pounds, type Finance } from "./finance.ts";
 import { marketSize } from "./market.ts";
 import { layerOwner } from "./responsibility.ts";
@@ -17,7 +19,11 @@ export type IpoConditionId =
   | "profit"
   | "satisfaction"
   | "payingUsers"
-  | SeriesId;
+  | SeriesId
+  | IpoRole;
+
+/** The C-suite roles a company must have filled to float: their checklist lines have the role's id. */
+export type IpoRole = (typeof IPO_ROLES)[number];
 
 /** One condition of the readiness check, for the checklist on the Finance page. */
 export interface IpoCondition {
@@ -157,7 +163,8 @@ export function createIpo(
     const yours = layerOwner(state.model, "os") === "you";
     const opsNeeded = servers.opsNeeded(state);
     const ops = staffOutput(config, state, "ops");
-    const patched = !yours || ops >= opsNeeded;
+    // A CISO keeps patches up to date with fewer ops.
+    const patched = !yours || ops >= opsNeeded * patchingNeed(config, state);
 
     const income = sum(days, (d) => d.income);
     const profit = income - sum(days, runningCosts);
@@ -273,12 +280,30 @@ export function createIpo(
         1,
       );
     }
+    // The executives going public needs: the market wants a CFO, a CISO and legal counsel in place.
+    for (const role of IPO_ROLES) {
+      const executive = executiveIn(state, role);
+      const name = config.csuite.roles[role].name;
+      add(
+        {
+          id: role,
+          label: `${name} hired`,
+          met: executive !== undefined,
+          needed: `A ${name} in your C-suite: going public needs one`,
+          now: executive ? `${executive.name}, hired on day ${executive.day}` : "Not yet",
+        },
+        1,
+      );
+    }
     return list.map((condition, i) => ({ ...condition, comfort: Math.round(comforts[i]! * 100) / 100 }));
   }
 
-  /** The conditions' comfort averaged, leaving out the funding rounds, which are only yes or no. */
+  /** Conditions that are only yes or no: the funding rounds and the executives. */
+  const YES_OR_NO: readonly string[] = [...SERIES_IDS, ...IPO_ROLES];
+
+  /** The conditions' comfort averaged, leaving out those that are only yes or no. */
   const comfortOf = (list: IpoCondition[]) => {
-    const graded = list.filter((x) => !(SERIES_IDS as readonly string[]).includes(x.id));
+    const graded = list.filter((x) => !YES_OR_NO.includes(x.id));
     return graded.reduce((s, x) => s + x.comfort, 0) / graded.length;
   };
 

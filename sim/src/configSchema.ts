@@ -5,6 +5,7 @@
 // id, other lists by position: "models.iaas.monthlyCost", "productTypes.video.features.hd.devDays",
 // "events.osPatch.encounter.chance". Overrides are a flat map of path to number: only the numbers that differ.
 import {
+  CSUITE_ROLES,
   CUSTOMER_TYPE_IDS,
   DANGER_RISKS,
   DIFFICULTIES,
@@ -300,6 +301,36 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add(`optimisation.cap.${m}`, "People", "Optimisation", `Most it saves (${MODEL_LABELS[m]})`, "The most optimisation can cut resource need per user on this model (0.5 = half): CU and DBU per user, PaaS instances, or the SaaS per-user fee. Kept through a migration, capped at the new model's.", range(0, 0.95, 0.05));
   }
   add("research.pointsPerPerson", "People", "Research", "Research points per researcher", "Research points (RP) a mid researcher earns a day. Juniors and seniors earn this × their grade's output. RP bank with no cap.", range(0, 100, 0.5));
+  add("csuite.shortlistSize", "People", "C-suite", "Candidates on a shortlist", "How many candidates each C-suite role's shortlist has, drawn as the game starts: one from each band of strength, weakest to strongest.", range(1, 6, 1));
+  add("csuite.equityCap", "People", "C-suite", "Equity cap", "The most the whole C-suite's equity can add up to (0.1 = 10%). Each candidate's ask is their base ask × the share of the cap still unused, so asks shrink as it fills. The staff share scheme doesn't count.", range(0, 0.5, 0.005));
+  add("csuite.payLuck", "People", "C-suite", "Luck in pay", "How much of a candidate's salary and equity ask is luck rather than strength: 0 makes the strongest always the dearest.", range(0, 1, 0.05));
+  const EFFECT_HELP: Record<string, string> = {
+    output: "Added to the pool's work a day (0.2 = +20%).",
+    outageCut: "Taken off every outage's hours (0.2 = 20% shorter).",
+    recovery: "Added to how fast satisfaction recovers while it's rising (0.5 = 50% faster).",
+    rollBonus: "Pips added to every investor and funder negotiation roll, rounded to a whole number. Not pay reviews.",
+    loanRateCut: "Taken off a bank loan's interest rate (0.2 = 20% lower).",
+    research: "Added to research points earned (0.25 = +25%).",
+    strength: "How far the head of people moves pay reviews from the none values: 1 gives the People lead: head of people figures, 1.5 half as far again.",
+    campaigns: "Added to campaigns' users per pound (0.1 = +10%).",
+    runningCostCut: "Taken off everyday running costs: hosting, rent, power and provider fees, not staff pay (0.08 = 8%).",
+    migrationCut: "Taken off a migration's days, upfront bill and exit penalty (0.3 = 30%).",
+    patching: "Taken off the ops a setup needs to keep patches up to date (0.3 = 30% fewer).",
+    breachCut: "Taken off a security breach's chance of coming up (0.4 = 40% less likely).",
+  };
+  for (const role of CSUITE_ROLES) {
+    const r = base.csuite.roles[role];
+    const p = `csuite.roles.${role}`;
+    const section = `C-suite: ${r.name}`;
+    for (const end of ["min", "max"] as const) {
+      const which = end === "min" ? "weakest" : "strongest";
+      add(`${p}.salary.${end}`, "People", section, `Salary, ${which}`, `Pay a day for the ${which} candidate. Fixed for good: pay reviews leave the C-suite out.`, range(0, 5_000, 5));
+      add(`${p}.equity.${end}`, "People", section, `Equity ask, ${which}`, `The ${which} candidate's equity ask with the cap empty (0.01 = 1%), paid in new shares.`, range(0, 0.1, 0.0005));
+      for (const key of Object.keys(r.effects)) {
+        add(`${p}.effects.${key}.${end}`, "People", section, `${key}, ${which}`, EFFECT_HELP[key] ?? "One of the role's effects.", range(0, key === "rollBonus" ? 10 : key === "strength" ? 3 : 1, key === "rollBonus" ? 1 : 0.01));
+      }
+    }
+  }
   const CAMPAIGNS = "Campaigns";
   for (const t of CUSTOMER_TYPE_IDS) {
     const type = base.customerTypes?.[t]?.name ?? t;

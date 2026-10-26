@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createSim, defaultConfig, SimError, type GameConfig, type GameState, type SeriesId, type Sim } from "../src/index.ts";
+import { withIpoExecutives } from "./executives.ts";
 
 // The IPO through the sim's public interface: the readiness checklist, the cold market, the float, the first day of
 // trading, and the until-IPO game length. Anything random is tested on fixed RNG states, so results repeat.
@@ -41,7 +42,8 @@ const refusal = (fn: () => unknown) => {
  * every day played no downtime, steady costs and £1,000 of income.
  */
 const makeReady = (played: GameState): GameState => ({
-  ...played,
+  // The CFO, CISO and legal counsel are hired.
+  ...withIpoExecutives(played),
   users: 2_000,
   paidUsers: 1_000,
   price: 60,
@@ -96,7 +98,7 @@ const met = (s: Sim, state: GameState) => Object.fromEntries(s.ipo(state).condit
 const coldAt = (chance: number) => createSim({ ...quiet, ipo: { ...quiet.ipo, coldChance: { min: chance, max: chance } } });
 
 describe("the readiness checklist", () => {
-  it("lists the twelve conditions, none met by a new company, and refuses to apply", () => {
+  it("lists the fifteen conditions, none met by a new company, and refuses to apply", () => {
     const state = begin();
     const ipo = sim.ipo(state);
     expect(ipo.conditions.map((c) => c.id)).toEqual([
@@ -112,6 +114,9 @@ describe("the readiness checklist", () => {
       "seriesB",
       "seriesC",
       "seriesD",
+      "cfo",
+      "ciso",
+      "legalCounsel",
     ]);
     expect(ipo).toMatchObject({ status: "not-ready", ready: false, canApply: false, offer: null, result: null });
     expect(ipo.refusal).toMatch(/Not ready to float yet: trading history, users and revenue/);
@@ -132,6 +137,10 @@ describe("the readiness checklist", () => {
       ["payingUsers", { ...state, paidUsers: 499 }],
       ["profit", { ...lastDays(state, RECORD, { staff: 2_000 }), price: 0.01 }],
       ...(["seriesA", "seriesB", "seriesC", "seriesD"] as const).map((round): [string, GameState] => [round, notApproached(state, round)]),
+      ...(["cfo", "ciso", "legalCounsel"] as const).map((role): [string, GameState] => [
+        role,
+        { ...state, csuite: { ...state.csuite, hired: state.csuite.hired.filter((e) => e.role !== role) } },
+      ]),
     ];
     for (const [id, s] of broken) {
       const conditions = met(sim, s);

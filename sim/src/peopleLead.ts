@@ -1,4 +1,5 @@
 import type { GameConfig, PeopleLeadConfig } from "./config.ts";
+import { hasExecutive, headOfPeopleStrength } from "./executives.ts";
 import type { GameState } from "./state.ts";
 
 /**
@@ -10,17 +11,27 @@ export interface PeopleLead extends PeopleLeadConfig {
   headOfPeople: boolean;
 }
 
+/** Whether the company has a head of people (a C-suite role). The one place it's checked. */
+export const hasHeadOfPeople = (state: GameState): boolean => hasExecutive(state, "headOfPeople");
+
 /**
- * Whether the company has a head of people: always false until the C-suite (#108) is built. The one place it's
- * checked, so #108 fills it in here once a head of people can be hired.
+ * The modifier with or without a head of people. With one, `strength` sets how far they move each figure from the
+ * none values: 1 (the default) gives config's headOfPeople values, 1.5 half as far again. The roll bonus stays a whole
+ * number of pips.
  */
-export const hasHeadOfPeople = (_state: GameState): boolean => false;
+export function peopleLeadFor(config: GameConfig, headOfPeople: boolean, strength = 1): PeopleLead {
+  const { none, headOfPeople: head } = config.payReview.peopleLead;
+  if (!headOfPeople) return { headOfPeople, ...none };
+  const at = (key: keyof PeopleLeadConfig) => none[key] + (head[key] - none[key]) * strength;
+  return {
+    headOfPeople,
+    rollBonus: Math.round(at("rollBonus")),
+    walkAwaySoftening: at("walkAwaySoftening"),
+    schemeValuation: at("schemeValuation"),
+    tribunalLean: at("tribunalLean"),
+  };
+}
 
-/** The modifier with or without a head of people, from config's two sets of values. */
-export const peopleLeadFor = (config: GameConfig, headOfPeople: boolean): PeopleLead => ({
-  headOfPeople,
-  ...(headOfPeople ? config.payReview.peopleLead.headOfPeople : config.payReview.peopleLead.none),
-});
-
-/** The people-lead modifier for the company as it stands. */
-export const peopleLead = (config: GameConfig, state: GameState): PeopleLead => peopleLeadFor(config, hasHeadOfPeople(state));
+/** The people-lead modifier for the company as it stands: the head of people hired, at their strength. */
+export const peopleLead = (config: GameConfig, state: GameState): PeopleLead =>
+  peopleLeadFor(config, hasHeadOfPeople(state), headOfPeopleStrength(config, state));
