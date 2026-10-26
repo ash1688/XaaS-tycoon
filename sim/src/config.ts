@@ -1897,8 +1897,10 @@ export const defaultConfig: GameConfig = {
   optimisation: { k: 30, cap: { onprem: 0.5, iaas: 0.35, paas: 0.35, saas: 0.35 } },
   // Tuned in the balance pass (#181): with a researcher at £80 a day, research about pays for itself over a game.
   research: { pointsPerPerson: 4 },
-  // Placeholders from the design (#108), for the designer to sign off. Effects are centred on the design's figures:
-  // +20% developer output, +25% RP, +10% campaigns, −8% running costs, migrations 30% cheaper and faster.
+  // Signed off by the designer on 2026-10-26 (#108). Effects are centred on the design's figures: +20% developer output,
+  // +25% RP, +10% campaigns, −8% running costs, migrations 30% cheaper and faster. Salaries sit near staff day rates:
+  // with the IPO's three hired two weeks before the trading history is met, sensible play still breaks even about day
+  // 65 and IPO readiness doesn't move; the three cost about £29k a game.
   csuite: {
     shortlistSize: 3,
     equityCap: 0.1,
