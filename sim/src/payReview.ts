@@ -439,7 +439,7 @@ export function createPayReview(
    * people-lead modifier's roll bonus (a penalty without a head of people); on the final
    * (third) offer there's no counter, and it goes to the tribunal.
    */
-  function offer(state: GameState, rise: number, schemes?: Partial<SchemeLevels>): GameState {
+  function offer(state: GameState, rise: number, schemes?: Partial<SchemeLevels>, auto = false): GameState {
     const review = openOrRefuse(state);
     const checked = checkOffer(state, review, rise, schemes);
     const offers = {
@@ -453,8 +453,31 @@ export function createPayReview(
       return goToTribunal(state, review, offers);
     }
     const bonus = peopleLead(config, state).rollBonus;
-    const done = negotiator.counter(review.negotiation, { rise: checked.value }, specsFor(review), state.payReviewRng, bonus);
+    const done = negotiator.counter(review.negotiation, { rise: checked.value }, specsFor(review), state.payReviewRng, bonus, auto);
     return { ...state, payReviewRng: done.rng, payReview: { ...review, ...offers, negotiation: done.negotiation } };
+  }
+
+  /**
+   * Auto-negotiate: offers a cash `rise` and scheme levels as offer does, then the same offer again after each staff
+   * counter, with the same rolls, up to the offer before the final one. Staff accepting along the way settles the
+   * review; otherwise it ends on staff's last counter, to accept or take to the tribunal by hand. It never makes the
+   * final offer, so never goes to the tribunal: refused when the next offer is the final one, and as offer refuses.
+   */
+  function autoOffer(state: GameState, rise: number, schemes?: Partial<SchemeLevels>): GameState {
+    const review = openOrRefuse(state);
+    if (review.studentOffers.length + 1 >= MAX_OFFERS) {
+      throw new SimError(
+        "final_offer",
+        "Your next offer is take it or leave it: make it yourself, or agree staff's counter. Auto-negotiate never goes to the tribunal.",
+      );
+    }
+    let current = offer(state, rise, schemes, true);
+    for (;;) {
+      const open = current.payReview;
+      // Settled, the next offer would be the final one, or staff have come down to the offer itself.
+      if (!open || open.studentOffers.length + 1 >= MAX_OFFERS || open.studentOffers.at(-1)! >= staffFigure(open)) return current;
+      current = offer(current, rise, schemes, true);
+    }
   }
 
   /** Accepts staff's counter: their figure is the cash rise, and no schemes are raised. */
@@ -582,6 +605,7 @@ export function createPayReview(
     reviewDue,
     openReview,
     offer,
+    autoOffer,
     acceptCounter,
     payReviewView,
     offerPreview,

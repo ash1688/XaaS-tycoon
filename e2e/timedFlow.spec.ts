@@ -228,6 +228,71 @@ test("a pay review with no deal after the final offer warns of the tribunal, sho
   }
 });
 
+/** A company whose first pay review is open, with staff's walk-away figure set to `walkAway` (their ask or the least offer). */
+async function reviewWith(browser: Browser, request: APIRequestContext, name: string, walkAway: "maxAsk" | "minOffer") {
+  const { code, id } = await newCompany(browser, request, name);
+  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
+  try {
+    await sql`update companies set state = jsonb_set(jsonb_set(state, '{day}', '6'::jsonb), '{cash}', '500000'::jsonb) where id = ${id}`;
+    const student = await (await browser.newContext()).newPage();
+    await student.goto(`/play/${code}/${id}`);
+    await student.getByRole("button", { name: "Continue" }).click();
+    const modal = student.getByRole("dialog", { name: "Pay review" });
+    await expect(modal).toBeVisible();
+    await (walkAway === "maxAsk"
+      ? sql`update companies set state = jsonb_set(state, '{payReview,walkAway}', state #> '{payReview,maxAsk}') where id = ${id}`
+      : sql`update companies set state = jsonb_set(state, '{payReview,walkAway}', state #> '{payReview,minOffer}') where id = ${id}`);
+    await student.reload();
+    await expect(modal).toBeVisible();
+    return { code, id, modal };
+  } finally {
+    await sql.end();
+  }
+}
+
+test("auto-negotiating a pay review stops on staff's last counter with Accept and Tribunal, and the tribunal goes by hand", async ({
+  browser,
+  request,
+}) => {
+  // Staff hold out for their whole ask, so the least offer never settles it.
+  const { code, id, modal } = await reviewWith(browser, request, "Auto Pay Ltd", "maxAsk");
+  const minOffer = (await modal.getByTestId("pay-min-offer").innerText()).replace("%", "");
+  await modal.getByTestId("pay-rise").fill(minOffer);
+  await expect(modal.getByTestId("pay-odds-high")).toBeVisible();
+  await modal.getByTestId("pay-auto-negotiate").click();
+
+  // Two offers of the same rise, each answered by a counter, and it stops before the final offer.
+  const transcript = modal.getByTestId("pay-auto-transcript");
+  await expect(transcript).toContainText(`Offer 1 (${minOffer}%): they `);
+  await expect(transcript).toContainText(`Offer 2 (${minOffer}%): they `);
+  await expect(modal.getByTestId("pay-round")).toHaveCount(2);
+  await expect(modal.getByTestId("pay-final-warning")).toContainText("next is a tribunal");
+  await expect(modal.getByTestId("pay-auto-negotiate")).toBeHidden();
+  await expect(modal.getByTestId("pay-final-accept")).toContainText(/Accept \d+\.\d%/);
+  await expect(modal.getByTestId("pay-tribunal")).toHaveText("Tribunal (£2,000 fee)");
+  const { cash } = await (await request.get(`/api/codes/${code}/companies/${id}`)).json();
+
+  // The tribunal is the student's button: their last offer again, which staff have turned down.
+  await modal.getByTestId("pay-tribunal").click();
+  await expect(modal.getByTestId("pay-tribunal-result")).toContainText("Its fee of £2,000");
+  const after = await (await request.get(`/api/codes/${code}/companies/${id}`)).json();
+  expect(after.cash).toBe(cash - 2_000);
+  expect(after.lastPayReview.outcome).toBe("tribunal");
+  expect(after.lastPayReview.studentOffers).toHaveLength(3);
+});
+
+test("auto-negotiating a pay review settles it if staff accept along the way", async ({ browser, request }) => {
+  // Staff take the least offer.
+  const { modal } = await reviewWith(browser, request, "Agreeable Ltd", "minOffer");
+  const minOffer = (await modal.getByTestId("pay-min-offer").innerText()).replace("%", "");
+  await modal.getByTestId("pay-rise").fill(minOffer);
+  await expect(modal.getByTestId("pay-odds-high")).toBeVisible();
+  await modal.getByTestId("pay-auto-negotiate").click();
+  await expect(modal.getByTestId("pay-auto-transcript")).toContainText(`Offer 1 (${minOffer}%): staff accepted.`);
+  await expect(modal.getByTestId("pay-settled")).toContainText(`Pay review settled on a ${minOffer}% rise.`);
+  await expect(modal.getByTestId("pay-tribunal-result")).toHaveCount(0);
+});
+
 test("the People page's pay history is empty before the first review, then lists each review settled", async ({ browser, request }) => {
   const { code, id } = await newCompany(browser, request, "Payroll Ltd");
   const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });

@@ -578,6 +578,26 @@ describe("the bots and text play", () => {
     expect(settled.state.day).toBe(46);
   });
 
+  it("auto-negotiates in text play: each offer and staff's answer, stopping on their last counter", () => {
+    const who = { player: "test" };
+    const open = untilReview(plain, begin(plain));
+    const { minOffer } = open.payReview!;
+    const pct = (n: number) => (n * 100).toFixed(1);
+    expect(renderCommands(plain, open)).toMatch(/autopay <rise %> \[schemes\]/);
+    // Staff walk away at the fair rise, inflation: the least offer, a point below, falls short.
+    const turn = runScript(plain, open, `autopay ${pct(minOffer)}`, who);
+    expect(turn.rows[0]).toMatchObject({ type: "autoNegotiatePay", ok: true });
+    const text = turn.lines.join("\n");
+    expect(text).toMatch(/auto-negotiated the pay review:\n {2}offer 1: [\d.]+% cash → staff counter [\d.]+%, rolled \d+.*\n {2}offer 2: [\d.]+% cash → staff counter/);
+    expect(text).toMatch(/it stops on staff's last counter of [\d.]+%: "accept pay" to agree it, or make your FINAL offer/);
+    expect(plain.payReview(turn.state)).toMatchObject({ final: true, offersLeft: 1 });
+    expect(renderCommands(plain, turn.state)).not.toMatch(/autopay/);
+    expect(runScript(plain, turn.state, `autopay ${pct(minOffer)}`, who).lines[1]).toMatch(/refused: Your next offer is take it or leave it/);
+    // An offer at inflation is accepted straight away.
+    const settled = runScript(plain, open, `autopay ${pct(open.payReview!.inflation)}`, who);
+    expect(settled.lines.join("\n")).toMatch(/offer 1: [\d.]+% cash → staff accepted\n {2}pay review settled: staff accepted your offer/);
+  });
+
   it("warns in text play before the final offer, shows the tribunal's odds, and reports what it picked", () => {
     const who = { player: "test" };
     const open = untilReview(plain, begin(plain));

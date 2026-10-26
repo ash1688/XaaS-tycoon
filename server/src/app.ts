@@ -821,9 +821,11 @@ export async function buildApp(opts: AppOptions) {
                 "acceptFunding",
                 "declineFunding",
                 "counterFunding",
+                "autoNegotiateFunding",
                 "acceptInvestor",
                 "declineInvestor",
                 "counterInvestor",
+                "autoNegotiateInvestor",
                 "pickInvestor",
                 "buyBack",
                 "buyApi",
@@ -839,6 +841,7 @@ export async function buildApp(opts: AppOptions) {
                 "startCampaign",
                 "stopCampaign",
                 "offerPayRise",
+                "autoNegotiatePay",
                 "acceptPayCounter",
                 "hireExecutive",
               ],
@@ -890,7 +893,7 @@ export async function buildApp(opts: AppOptions) {
             count: { type: "integer", minimum: 0, maximum: 999 },
             // setManagedService: a managed service on PaaS and its size, or null to turn the cache off.
             service: { enum: [...MANAGED_SERVICES] },
-            // acceptFunding, declineFunding and counterFunding: friends and family or the grant.
+            // acceptFunding, declineFunding, counterFunding and autoNegotiateFunding: friends and family or the grant.
             funder: { enum: [...FUNDER_IDS] },
             // pickInvestor: the VC to negotiate with, by name. The sim checks they're one of the three who approached.
             investor: { type: "string", minLength: 1, maxLength: 80 },
@@ -898,15 +901,15 @@ export async function buildApp(opts: AppOptions) {
             float: { type: "number", minimum: 0, maximum: 1 },
             // setOptimisation: the share of developer output on optimisation rather than features.
             share: { type: "number", minimum: 0, maximum: 1 },
-            // offerPayRise: the rise offered, 0.04 = 4%. The sim checks it against the review's caps.
+            // offerPayRise and autoNegotiatePay: the rise offered, 0.04 = 4%. The sim checks it against the review's caps.
             rise: { type: "number", minimum: 0, maximum: 1 },
-            // offerPayRise: staff scheme levels offered with it, by scheme. The sim checks none goes down.
+            // offerPayRise and autoNegotiatePay: staff scheme levels offered with it, by scheme. The sim checks none goes down.
             schemes: { type: "object", properties: SCHEME_LEVELS, additionalProperties: false },
             // hireExecutive: the C-suite role, and the candidate from its shortlist by id ("cfo-2"). The sim checks the
             // role is open and unfilled and the candidate is on its shortlist.
             role: { enum: [...CSUITE_ROLES] },
             candidate: { type: "string", minLength: 1, maxLength: 64 },
-            // counterFunding and counterInvestor: the terms asked for. The sim checks they're the offer's and how far they ask.
+            // counterFunding, counterInvestor and their auto-negotiate: the terms asked for. The sim checks they're the offer's and how far they ask.
             terms: { type: "object", properties: COUNTER_TERMS, additionalProperties: false },
           },
           allOf: [
@@ -920,8 +923,8 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { const: "buyRack" } } }, then: { required: ["size"] } },
             { if: { properties: { type: { const: "setInstances" } } }, then: { required: ["count"] } },
             { if: { properties: { type: { enum: ["acceptFunding", "declineFunding"] } } }, then: { required: ["funder"] } },
-            { if: { properties: { type: { const: "counterFunding" } } }, then: { required: ["funder", "terms"] } },
-            { if: { properties: { type: { const: "counterInvestor" } } }, then: { required: ["terms"] } },
+            { if: { properties: { type: { enum: ["counterFunding", "autoNegotiateFunding"] } } }, then: { required: ["funder", "terms"] } },
+            { if: { properties: { type: { enum: ["counterInvestor", "autoNegotiateInvestor"] } } }, then: { required: ["terms"] } },
             { if: { properties: { type: { const: "pickInvestor" } } }, then: { required: ["investor"] } },
             { if: { properties: { type: { enum: ["hire", "letGo", "cancelHire", "setInstances"] } } }, then: { properties: { count: { type: "integer", minimum: 1 } } } },
             { if: { properties: { type: { const: "setApiInstances" } } }, then: { required: ["count"] } },
@@ -933,7 +936,7 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { const: "unlockItem" } } }, then: { required: ["item"] } },
             { if: { properties: { type: { const: "startCampaign" } } }, then: { required: ["customerType", "budget", "days"] } },
             { if: { properties: { type: { const: "stopCampaign" } } }, then: { required: ["id"] } },
-            { if: { properties: { type: { const: "offerPayRise" } } }, then: { required: ["rise"] } },
+            { if: { properties: { type: { enum: ["offerPayRise", "autoNegotiatePay"] } } }, then: { required: ["rise"] } },
             { if: { properties: { type: { const: "hireExecutive" } } }, then: { required: ["role", "candidate"] } },
             {
               if: { properties: { type: { const: "setManagedService" } } },

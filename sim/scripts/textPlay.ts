@@ -1112,6 +1112,11 @@ export function renderCommands(sim: Sim, state: GameState): string {
       `  offer <${rise(review.minOffer)}–${rise(review.maxAsk)}> [pension=0-3] [health=0-3] [death=on] [discount=on] [shares=0-3]   (offer staff a pay rise, e.g. offer 3.5, or cash with schemes, e.g. offer 2.5 pension=1 death=on: the offer's worth to staff is within the range; they accept or counter with a roll; the third offer is final, and short of a deal goes to a tribunal)`,
       `  payodds <rise %> [schemes]   (what an offer would cost, its worth to staff, and the odds on staff's counter; changes nothing)`,
     );
+    if (!review.final) {
+      lines.push(
+        `  autopay <rise %> [schemes]   (Auto-negotiate: the same offer as "offer", made again after each counter with the same rolls, until staff accept or only the final offer is left; it never goes to the tribunal)`,
+      );
+    }
     if (review.canAcceptCounter) lines.push(`  accept pay   (agree staff's counter of ${rise(review.staffFigure)})`);
   }
   // Moderators only on a product with user content.
@@ -1243,6 +1248,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
     }
     if (countering[1]) lines.push(`  counter grant [amount <£>] [days <n>]   (ask for more cash and/or fewer days of the uptime condition, the same way)`);
     const odds = countering.filter(Boolean).join("|");
+    if (odds) lines.push(`  auto <${odds}> ...   (Auto-negotiate: the same terms as counter, repeated on each offer with the same rolls, to the final offer; it never accepts)`);
     if (odds) lines.push(`  odds <${odds}> ...   (the same terms as counter: the odds on the roll and each offer it could bring; changes nothing)`);
   }
   const investors = sim.investors(state);
@@ -1253,6 +1259,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
     if (investors.negotiation?.countersLeft) {
       lines.push(`  counter angel [amount <£>] [share <%>]   (ask for more cash and/or a smaller share for them; up to ${max} better in all; the third offer is final)`);
       lines.push(`  odds angel ...   (the same terms as counter: the odds on the roll and each offer it could bring; changes nothing)`);
+      lines.push(`  auto angel ...   (Auto-negotiate: the same terms as counter, repeated on each offer with the same rolls, to the final offer; it never accepts)`);
     }
   } else if (investors.angel) lines.push(`  angel   (your angel's deal and how their target stands; changes nothing)`);
   const vcApproach = investors.vc.approach;
@@ -1267,6 +1274,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
       if (investors.vc.negotiation?.countersLeft) {
         lines.push(`  counter vc [amount <£>] [share <%>]   (ask for more cash and/or a smaller share for them; up to ${max} better in all; the third offer is final)`);
         lines.push(`  odds vc ...   (the same terms as counter: the odds on the roll and each offer it could bring; changes nothing)`);
+        lines.push(`  auto vc ...   (Auto-negotiate: the same terms as counter, repeated on each offer with the same rolls, to the final offer; it never accepts)`);
       }
     }
   } else if (investors.vc.rounds[0]!.firstApproachDay !== null) lines.push(`  vc   (each Series round so far, and your lead VC; changes nothing)`);
@@ -1498,6 +1506,10 @@ export function parseCommand(text: string): Command {
       return args.length > 1
         ? one({ type: "offerPayRise", rise: risePercent(args[0]), schemes: schemeArgs(args.slice(1)) })
         : one({ type: "offerPayRise", rise: risePercent(args[0]) });
+    case "autopay":
+      return args.length > 1
+        ? one({ type: "autoNegotiatePay", rise: risePercent(args[0]), schemes: schemeArgs(args.slice(1)) })
+        : one({ type: "autoNegotiatePay", rise: risePercent(args[0]) });
     case "payodds":
       return { kind: "payOdds", rise: risePercent(args[0]), schemes: schemeArgs(args.slice(1)) };
     case "accept": {
@@ -1526,6 +1538,13 @@ export function parseCommand(text: string): Command {
       const from = funder(args[0]);
       const asked = terms(args.slice(1));
       return isInvestor(from) ? answer({ type: "counterInvestor", terms: asked }, from) : one({ type: "counterFunding", funder: from, terms: asked });
+    }
+    case "auto": {
+      const from = funder(args[0]);
+      const asked = terms(args.slice(1));
+      return isInvestor(from)
+        ? answer({ type: "autoNegotiateInvestor", terms: asked }, from)
+        : one({ type: "autoNegotiateFunding", funder: from, terms: asked });
     }
     case "odds":
       return { kind: "odds", funder: funder(args[0]), terms: terms(args.slice(1)) };
@@ -1679,6 +1698,9 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
   }
   if (command.action.type === "counterFunding") return { state: current, rows, lines: [counterLine(sim, current, command.action.funder)] };
   if (command.action.type === "counterInvestor") return { state: current, rows, lines: [counterLine(sim, current, command.party ?? "angel")] };
+  if (command.action.type === "autoNegotiateFunding") return { state: current, rows, lines: autoLines(sim, state, current, command.action.funder) };
+  if (command.action.type === "autoNegotiateInvestor") return { state: current, rows, lines: autoLines(sim, state, current, command.party ?? "angel") };
+  if (command.action.type === "autoNegotiatePay") return { state: current, rows, lines: autoPayLines(sim, state, current) };
   if (command.action.type === "pickInvestor") {
     return { state: current, rows, lines: [`pickInvestor: negotiating with ${command.action.investor}; the other two VCs have closed. "vc" for their offer in full.`] };
   }
@@ -1735,6 +1757,43 @@ function counterLine(sim: Sim, state: GameState, funder: Party): string {
   const n = isInvestor(funder) ? (funder === "vc" ? sim.investors(state).vc.negotiation! : sim.investors(state).negotiation!) : sim.funding(state).negotiations[funder]!;
   const round = n.rounds.at(-1)!;
   return `counter ${termsText(funder, round.counter)}: ${rollText(round)}. Offer ${n.offers.length}: ${termsText(funder, n.offers.at(-1)!)}${n.final ? " (final: accept or decline)" : ` (${n.countersLeft} counter left)`}`;
+}
+
+const negotiationOf = (sim: Sim, state: GameState, party: Party) =>
+  isInvestor(party) ? (party === "vc" ? sim.investors(state).vc.negotiation! : sim.investors(state).negotiation!) : sim.funding(state).negotiations[party]!;
+
+/** What Auto-negotiate played: each round's roll and the offer it brought, ending on the offer that stands. */
+function autoLines(sim: Sim, before: GameState, after: GameState, party: Party): string[] {
+  const n = negotiationOf(sim, after, party);
+  const from = negotiationOf(sim, before, party).rounds.length;
+  const rounds = n.rounds.slice(from).map(
+    (r, k) => `  offer ${from + k + 2}: you asked ${termsText(party, r.counter)}, ${rollText(r)} → ${termsText(party, n.offers[from + k + 1]!)}`,
+  );
+  const end = n.final
+    ? `their FINAL offer stands: ${termsText(party, n.offers.at(-1)!)} (accept or decline it; auto-negotiate never accepts)`
+    : `they've met your figure: ${termsText(party, n.offers.at(-1)!)} stands (accept, decline, or counter again)`;
+  return [`auto-negotiated ${rounds.length} round${rounds.length === 1 ? "" : "s"}:`, ...rounds, `  ${end}`];
+}
+
+/** What Auto-negotiate did in a pay review: each offer and staff's answer, then settled or staff's last counter. */
+function autoPayLines(sim: Sim, before: GameState, after: GameState): string[] {
+  const from = before.payReview!.studentOffers.length;
+  const review = sim.payReview(after);
+  const record = review ? null : after.pastPayReviews.at(-1)!;
+  const offers = review?.studentOffers ?? record!.studentOffers;
+  const terms = review?.offerTerms ?? record!.offerTerms;
+  const figures = review?.staffFigures ?? record!.staffFigures;
+  const lines = ["auto-negotiated the pay review:"];
+  for (let i = from; i < offers.length; i++) {
+    const answer = figures[i + 1] === undefined ? "staff accepted" : `staff counter ${rise(figures[i + 1]!)}${review ? `, ${rollText(review.rounds[i]!)}` : ""}`;
+    lines.push(`  offer ${i + 1}: ${offerText(sim, before, terms[i]!, offers[i]!)} → ${answer}`);
+  }
+  if (!review) return [...lines, `  ${payResultLine(sim, before, after)}`];
+  lines.push(
+    `  it stops on staff's last counter of ${rise(review.staffFigure)}: "accept pay" to agree it, or make your FINAL offer ("offer ...") ` +
+      `and short of a deal it goes to a TRIBUNAL for ${money(review.tribunalFee)}. Auto-negotiate never goes to the tribunal`,
+  );
+  return lines;
 }
 
 /** A counter's odds, before it's made. */

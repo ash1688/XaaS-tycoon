@@ -530,6 +530,28 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
   }
 
   /**
+   * Auto-negotiates the open approach's offer (the picked VC's, while VCs wait) from the counter `terms`: the same
+   * rolls as countering by hand, repeating the counter until the final offer, which stands until answered.
+   */
+  function autoNegotiateInvestor(state: GameState, terms: Partial<Terms>): GameState {
+    if (state.investors.vc.approach) {
+      const { a, vc } = pickedVc(state);
+      checkTerms(terms);
+      const done = negotiator.auto(vc.negotiation, terms, INVESTOR_TERMS, state.negotiationRng, shares.rollBonus(state));
+      const vcs = a.vcs.map((p) => (p === vc ? { ...p, negotiation: done.negotiation } : p));
+      return { ...withVc(state, { approach: { ...a, vcs } }), negotiationRng: done.rng };
+    }
+    const a = openApproach(state);
+    checkTerms(terms);
+    const done = negotiator.auto(a.negotiation, terms, INVESTOR_TERMS, state.negotiationRng, shares.rollBonus(state));
+    return {
+      ...state,
+      negotiationRng: done.rng,
+      investors: { ...state.investors, approach: { ...a, negotiation: done.negotiation } },
+    };
+  }
+
+  /**
    * Takes the offer that stands, at once: their cash for new shares. The angel sets the valuation to their figure and
    * closes friends and family and the grant; their target starts.
    */
@@ -1066,7 +1088,7 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
     });
   }
 
-  return { startingInvestors, investors, counterOdds, counterInvestor, acceptInvestor, declineInvestor, pickInvestor, investorDay };
+  return { startingInvestors, investors, counterOdds, counterInvestor, autoNegotiateInvestor, acceptInvestor, declineInvestor, pickInvestor, investorDay };
 }
 
 export type InvestorsModule = ReturnType<typeof createInvestors>;

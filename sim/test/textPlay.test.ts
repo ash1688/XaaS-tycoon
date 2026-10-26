@@ -466,6 +466,25 @@ describe("shares and funding", () => {
     expect(run(turn.state, "counter ff amount 20000").lines[0]).toMatch(/refused: This is the final offer/);
   });
 
+  it("auto-negotiates: one command plays each round to the final offer, and leaves accepting to the player", () => {
+    const state = start();
+    expect(renderCommands(sim, state)).toMatch(/auto <ff\|grant> \.\.\./);
+    expect(parseCommand("auto ff amount 18000")).toEqual({
+      kind: "action",
+      action: { type: "autoNegotiateFunding", funder: "friendsAndFamily", terms: { amount: 18_000 } },
+      times: 1,
+    });
+    expect(parseCommand("auto angel share 9")).toMatchObject({ action: { type: "autoNegotiateInvestor", terms: { share: 0.09 } }, party: "angel" });
+    const turn = run(state, "auto ff amount 18000");
+    expect(turn.rows[0]).toMatchObject({ type: "autoNegotiateFunding", ok: true });
+    expect(turn.lines.join("\n")).toMatch(
+      /^auto-negotiated 2 rounds:\n {2}offer 2: you asked £18,000 for [\d.]+%, rolled .* → £[\d,]+ for [\d.]+%\n {2}offer 3: you asked £[\d,]+ for [\d.]+%, rolled .*\n {2}their FINAL offer stands: .* \(accept or decline it; auto-negotiate never accepts\)$/,
+    );
+    expect(turn.state.funding.friendsAndFamily).toBeNull();
+    expect(renderStatus(sim, turn.state)).toMatch(/friends and family final offer/);
+    expect(run(turn.state, "auto ff amount 20000").lines[0]).toMatch(/refused: This is the final offer/);
+  });
+
   it("stops time when the grant's condition ends", () => {
     const short = createSim({ ...defaultConfig, mvp: NO_MVP, finalDay: 40, funding: { ...defaultConfig.funding, grant: { ...defaultConfig.funding.grant, days: 5 } } });
     const state = short.applyAction(

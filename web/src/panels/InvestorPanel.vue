@@ -88,6 +88,9 @@ const oddsFor = (terms: Partial<Terms>) => api.investorOdds(game.code, game.id, 
 async function counter(terms: Partial<Terms>) {
   await game.act({ type: "counterInvestor", terms });
 }
+async function autoNegotiate(terms: Partial<Terms>) {
+  await game.act({ type: "autoNegotiateInvestor", terms });
+}
 
 async function answer(type: "acceptInvestor" | "declineInvestor") {
   await game.act({ type });
@@ -309,6 +312,7 @@ async function answer(type: "acceptInvestor" | "declineInvestor") {
           better="a smaller share"
           :odds="oddsFor"
           :counter="counter"
+          :auto="autoNegotiate"
         />
       </template>
       <div class="confirm-buttons">
@@ -375,6 +379,7 @@ async function answer(type: "acceptInvestor" | "declineInvestor") {
           better="a smaller share"
           :odds="oddsFor"
           :counter="counter"
+          :auto="autoNegotiate"
         />
       </template>
       <div class="confirm-buttons">

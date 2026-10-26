@@ -54,6 +54,10 @@ async function counter(terms: Partial<Terms>) {
   const funder = reviewing.value;
   if (funder) await game.act({ type: "counterFunding", funder, terms });
 }
+async function autoNegotiate(terms: Partial<Terms>) {
+  const funder = reviewing.value;
+  if (funder) await game.act({ type: "autoNegotiateFunding", funder, terms });
+}
 
 async function answer(type: "acceptFunding" | "declineFunding") {
   const funder = reviewing.value;
@@ -225,6 +229,7 @@ async function answer(type: "acceptFunding" | "declineFunding") {
         :better="isFf ? 'a smaller share' : 'a shorter condition'"
         :odds="oddsFor"
         :counter="counter"
+        :auto="autoNegotiate"
       />
       <div class="confirm-buttons">
         <button :disabled="game.busy" data-testid="funding-accept" @click="answer('acceptFunding')">
