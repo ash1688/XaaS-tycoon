@@ -1122,6 +1122,11 @@ export interface CsuiteConfig {
   equityCap: number;
   /** How much of salary and equity is luck rather than strength: 0.25 = a quarter. */
   payLuck: number;
+  /**
+   * The board's pay holiday: when cash falls below startDays of running costs (C-suite pay included), every executive
+   * forgoes their pay, for good, until cash is back above endDays of them. startDays 0 turns it off.
+   */
+  payHoliday: { startDays: number; endDays: number };
   roles: Record<CsuiteRole, CsuiteRoleConfig>;
 }
 
@@ -1908,6 +1913,10 @@ export const defaultConfig: GameConfig = {
     shortlistSize: 3,
     equityCap: 0.1,
     payLuck: 0.25,
+    // A safety net for the full C-suite the IPO needs (#232): without it a small market (payments on SaaS) can't carry
+    // all 11 salaries and careful play is rescued or liquidated. At 7 and 21 days, none is, and executives miss about
+    // 7% of their pay days across careful play.
+    payHoliday: { startDays: 7, endDays: 21 },
     roles: {
       headOfDevelopment: {
         name: "Head of development",

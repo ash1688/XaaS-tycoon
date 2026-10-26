@@ -1043,8 +1043,11 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const settled = finance.settle(migrated.state, day, entries, rescue.rescue);
     // A rescue's cuts may let go marketers who were running campaigns: those campaigns stop.
     const released = campaigns.release(settled.state);
+    // The board's pay holiday starts when cash runs low and ends once it has recovered: costs counted with their pay.
+    const paid = { ...released.state, csuite: { ...released.state.csuite, payHolidaySince: null } };
+    const holiday = csuite.payHolidayDay(released.state, runway(paid).dailyCosts);
     // Last, the funding ladder: an angel's target, and an investor who approaches a company doing well.
-    const funded = investors.investorDay(released.state, {
+    const funded = investors.investorDay(holiday.state, {
       joined: (ramping ? 0 : organic.arrived) + wave.joined + (users - wave.users),
       left: (ramping ? 0 : organic.lost.reduce((sum, l) => sum + l.users, 0)) + (wave.left?.users ?? 0),
     });
@@ -1061,7 +1064,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       // First, what a tribunal settled before today.
       ...payReview.tribunalEntries(yesterday, day),
       ...payReview.schemeStartEntries(yesterday, day),
-      ...settled.entries, ...released.entries, ...funded.entries, ...opened.entries, ...drifted.entries, ...reviewed.entries,
+      ...settled.entries, ...released.entries, ...holiday.entries, ...funded.entries, ...opened.entries, ...drifted.entries, ...reviewed.entries,
       // C-suite roles that opened today, with their shortlists.
       ...csuite.openedEntries(yesterday, reviewed.state)];
     // Kit added today (managed autoscaling, a migration's new setup) gives what new kit gives now.

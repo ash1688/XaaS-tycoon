@@ -303,6 +303,8 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("research.pointsPerPerson", "People", "Research", "Research points per researcher", "Research points (RP) a mid researcher earns a day. Juniors and seniors earn this × their grade's output. RP bank with no cap.", range(0, 100, 0.5));
   add("csuite.shortlistSize", "People", "C-suite", "Candidates on a shortlist", "How many candidates each C-suite role's shortlist has, drawn as the game starts: one from each band of strength, weakest to strongest.", range(1, 6, 1));
   add("csuite.equityCap", "People", "C-suite", "Equity cap", "The most the whole C-suite's equity can add up to (0.1 = 10%). Each candidate's ask is their base ask × the share of the cap still unused, so asks shrink as it fills. The staff share scheme doesn't count.", range(0, 0.5, 0.005));
+  add("csuite.payHoliday.startDays", "People", "C-suite", "Pay holiday below", "When cash falls below this many days of running costs (C-suite pay included), every executive forgoes their pay until it recovers. 0 turns the pay holiday off.", range(0, 365, 1));
+  add("csuite.payHoliday.endDays", "People", "C-suite", "Pay holiday ends above", "The pay holiday ends, and executives are paid again, once cash is back above this many days of running costs.", range(0, 365, 1));
   add("csuite.payLuck", "People", "C-suite", "Luck in pay", "How much of a candidate's salary and equity ask is luck rather than strength: 0 makes the strongest always the dearest.", range(0, 1, 0.05));
   const EFFECT_HELP: Record<string, string> = {
     output: "Added to the pool's work a day (0.2 = +20%).",
@@ -868,6 +870,7 @@ export function validateOverrides(overrides: unknown, base: GameConfig = default
     ]),
     ["campaigns.minBudget", "campaigns.maxBudget", "A campaign's biggest budget can't be below its smallest."],
     ["campaigns.minDays", "campaigns.maxDays", "A campaign's longest run can't be below its shortest."],
+    ["csuite.payHoliday.startDays", "csuite.payHoliday.endDays", "The pay holiday can't end below where it starts."],
   ];
   if (GAME_LENGTH_IDS.every((l) => config.allowedGameLengths[l] !== 1)) {
     const changed = GAME_LENGTH_IDS.find((l) => `allowedGameLengths.${l}` in overrides) ?? GAME_LENGTH_IDS[0];

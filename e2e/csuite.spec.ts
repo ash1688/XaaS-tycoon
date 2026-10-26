@@ -37,6 +37,9 @@ test("hires a head of development from the shortlist, for good, and the IPO chec
   // Shut roles say when they open; the IPO needs every role.
   await expect(csuite.getByTestId("csuite-cfo")).toContainText("Opens once you take outside money");
   await expect(csuite.getByTestId("csuite-ipo")).toContainText("Every role must be filled to float: 0 of 11 hired");
+  await expect(csuite.getByTestId("csuite-pay-holiday-rule")).toContainText(
+    "If cash falls below 7 days of running costs, the board forgoes its pay until there are 21 days' worth in the bank.",
+  );
   await expect(csuite.getByTestId("csuite-legalCounsel")).toContainText("Opens when Series A venture capitalists approach");
 
   const dev = csuite.getByTestId("csuite-headOfDevelopment");

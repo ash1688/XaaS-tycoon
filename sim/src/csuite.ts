@@ -120,8 +120,13 @@ export interface CsuiteView {
   equityCap: number;
   equityUsed: number;
   equityLeft: number;
-  /** What the executives hired cost a day. */
+  /** What the executives hired cost a day, when they're paid. */
   dailyPay: number;
+  /**
+   * The board's pay holiday: the day it began while cash is low (no executive is paid), or null; and the days of
+   * running costs in the bank it starts below and ends above.
+   */
+  payHoliday: { since: number | null; startDays: number; endDays: number };
 }
 
 /** The C-suite's shortlists for a new game: each role's candidates drawn from their ranges on the game's seed. */
@@ -314,6 +319,7 @@ export function createCsuite(config: GameConfig) {
       equityUsed: Math.round(used * 10_000) / 10_000,
       equityLeft: Math.round(Math.max(0, equityCap - used) * 10_000) / 10_000,
       dailyPay: dailyPay(state),
+      payHoliday: { since: state.csuite.payHolidaySince ?? null, ...config.csuite.payHoliday },
     };
   }
 
@@ -354,9 +360,36 @@ export function createCsuite(config: GameConfig) {
   /** What the executives cost a day: their salaries, fixed for good. */
   const dailyPay = (state: GameState) => state.csuite.hired.reduce((sum, e) => sum + e.salary, 0);
 
-  /** A day's pay, a line for each executive. Pay reviews' rises never touch it. */
+  /** A day's pay, a line for each executive, or nothing during the board's pay holiday. Pay reviews' rises never touch it. */
   const payEntries = (state: GameState): LogEntry[] =>
-    state.csuite.hired.map((e) => ({ text: `${roleName(e.role)} pay (${e.name})`, cashDelta: -e.salary, category: "staff" }));
+    onPayHoliday(state)
+      ? []
+      : state.csuite.hired.map((e) => ({ text: `${roleName(e.role)} pay (${e.name})`, cashDelta: -e.salary, category: "staff" }));
+
+  const onPayHoliday = (state: GameState) => (state.csuite.payHolidaySince ?? null) !== null;
+
+  /**
+   * After a day: the board starts a pay holiday when cash falls below startDays of `dailyCosts` (running costs with
+   * their pay), and ends it once cash is back above endDays of them.
+   */
+  function payHolidayDay(state: GameState, dailyCosts: number): { state: GameState; entries: LogEntry[] } {
+    const { startDays, endDays } = config.csuite.payHoliday;
+    if (startDays <= 0 || state.csuite.hired.length === 0 || dailyCosts <= 0) return { state, entries: [] };
+    const pay = dailyPay(state);
+    if (!onPayHoliday(state) && state.cash < startDays * dailyCosts) {
+      return {
+        state: { ...state, csuite: { ...state.csuite, payHolidaySince: state.day } },
+        entries: [{ text: `Cash is low: your C-suite will forgo their ${pounds(pay)} a day of pay from tomorrow until the company has ${endDays} days of running costs in the bank.`, cashDelta: 0, kind: "staff" }],
+      };
+    }
+    if (onPayHoliday(state) && state.cash >= endDays * dailyCosts) {
+      return {
+        state: { ...state, csuite: { ...state.csuite, payHolidaySince: null } },
+        entries: [{ text: `Cash has recovered: your C-suite's ${pounds(pay)} a day of pay starts again tomorrow.`, cashDelta: 0, kind: "staff" }],
+      };
+    }
+    return { state, entries: [] };
+  }
 
   /** A line for each role that opened over a day: the shortlist is ready. */
   function openedEntries(before: GameState, after: GameState): LogEntry[] {
@@ -374,7 +407,7 @@ export function createCsuite(config: GameConfig) {
   const hiredText = (e: Executive) =>
     `${e.name} joined as ${roleName(e.role)} for ${pounds(e.salary)} a day${e.shares ? ` and ${count.format(e.shares)} new shares (${percent(e.equity)})` : ""}.`;
 
-  return { openDay, isOpen, equityUsed, askNow, csuiteView, hire, dailyPay, payEntries, openedEntries, hiredText };
+  return { openDay, isOpen, equityUsed, askNow, csuiteView, hire, dailyPay, payEntries, payHolidayDay, openedEntries, hiredText };
 }
 
 export type CsuiteModule = ReturnType<typeof createCsuite>;

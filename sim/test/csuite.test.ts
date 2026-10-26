@@ -12,8 +12,8 @@ import {
 } from "../src/index.ts";
 
 // The C-suite through the sim's public interface: roles opening as the company grows, shortlists, hiring for good with
-// equity under the cap, each role's effect through the seam it plugs into, and executives' pay. The IPO's three
-// required executives are in ipo.test.ts's checklist.
+// equity under the cap, each role's effect through the seam it plugs into, and executives' pay, with the board's pay
+// holiday when cash runs low. The IPO's full C-suite line is in ipo.test.ts's checklist.
 
 const quiet: GameConfig = {
   ...defaultConfig,
@@ -224,6 +224,65 @@ describe("pay and equity", () => {
     expect(state.rescue).not.toBeNull();
     expect(state.csuite.hired.map((e) => e.role)).toEqual(["headOfOps"]);
     expect(sim.advance(state).log[0]!.entries.some((e) => e.text.startsWith("Head of ops pay"))).toBe(true);
+  });
+});
+
+describe("the board's pay holiday", () => {
+  /** Two executives hired, and cash set to this many days of running costs (their pay included). */
+  const withCash = (days: number, s: Sim = sim): GameState => {
+    const hired = hire(s, hire(s, begin(s), "headOfOps", 0), "headOfSupport", 0);
+    return { ...hired, cash: Math.round(days * s.runway(hired).dailyCosts) };
+  };
+  const pay = (state: GameState) => state.csuite.hired.reduce((sum, e) => sum + e.salary, 0);
+  const payLines = (log: { entries: { text: string; cashDelta: number }[] }[]) =>
+    log[0]!.entries.filter((e) => /^Head of (ops|support) pay \(/.test(e.text));
+
+  it("starts when cash falls below 7 days of running costs: no executive is paid from the next day", () => {
+    const low = withCash(5);
+    const first = sim.advance(low);
+    // The day it starts, executives are still paid; the board decides at the day's end.
+    expect(payLines(first.log)).toHaveLength(2);
+    expect(first.state.csuite.payHolidaySince).toBe(first.state.day);
+    expect(first.log[0]!.entries.map((e) => e.text)).toContain(
+      `Cash is low: your C-suite will forgo their £${pay(low).toLocaleString("en-GB")} a day of pay from tomorrow until the company has 21 days of running costs in the bank.`,
+    );
+    expect(sim.csuite(first.state).payHoliday).toEqual({ since: first.state.day, startDays: 7, endDays: 21 });
+    expect(sim.runway(first.state).dailyCosts).toBe(sim.runway(low).dailyCosts - pay(low));
+    const next = sim.advance(first.state);
+    expect(payLines(next.log)).toEqual([]);
+    expect(next.state.csuite.payHolidaySince).toBe(first.state.day);
+  });
+
+  it("ends once cash is back above 21 days, and pay isn't owed for the days missed", () => {
+    const on = sim.advance(withCash(5)).state;
+    // Between the two thresholds the holiday goes on.
+    const between = sim.advance({ ...on, cash: Math.round(14 * sim.runway(withCash(0)).dailyCosts) });
+    expect(between.state.csuite.payHolidaySince).toBe(on.csuite.payHolidaySince);
+    const recovered = sim.advance({ ...between.state, cash: Math.round(30 * sim.runway(withCash(0)).dailyCosts) });
+    expect(recovered.state.csuite.payHolidaySince).toBeNull();
+    expect(recovered.log[0]!.entries.map((e) => e.text)).toContain(
+      `Cash has recovered: your C-suite's £${pay(on).toLocaleString("en-GB")} a day of pay starts again tomorrow.`,
+    );
+    const paidAgain = sim.advance(recovered.state);
+    expect(payLines(paidAgain.log).map((e) => e.cashDelta)).toEqual(recovered.state.csuite.hired.map((e) => -e.salary));
+  });
+
+  it("doesn't start between the thresholds, without executives, or when turned off", () => {
+    expect(sim.advance(withCash(14)).state.csuite.payHolidaySince ?? null).toBeNull();
+    const nobody = { ...begin(), cash: 100 };
+    expect(sim.advance(nobody).state.csuite.payHolidaySince ?? null).toBeNull();
+    const off = createSim({ ...quiet, csuite: { ...quiet.csuite, payHoliday: { startDays: 0, endDays: 0 } } });
+    expect(off.advance(withCash(5, off)).state.csuite.payHolidaySince ?? null).toBeNull();
+    expect(off.csuite(begin(off)).payHoliday).toEqual({ since: null, startDays: 0, endDays: 0 });
+  });
+
+  it("shows in text play", () => {
+    const who = { player: "test" };
+    const on = sim.advance(withCash(5)).state;
+    expect(runScript(sim, on, "csuite", who).lines.join("\n")).toMatch(
+      new RegExp(`pay holiday: since day ${on.day}, cash is low, so no executive is paid until cash is back above 21 days`),
+    );
+    expect(runScript(sim, begin(), "csuite", who).lines.join("\n")).toMatch(/pay holiday: if cash falls below 7 days of running costs/);
   });
 });
 

@@ -70,6 +70,8 @@ export interface Executive {
 export interface Csuite {
   shortlists: Record<CsuiteRole, Candidate[]>;
   hired: Executive[];
+  /** The day the board's pay holiday began, while it lasts: no executive is paid. Left out or null, they're paid. */
+  payHolidaySince?: number | null;
 }
 
 /** Headcount in one pool, by grade. */

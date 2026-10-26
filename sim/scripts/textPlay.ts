@@ -556,7 +556,16 @@ function csuiteLine(sim: Sim, state: GameState): string {
   const view = sim.csuite(state);
   const hired = view.roles.filter((r) => r.executive).map((r) => `${r.name} ${r.executive!.name}`);
   const open = view.roles.filter((r) => r.open && !r.executive).map((r) => r.name);
-  return `c-suite: ${hired.length ? `${hired.join(", ")}; ${money(view.dailyPay)}/day` : "nobody hired"} (${hired.length} of ${view.roles.length}, all needed to IPO) | ${open.length ? `can hire: ${open.join(", ")} ("csuite" for shortlists)` : "no role open to hire"} | equity cap ${tenth(view.equityCap)}, ${tenth(view.equityLeft)} left`;
+  const pay = view.payHoliday.since !== null ? `PAY HOLIDAY since day ${view.payHoliday.since} (${money(view.dailyPay)}/day forgone)` : `${money(view.dailyPay)}/day`;
+  return `c-suite: ${hired.length ? `${hired.join(", ")}; ${pay}` : "nobody hired"} (${hired.length} of ${view.roles.length}, all needed to IPO) | ${open.length ? `can hire: ${open.join(", ")} ("csuite" for shortlists)` : "no role open to hire"} | equity cap ${tenth(view.equityCap)}, ${tenth(view.equityLeft)} left`;
+}
+
+/** The board's pay holiday in a line: on now, or when it would start. */
+function payHolidayLine(h: ReturnType<Sim["csuite"]>["payHoliday"]): string {
+  if (h.startDays <= 0) return "pay holiday: off";
+  return h.since !== null
+    ? `pay holiday: since day ${h.since}, cash is low, so no executive is paid until cash is back above ${h.endDays} days of running costs`
+    : `pay holiday: if cash falls below ${h.startDays} days of running costs, every executive forgoes their pay until it's back above ${h.endDays} days`;
 }
 
 /** The C-suite in full: every role with when it opens, who fills it, or its shortlist. */
@@ -564,6 +573,7 @@ function csuiteLines(sim: Sim, state: GameState): string[] {
   const view = sim.csuite(state);
   const lines = [
     `c-suite: hired for good, no pay reviews; equity asks paid in new shares, shrinking as the ${tenth(view.equityCap)} cap fills (${tenth(view.equityUsed)} used, ${tenth(view.equityLeft)} left; the staff share scheme doesn't count). Every role must be filled to IPO: ${view.roles.filter((r) => r.executive).length} of ${view.roles.length} hired`,
+    payHolidayLine(view.payHoliday),
   ];
   for (const r of view.roles) {
     if (r.executive) {

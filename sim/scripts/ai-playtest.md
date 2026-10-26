@@ -168,7 +168,8 @@ npm run -s play -- summary <game>
   hires one, for good: no letting go, and pay reviews leave their pay alone. Equity asks are new shares, and shrink as
   the C-suite's 10% cap fills. The heads open on day 1, the CFO on outside money or the first angel approach, the CTO
   and head of people at the first angel approach, and the COO, CIO, CMO, CISO and legal counsel at the Series A
-  approach. Every role is needed to IPO: all 11 beyond you, the CEO.
+  approach. Every role is needed to IPO: all 11 beyond you, the CEO. If cash falls below 7 days of running costs, the
+  C-suite takes a **pay holiday**: none of them is paid (and it isn't owed later) until cash is back above 21 days.
 - `ipo` shows the IPO readiness checklist: six conditions (a trading history; users and revenue, with a minimum
   paying customer base; an uptime record; predictable costs; a security audit; and the full C-suite, all 11 roles
   hired), each with where you stand and what's needed. Satisfaction and profit aren't conditions, but the market
