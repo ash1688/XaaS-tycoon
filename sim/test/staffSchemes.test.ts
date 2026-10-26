@@ -224,16 +224,63 @@ describe("levels only go up", () => {
   });
 });
 
-describe("accepting staff's counter", () => {
-  it("is a cash rise only: the offer's schemes aren't raised", () => {
-    const open = untilReview(plain, begin());
-    const countered = offer(plain, open, plain.payReview(open)!.minOffer, { pension: 1, discount: 1 });
+describe("staff's counter", () => {
+  const open = untilReview(plain, begin());
+  const { minOffer } = open.payReview!;
+  const levels = { pension: 1, discount: 1 };
+  const worth = plain.payOfferPreview(open, minOffer, levels).schemeValue;
+  const cash = Math.max(0, round(minOffer - worth));
+  const countered = offer(plain, open, cash, levels);
+  const review = plain.payReview(countered)!;
+
+  it("keeps the offer's schemes and asks the rest of its figure in cash", () => {
+    const value = review.studentOffers[0]!;
+    expect(review.counter).toEqual({
+      cash: round(review.staffFigure - (value - cash)),
+      schemes: { pension: 1, health: 0, deathInService: 0, discount: 1, shareSave: 0 },
+      schemesText: "Pension top-up to level 1, Discount scheme",
+    });
+    expect(review.counter!.cash).toBeLessThan(review.staffFigure);
+    expect(review.counter!.cash).toBeGreaterThan(cash);
+  });
+
+  it("is rolled on the offer's worth: the same figure as a cash offer worth as much", () => {
+    const cashOnly = plain.payReview(offer(plain, open, review.studentOffers[0]!))!;
+    expect(cashOnly.staffFigure).toBe(review.staffFigure);
+    expect(cashOnly.counter).toEqual({ cash: cashOnly.staffFigure, schemes: open.staffSchemes, schemesText: "" });
+  });
+
+  it("is null before the first offer", () => {
+    expect(plain.payReview(open)!.counter).toBeNull();
+  });
+
+  it("settles on its cash with the offer's schemes, which start the next day", () => {
     const settled = plain.applyAction(countered, { type: "acceptPayCounter" });
     const record = settled.pastPayReviews.at(-1)!;
-    expect(record.outcome).toBe("counterAccepted");
-    expect(record.rise).toBe(plain.payReview(countered)!.staffFigure);
+    expect(record).toMatchObject({ outcome: "counterAccepted", rise: review.counter!.cash });
+    expect(settled.staffSchemes).toEqual(review.counter!.schemes);
+    expect(record.schemes).toEqual(review.counter!.schemes);
+    const log = plain.advance(settled).log[0]!.entries.map((e) => e.text).join("\n");
+    expect(log).toContain("Staff schemes from today: Pension top-up to level 1, Discount scheme.");
+  });
+
+  it("settles a cash offer's counter on staff's figure, schemes as held", () => {
+    const cashCountered = offer(plain, open, minOffer);
+    const settled = plain.applyAction(cashCountered, { type: "acceptPayCounter" });
+    expect(settled.pastPayReviews.at(-1)!.rise).toBe(plain.payReview(cashCountered)!.staffFigure);
     expect(settled.staffSchemes).toEqual(open.staffSchemes);
-    expect(record.schemes).toEqual(open.staffSchemes);
+  });
+
+  it("keeps the schemes after auto-negotiating, as in the playtest: pension, health and share save", () => {
+    const playtest = { pension: 1, health: 1, shareSave: 1 };
+    const w = plain.payOfferPreview(open, minOffer, playtest).schemeValue;
+    const auto = plain.applyAction(open, { type: "autoNegotiatePay", rise: Math.max(0, round(minOffer - w)), schemes: playtest });
+    const last = plain.payReview(auto)!;
+    expect(last.counter!.schemesText).toBe("Pension top-up to level 1, Health cash plan to level 1, Share save to level 1");
+    const settled = plain.applyAction(auto, { type: "acceptPayCounter" });
+    expect(settled.staffSchemes).toEqual({ pension: 1, health: 1, deathInService: 0, discount: 0, shareSave: 1 });
+    expect(settled.pastPayReviews.at(-1)).toMatchObject({ outcome: "counterAccepted", rise: last.counter!.cash });
+    expect(settled.pastPayReviews.at(-1)!.shareSaveShares).toBeGreaterThan(0);
   });
 });
 
@@ -321,11 +368,12 @@ describe("the tribunal", () => {
   const worth = plain.payOfferPreview(atFinal, minOffer, levels).schemeValue;
   const cash = Math.max(0, round(minOffer - worth));
 
-  it("applies the offer's schemes on the student's figure or the middle, and only cash on staff's", () => {
+  it("applies the offer's schemes whatever it picks, with each pick's cash on top", () => {
     const odds = plain.payOfferPreview(atFinal, cash, levels).tribunal!;
     expect(odds.cash.student).toBe(cash);
-    expect(odds.cash.staff).toBe(odds.rises.staff);
     expect(odds.cash.middle).toBe(round(odds.rises.middle - (odds.rises.student - cash)));
+    expect(odds.cash.staff).toBe(round(odds.rises.staff - (odds.rises.student - cash)));
+    expect(odds.cash.staff).toBeLessThan(odds.rises.staff);
     const seen = new Set<string>();
     for (let seed = 0; seed < 300 && seen.size < 3; seed++) {
       const settled = offer(plain, { ...atFinal, payReviewRng: seed }, cash, levels);
@@ -333,9 +381,7 @@ describe("the tribunal", () => {
       const pick = record.tribunal!.pick;
       seen.add(pick);
       expect(record.rise).toBe(odds.cash[pick]);
-      expect(settled.staffSchemes).toEqual(
-        pick === "staff" ? atFinal.staffSchemes : { pension: 1, health: 0, deathInService: 1, discount: 0, shareSave: 0 },
-      );
+      expect(settled.staffSchemes).toEqual({ pension: 1, health: 0, deathInService: 1, discount: 0, shareSave: 0 });
       expect(record.schemes).toEqual(settled.staffSchemes);
     }
     expect([...seen].sort()).toEqual(["middle", "staff", "student"]);

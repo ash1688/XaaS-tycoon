@@ -119,8 +119,8 @@ export interface PayPolicy {
    */
   schemes?: readonly StaffSchemeId[];
   /**
-   * Takes staff's counter when it's no more than inflation plus this many points: staff's counters are cash only, so
-   * taking one drops any schemes offered. Null never takes a counter.
+   * Takes staff's counter when its worth is no more than inflation plus this many points: a counter keeps the schemes
+   * offered and asks the rest in cash. Null never takes a counter.
    */
   acceptWithin: number | null;
   /** A counter it doesn't take: its next offer comes this share of the way from its last towards staff's figure. */
@@ -280,7 +280,7 @@ export const STRATEGIES: Strategy[] = [
   {
     id: "scheme-heavy",
     description:
-      "As sensible, but raises every staff scheme a level each pay review, share save included, for a cash rise of inflation less their worth; comes halfway to staff's figure in cash rather than take a cash-only counter, as far as the tribunal unless its fee would leave less than two weeks' running costs.",
+      "As sensible, but raises every staff scheme a level each pay review, share save included, for a cash rise of inflation less their worth; comes halfway to staff's figure in cash rather than take a counter, as far as the tribunal unless its fee would leave less than two weeks' running costs.",
     priceFactor: 1,
     support: true,
     scaling: "ahead",
@@ -751,7 +751,7 @@ function mvpTeam(sim: Sim, state: GameState, strategy: Strategy): GameState {
 /**
  * The pay review policy every bot plays without a PayPolicy of its own (see bargain), so its games get past the
  * reviews: offer inflation (pay held level in real terms), as cash or, with `schemes`, as those schemes and the rest in
- * cash, and if staff counter, accept their counter (cash only).
+ * cash, and if staff counter, accept their counter (which keeps the schemes, with cash on top).
  */
 function settlePay(sim: Sim, state: GameState, strategy: Strategy): GameState {
   const review = sim.payReview(state);

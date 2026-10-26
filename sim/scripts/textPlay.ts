@@ -681,13 +681,15 @@ function payLines(sim: Sim, state: GameState): string[] {
   });
   lines.push(
     review.canAcceptCounter
-      ? `  staff are asking ${rise(review.staffFigure)} in cash: "accept pay" to agree it (cash only, no schemes), or offer again`
+      ? review.counter?.schemesText
+        ? `  staff are asking ${rise(review.counter.cash)} cash plus your schemes (${review.counter.schemesText}): "accept pay" to agree it, or offer again`
+        : `  staff are asking ${rise(review.staffFigure)} in cash: "accept pay" to agree it, or offer again`
       : `  staff open at ${rise(review.staffFigure)}: make the first offer`,
   );
   if (review.final) {
     lines.push(
       `  your next offer is FINAL: if staff don't accept it, it goes to a TRIBUNAL, which charges ${money(review.tribunalFee)} and picks your figure, theirs or the middle, ` +
-        `favouring whichever is closest to a fair rise ("payodds <rise %> [schemes]" for its odds). Your schemes apply if it picks your figure or the middle`,
+        `favouring whichever is closest to a fair rise ("payodds <rise %> [schemes]" for its odds). Your schemes apply whichever it picks`,
     );
   }
   return lines;
@@ -727,7 +729,7 @@ function payOddsLines(p: PayOfferPreview): string[] {
       `  final offer: if staff don't accept it, the tribunal sits for ${money(t.fee)} and picks:`,
       `    your offer ${chance(t.chances.student)} → ${rise(t.cash.student)} cash${raised.length ? " + your schemes" : ""}`,
       `    the middle ${chance(t.chances.middle)} → ${rise(t.cash.middle)} cash${raised.length ? " + your schemes" : ""}`,
-      `    staff's figure ${chance(t.chances.staff)} → ${rise(t.cash.staff)} cash, no schemes`,
+      `    staff's figure ${chance(t.chances.staff)} → ${rise(t.cash.staff)} cash${raised.length ? " + your schemes" : ""}`,
     );
   }
   if (p.odds) {

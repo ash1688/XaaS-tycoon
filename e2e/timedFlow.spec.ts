@@ -293,6 +293,39 @@ test("auto-negotiating a pay review settles it if staff accept along the way", a
   await expect(modal.getByTestId("pay-tribunal-result")).toHaveCount(0);
 });
 
+test("staff's counter to an offer with schemes keeps them: agreeing it starts them, as the People page shows", async ({ browser, request }) => {
+  // The playtest: pension, health and share save, auto-negotiated to staff's last counter, then agreed.
+  const { code, id, modal } = await reviewWith(browser, request, "Perks Ltd", "maxAsk");
+  const minOffer = (await modal.getByTestId("pay-min-offer").innerText()).replace("%", "");
+  await modal.getByTestId("pay-rise").fill(minOffer);
+  for (const id of ["pension", "health", "shareSave"]) await modal.getByTestId(`pay-scheme-${id}-input`).fill("1");
+  await expect(modal.getByTestId("pay-offer")).toContainText("+ 3 schemes");
+  await expect(modal.getByTestId("pay-odds-high")).toContainText(/they ask \d+\.\d% cash plus your schemes/);
+  await modal.getByTestId("pay-auto-negotiate").click();
+
+  await expect(modal.getByTestId("pay-auto-transcript")).toContainText(/Offer 1 \([\d.]+%\): they .*\d+\.\d% cash plus your schemes\./);
+  const schemes = "Pension top-up to level 1, Health cash plan to level 1, Share save to level 1";
+  const counter = modal.getByTestId("pay-counter");
+  await expect(counter).toContainText(new RegExp(`Your staff are asking for \\d+\\.\\d% cash plus your schemes \\(${schemes}\\)\\.`));
+  const cash = (await counter.locator("strong").innerText()).replace("%", "");
+  await expect(modal.getByTestId("pay-accept-counter")).toHaveText(`Agree ${cash}% plus your schemes`);
+  await expect(modal.getByTestId("pay-final-warning")).toContainText("Your schemes apply whichever it picks.");
+  await modal.getByTestId("pay-accept-counter").click();
+
+  await expect(modal.getByTestId("pay-settled")).toContainText(`Pay review settled on a ${cash}% rise.`);
+  await expect(modal.getByTestId("pay-schemes-held")).toContainText(/Pension top-up 1 .*Health cash plan 1 .*Share save 1 /);
+  await expect(modal.getByTestId("pay-share-save-issued")).toBeVisible();
+  const after = await (await request.get(`/api/codes/${code}/companies/${id}`)).json();
+  expect(after.lastPayReview).toMatchObject({ outcome: "counterAccepted", rise: Number(cash) / 100 });
+  await modal.getByTestId("pay-done").click();
+
+  const student = modal.page();
+  await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "People" }).click();
+  const table = student.getByTestId("staff-schemes");
+  for (const id of ["pension", "health", "shareSave"]) await expect(table.getByTestId(`staff-scheme-${id}`)).toContainText("Level 1 of 3");
+  await expect(table.getByTestId("staff-scheme-discount")).toContainText("Off");
+});
+
 test("the People page's pay history is empty before the first review, then lists each review settled", async ({ browser, request }) => {
   const { code, id } = await newCompany(browser, request, "Payroll Ltd");
   const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
