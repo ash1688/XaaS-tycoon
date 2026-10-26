@@ -117,7 +117,9 @@ When starting a company, the student chooses how many shares it has, from **10,0
   C's). Its second tranche is paid when the later round's target is hit (B's, then D's), and its cash and share
   taken are the two rounds' added together, so a student who takes both ends up about where four rounds would leave
   them. The game summary says it was a two-round game. C-suite roles still open at the first round's approach. Until
-  IPO, 1-year and career games keep all four rounds.
+  IPO, 1-year and career games keep all four rounds. (#233: the cash is split between the tranches in proportion to
+  the two rounds' offers. Until tranches arrive for every round (#102), a merged round's second tranche has no
+  deadline: it waits for the later target.)
 
   - Each VC's offer leans one way: **most cash**, **fewest conditions** or **least ownership taken**. Each VC's lean is random, so a round can have two "most cash" offers and one "least ownership".
   - The student picks **one** VC and negotiates with them alone. Picking one closes the other two.

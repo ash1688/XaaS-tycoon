@@ -11,7 +11,8 @@ import { formatShare, formatSharePrice } from "../shares";
 // and what missing it costs. The student negotiates, accepts or declines it; declining brings another angel a few days
 // later. Accepting sets the valuation to the angel's figure and closes friends and family and grants. Then venture
 // capital, Series A to D: three VCs approach for each round, the student picks one to negotiate with (closing the other
-// two), and accepting sets the valuation to theirs. Series A approaching, taken or not, opens the last C-suite roles the IPO needs.
+// two), and accepting sets the valuation to theirs. A 180-day game has two rounds, Series A and B, each merging two and
+// paying its cash in two tranches. Series A approaching, taken or not, opens the last C-suite roles the IPO needs.
 const game = useGame();
 const investors = computed(() => game.company?.investors ?? null);
 const offer = computed(() => investors.value?.offer ?? null);
@@ -190,6 +191,14 @@ async function answer(type: "acceptInvestor" | "declineInvestor") {
           <template v-if="r.firstApproachDay === null"> not yet</template>
           <template v-else> approached day {{ r.firstApproachDay }} ✓</template>
           <template v-if="r.deal">: {{ r.deal.investor }} put in {{ formatCash(r.deal.amount) }} for {{ formatShare(r.deal.share) }}</template>
+          <template v-if="r.deal?.tranche">
+            <span v-if="r.deal.tranche.paidDay === null" class="muted" data-testid="vc-tranche">
+              ({{ formatCash(r.deal.tranche.amount) }} of it still to come, once you hit their growth target)
+            </span>
+            <span v-else class="muted" data-testid="vc-tranche">
+              (the second tranche, {{ formatCash(r.deal.tranche.amount) }}, paid day {{ r.deal.tranche.paidDay }})
+            </span>
+          </template>
         </li>
       </ul>
       <template v-if="vcApproach">
@@ -215,6 +224,10 @@ async function answer(type: "acceptInvestor" | "declineInvestor") {
               {{ formatCash(o.amount) }} for {{ formatShare(o.theirShare) }}, valuing the company at
               {{ formatCash(o.valuation) }}. You'd own {{ formatShare(o.yourShareAfter) }}.
             </p>
+            <p v-if="o.secondTranche !== null" class="muted" data-testid="vc-offer-tranches">
+              {{ formatCash(o.amount - o.secondTranche) }} on signing, {{ formatCash(o.secondTranche) }} once you hit
+              their growth target.
+            </p>
             <button v-if="o.status === 'open' && !game.over" :disabled="game.busy" data-testid="vc-pick" @click="pick(o.investor)">
               Negotiate with {{ o.investor }}
             </button>
@@ -237,7 +250,8 @@ async function answer(type: "acceptInvestor" | "declineInvestor") {
         {{ vc.lead.investor }} is your lead VC: they'll be back for the next round alongside two new VCs.
       </p>
       <p v-else class="muted">
-        Venture capitalists come to growing companies after the angel: Series A, then B, C and D. You don't need
+        Venture capitalists come to growing companies after the angel:
+        {{ vc.rounds.length === 2 ? "Series A, then Series B (a 180-day game has two rounds, each the size of two)" : "Series A, then B, C and D" }}. You don't need
         their money to float, but Series A approaching opens the last C-suite roles, whether or not you take it.
       </p>
     </article>
@@ -253,7 +267,11 @@ async function answer(type: "acceptInvestor" | "declineInvestor") {
             </tr>
             <tr>
               <th scope="row">They put in</th>
-              <td>{{ formatCash(vcPicked.amount) }}, now, all of it</td>
+              <td v-if="vcPicked.secondTranche === null">{{ formatCash(vcPicked.amount) }}, now, all of it</td>
+              <td v-else class="words" data-testid="vc-tranches">
+                {{ formatCash(vcPicked.amount) }} in two tranches: {{ formatCash(vcPicked.amount - vcPicked.secondTranche) }}
+                now, and {{ formatCash(vcPicked.secondTranche) }} once you hit their growth target
+              </td>
             </tr>
             <tr>
               <th scope="row">They value the company at</th>

@@ -1,5 +1,6 @@
 import { SPEND_CATEGORIES, type DifficultyId, type GameConfig, type GameLengthId, type ModelId, type ProductTypeId } from "./config.ts";
 import { profitCosts } from "./finance.ts";
+import { vcLadder } from "./investors.ts";
 import { isOpen } from "./loan.ts";
 import type { Infrastructure } from "./infrastructure.ts";
 import type { DaySpend, GameEnding, GameState, IpoResult, Rescue, Spend } from "./state.ts";
@@ -68,6 +69,8 @@ export interface GameSummary {
   day: number;
   gameLength: GameLengthId;
   difficulty: DifficultyId;
+  /** VC rounds on the funding ladder: two in a 180-day game, where Series A and B each merge two rounds, else four. */
+  vcRounds: number;
   /** The game length's last day: null until IPO, which has none. */
   finalDay: number | null;
   /** The float and the first day of trading, if the game ended in an IPO. */
@@ -154,6 +157,7 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
       day: state.day,
       gameLength: state.gameLength,
       difficulty: state.difficulty,
+      vcRounds: vcLadder(state).length,
       finalDay: state.finalDay,
       ipo: state.ipo.result,
       cash: state.cash,

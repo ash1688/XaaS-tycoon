@@ -1,4 +1,4 @@
-import { SERIES_IDS, VC_LEANS, type GameConfig, type SeriesId, type VcLean } from "./config.ts";
+import { SERIES_IDS, VC_LEANS, type GameConfig, type SeriesId, type VcLean, type VcRoundConfig } from "./config.ts";
 import { count, pounds, type Finance } from "./finance.ts";
 import { loanOwed } from "./loan.ts";
 import { marketSize } from "./market.ts";
@@ -91,6 +91,11 @@ export interface VcOfferView {
   /** "open" until one is picked; then "picked" for that VC and "closed" for the other two. */
   status: "open" | "picked" | "closed";
   amount: number;
+  /**
+   * In a two-round game, the part of the cash held back as the second tranche, paid once the company hits their growth
+   * target; the rest is paid on signing. Null in a four-round game, where all of it is paid on signing.
+   */
+  secondTranche: number | null;
   /** Their share of the company after, 0–1. */
   theirShare: number;
   preMoney: number;
@@ -217,13 +222,37 @@ const LEAN_LABELS: Record<VcLean, string> = { cash: "Most cash", conditions: "Fe
 export const seriesApproachDay = (state: Pick<GameState, "investors">, round: SeriesId) =>
   state.investors.vc.firstApproachDay[round];
 
+/** A rung of venture capital: its round, and the rounds of the four whose offers and targets it takes, earlier first. */
+export interface VcRung {
+  round: SeriesId;
+  parts: SeriesId[];
+}
+
+/** A 180-day game has two VC rounds, not four. */
+export const twoRoundGame = (state: Pick<GameState, "gameLength">) => state.gameLength === "180-days";
+
+const FOUR_ROUNDS: VcRung[] = SERIES_IDS.map((round) => ({ round, parts: [round] }));
+/** Series A takes A and B's offers and targets, and Series B takes C and D's. */
+const TWO_ROUNDS: VcRung[] = [
+  { round: "seriesA", parts: ["seriesA", "seriesB"] },
+  { round: "seriesB", parts: ["seriesC", "seriesD"] },
+];
+
+/**
+ * The game's VC rounds in order: Series A to D, or in a 180-day game Series A and B, each merging two of the four. A
+ * merged round approaches at the earlier round's target, for both rounds' cash and share added together, and pays the
+ * later round's part as a second tranche once the later round's target is hit.
+ */
+export const vcLadder = (state: Pick<GameState, "gameLength">): VcRung[] => (twoRoundGame(state) ? TWO_ROUNDS : FOUR_ROUNDS);
+
 const percent = (share: number) => `${Math.round(share * 1000) / 10}%`;
 const roundTo = (n: number, step: number) => Math.round(n / step) * step;
 /** The most of the company an offer can come to, however far the business falls. */
 const MAX_SHARE = 0.9;
 
 /**
- * The funding ladder's investors, who approach the student: the angel, then Series A–D venture capital. A rung's hidden
+ * The funding ladder's investors, who approach the student: the angel, then Series A–D venture capital (Series A and B
+ * in a 180-day game, each merging two rounds: see vcLadder). A rung's hidden
  * target, once hit, brings an investor approachDays later with an offer of cash for a share (three VCs, for a VC
  * round), which the student negotiates, accepts or declines; declining brings another retryDays later. See
  * InvestorsConfig and VcConfig.
@@ -683,14 +712,48 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
 
   /** The day the rung before a round first approached: the angel for Series A. */
   const rungBefore = (state: GameState, round: SeriesId) => {
-    const at = SERIES_IDS.indexOf(round);
-    return at === 0 ? state.investors.firstApproachDay : state.investors.vc.firstApproachDay[SERIES_IDS[at - 1]!];
+    const ladder = vcLadder(state);
+    const at = ladder.findIndex((r) => r.round === round);
+    return at === 0 ? state.investors.firstApproachDay : state.investors.vc.firstApproachDay[ladder[at - 1]!.round];
+  };
+
+  /**
+   * A VC's offer for one of the four rounds' terms, from where its two draws fell (0–1) between the least and most
+   * premium and share, as an angel's, plus the VC's lean and the lead VC's premium. `round` is the round approaching,
+   * whose declines make it less generous.
+   */
+  function roundOffer(state: GameState, r: VcRoundConfig, round: SeriesId, lean: VcLean, isLead: boolean, premiumAt: number, shareAt: number) {
+    const leaning = vcConfig.leans[lean];
+    // Word gets round: each approach turned down in this round makes the next VCs less generous.
+    const declines = state.investors.vc.declined.filter((d) => d.round === round).length;
+    const premiumMax = Math.max(r.premium.min, r.premium.max - declines * vcConfig.declinePremium);
+    const shareMin = Math.min(r.share.max, r.share.min + declines * vcConfig.declineShare);
+    const business = shares.businessWorth(state);
+    const cash = netCash(state);
+    const premium =
+      Math.round((r.premium.min + premiumAt * (premiumMax - r.premium.min) + leaning.premium + (isLead ? vcConfig.leadPremium : 0)) * 100) / 100;
+    const asked = Math.min(MAX_SHARE, roundTo((shareMin + shareAt * (r.share.max - shareMin)) * leaning.share, 0.005));
+    const preMoney = Math.max(premium * business + cash, 0.25 * premium * business);
+    const amount = Math.min(r.maxAmount, Math.max(r.minAmount, roundTo((asked * preMoney) / (1 - asked), 1000)));
+    return { amount, share: amount / (preMoney + amount) };
+  }
+
+  /**
+   * A merged round's agreed cash split into its two tranches, in proportion to the two rounds' opening offers, to the
+   * nearest £1,000: paid on signing, and paid once the later round's target is hit. Null for a round of four.
+   */
+  const tranches = (vc: VcPitch, amount: number): [number, number] | null => {
+    if (!vc.parts) return null;
+    const opening = vc.parts.reduce((sum, p) => sum + p.amount, 0);
+    const first = Math.min(amount, roundTo((amount * vc.parts[0]!.amount) / opening, 1000));
+    return [first, amount - first];
   };
 
   /**
    * Three VCs approach for a round. On the round's first approach the lead VC, if there is one, returns for B, C or D
    * alongside two new VCs; otherwise all three are new. Each leans its own way, and their offers value the business at
-   * a premium over the formula's, as an angel's do.
+   * a premium over the formula's, as an angel's do. A merged round's offers are its two rounds' offers added together,
+   * each VC's draws falling the same way in both.
    */
   function vcApproach(state: GameState, round: SeriesId): { state: GameState; entries: LogEntry[] } {
     let rng = state.investorRng;
@@ -700,28 +763,23 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
       return r;
     };
     const v = state.investors.vc;
-    const r = vcConfig.rounds[round];
+    const rung = vcLadder(state).find((r) => r.round === round)!;
     const first = v.firstApproachDay[round] === null;
     const lead = first && round !== "seriesA" ? v.lead : null;
     // New names each time: not the lead, nor any VC turned down or gone with before, unless too few are left.
     const used = new Set([...v.declined.flatMap((d) => d.investors), ...v.deals.map((d) => d.investor), ...(v.lead ? [v.lead.investor] : [])]);
     let pool = VC_NAMES.filter((n) => !used.has(n));
     if (pool.length < 3) pool = VC_NAMES.filter((n) => n !== lead?.investor);
-    // Word gets round: each approach turned down in this round makes the next VCs less generous.
-    const declines = v.declined.filter((d) => d.round === round).length;
-    const premiumMax = Math.max(r.premium.min, r.premium.max - declines * vcConfig.declinePremium);
-    const shareMin = Math.min(r.share.max, r.share.min + declines * vcConfig.declineShare);
     const business = shares.businessWorth(state);
     const cash = netCash(state);
 
     const pitch = (investor: string, lean: VcLean, isLead: boolean): VcPitch => {
-      const leaning = vcConfig.leans[lean];
-      const premium =
-        Math.round((r.premium.min + draw() * (premiumMax - r.premium.min) + leaning.premium + (isLead ? vcConfig.leadPremium : 0)) * 100) / 100;
-      const asked = Math.min(MAX_SHARE, roundTo((shareMin + draw() * (r.share.max - shareMin)) * leaning.share, 0.005));
-      const preMoney = Math.max(premium * business + cash, 0.25 * premium * business);
-      const amount = Math.min(r.maxAmount, Math.max(r.minAmount, roundTo((asked * preMoney) / (1 - asked), 1000)));
-      return { investor, lean, lead: isLead, negotiation: negotiator.open({ amount, share: amount / (preMoney + amount) }) };
+      const premiumAt = draw();
+      const shareAt = draw();
+      const parts = rung.parts.map((p) => ({ round: p, ...roundOffer(state, vcConfig.rounds[p], round, lean, isLead, premiumAt, shareAt) }));
+      const amount = parts.reduce((sum, p) => sum + p.amount, 0);
+      const share = Math.min(MAX_SHARE, parts.reduce((sum, p) => sum + p.share, 0));
+      return { investor, lean, lead: isLead, negotiation: negotiator.open({ amount, share }), parts: parts.length > 1 ? parts : null };
     };
     const vcs: VcPitch[] = lead ? [pitch(lead.investor, lead.lean, true)] : [];
     while (vcs.length < 3) {
@@ -761,7 +819,37 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
    * approached and gapDays have passed, the first day the next round's target is hit sets when its VCs approach, ahead
    * of any retry for the round before; and on that day they do, or once an angel's offer open then is answered.
    */
-  function vcDay(s: GameState): { state: GameState; entries: LogEntry[] } {
+  function vcDay(state: GameState): { state: GameState; entries: LogEntry[] } {
+    const paid = trancheDay(state);
+    const rung = vcRungDay(paid.state);
+    return { state: rung.state, entries: [...paid.entries, ...rung.entries] };
+  }
+
+  /**
+   * A merged round's second tranche, still to come: paid on the first day the later round's target is hit, once gapDays
+   * have passed since the round first approached.
+   */
+  function trancheDay(s: GameState): { state: GameState; entries: LogEntry[] } {
+    const v = s.investors.vc;
+    const due = v.deals.find(
+      (d) =>
+        d.tranche !== null &&
+        d.tranche.paidDay === null &&
+        s.day >= v.firstApproachDay[d.round]! + vcConfig.gapDays &&
+        vcTargetHit(s, d.tranche.target),
+    );
+    if (!due) return { state: s, entries: [] };
+    const tranche = due.tranche!;
+    const entry: LogEntry = {
+      text: `${due.investor} paid the second tranche of your ${ROUND_NAMES[due.round]}: ${pounds(tranche.amount)}, now that ${s.companyName} has hit their growth target.`,
+      cashDelta: tranche.amount,
+      kind: "funding",
+    };
+    const deals = v.deals.map((d) => (d === due ? { ...d, tranche: { ...tranche, paidDay: s.day } } : d));
+    return { state: withVc(finance.chargeNow(s, [entry]), { deals }), entries: [entry] };
+  }
+
+  function vcRungDay(s: GameState): { state: GameState; entries: LogEntry[] } {
     const v = s.investors.vc;
     const a = v.approach;
     if (a) {
@@ -780,11 +868,11 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
         entries: [entry],
       };
     }
-    const upcoming = SERIES_IDS.find((r) => v.firstApproachDay[r] === null);
-    if (upcoming && v.next?.round !== upcoming) {
-      const before = rungBefore(s, upcoming);
-      if (before !== null && s.day >= before + vcConfig.gapDays && vcTargetHit(s, upcoming)) {
-        s = withVc(s, { next: { round: upcoming, day: s.day + c.approachDays } });
+    const upcoming = vcLadder(s).find((r) => v.firstApproachDay[r.round] === null);
+    if (upcoming && v.next?.round !== upcoming.round) {
+      const before = rungBefore(s, upcoming.round);
+      if (before !== null && s.day >= before + vcConfig.gapDays && vcTargetHit(s, upcoming.parts[0]!)) {
+        s = withVc(s, { next: { round: upcoming.round, day: s.day + c.approachDays } });
       }
     }
     // They wait while an angel's offer is open, and come once it's answered.
@@ -826,6 +914,7 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
     const yours = state.shareholders.find((h) => h.id === "student")?.shares ?? 0;
     return {
       amount,
+      secondTranche: tranches(vc, amount)?.[1] ?? null,
       theirShare: newShares / sharesAfter,
       preMoney: Math.round(preMoney),
       valuation: Math.round(preMoney + amount),
@@ -848,7 +937,9 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
       const yours = state.shareholders.find((h) => h.id === "student")?.shares ?? 0;
       const funding = shares.funding(state);
       const closing = [funding.friendsAndFamilyOffer && "friends and family's offer", funding.grantOffer && "the grant's offer"].filter(Boolean);
-      const after = SERIES_IDS[SERIES_IDS.indexOf(a.round) + 1];
+      const ladder = vcLadder(state);
+      const after = ladder[ladder.findIndex((r) => r.round === a.round) + 1]?.round;
+      const merged = a.vcs.some((p) => p.parts !== null);
       approachView = {
         round: a.round,
         name: ROUND_NAMES[a.round],
@@ -872,7 +963,9 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
         yourShareBefore: yours / inIssue,
         effects: [
           "The company's valuation becomes the VC's figure, with their cash, and moves in step with the formula from then on.",
-          "All their cash is paid on signing.",
+          merged
+            ? "Their cash comes in two tranches: the first on signing, the second once the company hits their growth target, which stays hidden as the rounds' targets do. Until it's paid, the valuation counts only the cash you have."
+            : "All their cash is paid on signing.",
           ...(after ? [`They become your lead VC: they'll be back for ${ROUND_NAMES[after]} alongside two new VCs.`] : []),
           ...(closing.length ? [`Friends and family and grants close for good: ${closing.join(" and ")} will be gone.`] : []),
         ],
@@ -896,7 +989,7 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
     return {
       approach: approachView,
       negotiation,
-      rounds: SERIES_IDS.map((round) => ({
+      rounds: vcLadder(state).map(({ round }) => ({
         round,
         name: ROUND_NAMES[round],
         firstApproachDay: v.firstApproachDay[round],
@@ -923,15 +1016,17 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
   }
 
   /**
-   * Takes the picked VC's offer that stands, at once: their cash for new shares. Their figure becomes the valuation,
+   * Takes the picked VC's offer that stands, at once: their cash for new shares, a merged round's first tranche now and
+   * its second once the later round's target is hit. Their figure becomes the valuation,
    * they become the lead VC, and friends and family and the grant close.
    */
   function acceptVc(state: GameState): GameState {
     const { a, vc } = pickedVc(state);
     const t = vcTerms(state, a, vc);
+    const split = tranches(vc, t.amount);
     const entry: LogEntry = {
-      text: `${vc.investor} led your ${ROUND_NAMES[a.round]}: ${pounds(t.amount)} for ${count.format(t.newShares)} new shares, ${percent(t.theirShare)} of the company, valuing it at ${pounds(t.valuation)}. You now own ${percent(t.yourShareAfter)}.`,
-      cashDelta: t.amount,
+      text: `${vc.investor} led your ${ROUND_NAMES[a.round]}: ${pounds(t.amount)} for ${count.format(t.newShares)} new shares, ${percent(t.theirShare)} of the company, valuing it at ${pounds(t.valuation)}. You now own ${percent(t.yourShareAfter)}.${split ? ` They paid ${pounds(split[0])} on signing; the second tranche, ${pounds(split[1])}, comes once the company hits their growth target.` : ""}`,
+      cashDelta: split ? split[0] : t.amount,
       kind: "funding",
     };
     const deal: VcDeal = {
@@ -943,6 +1038,7 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
       shares: t.newShares,
       share: t.theirShare,
       valuation: t.valuation,
+      tranche: split ? { amount: split[1], target: vc.parts![1]!.round, paidDay: null } : null,
     };
     const v = state.investors.vc;
     const holding = state.shareholders.some((h) => h.id === "vc" && h.investor === vc.investor);

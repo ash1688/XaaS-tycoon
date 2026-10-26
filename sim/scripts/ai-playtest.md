@@ -123,7 +123,10 @@ npm run -s play -- summary <game>
   `accept vc` and `decline vc` work as for the angel. `decline vc` before picking turns all three down. Turned down,
   failed or left to lapse, three new VCs approach for the same round a few days later. Accepting sets your valuation
   to the VC's figure, and they become your lead VC, back for the next round alongside two new VCs. The IPO needs no
-  round's money, but Series A must have approached: it opens the last C-suite roles.
+  round's money, but Series A must have approached: it opens the last C-suite roles. A 180-day game has two rounds,
+  not four: Series A (the size of A and B together) and Series B (C and D together). Each pays its cash in two
+  tranches, the first on signing and the second once the company hits the VC's growth target (`vc` shows what's still
+  to come).
 - **Pay reviews**: a game counts as one year of four quarters, and before quarters 2, 3 and 4 your staff come to you
   about pay. Until IPO and a career have years of 365 days: reviews before quarters 2, 3 and 4 of the first year, then
   before every quarter after (`Y2Q1` is quarter 1 of year 2). Time stops, and `next` is refused until the review is settled. `pay` shows it: this review's inflation

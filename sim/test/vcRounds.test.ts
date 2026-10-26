@@ -8,6 +8,7 @@ import {
   VC_LEANS,
   type DayLog,
   type GameConfig,
+  type GameLengthId,
   type GameState,
   type PauseReason,
   type SeriesId,
@@ -17,12 +18,14 @@ import {
 // Venture capital, Series A–D, through the sim's public interface: each round approaching at its hidden target with
 // three offers, their leans, picking one (which closes the others), declining or failing (three new VCs), accepting
 // (the valuation follows the chosen VC), the lead VC returning, and the IPO needing
-// only Series A to have approached (when the last C-suite roles open).
+// only Series A to have approached (when the last C-suite roles open). Played as 1-year games, which have all four
+// rounds; a 180-day game's two merged rounds are at the end.
 
 const vc = defaultConfig.investors.vc;
 /** Low targets, a short gap and an early angel, so every round comes within a game. */
 const fast: GameConfig = {
   ...defaultConfig,
+  allowedGameLengths: { ...defaultConfig.allowedGameLengths, "1-year": 1, "until-ipo": 1, career: 1 },
   events: [],
   payReview: { ...defaultConfig.payReview, on: 0 },
   investors: {
@@ -52,7 +55,8 @@ function stopAfter(last: SeriesId): Sim {
 }
 const onlyA = stopAfter("seriesA");
 const sensible = STRATEGIES.find((s) => s.id === "sensible")!;
-const begin = (s: Sim = sim, seed = 42) => s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed });
+const begin = (s: Sim = sim, seed = 42, gameLength: GameLengthId = "1-year") =>
+  s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed, gameLength });
 
 const refusal = (fn: () => unknown) => {
   try {
@@ -332,5 +336,121 @@ describe("the IPO gate", () => {
   it("puts no Series round on the checklist", () => {
     const state = until("seriesB").state;
     expect(sim.ipo(state).conditions.filter((c) => c.id.startsWith("series"))).toEqual([]);
+  });
+});
+
+describe("a 180-day game's two rounds", () => {
+  const short = (s: Sim = sim, seed = 42) => begin(s, seed, "180-days");
+
+  it("has two rounds, Series A and B: Series A approaches at old Series A's target, for A and B's offers together", () => {
+    const { state } = until("seriesA", sim, short());
+    const angelDay = state.investors.firstApproachDay!;
+    expect(state.day).toBe(targetDay(fast, state, "seriesA", angelDay + fast.investors.vc.gapDays) + fast.investors.approachDays);
+    const v = sim.investors(state).vc;
+    expect(v.rounds.map((r) => r.name)).toEqual(["Series A", "Series B"]);
+    expect(v.approach!.effects).toContain(
+      "Their cash comes in two tranches: the first on signing, the second once the company hits their growth target, which stays hidden as the rounds' targets do. Until it's paid, the valuation counts only the cash you have.",
+    );
+    for (const p of state.investors.vc.approach!.vcs) {
+      expect(p.parts!.map((x) => x.round)).toEqual(["seriesA", "seriesB"]);
+      for (const part of p.parts!) {
+        expect(part.amount).toBeGreaterThanOrEqual(vc.rounds[part.round].minAmount);
+        expect(part.amount).toBeLessThanOrEqual(vc.rounds[part.round].maxAmount);
+      }
+      // Their share added together too, but never more than 90% of the company, as any offer.
+      const share = Math.min(0.9, p.parts![0]!.share + p.parts![1]!.share);
+      expect(p.negotiation.offers[0]).toEqual({ amount: p.parts![0]!.amount + p.parts![1]!.amount, share });
+    }
+  });
+
+  it("takes the cash and share of the two rounds added together", () => {
+    // Fixed ranges, so a merged offer's share is the two rounds' shares, as the lean asks, added together.
+    const rounds = fast.investors.vc.rounds;
+    const fixed = createSim({
+      ...fast,
+      investors: {
+        ...fast.investors,
+        vc: {
+          ...fast.investors.vc,
+          rounds: {
+            ...rounds,
+            seriesA: { ...rounds.seriesA, premium: { min: 1.5, max: 1.5 }, share: { min: 0.2, max: 0.2 }, minAmount: 0, maxAmount: 1e9 },
+            seriesB: { ...rounds.seriesB, premium: { min: 1.5, max: 1.5 }, share: { min: 0.15, max: 0.15 }, minAmount: 0, maxAmount: 1e9 },
+          },
+        },
+      },
+    });
+    const state = until("seriesA", fixed, short(fixed)).state;
+    const a = state.investors.vc.approach!;
+    const worth = a.business * 1.5 + a.netCash;
+    for (const o of fixed.investors(state).vc.approach!.offers) {
+      const lean = vc.leans[o.lean];
+      const premium = worth + a.business * lean.premium;
+      // Each round's cash buys its share at the same valuation: added together, as the four-round game's two would.
+      const cashFor = (share: number) => Math.round((share * lean.share * premium) / (1 - share * lean.share) / 1000) * 1000;
+      expect(o.amount).toBe(cashFor(0.2) + cashFor(0.15));
+      expect(o.theirShare).toBeCloseTo(0.2 * lean.share + 0.15 * lean.share, 2);
+    }
+  });
+
+  it("pays the first tranche on signing, and the second once old Series B's target is hit", () => {
+    const state = until("seriesA", sim, short()).state;
+    const offer = sim.investors(state).vc.approach!.offers[0]!;
+    expect(offer.secondTranche).toBeGreaterThan(0);
+    const first = offer.amount - offer.secondTranche!;
+    const accepted = sim.applyAction(sim.applyAction(state, { type: "pickInvestor", investor: offer.investor }), { type: "acceptInvestor" });
+    expect(accepted.cash).toBeCloseTo(state.cash + first, 6);
+    const deal = sim.investors(accepted).vc.rounds[0]!.deal!;
+    expect(deal).toMatchObject({ amount: offer.amount, shares: offer.newShares, tranche: { amount: offer.secondTranche, target: "seriesB", paidDay: null } });
+    expect(sim.capTable(accepted).rows.find((r) => r.id === "vc")!.share).toBeCloseTo(offer.theirShare, 6);
+
+    const paid = (s: GameState) => s.investors.vc.deals[0]!.tranche!.paidDay !== null;
+    const { state: after, log } = playUntil(sim, accepted, paid);
+    expect(after.day).toBe(targetDay(fast, after, "seriesB", state.day + fast.investors.vc.gapDays));
+    const entry = log.at(-1)!.entries.find((e) => e.text.includes("second tranche"))!;
+    expect(entry).toMatchObject({ cashDelta: offer.secondTranche, kind: "funding" });
+    expect(entry.text).toBe(`${offer.investor} paid the second tranche of your Series A: £${offer.secondTranche!.toLocaleString("en-GB")}, now that Acme has hit their growth target.`);
+    expect(after.spendByDay.at(-1)!.raised).toBe(offer.secondTranche);
+  });
+
+  it("brings Series B at old Series C's target, for C and D's offers together, with the lead VC back", () => {
+    const state = until("seriesA", sim, short()).state;
+    const offer = sim.investors(state).vc.approach!.offers[1]!;
+    const accepted = sim.applyAction(sim.applyAction(state, { type: "pickInvestor", investor: offer.investor }), { type: "acceptInvestor" });
+    const atB = until("seriesB", sim, accepted).state;
+    expect(atB.day).toBe(targetDay(fast, atB, "seriesC", state.day + fast.investors.vc.gapDays) + fast.investors.approachDays);
+    const b = sim.investors(atB).vc.approach!;
+    expect(b).toMatchObject({ round: "seriesB", name: "Series B" });
+    expect(b.offers[0]).toMatchObject({ investor: offer.investor, lead: true });
+    expect(atB.investors.vc.approach!.vcs.every((p) => p.parts!.map((x) => x.round).join() === "seriesC,seriesD")).toBe(true);
+    // The last round: no lead to come back for.
+    expect(b.effects.some((e) => e.includes("lead VC"))).toBe(false);
+  });
+
+  it("sees at most two rounds in the whole game, and its summary says so", () => {
+    let state = short();
+    // Declines every approach, so the game runs to its last day.
+    while (state.status === "playing") {
+      if (state.investors.vc.approach || state.investors.approach) state = sim.applyAction(state, { type: "declineInvestor" });
+      state = sim.tick(playDay(sim, state, sensible)).state;
+    }
+    expect(state.investors.vc.firstApproachDay).toMatchObject({ seriesC: null, seriesD: null });
+    expect(state.investors.vc.firstApproachDay.seriesB).not.toBeNull();
+    expect(new Set(state.investors.vc.declined.map((d) => d.round))).toEqual(new Set(["seriesA", "seriesB"]));
+    expect(sim.summarise(state).vcRounds).toBe(2);
+  });
+
+  it("leaves every other length's four rounds as they were, all cash paid on signing", () => {
+    for (const length of ["1-year", "until-ipo", "career"] as const) {
+      const state = until("seriesA", sim, begin(sim, 42, length)).state;
+      expect(sim.investors(state).vc.rounds.map((r) => r.name)).toEqual(["Series A", "Series B", "Series C", "Series D"]);
+      expect(sim.summarise(state).vcRounds).toBe(4);
+      expect(state.investors.vc.approach!.vcs.every((p) => p.parts === null)).toBe(true);
+      const offer = sim.investors(state).vc.approach!.offers[0]!;
+      expect(offer.secondTranche).toBeNull();
+      const accepted = sim.applyAction(sim.applyAction(state, { type: "pickInvestor", investor: offer.investor }), { type: "acceptInvestor" });
+      expect(accepted.cash).toBeCloseTo(state.cash + offer.amount, 6);
+      expect(accepted.investors.vc.deals[0]!.tranche).toBeNull();
+    }
   });
 });

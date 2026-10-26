@@ -37,7 +37,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 52;
+export const GAME_STATE_VERSION = 53;
 
 /**
  * A candidate on a C-suite role's shortlist. Strength, 0 to 1, sets each of the role's effects within its range; the
@@ -356,6 +356,11 @@ export interface VcPitch {
   lean: VcLean;
   lead: boolean;
   negotiation: Negotiation;
+  /**
+   * In a two-round game, the opening offer for each of the two rounds merged into this one, earlier round first: the
+   * offer opened at their cash and their shares added together. Null in a four-round game.
+   */
+  parts: { round: SeriesId; amount: number; share: number }[] | null;
 }
 
 /**
@@ -382,6 +387,18 @@ export interface VcDeal {
   shares: number;
   share: number;
   valuation: number;
+  /**
+   * A merged round's second tranche, in a two-round game: the later round's part of the cash, paid when that round's
+   * target is hit. Null in a four-round game, where all the cash is paid on signing.
+   */
+  tranche: VcTranche | null;
+}
+
+/** A merged round's second tranche: its cash, the round whose target pays it, and the day it was paid (null until then). */
+export interface VcTranche {
+  amount: number;
+  target: SeriesId;
+  paidDay: number | null;
 }
 
 /**

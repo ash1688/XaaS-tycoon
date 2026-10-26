@@ -3,10 +3,12 @@ import { E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
 
 // Venture capital: Series A's three VCs approaching with a notification, the rounds on Finance and the IPO checklist,
 // picking one (which closes the other two), negotiating and accepting (the valuation theirs, a VC on the cap table),
-// and the lead VC coming back for Series B.
+// and the lead VC coming back for Series B. A 180-day game has two rounds, each merging two of the four and paying its
+// cash in two tranches.
 
 // An angel within days of the launch, then each round two days after the one before, at targets any launched company
-// hits, so Series A and B come in a 30-day game.
+// hits, so Series A and B come in a 30-day game: Series A at old Series A's target, its second tranche at B's, and
+// Series B at C's.
 const EARLY_VC = {
   "investors.angel.targetDays": 10,
   "investors.approachDays": 1,
@@ -18,6 +20,8 @@ const EARLY_VC = {
   "investors.vc.rounds.seriesA.target.payingUsers": 0.01,
   "investors.vc.rounds.seriesB.target.dailyRevenue": 0,
   "investors.vc.rounds.seriesB.target.payingUsers": 0.01,
+  "investors.vc.rounds.seriesC.target.payingUsers": 0.01,
+  "investors.vc.rounds.seriesC.target.minUptime": 0,
 };
 
 let code: string | null = null;
@@ -66,6 +70,8 @@ test("Series A's three VCs approach; picking one closes the others, accepting se
   const panel = student.getByTestId("investor-panel");
   await expect(panel.getByTestId("vc")).toContainText("You don't need their money to float");
   await expect(panel.getByTestId("vc-round-seriesA")).toContainText("Series A not yet");
+  await expect(panel.getByTestId("vc")).toContainText("a 180-day game has two rounds");
+  await expect(panel.locator('[data-testid^="vc-round-"]')).toHaveCount(2);
 
   // The approach: time stopped for it, and a notification on every page.
   await continueUntil(student, "vc-note");
@@ -78,11 +84,15 @@ test("Series A's three VCs approach; picking one closes the others, accepting se
   const offers = panel.locator("[data-vc-offer]");
   await expect(offers).toHaveCount(3);
   await expect(offers.getByText(/^(Most cash|Fewest conditions|Least ownership)$/)).toHaveCount(3);
+  await expect(offers.getByTestId("vc-offer-tranches")).toHaveCount(3);
+  await expect(offers.getByTestId("vc-offer-tranches").first()).toContainText(/£[\d,]+ on signing, £[\d,]+ once you hit their growth target/);
   const name = (await offers.nth(1).locator("strong").first().textContent())!;
   await offers.nth(1).getByTestId("vc-pick").click();
   const modal = student.getByRole("dialog", { name: "Series A offer" });
   await expect(modal).toBeVisible();
   await expect(modal.getByTestId("vc-effects")).toContainText("They become your lead VC");
+  await expect(modal.getByTestId("vc-effects")).toContainText("Their cash comes in two tranches");
+  await expect(modal.getByTestId("vc-tranches")).toContainText(/in two tranches: £[\d,]+ now, and £[\d,]+ once you hit their growth target/);
   await expect(offers.getByText("Closed")).toHaveCount(2);
 
   // Negotiate once, then accept the offer that stands.
@@ -96,12 +106,14 @@ test("Series A's three VCs approach; picking one closes the others, accepting se
   await expect(modal).toBeHidden();
   await expect(student.getByTestId("vc-note")).toBeHidden();
   await expect(panel.getByTestId("vc-round-seriesA")).toContainText(`${name} put in`);
+  await expect(panel.getByTestId("vc-tranche")).toContainText("still to come, once you hit their growth target");
   await expect(panel.getByTestId("vc-lead")).toContainText(`${name} is your lead VC`);
   await expect(student.getByTestId("driver-investor")).toContainText(`${name}, your Series A VC, valued the business at`);
   await expect(student.getByTestId("cap-vc")).toContainText(`${name} (VC)`);
 
-  // Series B: the lead VC is back alongside two new VCs.
+  // Series B: the lead VC is back alongside two new VCs, after Series A's second tranche came in.
   await continueUntil(student, "vc-note");
+  await expect(panel.getByTestId("vc-tranche")).toContainText(/the second tranche, £[\d,]+, paid day \d+/);
   await expect(student.getByTestId("vc-note")).toContainText("Series B");
   await expect(offers).toHaveCount(3);
   await expect(offers.filter({ hasText: "Your lead VC, back from the last round." })).toContainText(name);

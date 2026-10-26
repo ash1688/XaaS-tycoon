@@ -27,6 +27,7 @@ import {
   type FunderId,
   type GameDate,
   type GameState,
+  type VcTranche,
   type IpoResult,
   type NegotiationRound,
   type NegotiationView,
@@ -970,16 +971,24 @@ function angelLines(sim: Sim, state: GameState): string[] {
   ];
 }
 
-/** Each Series round in a few words: the day it first approached, and the deal if one was done. */
+/** A merged round's second tranche in a few words: paid, or still to come. */
+const trancheText = (t: VcTranche | null) =>
+  t === null ? "" : t.paidDay === null ? `, ${money(t.amount)} of it to come once you hit their growth target` : `, the last ${money(t.amount)} paid day ${t.paidDay}`;
+
+/**
+ * Each Series round in a few words: the day it first approached, and the deal if one was done. A 180-day game has two,
+ * each merging two rounds.
+ */
 function roundsText(sim: Sim, state: GameState): string {
-  return sim
-    .investors(state)
-    .vc.rounds.map((r) =>
+  const rounds = sim.investors(state).vc.rounds;
+  const text = rounds
+    .map((r) =>
       r.firstApproachDay === null
         ? `${r.name} not yet`
-        : `${r.name} approached day ${r.firstApproachDay}${r.deal ? ` (${r.deal.investor} put in ${money(r.deal.amount)} for ${stake(r.deal.share)})` : ""}`,
+        : `${r.name} approached day ${r.firstApproachDay}${r.deal ? ` (${r.deal.investor} put in ${money(r.deal.amount)} for ${stake(r.deal.share)}${trancheText(r.deal.tranche)})` : ""}`,
     )
     .join(", ");
+  return rounds.length === 2 ? `${text} (a 180-day game has two VC rounds, each merging two)` : text;
 }
 
 /** Who closed friends and family and the grant: "an angel", or the first VC taken ("a Series A VC"). */
@@ -1022,7 +1031,8 @@ function vcLines(sim: Sim, state: GameState): string[] {
       (o, i) =>
         `  ${i + 1}) ${o.investor}${o.lead ? ", your lead VC," : ""} leans to ${o.leanLabel.toLowerCase()} [${o.status}]: ${money(o.amount)} for ${o.newShares.toLocaleString("en-GB")} new shares at ${perShare(o.sharePrice)}. ` +
         `They value the company at ${money(o.preMoney)} before their cash (${o.multiple}× the formula's business; today's valuation is ${money(a.formulaValuation)}), ${money(o.valuation)} with it. ` +
-        `They'd own ${stake(o.theirShare)}; you'd go from ${stake(a.yourShareBefore)} to ${stake(o.yourShareAfter)}.`,
+        `They'd own ${stake(o.theirShare)}; you'd go from ${stake(a.yourShareBefore)} to ${stake(o.yourShareAfter)}.` +
+        (o.secondTranche === null ? "" : ` ${money(o.amount - o.secondTranche)} on signing, ${money(o.secondTranche)} once you hit their growth target.`),
     ),
     ...a.effects.map((e) => `  accepting: ${e}`),
     `  offers: ${standsText(a.daysLeft, a.lastDay)}; turned down, three new VCs approach in a few days, on less generous terms`,
@@ -1678,7 +1688,7 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
       state: current,
       rows,
       lines: [
-        `acceptInvestor: done. ${deal.investor} put in ${money(deal.amount)} for ${stake(deal.share)} in your ${ROUND_NAMES[deal.round]}; valuation now ${money(sim.valuation(current).valuation)}. They're your lead VC.`,
+        `acceptInvestor: done. ${deal.investor} put in ${money(deal.amount)} for ${stake(deal.share)} in your ${ROUND_NAMES[deal.round]}${trancheText(deal.tranche)}; valuation now ${money(sim.valuation(current).valuation)}. They're your lead VC.`,
       ],
     };
   }
