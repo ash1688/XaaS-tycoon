@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import type { ManagedService, ServerSize } from "@xaas/sim";
+import type { ManagedOption, ManagedService, ServerSize } from "@xaas/sim";
 import { formatCash, formatCount } from "../api";
 import StepperControl from "../components/StepperControl.vue";
 import { useGame } from "../game";
@@ -18,40 +18,64 @@ const hasApi = computed(() => !!game.company?.api?.owned);
 const apiu = computed(() => (m.value ? m.value.apiInstances * m.value.apiInstanceUnits : 0));
 const setApiInstances = (count: number) => game.act({ type: "setApiInstances", count });
 
-// The database and cache: a size dropdown and a − / + pair. With none running, the dropdown picks the size + adds;
-// with one running, changing it resizes it at once. You run at most one of each, so + only adds when there's none,
-// and − removes it: the cache can go, but the database can't, since every product stores data.
+// The database and cache: you run at most one of each, grown by picking a bigger size. Each shows what runs now, a size
+// picker and one button: add one at the size picked with none running, or resize to it, saying what that does to
+// capacity and the monthly bill. The cache can be removed; the database can't, since every product stores data.
+const SERVICES: ManagedService[] = ["database", "cache"];
 const picked = ref<Partial<Record<ManagedService, ServerSize>>>({});
 // A server from before databases could be missing sent the smallest with no units for none: that's none too.
 const current = (service: ManagedService) => {
   const now = (service === "database" ? m.value?.database : m.value?.cache) ?? null;
   return now && now.units > 0 ? now : null;
 };
-const sizes = (service: ManagedService) =>
+const sizes = (service: ManagedService): ManagedOption[] =>
   (service === "database" ? (m.value?.databaseOptions ?? m.value?.database?.options) : m.value?.cacheOptions) ?? [];
-const sizeOf = (service: ManagedService): ServerSize =>
-  current(service)?.size ?? picked.value[service] ?? sizes(service)[0]?.size ?? "small";
-const unitOf = (service: ManagedService) => (service === "database" ? "DBU" : "CH");
-
-function countText(service: ManagedService) {
+// The size picked: with one running and nothing picked yet, the next size up, so the button says what growing gives.
+function sizeOf(service: ManagedService): ServerSize {
+  const choice = picked.value[service];
+  if (choice) return choice;
   const now = current(service);
-  return now ? `1 ${now.size}` : "None";
+  const all = sizes(service);
+  if (!now) return all[0]?.size ?? "small";
+  return all[all.findIndex((o) => o.size === now.size) + 1]?.size ?? now.size;
 }
-function downWhy(service: ManagedService) {
-  if (!current(service)) return `You have no ${service} to remove.`;
-  if (service === "database") return "Your product needs a database: pick a size to resize it instead.";
-  return undefined;
+const option = (service: ManagedService) => sizes(service).find((o) => o.size === sizeOf(service));
+const unitOf = (service: ManagedService) => (service === "database" ? "DBU" : "CH");
+const optionText = (service: ManagedService, o: ManagedOption) =>
+  `${o.size} · ${formatCount(o.units)} ${unitOf(service)} · ${formatCash(o.monthlyCost)}/mo`;
+
+// The button: add, resize, or nothing to do when the size picked is the one running.
+function buttonText(service: ManagedService) {
+  const o = option(service);
+  if (!o) return "";
+  const what = `${formatCount(o.units)} ${unitOf(service)}, ${formatCash(o.monthlyCost)} a month`;
+  return current(service) ? `Resize to ${o.size} (${what})` : `Add a ${o.size} ${service} (${what})`;
 }
-const upWhy = (service: ManagedService) =>
-  current(service) ? `You run one ${service}: pick a bigger size to grow it.` : undefined;
+const unchanged = (service: ManagedService) => current(service)?.size === sizeOf(service);
+// What a resize changes: "15 DBU more, £1,375 a month more".
+function changeText(service: ManagedService) {
+  const now = current(service);
+  const o = option(service);
+  if (!now || !o || now.size === o.size) return "";
+  const units = o.units - now.units;
+  const cost = o.monthlyCost - now.monthlyCost;
+  const unitPart = `${formatCount(Math.abs(units))} ${unitOf(service)} ${units > 0 ? "more" : "less"}`;
+  return `${unitPart}, ${formatCash(Math.abs(cost))} a month ${cost > 0 ? "more" : "less"}. Ready at once.`;
+}
 
 function pick(service: ManagedService, size: string) {
   picked.value[service] = size as ServerSize;
-  // One running: the dropdown resizes it.
-  if (current(service)) game.act({ type: "setManagedService", service, size: size as ServerSize });
 }
-const add = (service: ManagedService) => game.act({ type: "setManagedService", service, size: sizeOf(service) });
-const remove = (service: ManagedService) => game.act({ type: "setManagedService", service, size: null });
+async function apply(service: ManagedService) {
+  game.track("control", { control: `managed-${service}`, value: current(service) ? "resize" : "add" });
+  await game.act({ type: "setManagedService", service, size: sizeOf(service) });
+  delete picked.value[service];
+}
+async function remove(service: ManagedService) {
+  game.track("control", { control: `managed-${service}`, value: "remove" });
+  await game.act({ type: "setManagedService", service, size: null });
+  delete picked.value[service];
+}
 </script>
 
 <template>
@@ -118,84 +142,66 @@ const remove = (service: ManagedService) => game.act({ type: "setManagedService"
         />
       </li>
 
-      <li data-testid="platform-database">
+      <li v-for="service in SERVICES" :key="service" :data-testid="`platform-${service}`">
         <div class="server-info">
-          <strong>Managed database</strong>
-          <span v-if="m.database" class="muted">
-            {{ formatCount(m.database.units) }} DBU for {{ formatCash(m.database.monthlyCost) }} a month. One database,
-            bigger as you grow: pick a size to resize it.
+          <strong>Managed {{ service }}</strong>
+          <span v-if="current(service)" class="managed-now" :data-testid="`managed-${service}-current`">
+            1 {{ current(service)!.size }} · {{ formatCount(current(service)!.units) }} {{ unitOf(service) }} ·
+            {{ formatCash(current(service)!.monthlyCost) }}/mo
           </span>
-          <span v-else class="muted warn-text" data-testid="no-database">
-            None yet. Your product needs a database to serve users: pick a size and press +.
+          <span v-else-if="service === 'database'" class="muted warn-text" data-testid="no-database">
+            None yet. Your product needs a database to serve users: pick a size and add it.
           </span>
-          <span class="managed-note">Stores your data. Managed by provider: no ops needed.</span>
-        </div>
-        <div class="managed-controls">
-          <label class="size-select">
-            <span>{{ current("database") ? "Size" : "Size to add" }}</span>
-            <select
-              :value="sizeOf('database')"
-              :disabled="game.busy || game.over"
-              data-testid="managed-database-size"
-              @change="pick('database', ($event.target as HTMLSelectElement).value)"
-            >
-              <option v-for="o in sizes('database')" :key="o.size" :value="o.size">
-                {{ o.size }} · {{ formatCount(o.units) }} {{ unitOf("database") }} · {{ formatCash(o.monthlyCost) }}/mo
-              </option>
-            </select>
-          </label>
-          <StepperControl
-            label="Managed database"
-            :value="countText('database')"
-            :down-label="'Remove the database'"
-            :up-label="current('database') ? 'Add another database' : `Add a ${sizeOf('database')} database`"
-            :down-why="downWhy('database')"
-            :up-why="upWhy('database')"
-            :disabled="game.busy || game.over"
-            testid="managed-database"
-            @down="remove('database')"
-            @up="add('database')"
-          />
-        </div>
-      </li>
-
-      <li data-testid="platform-cache">
-        <div class="server-info">
-          <strong>Managed cache</strong>
-          <span v-if="m.cache" class="muted">
-            {{ formatCount(m.cache.units) }} CH for {{ formatCash(m.cache.monthlyCost) }} a month: each cache hit takes
-            a DBU off the database.
+          <span v-else class="muted" :data-testid="`managed-${service}-current`">None</span>
+          <span class="muted">
+            <template v-if="service === 'database'">
+              Stores your data. You run one, grown by resizing it; it can't be removed.
+            </template>
+            <template v-else>Answers repeat reads: each cache hit takes a DBU off the database. Optional.</template>
           </span>
-          <span v-else class="muted">None. A cache answers repeat reads, taking load off the database.</span>
           <span class="managed-note">Managed by provider: no ops needed.</span>
         </div>
         <div class="managed-controls">
           <label class="size-select">
-            <span>{{ current("cache") ? "Size" : "Size to add" }}</span>
+            <span>Size</span>
             <select
-              :value="sizeOf('cache')"
+              :value="sizeOf(service)"
               :disabled="game.busy || game.over"
-              data-testid="managed-cache-size"
-              @change="pick('cache', ($event.target as HTMLSelectElement).value)"
+              :data-testid="`managed-${service}-size`"
+              @change="pick(service, ($event.target as HTMLSelectElement).value)"
             >
-              <option v-for="o in sizes('cache')" :key="o.size" :value="o.size">
-                {{ o.size }} · {{ formatCount(o.units) }} {{ unitOf("cache") }} · {{ formatCash(o.monthlyCost) }}/mo
-              </option>
+              <option v-for="o in sizes(service)" :key="o.size" :value="o.size">{{ optionText(service, o) }}</option>
             </select>
           </label>
-          <StepperControl
-            label="Managed cache"
-            :value="countText('cache')"
-            :down-label="'Remove the cache'"
-            :up-label="current('cache') ? 'Add another cache' : `Add a ${sizeOf('cache')} cache`"
-            :down-why="downWhy('cache')"
-            :up-why="upWhy('cache')"
-            :disabled="game.busy || game.over"
-            testid="managed-cache"
-            @down="remove('cache')"
-            @up="add('cache')"
-          />
+          <div class="managed-actions">
+            <button
+              v-if="!unchanged(service)"
+              type="button"
+              class="small"
+              :disabled="game.busy || game.over"
+              :data-testid="`managed-${service}-apply`"
+              @click="apply(service)"
+            >
+              {{ buttonText(service) }}
+            </button>
+            <button
+              v-if="service === 'cache' && current(service)"
+              type="button"
+              class="ghost small"
+              :disabled="game.busy || game.over"
+              data-testid="managed-cache-remove"
+              @click="remove(service)"
+            >
+              Remove the cache
+            </button>
+          </div>
         </div>
+        <p v-if="changeText(service)" class="muted step-note" :data-testid="`managed-${service}-change`">
+          {{ changeText(service) }}
+        </p>
+        <p v-else-if="unchanged(service)" class="muted step-note" :data-testid="`managed-${service}-change`">
+          This is the size you run: pick another to resize it.
+        </p>
       </li>
     </ul>
 

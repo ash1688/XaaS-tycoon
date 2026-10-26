@@ -3544,6 +3544,22 @@ body.modal-open {
   gap: 0.5rem 1rem;
 }
 
+/* PaaS: what a managed service runs now, and its add / resize / remove buttons, which wrap on a phone. */
+.managed-now {
+  font-weight: 700;
+}
+
+.managed-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.managed-actions button {
+  white-space: normal;
+  text-align: left;
+}
+
 .size-select {
   display: flex;
   flex-direction: column;
