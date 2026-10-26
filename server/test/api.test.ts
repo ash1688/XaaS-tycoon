@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
-import { createSim, defaultConfig, GAME_STATE_VERSION, PRODUCT_TYPE_IDS } from "@xaas/sim";
+import { createSim, defaultConfig, GAME_STATE_VERSION, PRODUCT_TYPE_IDS, type GameState } from "@xaas/sim";
 import { buildApp } from "../src/app.ts";
 import { companies } from "../src/db/schema.ts";
 import type {
@@ -4550,6 +4550,44 @@ describe("pay reviews", () => {
     const played = await next();
     expect(played.statusCode).toBe(200);
     expect(played.json<ContinueResult>().company.day).toBe(4);
+  });
+
+  it("rolls each review's inflation fresh, on the reviews' RNG as saved after the review before", async () => {
+    // The playtest's kind of game (social on IaaS), each review settled on a counter. The reviews' RNG is set to a
+    // known state, so the rolls are known to differ, and the game is played again in the sim alone from the saved row:
+    // save and load between days and actions must leave the same rolls.
+    const code = await newCode();
+    const created = await payApp.inject({
+      method: "POST",
+      url: `/api/codes/${code}/companies`,
+      payload: { name: "Acme", productType: "social", model: "iaas" },
+    });
+    const { id } = created.json<CompanyView>();
+    await testDb.db
+      .update(companies)
+      .set({ state: sql`jsonb_set(${companies.state}, '{payReviewRng}', '12345')` })
+      .where(eq(companies.id, id));
+    const [row] = await testDb.db.select().from(companies).where(eq(companies.id, id));
+    const url = `/api/codes/${code}/companies/${id}`;
+    const act = (payload: object) => payApp.inject({ method: "POST", url: `${url}/actions`, payload });
+    let local = row!.state as GameState;
+    const served: number[] = [];
+    const replayed: number[] = [];
+    for (let i = 0; i < 12 && local.status === "playing"; i++) {
+      const played = (await payApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+      local = paySim.tick(local).state;
+      const review = played.company.payReview;
+      if (!review) continue;
+      served.push(review.inflation);
+      replayed.push(local.payReview!.inflation);
+      await act({ type: "offerPayRise", rise: review.minOffer });
+      expect((await act({ type: "acceptPayCounter" })).json<CompanyView>().payReview).toBeNull();
+      local = paySim.applyAction(paySim.applyAction(local, { type: "offerPayRise", rise: review.minOffer }), { type: "acceptPayCounter" });
+    }
+    expect(served).toEqual(replayed);
+    expect(served).toEqual([0.059, 0.053, 0.023]);
+    const [saved] = await testDb.db.select().from(companies).where(eq(companies.id, id));
+    expect((saved!.state as GameState).payReviewRng).toBe(local.payReviewRng);
   });
 
   it("settles at once on an offer of staff's ask", async () => {
