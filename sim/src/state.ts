@@ -1176,6 +1176,11 @@ export type Action =
    * offer price, once approved, and rings the opening bell: the first day of trading is played and the game ends.
    */
   | { type: "ringBell"; float: number }
+  /**
+   * Presses Launch once the MVP is done: the company goes live on the next day played, and its first users arrive at
+   * the end of it. It can launch short of servers or ops (see LaunchView.missing).
+   */
+  | { type: "launch" }
   /** Buys the product's paid API, charged at once. Calls start arriving from the next day played. */
   | { type: "buyApi" }
   /**

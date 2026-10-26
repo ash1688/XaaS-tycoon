@@ -3,17 +3,19 @@ import { settlingPay } from "./settlingPay.ts";
 import { createSim, defaultConfig, type GameConfig, type GameState, type ProductTypeId } from "../src/index.ts";
 
 // Pay reviews settled as they open, as a bot would: they have their own tests (payReview.test.ts).
-const sim = settlingPay(createSim());
+// Launch presses itself once servers can serve users: Launch has its own tests (mvp.test.ts).
+const AUTO_LAUNCH: GameConfig["launch"] = { ...defaultConfig.launch, auto: 1 };
+const sim = settlingPay(createSim({ ...defaultConfig, launch: AUTO_LAUNCH }));
 
 /** The default config with the rivals' settings changed. */
 function withRivals(rivals: Partial<GameConfig["rivals"]>): GameConfig {
-  return { ...defaultConfig, rivals: { ...defaultConfig.rivals, ...rivals } };
+  return { ...defaultConfig, launch: AUTO_LAUNCH, rivals: { ...defaultConfig.rivals, ...rivals } };
 }
 
 /** The default config with no rivals in one product's market. */
 function withoutRivals(productType: ProductTypeId): GameConfig {
   const product = defaultConfig.productTypes[productType];
-  return { ...defaultConfig, productTypes: { ...defaultConfig.productTypes, [productType]: { ...product, rivals: [] } } };
+  return { ...defaultConfig, launch: AUTO_LAUNCH, productTypes: { ...defaultConfig.productTypes, [productType]: { ...product, rivals: [] } } };
 }
 
 const start = (s = sim, productType: ProductTypeId = "ecommerce"): GameState =>

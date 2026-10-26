@@ -114,6 +114,7 @@ describe("roles and shortlists", () => {
   it("opens the CFO, CTO and head of people when the first angel approaches, saying so in the log", () => {
     const early = createSim({
       ...quiet,
+      launch: { ...quiet.launch, auto: 1 },
       investors: { ...quiet.investors, angel: { ...quiet.investors.angel, target: { dailyRevenue: 300, days: 3 } } },
     });
     let state = begin(early);
@@ -288,7 +289,7 @@ describe("the board's pay holiday", () => {
 
 describe("each role's effect, through its seam", () => {
   /** No MVP to build, so developers' work goes into features and the slider from day 1. */
-  const built = createSim({ ...quiet, mvp: NO_MVP });
+  const built = createSim({ ...quiet, mvp: NO_MVP, launch: { ...quiet.launch, auto: 1 } });
 
   it("head of development: more developer output on the MVP, features and optimisation", () => {
     const state = begin();
@@ -307,7 +308,7 @@ describe("each role's effect, through its seam", () => {
   it("head of ops: ops cover more servers, and outages are shorter", () => {
     const outage: GameConfig = {
       ...quiet,
-      mvp: NO_MVP,
+      mvp: NO_MVP, launch: { ...quiet.launch, auto: 1 },
       events: [
         {
           id: "providerOutage",
@@ -355,6 +356,7 @@ describe("each role's effect, through its seam", () => {
     const angel = angelApproached(hired);
     const early = createSim({
       ...quiet,
+      launch: { ...quiet.launch, auto: 1 },
       investors: { ...quiet.investors, angel: { ...quiet.investors.angel, target: { dailyRevenue: 300, days: 3 } } },
     });
     let approached = begin(early);
@@ -453,7 +455,7 @@ describe("each role's effect, through its seam", () => {
       ...quiet,
       // The real events, breaches among them.
       events: defaultConfig.events,
-      mvp: NO_MVP,
+      mvp: NO_MVP, launch: { ...quiet.launch, auto: 1 },
       csuite: {
         ...quiet.csuite,
         roles: { ...quiet.csuite.roles, ciso: { ...quiet.csuite.roles.ciso, effects: { patching: { min: 0.5, max: 0.5 }, breachCut: { min: 1, max: 1 } } } },

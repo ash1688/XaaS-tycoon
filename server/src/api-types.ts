@@ -258,9 +258,9 @@ export interface CompanyView {
   /** What the current headcount costs per day. */
   dailyStaffCost: number;
   /**
-   * The launch: "upcoming" with the launch day the setup gives and the days to it, "waiting" once the earliest launch
-   * day has passed with nothing set up (or arrived) to serve users, "launched" with the day it did. The launch burst of
-   * users (and of them those paying), whether the model has servers to set up, and whether they are.
+   * The launch: "waiting" or "upcoming" while the MVP is built, "ready" once it's done and waiting for Launch, then
+   * "launching" and "launched" from go-live, the day Launch was pressed for. Whether the model has servers to set up,
+   * whether they are, and before go-live what launching would be short of.
    */
   launch: LaunchView;
   /** The MVP every game opens with: developer-days done of its total, and the day it'll be done at today's developers. */

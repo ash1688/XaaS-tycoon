@@ -43,7 +43,7 @@ function noneNote(t: Tier) {
 const launchNeeds = computed(() => {
   const c = game.company;
   const l = c?.launch;
-  if (!c || !l || !l.needsServers || (l.status !== "waiting" && l.status !== "upcoming")) return null;
+  if (!c || !l || !l.needsServers || !["waiting", "upcoming", "ready"].includes(l.status)) return null;
   const building = !c.mvp.done && c.mvp.total > 0;
   const day = building && c.mvp.launchDay !== null ? ` (day ${c.mvp.launchDay})` : "";
   return {

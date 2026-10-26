@@ -11,7 +11,9 @@ import {
   type ProductTypeId,
 } from "../src/index.ts";
 
-const sim = createSim();
+// Launch presses itself once servers can serve users: Launch has its own tests (mvp.test.ts).
+const AUTO_LAUNCH: GameConfig["launch"] = { ...defaultConfig.launch, auto: 1 };
+const sim = createSim({ ...defaultConfig, launch: AUTO_LAUNCH });
 
 /** A SaaS company 20 days in: launched, with paying users to react to a price change. */
 const running = (s = sim, productType: ProductTypeId = "social"): GameState =>
@@ -22,6 +24,7 @@ function withMix(productType: ProductTypeId, customerMix: Record<CustomerTypeId,
   const product = defaultConfig.productTypes[productType];
   return {
     ...defaultConfig,
+    launch: AUTO_LAUNCH,
     productTypes: { ...defaultConfig.productTypes, [productType]: { ...product, pricing: { ...product.pricing, customerMix } } },
   };
 }

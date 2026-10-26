@@ -828,6 +828,7 @@ export async function buildApp(opts: AppOptions) {
                 "autoNegotiateInvestor",
                 "pickInvestor",
                 "buyBack",
+                "launch",
                 "buyApi",
                 "switchServer",
                 "setApiInstances",

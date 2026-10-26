@@ -3,7 +3,8 @@ import { createSim, dayOfDate, defaultConfig, gameDate, SimError, type GameConfi
 
 // The real calendar and its holidays, through the sim's public interface, on the default config. Events are taken out
 // so only holidays move load and growth.
-const quiet: GameConfig = { ...defaultConfig, events: [], allowedGameLengths: { "180-days": 1, "until-ipo": 0, "1-year": 1, career: 1 } };
+// Launch presses itself once servers can serve users: Launch has its own tests (mvp.test.ts).
+const quiet: GameConfig = { ...defaultConfig, launch: { ...defaultConfig.launch, auto: 1 }, events: [], allowedGameLengths: { "180-days": 1, "until-ipo": 0, "1-year": 1, career: 1 } };
 const sim = createSim(quiet);
 
 const begin = (productType: string, startDate: string, gameLength = "1-year") =>

@@ -2,25 +2,24 @@ import type { GameConfig } from "./config.ts";
 import { count } from "./finance.ts";
 import { mvpDoneBy, mvpStatus } from "./mvp.ts";
 import type { Pricing } from "./pricing.ts";
-import type { Servers } from "./servers.ts";
+import type { Servers, UnitsView } from "./servers.ts";
 import { staffOutput } from "./staff.ts";
-import type { GameState, LogEntry } from "./state.ts";
+import { SimError, type GameState, type LogEntry } from "./state.ts";
 
 /** Where the company is with its launch, for the Home card. */
 export interface LaunchView {
   /**
-   * "waiting" while nothing it has set up could serve users, or there are no developers to finish the MVP; "upcoming"
-   * once both will be ready, but aren't yet (the MVP being built, VMs being set up, kit on order); "launching" while its first users trickle in over the ramp; "launched" once the
-   * ramp is over and normal growth has taken over.
+   * "waiting" while there are no developers to finish the MVP; "upcoming" while it's being built; "ready" once it's
+   * done and the company waits for the student to press Launch; "launching" from then while its first users trickle
+   * in over the ramp; "launched" once the ramp is over and normal growth has taken over. With launch.auto (tests and
+   * demos), never "ready": a done MVP is "waiting" until servers are set up to serve users, then "upcoming".
    */
-  status: "waiting" | "upcoming" | "launching" | "launched";
+  status: "waiting" | "upcoming" | "ready" | "launching" | "launched";
   /**
-   * The first day users arrived or, with the setup and developers it has now, will arrive: the first day the MVP is
-   * done and servers are ready by. Null while nothing it has could serve users, or nobody is building the MVP.
+   * Go-live: the day Launch was pressed for (the next day played), the first day of the ramp, its first users arriving
+   * at the end of it. Null until Launch is pressed.
    */
   day: number | null;
-  /** Days from the day just played to that day: null once users have started arriving, or with nothing set up. */
-  daysLeft: number | null;
   /** Days the ramp lasts. */
   rampDays: number;
   /** Ramp days played so far, from 1 on the first day users arrived to rampDays: 0 before. */
@@ -36,15 +35,27 @@ export interface LaunchView {
    * server's share, bought kit still on order included.
    */
   opsNeeded: number;
+  /**
+   * Before go-live, what going live on the next day played would be short of, each in plain words ("No database: no
+   * users can be served"), from the same capacity the Infrastructure page shows. Empty once Launch is pressed.
+   */
+  missing: string[];
 }
 
 /**
- * Launch: a new company has no users, no servers and an MVP to build (see Mvp). Its first users start arriving at the
- * end of the first day its MVP is done and it has capacity to serve them, and trickle in over the launch ramp (see
- * LaunchConfig). Before that nothing is running, so there are no users, income, tickets, events or hosting bills, but
- * staff and loan repayments are still charged.
+ * Launch: a new company has no users, no servers and an MVP to build (see Mvp). Once the MVP is done it waits, ready
+ * to launch, until the student presses Launch: go-live is the next day played, and its first users arrive at the end
+ * of it and trickle in over the launch ramp (see LaunchConfig). Before go-live nothing is running, so there are no
+ * users, income, tickets, events or hosting bills, but staff and loan repayments are still charged. The student can
+ * launch short of an app server, database or ops: `missing` says what's short, and users who can't be served leave.
+ * `units` gives the capacity the Infrastructure page shows, on a model with servers.
  */
-export function createLaunch(config: GameConfig, servers: Servers, pricing: Pricing) {
+export function createLaunch(
+  config: GameConfig,
+  servers: Servers,
+  pricing: Pricing,
+  units: (state: GameState) => UnitsView | null,
+) {
   // A ramp whose shares add up to nothing brings everyone on the first day.
   const raw = config.launch.rampShares;
   const total = raw.reduce((sum, s) => sum + Math.max(0, s), 0);
@@ -64,35 +75,58 @@ export function createLaunch(config: GameConfig, servers: Servers, pricing: Pric
     return servers.usersSupported(servers.capacityOn(state, day + 1, 1), state) > 0;
   }
 
-  /** Whether the company's first users arrive at the end of `day`: not launched yet, its MVP done and ready by then. */
-  const launchesOn = (state: GameState, day: number) =>
-    state.launchDay === null && mvpDoneBy(state.mvp, day) && readyBy(state, day);
+  /**
+   * With launch.auto (tests and demos), whether Launch presses itself at the end of `day`: not launched yet, its MVP
+   * done and servers ready by then. Never otherwise: the student presses Launch.
+   */
+  const autoLaunchesOn = (state: GameState, day: number) =>
+    config.launch.auto > 0 && state.launchDay === null && mvpDoneBy(state.mvp, day) && readyBy(state, day);
 
-  /** Which ramp day `day` is, from 1, for a company launching on it or already launched; 0 if it isn't one. */
+  /** Which ramp day `day` is, from 1, for a company that has launched or launches on it; 0 if it isn't one. */
   function rampDayOn(state: GameState, day: number): number {
-    const first = state.launchDay ?? (launchesOn(state, day) ? day : null);
+    const first = state.launchDay ?? (autoLaunchesOn(state, day) ? day : null);
     if (first === null) return 0;
     const k = day - first + 1;
     return k >= 1 && k <= rampDays ? k : 0;
   }
 
+  /** Whether servers that can serve users are set up, ready or on their way. Always on a model with no servers. */
+  const setUp = (state: GameState) => readyBy(state, Infinity);
+
   /**
-   * The day the company's first users arrived or, with the servers and developers it has now, will: the first day
-   * from the next one played that its MVP is done and it's ready by. Null while nothing it has could serve users, or
-   * there are no developers to finish the MVP.
+   * What going live on the next day played would be short of: on a model with servers, an app server and a database
+   * ready by then, as the Infrastructure page's capacity shows; on any model, the ops it needs now.
    */
-  function launchDayFor(state: GameState): number | null {
-    if (state.launchDay !== null) return state.launchDay;
-    const mvpDay = mvpStatus(config, { ...state, output: staffOutput(config, state, "developers") }).launchDay;
-    if (mvpDay === null) return null;
-    const first = Math.max(state.day + 1, mvpDay);
-    const days = [first, ...state.servers.map((s) => s.readyDay).filter((d) => d > first)].sort((a, b) => a - b);
-    return days.find((d) => readyBy(state, d)) ?? null;
+  function missing(state: GameState): string[] {
+    const list: string[] = [];
+    const u = units(state);
+    if (u) {
+      if (u.cu.capacity <= 0) list.push("No app server: no users can be served");
+      if (u.dbu.capacity <= 0) list.push("No database: no users can be served");
+    } else if (!setUp(state)) list.push("No capacity: no users can be served");
+    const needed = servers.opsNeeded(state);
+    const ops = staffOutput(config, state, "ops");
+    if (needed > 0 && ops < needed) {
+      const who = ops <= 0 ? "No ops" : `Short of ops (${+ops.toFixed(1)} of ${+needed.toFixed(1)} needed)`;
+      const cut = u ? Math.round(u.opsCut * 100) : 0;
+      list.push(cut > 0 ? `${who}: your servers run at ${100 - cut}% of their capacity` : `${who}: nobody to keep the service running`);
+    }
+    return list;
+  }
+
+  /**
+   * Presses Launch: the company goes live on the next day played, its first users arriving at the end of it. Only once
+   * the MVP is done, and only once. It can go ahead short of servers or ops (see missing).
+   */
+  function launch(state: GameState): GameState {
+    if (state.launchDay !== null) throw new SimError("already_launched", "You've already launched.");
+    if (!mvpDoneBy(state.mvp, state.day)) throw new SimError("mvp_first", "Your MVP isn't done yet: you can launch once it is.");
+    return { ...state, launchDay: state.day + 1 };
   }
 
   /**
    * A ramp day's arrivals, if `day` is one: its share of the launch total, split paid and free like any new users,
-   * logged. The first ramp day is kept as the launch day.
+   * logged. An auto launch's first ramp day is kept as go-live.
    */
   function arrive(state: GameState, day: number): { state: GameState; entries: LogEntry[] } {
     const k = rampDayOn(state, day);
@@ -103,35 +137,41 @@ export function createLaunch(config: GameConfig, servers: Servers, pricing: Pric
     const done = k === rampDays && rampDays > 1 ? " That's everyone: normal growth takes over from tomorrow." : "";
     const text = `${when}: ${count.format(users)} new users arrived, ${count.format(paidUsers)} of them paying.${done}`;
     return {
-      state: {
-        ...state,
-        launchDay: state.launchDay ?? day,
-        users: state.users + users,
-        paidUsers: state.paidUsers + paidUsers,
-      },
+      state: { ...state, launchDay: state.launchDay ?? day, users: state.users + users, paidUsers: state.paidUsers + paidUsers },
       entries: [{ text, cashDelta: 0, kind: "launch" }],
     };
   }
 
+  /** "waiting" or "upcoming": whether anyone is building the MVP. */
+  const building = (state: GameState) =>
+    mvpStatus(config, { ...state, output: staffOutput(config, state, "developers") }).launchDay === null ? "waiting" : "upcoming";
+
   function launchView(state: GameState): LaunchView {
-    const day = launchDayFor(state);
-    const rampDay = state.launchDay === null ? 0 : Math.min(rampDays, state.day - state.launchDay + 1);
+    const rampDay = state.launchDay === null ? 0 : Math.max(0, Math.min(rampDays, state.day - state.launchDay + 1));
     const status =
-      state.launchDay !== null ? (rampDay < rampDays ? "launching" : "launched") : day === null ? "waiting" : "upcoming";
+      state.launchDay !== null
+        ? rampDay < rampDays
+          ? "launching"
+          : "launched"
+        : !mvpDoneBy(state.mvp, state.day)
+          ? building(state)
+          : config.launch.auto > 0
+            ? setUp(state) ? "upcoming" : "waiting"
+            : "ready";
     return {
       status,
-      day,
-      daysLeft: state.launchDay !== null || day === null ? null : day - state.day,
+      day: state.launchDay,
       rampDays,
       rampDay,
       arrived: arrivedBy(state, rampDay),
       needsServers: servers.hasServers(state.model),
-      setUp: state.launchDay !== null || day !== null,
+      setUp: setUp(state),
       opsNeeded: servers.opsFor(state.model, state.servers),
+      missing: state.launchDay === null ? missing(state) : [],
     };
   }
 
-  return { launchesOn, rampDayOn, arrive, launchView };
+  return { rampDayOn, arrive, launch, launchView };
 }
 
 export type Launch = ReturnType<typeof createLaunch>;

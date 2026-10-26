@@ -58,6 +58,7 @@ export type ConfigErrors = Record<string, string>;
  * number that's neither a field nor listed here, so a new number has to be one or the other.
  */
 export const CONFIG_EXCLUSIONS: Record<string, string> = {
+  "launch.auto": "A switch for tests and demos about after launch, not a balance number: students press Launch.",
   maxCompanyNameLength: "A limit on what students type, not a balance number; the name filter and screens rely on it.",
   "shares.min": "The range of shares a student can pick is fixed by the design: 10,000 to 100,000.",
   "shares.max": "The range of shares a student can pick is fixed by the design: 10,000 to 100,000.",

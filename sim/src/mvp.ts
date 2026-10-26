@@ -26,8 +26,8 @@ export interface MvpView {
   /** Days of work left at today's developers: 0 once done, null with no developers. */
   daysLeft: number | null;
   /**
-   * The day it was or, at today's developers, will be finished: the earliest the first users can arrive, at the end of
-   * it. Null with no developers to finish it.
+   * The day it was or, at today's developers, will be finished: Launch can be pressed once it's played, for go-live the
+   * day after. Null with no developers to finish it.
    */
   launchDay: number | null;
 }
@@ -67,7 +67,7 @@ export function mvpDay(config: GameConfig, input: MvpInput): { mvp: MvpProgress;
   const total = mvpSize(config, input.productType, input.model);
   const progress = Math.min(total, tidy(mvp.progress + output));
   if (progress >= total) {
-    const text = "MVP done: your first users arrive once you have somewhere to serve them. Developers can build features now.";
+    const text = "MVP done: press Launch when you're set up, and your first users start arriving. Developers can build features now.";
     return { mvp: { progress, doneDay: day }, entries: [{ text, cashDelta: 0, kind: "launch" }] };
   }
   const text =

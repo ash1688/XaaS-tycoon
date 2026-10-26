@@ -802,7 +802,7 @@ function bargain(sim: Sim, state: GameState, policy: PayPolicy): GameState {
 }
 
 /**
- * What the bot does before each day: any pay review, price, migration, servers, staff, the MVP team, research,
+ * What the bot does before each day: any pay review, price, migration, servers, staff, Launch, the MVP team, research,
  * Campaigns, features and the slider.
  */
 export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameState {
@@ -858,10 +858,21 @@ export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameSta
       s = staffTo(sim, s, "moderators", reportsNow, reportsNextWeek, moderation.backlog / 5 / perModerator);
     }
   }
+  s = launchWhenSetUp(sim, s);
   s = mvpTeam(sim, s, strategy);
   s = hireExecutives(sim, s, strategy);
   s = marketing(sim, research(sim, s, strategy), strategy);
   return optimise(sim, buildFeatures(sim, s), strategy);
+}
+
+/**
+ * Presses Launch as soon as the MVP is done and servers ready for the next day can serve users (an app server and a
+ * database), so go-live comes as early as it can. Missing ops don't hold it back: they only cut capacity.
+ */
+function launchWhenSetUp(sim: Sim, state: GameState): GameState {
+  if (sim.launch(state).status !== "ready") return state;
+  const units = sim.units(state);
+  return !units || (units.cu.capacity > 0 && units.dbu.capacity > 0) ? tryAction(sim, state, { type: "launch" }) : state;
 }
 
 /** The first outage from load on a day, by the tier that ran over: read from the day's log. */

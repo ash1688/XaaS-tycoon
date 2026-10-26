@@ -3,14 +3,16 @@ import { settlingPay } from "./settlingPay.ts";
 import { createSim, defaultConfig, type Action, type DayLog, type GameConfig, type GameState } from "../src/index.ts";
 
 // Pay reviews settled as they open, as a bot would: they have their own tests (payReview.test.ts).
-const sim = settlingPay(createSim());
+// Launch presses itself once servers can serve users: Launch has its own tests (mvp.test.ts).
+const AUTO_LAUNCH: GameConfig["launch"] = { ...defaultConfig.launch, auto: 1 };
+const sim = settlingPay(createSim({ ...defaultConfig, launch: AUTO_LAUNCH }));
 const product = defaultConfig.productTypes.payments;
 const tx = product.transactions!;
 const perMonth = defaultConfig.billing.daysPerMonth;
 
 /** The default config with the payments app changed. */
 function withPayments(change: (p: typeof product) => typeof product, rest: Partial<GameConfig> = {}): GameConfig {
-  return { ...defaultConfig, ...rest, productTypes: { ...defaultConfig.productTypes, payments: change(product) } };
+  return { ...defaultConfig, launch: AUTO_LAUNCH, ...rest, productTypes: { ...defaultConfig.productTypes, payments: change(product) } };
 }
 
 /** A payments company on SaaS, 20 days in: launched, with paying businesses. */

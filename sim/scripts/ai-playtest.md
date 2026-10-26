@@ -33,7 +33,7 @@ npm run -s play -- summary <game>
   a week in a career. It **stops early**, on the day itself, when the game pauses for the student: an event that
   hurts or brings a wave of new users, or an outage, a holiday that hits your product (announced 14 days ahead, and on the day it starts), an
   alert (capacity over 100%, satisfaction falling below the poor mark, the grant withdrawn, paid API calls starting
-  to be dropped), a new offer, cash about to run out, or something finished (a feature
+  to be dropped), a new offer, cash about to run out, or something finished (the MVP ready to launch, a feature
   built, the launch over, servers ready, a migration step, the grant's condition met). The text interface also
   stops for a new risk on the danger meter, staff starting, satisfaction falling hard, reports going unhandled and the price lock
   ending.
@@ -51,9 +51,11 @@ npm run -s play -- summary <game>
   staff, and on the `letgo` line); it's refused if you haven't the cash. `move` only moves permanent staff.
 - Every game opens with an **MVP**: no users arrive, and nothing earns, until your developers have built it, while
   everyone is paid from day 1. The status shows its progress in developer-days and the day it'll be done. More
-  developers finish it sooner (agency developers count at half), and on SaaS it's much shorter. Your first users
-  arrive the day it's done and your servers are ready, over a 3-day launch ramp. Hosting bills start then too, though
-  on-prem kit is still paid for when you buy it.
+  developers finish it sooner (agency developers count at half), and on SaaS it's much shorter. Once it's done the
+  company waits, **ready to launch**, until you type `launch`: go-live is the next day played, and your first users
+  arrive at the end of it, over a 3-day launch ramp. Hosting bills start at go-live too, so servers rented while you
+  wait cost nothing until then (on-prem kit is still paid for when you buy it). You can launch without an app server,
+  database or ops: the status's launch line says what you'd be short of, and users who can't be served leave.
 - Once the MVP is done, the **developer slider** splits developer time between features and **optimisation**:
   `optimise <0–100>` sets the % on optimisation. Optimisation builds up for good and cuts what each user needs (CU and
   DBU on on-prem and IaaS, instances on PaaS, the per-user fee on SaaS), quickly at first and then flattening out
@@ -235,7 +237,7 @@ When the game is over, reply with a **game summary** of no more than about 350 w
 2. **Ending:** finished, liquidated or floated (and whether you were rescued, and when), on which day, final cash, paying and free users, satisfaction and uptime (from `summary`),
    and your valuation and the share of the company you still own (from `valuation`). After an IPO: the float, cash
    raised, the close and market value, and your stake (from `ipo`).
-3. **Key moments:** the launch day (when the MVP was done), first profit, price changes, migrations, funding taken or
+3. **Key moments:** the MVP done and the launch day (when you pressed Launch), first profit, price changes, migrations, funding taken or
    declined, any rescue or buy-back, what you researched and unlocked, Campaigns you ran (spend, users, cost per user),
    where you kept the developer slider, events and how you handled them (and what the danger meter was doing), any
    crisis.
