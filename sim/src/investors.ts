@@ -368,7 +368,8 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
       preMoney,
       share: amount / (preMoney + amount),
       // What the business is worth to them today, as a multiple of the formula's: what accepting sets the valuation to.
-      multiple: Math.min(multiple, (preMoney - cash) / business),
+      // Their figure's, so it holds when the 90% cap lifts the price above the multiple agreed.
+      multiple: (preMoney - cash) / business,
     };
   }
 
