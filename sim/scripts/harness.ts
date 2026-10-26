@@ -4,7 +4,6 @@ import {
   createSim,
   FUNDER_IDS,
   CSUITE_ROLES,
-  IPO_ROLES,
   seriesApproachDay,
   type CsuiteRole,
   ROUND_IDS,
@@ -87,15 +86,15 @@ export interface Strategy {
   schemes?: Partial<SchemeLevels>;
   /** How it bargains in pay reviews, in place of the default policy (see settlePay). */
   pay?: PayPolicy;
-  /** Who it hires to the C-suite, and how it picks from each shortlist. Left out, the IPO's three (see hireExecutives). */
+  /** Who it hires to the C-suite, and how it picks from each shortlist. Left out, the full C-suite the IPO needs (see hireExecutives). */
   csuite?: CsuitePolicy;
 }
 
 /**
  * Who a strategy hires to the C-suite: each role in `roles` once it's open (and the company has launched, for any but
  * the head of development), the candidate `pick` prefers. `beforeTrading` holds every hire until that many days before
- * the IPO's trading history is met, and Series A has approached (when the CISO and legal counsel open): the executives
- * the IPO needs, as late as they can be hired in time to float.
+ * the IPO's trading history is met, and Series A has approached (when the last roles open): the full C-suite the IPO
+ * needs, as late as it can be hired in time to float.
  */
 export interface CsuitePolicy {
   roles: CsuiteRole[];
@@ -103,8 +102,8 @@ export interface CsuitePolicy {
   beforeTrading?: number;
 }
 
-/** The default: the CFO, CISO and legal counsel the IPO needs, the cheapest of each, two weeks before it could float. */
-const IPO_EXECUTIVES: CsuitePolicy = { roles: [...IPO_ROLES], pick: "cheapest", beforeTrading: 14 };
+/** The default: every role, as the IPO needs, the cheapest of each, two weeks before it could float. */
+const IPO_EXECUTIVES: CsuitePolicy = { roles: [...CSUITE_ROLES], pick: "cheapest", beforeTrading: 14 };
 
 /**
  * A way of bargaining in pay reviews: what it opens with, what it adds in schemes, when it takes staff's counter and
@@ -345,7 +344,7 @@ export interface GameResult {
   rounds: Record<RoundId, number | null>;
   tradingDay: number | null;
   /**
-   * The C-suite: executives hired, the day the last of the IPO's three (CFO, CISO, legal counsel) was, or null, what
+   * The C-suite: executives hired, the day the last role was filled (the IPO needs the full C-suite), or null, what
    * their salaries came to and the equity they took.
    */
   csuite: { hired: number; ipoDay: number | null; pay: number; equity: number };
@@ -949,7 +948,7 @@ export function playGame(sim: Sim, { model, productType, strategy, seed }: GameS
 
 function csuiteResult(state: GameState): GameResult["csuite"] {
   const { hired } = state.csuite;
-  const ipo = IPO_ROLES.map((role) => hired.find((e) => e.role === role)?.day ?? null);
+  const ipo = CSUITE_ROLES.map((role) => hired.find((e) => e.role === role)?.day ?? null);
   return {
     hired: hired.length,
     ipoDay: ipo.every((d) => d !== null) ? Math.max(...(ipo as number[])) : null,
@@ -1228,7 +1227,7 @@ export function renderReport(results: GameResult[], { title = "Balance report", 
 
   out.push("## Funding rounds by strategy", "");
   out.push(
-    "The day the angel and each Series round first approached (declined or not), as medians, across every game that started. The IPO needs all four Series rounds to have approached, so strong careful play should see Series D by about the day its trading history is met (launch + the IPO's trading days), leaving time to float in a 180-day game. All four: games where every round approached. D by trading: games where Series D approached by then. Latest D: the latest Series D approach, or how many never had one.",
+    "The day the angel and each Series round first approached (declined or not), as medians, across every game that started. The IPO needs Series A to have approached (it opens the last C-suite roles) but no later round. All four: games where every round approached. D by trading: games where Series D approached by then. Latest D: the latest Series D approach, or how many never had one.",
     "",
   );
   out.push(table(["Strategy", "Angel", "Series A", "Series B", "Series C", "Series D", "All four", "D by trading", "Latest D"], used.map((s) => {
@@ -1250,10 +1249,10 @@ export function renderReport(results: GameResult[], { title = "Balance report", 
 
   out.push("## C-suite by strategy", "");
   out.push(
-    "Executives hired, as medians across every game that started. IPO three: the day the last of the CFO, CISO and legal counsel was hired (they're needed to float), and how many games had all three. Pay: what their salaries came to over the game. Equity: the share of the company they took, capped at the C-suite's cap.",
+    "Executives hired, as medians across every game that started. Full C-suite: the day the last of the 11 roles was filled (every one is needed to float), and how many games filled them all. Pay: what their salaries came to over the game. Equity: the share of the company they took, capped at the C-suite's cap.",
     "",
   );
-  out.push(table(["Strategy", "Hired", "IPO three", "Had all three", "Pay", "Equity", "Break-even"], used.map((s) => {
+  out.push(table(["Strategy", "Hired", "Full C-suite", "Filled them all", "Pay", "Equity", "Break-even"], used.map((s) => {
     const g = results.filter((r) => r.strategy === s.id && r.outcome !== "cant-start");
     const ipo = g.flatMap((r) => (r.csuite.ipoDay === null ? [] : [r.csuite.ipoDay]));
     const even = g.flatMap((r) => (r.breakEvenDay === null ? [] : [r.breakEvenDay]));

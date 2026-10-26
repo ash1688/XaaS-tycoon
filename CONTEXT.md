@@ -80,6 +80,10 @@ _Avoid_: Release, ship date
 The company's senior leaders. The student is the CEO; the others (CFO, CTO and so on) are each hired once from a shortlist and kept for the rest of the game. Roles open as the company grows (the heads from day 1, the CFO on outside money or the first angel approach, the CTO and head of people at the first angel approach, the rest at the Series A approach). Each candidate has a salary, fixed for good (pay reviews leave the C-suite out), and an equity ask in new shares that shrinks as the C-suite's cap (about 10%) fills. The full C-suite is needed to IPO.
 _Avoid_: Executives, leadership team, management
 
+**Pay holiday**:
+When cash falls below about 7 days of running costs, the whole C-suite forgoes its pay until cash is back above about 21 days. Pay missed isn't owed later. It keeps a small company that has hired the full C-suite from running out of cash.
+_Avoid_: Pay freeze, deferred pay (nothing is paid back)
+
 **Staff**:
 The developers, ops, support, moderators, researchers and marketers hired and let go in bulk, as permanent or agency staff (researchers and marketers permanent only). Not the C-suite.
 _Avoid_: Employees, workers

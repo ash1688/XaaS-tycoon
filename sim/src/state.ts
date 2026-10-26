@@ -70,6 +70,8 @@ export interface Executive {
 export interface Csuite {
   shortlists: Record<CsuiteRole, Candidate[]>;
   hired: Executive[];
+  /** The day the board's pay holiday began, while it lasts: no executive is paid. Left out or null, they're paid. */
+  payHolidaySince?: number | null;
 }
 
 /** Headcount in one pool, by grade. */
@@ -388,8 +390,8 @@ export interface VcDeal {
  */
 export interface VentureCapital {
   /**
-   * The day each round first approached, whatever the student made of it: from then the company has reached it. The
-   * IPO needs all four, and Series A's is when its C-suite roles unlock.
+   * The day each round first approached, whatever the student made of it: from then the company has reached it. Series
+   * A's is when its C-suite roles unlock, which the IPO needs.
    */
   firstApproachDay: Record<SeriesId, number | null>;
   /** The round whose VCs approach next, and the day: set when its target is hit, and again after a decline. */

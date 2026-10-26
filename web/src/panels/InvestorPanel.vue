@@ -11,7 +11,7 @@ import { formatShare, formatSharePrice } from "../shares";
 // and what missing it costs. The student negotiates, accepts or declines it; declining brings another angel a few days
 // later. Accepting sets the valuation to the angel's figure and closes friends and family and grants. Then venture
 // capital, Series A to D: three VCs approach for each round, the student picks one to negotiate with (closing the other
-// two), and accepting sets the valuation to theirs. Every round must approach before the IPO, taken or not.
+// two), and accepting sets the valuation to theirs. Series A approaching, taken or not, opens the last C-suite roles the IPO needs.
 const game = useGame();
 const investors = computed(() => game.company?.investors ?? null);
 const offer = computed(() => investors.value?.offer ?? null);
@@ -237,8 +237,8 @@ async function answer(type: "acceptInvestor" | "declineInvestor") {
         {{ vc.lead.investor }} is your lead VC: they'll be back for the next round alongside two new VCs.
       </p>
       <p v-else class="muted">
-        Venture capitalists come to growing companies after the angel: Series A, then B, C and D. Every round must
-        approach before you can float, whether or not you take their money.
+        Venture capitalists come to growing companies after the angel: Series A, then B, C and D. You don't need
+        their money to float, but Series A approaching opens the last C-suite roles, whether or not you take it.
       </p>
     </article>
 

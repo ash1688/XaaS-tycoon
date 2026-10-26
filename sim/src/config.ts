@@ -1122,6 +1122,11 @@ export interface CsuiteConfig {
   equityCap: number;
   /** How much of salary and equity is luck rather than strength: 0.25 = a quarter. */
   payLuck: number;
+  /**
+   * The board's pay holiday: when cash falls below startDays of running costs (C-suite pay included), every executive
+   * forgoes their pay, for good, until cash is back above endDays of them. startDays 0 turns it off.
+   */
+  payHoliday: { startDays: number; endDays: number };
   roles: Record<CsuiteRole, CsuiteRoleConfig>;
 }
 
@@ -1443,7 +1448,7 @@ export interface FundingConfig {
   grant: { amount: number; days: number; minUptime: Record<ModelId, number> };
 }
 
-/** What a product must reach to pass the IPO readiness check: see IpoConfig. */
+/** What a product must reach to pass the IPO readiness check's users and revenue: see IpoConfig. */
 export interface IpoProductConfig {
   /** Users, paying or free. */
   users: number;
@@ -1455,12 +1460,15 @@ export interface IpoProductConfig {
 
 /**
  * The IPO. The company can apply to float once it passes every condition of the readiness check: a trading history of
- * minTradingDays since the launch, users and revenue, an uptime record, predictable costs, a security audit,
- * profitability, a satisfaction record and a minimum paying customer base. No investor is needed. Records are measured
- * over the last recordDays days played; predictable costs leaves out the record's costDaysSetAside costliest days.
+ * minTradingDays since the launch; users and revenue, with a minimum paying customer base; an uptime record;
+ * predictable costs; a security audit; and the full C-suite, every role hired. No investor's money is needed, though
+ * Series A must approach to open the last C-suite roles. Records are measured over the last recordDays days played;
+ * predictable costs leaves out the record's costDaysSetAside costliest days.
  *
- * Each condition also has a comfort, 0–1: how far over it the company is, reaching 1 at comfortMargin over (0.25 = 25%
- * over a "more than" threshold, or a quarter of the way from it to perfect). The comfort is their average.
+ * Each condition but the full C-suite (yes or no) also has a comfort, 0–1: how far over it the company is, reaching 1
+ * at comfortMargin over (0.25 = 25% over a "more than" threshold, or a quarter of the way from it to perfect). The
+ * market also weighs two things that aren't conditions: satisfaction over the record (comfort from minSatisfaction up)
+ * and profit over it (comfort from a margin of 0 up). The comfort is the average of all of these.
  *
  * Applying rolls a hidden cold market: coldChance.max at a comfort of 0, falling to coldChance.min at 1. A cold market
  * postpones the IPO for coldDelayDays and costs coldSatisfactionLoss points of satisfaction. Otherwise it's approved,
@@ -1479,7 +1487,7 @@ export interface IpoConfig {
   recordDays: number;
   /** Uptime % over recordDays. */
   minUptime: number;
-  /** Average satisfaction % over recordDays. */
+  /** Average satisfaction % over recordDays the market starts to take comfort from: not a condition to float. */
   minSatisfaction: number;
   /** The most daily running costs over recordDays may vary: their standard deviation ÷ their mean. */
   maxCostSwing: number;
@@ -1905,6 +1913,10 @@ export const defaultConfig: GameConfig = {
     shortlistSize: 3,
     equityCap: 0.1,
     payLuck: 0.25,
+    // A safety net for the full C-suite the IPO needs (#232): without it a small market (payments on SaaS) can't carry
+    // all 11 salaries and careful play is rescued or liquidated. At 7 and 21 days, none is, and executives miss about
+    // 7% of their pay days across careful play.
+    payHoliday: { startDays: 7, endDays: 21 },
     roles: {
       headOfDevelopment: {
         name: "Head of development",

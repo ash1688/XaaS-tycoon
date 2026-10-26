@@ -1,5 +1,4 @@
-import { SERIES_IDS, type GameConfig, type SeriesId } from "./config.ts";
-import { IPO_ROLES } from "./csuite.ts";
+import { CSUITE_ROLES, type GameConfig } from "./config.ts";
 import { executiveIn, patchingNeed } from "./executives.ts";
 import { count, pounds, type Finance } from "./finance.ts";
 import { marketSize } from "./market.ts";
@@ -8,22 +7,10 @@ import { nextRandom } from "./rng.ts";
 import type { Servers } from "./servers.ts";
 import type { Shares } from "./shares.ts";
 import { staffOutput } from "./staff.ts";
-import { ROUND_NAMES, SimError, type DaySpend, type GameState, type IpoApplication, type IpoResult, type LogEntry } from "./state.ts";
+import { SimError, type DaySpend, type GameState, type IpoApplication, type IpoResult, type LogEntry } from "./state.ts";
 
-export type IpoConditionId =
-  | "trading"
-  | "usersAndRevenue"
-  | "uptime"
-  | "costs"
-  | "security"
-  | "profit"
-  | "satisfaction"
-  | "payingUsers"
-  | SeriesId
-  | IpoRole;
-
-/** The C-suite roles a company must have filled to float: their checklist lines have the role's id. */
-export type IpoRole = (typeof IPO_ROLES)[number];
+/** The readiness check's six conditions. */
+export type IpoConditionId = "trading" | "usersAndRevenue" | "uptime" | "costs" | "security" | "csuite";
 
 /** One condition of the readiness check, for the checklist on the Finance page. */
 export interface IpoCondition {
@@ -35,9 +22,19 @@ export interface IpoCondition {
   /** Where the company stands, in words. */
   now: string;
   /**
-   * How far over it the company is, 0–1: 1 is comfortably. 0 while it isn't met. A funding round approaching is yes
-   * or no, so it doesn't count towards the comfort that sways the market.
+   * How far over it the company is, 0–1: 1 is comfortably. 0 while it isn't met. The full C-suite is yes or no, so it
+   * doesn't count towards the comfort that sways the market.
    */
+  comfort: number;
+}
+
+/**
+ * Something the market weighs that isn't a condition to float: satisfaction and profitability. They sway the cold-market
+ * chance and the first day of trading alongside the conditions' comfort.
+ */
+interface MarketSignal {
+  label: string;
+  now: string;
   comfort: number;
 }
 
@@ -132,7 +129,7 @@ export function createIpo(
   const overPercent = (value: number, need: number) =>
     need >= 100 ? 1 : clamp01((value - need) / (c.comfortMargin * (100 - need)));
 
-  function conditions(state: GameState): IpoCondition[] {
+  function readiness(state: GameState): { conditions: IpoCondition[]; signals: MarketSignal[] } {
     const product = c.products[state.productType];
     const market = Math.round(marketSize(config, state));
     const days = record(state);
@@ -146,6 +143,8 @@ export function createIpo(
 
     const revenueMet = v.annualRevenue >= product.annualRevenue;
     const usersMet = state.users >= product.users;
+    const payers = state.paidUsers;
+    const payersMet = payers >= product.payingUsers;
 
     const down = sum(days, (d) => d.hoursDown);
     const uptime = 100 * (1 - down / (n * HOURS_PER_DAY));
@@ -173,8 +172,9 @@ export function createIpo(
     const margin = income > 0 ? profit / income : 0;
 
     const satisfaction = sum(days, (d) => d.satisfaction) / n;
-    const payers = state.paidUsers;
 
+    const missing = CSUITE_ROLES.filter((role) => executiveIn(state, role) === undefined);
+    const hired = CSUITE_ROLES.length - missing.length;
 
     const list: Omit<IpoCondition, "comfort">[] = [];
     const comforts: number[] = [];
@@ -196,11 +196,15 @@ export function createIpo(
       {
         id: "usersAndRevenue",
         label: "Users and revenue",
-        met: usersMet && revenueMet,
-        needed: `${count.format(product.users)} users and ${pounds(product.annualRevenue)} a year of revenue`,
-        now: `${count.format(state.users)} users (of a market of about ${count.format(market)}) and ${pounds(v.annualRevenue)} a year`,
+        met: usersMet && revenueMet && payersMet,
+        needed: `${count.format(product.users)} users, ${count.format(product.payingUsers)} of them paying, and ${pounds(product.annualRevenue)} a year of revenue: a few customers paying a lot can't float`,
+        now: `${count.format(state.users)} users (of a market of about ${count.format(market)}), ${count.format(payers)} paying, and ${pounds(v.annualRevenue)} a year: once the market is full, more of them paying is what grows it`,
       },
-      Math.min(over(state.users, product.users), over(v.annualRevenue, product.annualRevenue)),
+      Math.min(
+        over(state.users, product.users),
+        over(payers, product.payingUsers),
+        over(v.annualRevenue, product.annualRevenue),
+      ),
     );
     add(
       {
@@ -238,72 +242,42 @@ export function createIpo(
     );
     add(
       {
-        id: "profit",
+        id: "csuite",
+        label: "The full C-suite",
+        met: missing.length === 0,
+        needed: `every C-suite role filled, all ${CSUITE_ROLES.length} beyond you as CEO: the last open when Series A venture capitalists approach, whether or not you take their money`,
+        now:
+          missing.length === 0
+            ? `All ${CSUITE_ROLES.length} hired`
+            : `${hired} of ${CSUITE_ROLES.length} hired; still to hire: ${missing.map((role) => config.csuite.roles[role].name).join(", ")}`,
+      },
+      1,
+    );
+    // Not conditions, but the market still weighs them: satisfaction, and making money.
+    const signals: MarketSignal[] = [
+      {
+        label: "Satisfaction",
+        now: recorded(`${Math.round(satisfaction)}% on average`),
+        comfort: hasRecord ? overPercent(satisfaction, c.minSatisfaction) : 0,
+      },
+      {
         label: "Profitability",
-        met: profitable || (income > 0 && net >= 0),
-        needed: `a profit over the last ${c.recordDays} days, or a clear path to one: making money on a usual day now`,
         now: `${profit >= 0 ? "Profit" : "Loss"} of ${pounds(Math.abs(profit))} over ${c.recordDays} days; ${net >= 0 ? "+" : "−"}${pounds(Math.abs(net))} on a usual day`,
+        comfort: profitable ? clamp01(margin / c.comfortMargin) : 0,
       },
-      profitable ? clamp01(margin / c.comfortMargin) : 0,
-    );
-    add(
-      {
-        id: "satisfaction",
-        label: "Satisfaction record",
-        met: hasRecord && satisfaction >= c.minSatisfaction,
-        needed: `${c.minSatisfaction}% satisfaction on average over the last ${c.recordDays} days`,
-        now: recorded(`${Math.round(satisfaction)}%`),
-      },
-      overPercent(satisfaction, c.minSatisfaction),
-    );
-    add(
-      {
-        id: "payingUsers",
-        label: "Paying customer base",
-        met: payers >= product.payingUsers,
-        needed: `${count.format(product.payingUsers)} paying users`,
-        now: `${count.format(payers)}, of ${count.format(state.users)} users in a market of about ${count.format(market)}: more of them paying, not more users, is what grows it once the market is full`,
-      },
-      over(payers, product.payingUsers),
-    );
-    // Every Series round must have approached, taken or not: growth qualifies a company to float, not dilution.
-    for (const round of SERIES_IDS) {
-      const day = state.investors.vc.firstApproachDay[round];
-      add(
-        {
-          id: round,
-          label: `${ROUND_NAMES[round]} approached`,
-          met: day !== null,
-          needed: `${ROUND_NAMES[round]} venture capitalists to have approached the company, whether or not you took their money: they come to companies that grow`,
-          now: day === null ? "Not yet" : `Approached on day ${day}`,
-        },
-        1,
-      );
-    }
-    // The executives going public needs: the market wants a CFO, a CISO and legal counsel in place.
-    for (const role of IPO_ROLES) {
-      const executive = executiveIn(state, role);
-      const name = config.csuite.roles[role].name;
-      add(
-        {
-          id: role,
-          label: `${name} hired`,
-          met: executive !== undefined,
-          needed: `A ${name} in your C-suite: going public needs one`,
-          now: executive ? `${executive.name}, hired on day ${executive.day}` : "Not yet",
-        },
-        1,
-      );
-    }
-    return list.map((condition, i) => ({ ...condition, comfort: Math.round(comforts[i]! * 100) / 100 }));
+    ];
+    return {
+      conditions: list.map((condition, i) => ({ ...condition, comfort: Math.round(comforts[i]! * 100) / 100 })),
+      signals: signals.map((x) => ({ ...x, comfort: Math.round(x.comfort * 100) / 100 })),
+    };
   }
 
-  /** Conditions that are only yes or no: the funding rounds and the executives. */
-  const YES_OR_NO: readonly string[] = [...SERIES_IDS, ...IPO_ROLES];
-
-  /** The conditions' comfort averaged, leaving out those that are only yes or no. */
-  const comfortOf = (list: IpoCondition[]) => {
-    const graded = list.filter((x) => !YES_OR_NO.includes(x.id));
+  /**
+   * The comfort that sways the market, 0–1: the conditions' comfort and the market's signals averaged, leaving out the
+   * full C-suite, which is only yes or no.
+   */
+  const comfortOf = ({ conditions, signals }: ReturnType<typeof readiness>) => {
+    const graded = [...conditions.filter((x) => x.id !== "csuite"), ...signals];
     return graded.reduce((s, x) => s + x.comfort, 0) / graded.length;
   };
 
@@ -374,7 +348,8 @@ export function createIpo(
   }
 
   function ipoView(state: GameState): IpoView {
-    const list = conditions(state);
+    const r = readiness(state);
+    const list = r.conditions;
     const ready = list.every((x) => x.met);
     const why = refusal(state, list);
     const { ipo } = state;
@@ -391,7 +366,7 @@ export function createIpo(
       status,
       conditions: list,
       ready,
-      comfort: Math.round(comfortOf(list) * 100) / 100,
+      comfort: Math.round(comfortOf(r) * 100) / 100,
       canApply: why === null,
       refusal: why?.message ?? null,
       retryDay: status === "cold" ? ipo.retryDay : null,
@@ -407,10 +382,10 @@ export function createIpo(
    * between a cold market (postponed coldDelayDays, and satisfaction lost) and approval.
    */
   function applyForIpo(state: GameState): GameState {
-    const list = conditions(state);
-    const why = refusal(state, list);
+    const r = readiness(state);
+    const why = refusal(state, r.conditions);
     if (why) throw why;
-    const comfort = comfortOf(list);
+    const comfort = comfortOf(r);
     const chance = c.coldChance.max - (c.coldChance.max - c.coldChance.min) * comfort;
     const [roll, rng] = nextRandom(state.rng);
     const cold = roll < chance;
@@ -439,7 +414,7 @@ export function createIpo(
   }
 
   /** Why the first day went as it did, in words: what helped and hurt, the float, and luck. */
-  function reasons(list: IpoCondition[], growth: number, float: number, drift: number, move: number): string[] {
+  function reasons(list: { label: string; now: string; comfort: number }[], growth: number, float: number, drift: number, move: number): string[] {
     const out: string[] = [];
     for (const x of list) {
       if (x.comfort >= 0.75) out.push(`+ ${x.label}: comfortably over (${x.now})`);
@@ -473,8 +448,8 @@ export function createIpo(
         { min: c.minFloat, max: c.maxFloat },
       );
     }
-    const list = conditions(state);
-    const comfort = comfortOf(list);
+    const r = readiness(state);
+    const comfort = comfortOf(r);
     const v = shares.valuation(state);
     const offerPrice = v.sharePrice;
     const p = preview(state, float, offerPrice);
@@ -511,7 +486,7 @@ export function createIpo(
       studentShare: yours / p.sharesAfter,
       studentValue: Math.round(yours * closePrice),
       comfort: Math.round(comfort * 100) / 100,
-      reasons: reasons(list, v.growth, float, drift, closePrice / offerPrice - 1),
+      reasons: reasons([...r.conditions.filter((x) => x.id !== "csuite"), ...r.signals], v.growth, float, drift, closePrice / offerPrice - 1),
     };
     const entry: LogEntry = {
       text: `${state.companyName} floated ${percent(float)}: ${count.format(p.newShares)} new shares at ${pounds(offerPrice)} raised ${pounds(p.cashRaised)}.`,

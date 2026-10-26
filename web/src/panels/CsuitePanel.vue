@@ -11,6 +11,7 @@ const game = useGame();
 const csuite = computed(() => game.company?.csuite ?? null);
 const open = computed(() => csuite.value?.roles.filter((r) => r.open) ?? []);
 const shut = computed(() => csuite.value?.roles.filter((r) => !r.open) ?? []);
+const hiredCount = computed(() => csuite.value?.roles.filter((r) => r.executive).length ?? 0);
 async function hire(role: CsuiteRole, candidate: string) {
   await game.actFrom("hire-executive", { type: "hireExecutive", role, candidate });
 }
@@ -25,12 +26,21 @@ async function hire(role: CsuiteRole, candidate: string) {
       shrink as the C-suite's {{ formatShare(csuite.equityCap) }} cap fills: {{ formatShare(csuite.equityLeft) }} left.
       The staff share scheme doesn't count towards it.
     </p>
-    <p v-if="csuite.dailyPay" data-testid="csuite-pay">C-suite pay: {{ formatCash(csuite.dailyPay) }} a day.</p>
+    <p data-testid="csuite-ipo">
+      Every role must be filled to float: {{ hiredCount }} of {{ csuite.roles.length }} hired.
+    </p>
+    <p v-if="csuite.payHoliday.since !== null" class="pay-holiday" role="status" data-testid="csuite-pay-holiday">
+      <strong>Pay holiday since day {{ csuite.payHoliday.since }}.</strong> Cash is low, so your C-suite is forgoing its
+      {{ formatCash(csuite.dailyPay) }} a day of pay until you have {{ csuite.payHoliday.endDays }} days of running
+      costs in the bank.
+    </p>
+    <p v-else-if="csuite.dailyPay" data-testid="csuite-pay">C-suite pay: {{ formatCash(csuite.dailyPay) }} a day.</p>
+    <p v-if="csuite.payHoliday.startDays > 0 && csuite.payHoliday.since === null" class="muted" data-testid="csuite-pay-holiday-rule">
+      If cash falls below {{ csuite.payHoliday.startDays }} days of running costs, the board forgoes its pay until
+      there are {{ csuite.payHoliday.endDays }} days' worth in the bank. Pay it misses isn't owed later.
+    </p>
     <div v-for="r in open" :key="r.role" class="role" :data-testid="`csuite-${r.role}`">
-      <h3>
-        {{ r.name }}
-        <span v-if="r.requiredToIpo" class="required" data-testid="csuite-required">Needed to IPO</span>
-      </h3>
+      <h3>{{ r.name }}</h3>
       <p class="muted">{{ r.blurb }}</p>
       <div v-if="r.executive" data-testid="csuite-executive">
         <p>
@@ -82,7 +92,6 @@ async function hire(role: CsuiteRole, candidate: string) {
     <ul v-if="shut.length" class="shut" data-testid="csuite-shut">
       <li v-for="r in shut" :key="r.role" :data-testid="`csuite-${r.role}`">
         <strong>{{ r.name }}</strong>
-        <span v-if="r.requiredToIpo" class="required">Needed to IPO</span>
         <span class="muted">{{ r.opens }} {{ r.blurb }}</span>
       </li>
     </ul>
@@ -99,13 +108,9 @@ async function hire(role: CsuiteRole, candidate: string) {
   margin: 0 0 0.25rem;
   font-size: 1rem;
 }
-.required {
-  font-size: 0.75rem;
-  font-weight: 600;
-  margin-left: 0.4rem;
-  padding: 0.05rem 0.4rem;
-  border-radius: 0.6rem;
-  border: 1px solid currentColor;
+.pay-holiday {
+  border-left: 3px solid var(--warn, #c80);
+  padding-left: 0.5rem;
 }
 .effects {
   margin: 0;
