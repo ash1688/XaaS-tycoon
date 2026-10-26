@@ -39,6 +39,8 @@ export interface NegotiationRound {
   result: RollResult;
   /** Share of the way from the offer to the counter that the next offer moved. */
   move: number;
+  /** Played by Auto-negotiate rather than countered by hand. Left out by hand. */
+  auto?: true;
 }
 
 /**
@@ -186,6 +188,7 @@ export function createNegotiation(config: NegotiationConfig) {
     specs: TermSpec[],
     rng: number,
     bonus = 0,
+    auto = false,
   ): { negotiation: Negotiation; rng: number; round: NegotiationRound } {
     refuseIfFinal(n);
     const offer = latest(n);
@@ -196,12 +199,63 @@ export function createNegotiation(config: NegotiationConfig) {
     const total = die - penalty + bonus;
     const result = resultOf(total);
     const move = moves[result];
-    const round: NegotiationRound = { ...checked, die, penalty, bonus, total, result, move };
+    const round: NegotiationRound = { ...checked, die, penalty, bonus, total, result, move, ...(auto ? { auto: true as const } : {}) };
     const negotiation = { offers: [...n.offers, between(offer, checked.counter, move, specs)], rounds: [...n.rounds, round] };
     return { negotiation, rng: next, round };
   }
 
-  return { open, latest, isFinal, countersLeft, odds, counter };
+  /**
+   * What repeating the student's `figure` (a counter in full) asks of the offer that stands: the figure itself, or, if
+   * the other side dug in and it now asks more than maxAsk, as far towards it as a counter can ask, each term rounded
+   * back towards the offer. Null when there's nothing left to ask: the offer has reached the figure.
+   */
+  function repeatAsk(offer: Terms, figure: Terms, specs: TermSpec[]): Terms | null {
+    const tryCheck = (terms: Terms) => {
+      try {
+        return { terms: check(offer, terms, specs).counter, refused: null };
+      } catch (e) {
+        if (e instanceof SimError) return { terms: null, refused: e };
+        throw e;
+      }
+    };
+    const first = tryCheck(figure);
+    if (first.terms || first.refused?.code !== "counter_too_far") return first.terms;
+    const scale = maxAsk / first.refused.details.ask!;
+    const capped: Terms = { ...offer };
+    for (const spec of specs) {
+      const was = offer[spec.key]!;
+      const gain = spec.better === "higher" ? figure[spec.key]! - was : was - figure[spec.key]!;
+      if (gain <= 0) continue;
+      const steps = Math.floor((gain * scale) / spec.step + 1e-9);
+      capped[spec.key] = roundTo(was + (spec.better === "higher" ? 1 : -1) * steps * spec.step, spec.step);
+    }
+    return tryCheck(capped).terms;
+  }
+
+  /**
+   * Auto-negotiate: counters with `asked` exactly as counter does, then repeats that counter in full on each offer
+   * after it with the same rolls and rules, until the final offer, or until the offer reaches it and there's nothing
+   * left to ask. A counter that would now ask too far (after they dug in) asks as far as it can, as repeatAsk does.
+   * Never accepts: the offer it ends on stands. Refused as counter would refuse the first counter.
+   */
+  function auto(
+    n: Negotiation,
+    asked: Partial<Terms>,
+    specs: TermSpec[],
+    rng: number,
+    bonus = 0,
+  ): { negotiation: Negotiation; rng: number; rounds: NegotiationRound[] } {
+    let done = counter(n, asked, specs, rng, bonus, true);
+    const figure = done.round.counter;
+    while (!isFinal(done.negotiation)) {
+      const again = repeatAsk(latest(done.negotiation), figure, specs);
+      if (!again) break;
+      done = counter(done.negotiation, again, specs, done.rng, bonus, true);
+    }
+    return { negotiation: done.negotiation, rng: done.rng, rounds: done.negotiation.rounds.slice(n.rounds.length) };
+  }
+
+  return { open, latest, isFinal, countersLeft, odds, counter, repeatAsk, auto };
 }
 
 export type Negotiator = ReturnType<typeof createNegotiation>;

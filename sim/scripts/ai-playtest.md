@@ -109,6 +109,10 @@ npm run -s play -- summary <game>
   middle one halfway, and a low one makes them dig in: their next offer is a little worse. You can counter twice; the third offer is final. The more you ask, the worse
   the odds, and a counter can ask at most 50% better terms in all. They never walk away: the latest offer stands until
   you accept or decline it. `odds ff ...` (same terms as `counter`) shows the odds and what each roll would bring.
+  **Auto-negotiate**: `auto ff ...` (or `auto grant`, `auto angel`, `auto vc`, with the same terms as `counter`) makes
+  that counter, then repeats it on each offer with the same rolls as by hand, and prints each round, ending on the
+  final offer. On average it's no better and no worse than countering by hand. It never accepts: you still `accept` or
+  `decline`.
 - An **angel investor** may approach you (time stops when they do, and `look` shows them under `investors`). `angel`
   shows their offer in full: their cash for a share of the company, the valuation it puts on the company, their target
   (income, and users gained less users lost, both within a few weeks) and what happens if you miss it. `counter angel amount 30000 share 15` and `odds angel ...` negotiate it the same
@@ -136,7 +140,10 @@ npm run -s play -- summary <game>
   more). `payodds 3.5` shows what an offer would cost a day and a year, and the odds on their counter. `accept pay`
   agrees their counter at any time. Your third offer is final: if staff don't accept it, it goes to a **tribunal**,
   which charges a fee (about £2k) and picks your figure, staff's or the middle, favouring whichever is closest to the
-  hidden fair rise, so lowballing backfires. On the final offer `payodds` shows the tribunal's odds. The rise raises every team's day rate from the next day, new hires and agency staff included,
+  hidden fair rise, so lowballing backfires. `autopay 3.5` (schemes as with `offer`) auto-negotiates: it makes the
+  offer, then the same again after each counter with the same rolls, and prints each one. If staff accept it's settled;
+  if not, it stops on their last counter for you to `accept pay` or make the final offer yourself: it never goes to the
+  tribunal by itself. On the final offer `payodds` shows the tribunal's odds. The rise raises every team's day rate from the next day, new hires and agency staff included,
   and each review's rise compounds on the last. A rise below inflation is a pay cut in real terms.
 - **Staff schemes**: an offer can add schemes to a smaller cash rise: `offer 2.5 pension=2 health=1 death=on
   discount=on shares=1` (pension top-up, the health cash plan and share save go 0–3; death in service and the discount
@@ -215,6 +222,7 @@ reviews, try at least two different approaches, and use at least one staff schem
 - cash only, around inflation, taking a counter when it's reasonable
 - a smaller cash rise topped up with schemes (share save included), and watch your stake and the daily scheme costs
 - a lowball that runs to the tribunal, so you see its odds, its pick and its fee
+- `autopay` from your opening figure, then decide on staff's last counter
 
 Run `payhistory` at the end, and judge each approach by what it cost you in cash and ownership over the rest of the
 game, not just on the day.

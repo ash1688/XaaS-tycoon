@@ -4171,6 +4171,11 @@ select:disabled {
 .negotiation-rounds li + li {
   margin-top: 0.4rem;
 }
+/* What Auto-negotiate played, round by round. */
+.auto-transcript {
+  border-left: 3px solid var(--border);
+  padding-left: 0.75rem;
+}
 .counter-form {
   display: flex;
   flex-wrap: wrap;

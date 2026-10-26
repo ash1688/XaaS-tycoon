@@ -20,7 +20,8 @@ import { useGame } from "../game";
 
 // Negotiating any offer: its offers and rolls so far, and a counter being drafted with its live odds. The offer it's
 // for (friends and family, the grant, an investor) says what its terms are, how they read, and how to fetch the odds
-// and send the counter.
+// and send the counter, or auto-negotiate from it: the same counter repeated on every offer to the final one, with the
+// same rolls, shown as a short transcript. It never accepts: the offer's own Accept and Decline answer it.
 const props = defineProps<{
   talks: NegotiationView;
   fields: CounterField[];
@@ -29,6 +30,7 @@ const props = defineProps<{
   better: string;
   odds: (terms: Partial<Terms>) => Promise<CounterOdds>;
   counter: (terms: Partial<Terms>) => Promise<void>;
+  auto: (terms: Partial<Terms>) => Promise<void>;
 }>();
 
 const game = useGame();
@@ -81,6 +83,13 @@ async function send() {
   if (!game.error) resetDraft();
 }
 
+async function autoNegotiate() {
+  const terms = draftTerms.value;
+  if (!terms) return;
+  await props.auto(terms);
+  if (!game.error) resetDraft();
+}
+
 const RESULT: Record<RollResult, string> = {
   high: "a high roll",
   middle: "a middle roll",
@@ -90,6 +99,10 @@ const RESULT: Record<RollResult, string> = {
 const moveText = (move: number) =>
   move < 0 ? "they dug in: their offer got worse" : move >= 0.75 ? "they moved most of the way" : move >= 0.4 ? "they met you halfway" : "they barely moved";
 const percent = (n: number) => `${Math.round(n * 100)}%`;
+/** The rounds Auto-negotiate played, each with the offer it brought: "Offer 2: they met you halfway". */
+const autoRounds = computed(() =>
+  props.talks.rounds.flatMap((r, i) => (r.auto ? [{ offer: i + 2, text: moveText(r.move), terms: props.talks.offers[i + 1]! }] : [])),
+);
 const signed = (n: number) => (n < 0 ? `−${-n}` : String(n));
 </script>
 
@@ -109,6 +122,12 @@ const signed = (n: number) => (n < 0 ? `−${-n}` : String(n));
         Offer {{ i + 2 }}: {{ termsText(talks.offers[i + 1]!) }}.
       </li>
     </ol>
+    <p v-if="autoRounds.length" class="auto-transcript" role="status" data-testid="auto-transcript">
+      <strong>Auto-negotiated.</strong>
+      <span v-for="a in autoRounds" :key="a.offer" data-testid="auto-round">
+        Offer {{ a.offer }}: {{ a.text }} ({{ termsText(a.terms) }}).
+      </span>
+    </p>
     <p v-if="talks.final" class="muted">This is their final offer: accept it or decline it.</p>
     <form v-else-if="!game.over" class="counter-form" novalidate @submit.prevent="send">
       <label v-for="f in fields" :key="f.key">
@@ -139,9 +158,18 @@ const signed = (n: number) => (n < 0 ? `−${-n}` : String(n));
       </div>
       <p v-else-if="oddsError" class="error" data-testid="counter-error">{{ oddsError }}</p>
       <p v-else class="muted">Ask for more cash or {{ better }} to see your odds.</p>
-      <button type="submit" :disabled="game.busy || !odds" data-testid="funding-counter">
-        Counter ({{ talks.countersLeft }} left)
-      </button>
+      <div class="confirm-buttons">
+        <button type="submit" :disabled="game.busy || !odds" data-testid="funding-counter">
+          Counter ({{ talks.countersLeft }} left)
+        </button>
+        <button type="button" class="ghost" :disabled="game.busy || !odds" data-testid="auto-negotiate" @click="autoNegotiate">
+          Auto-negotiate
+        </button>
+      </div>
+      <p class="muted">
+        Auto-negotiate plays the rest for you: the same counter on every offer, with the same rolls as by hand, to their
+        final offer. It never accepts for you.
+      </p>
     </form>
     <p class="muted">
       They never walk away: their latest offer stands until you accept or decline it. The more you ask, the worse your

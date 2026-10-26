@@ -1881,6 +1881,23 @@ describe("the angel investor", () => {
     expect((await act({ type: "acceptInvestor" })).json()).toMatchObject({ error: "no_approach" });
   });
 
+  it("auto-negotiates the angel to their final offer, and leaves accepting to the student", async () => {
+    const { act, result } = await approached();
+    const offer = result.company.investors.offer!;
+    expect((await act({ type: "autoNegotiateInvestor" })).statusCode).toBe(400);
+    expect((await act({ type: "autoNegotiateInvestor", terms: { days: 5 } })).statusCode).toBe(400);
+    const share = Math.round(offer.theirShare * 900) / 1000;
+    const played = (await act({ type: "autoNegotiateInvestor", terms: { share } })).json<CompanyView>();
+    expect(played.investors.negotiation).toMatchObject({ final: true, countersLeft: 0 });
+    expect(played.investors.negotiation!.rounds).toHaveLength(2);
+    expect(played.investors.negotiation!.rounds.every((r) => r.auto)).toBe(true);
+    expect(played.investors).toMatchObject({ angel: null });
+    expect(played.cash).toBe(result.company.cash);
+    expect((await act({ type: "autoNegotiateInvestor", terms: { share: share / 2 } })).json()).toMatchObject({ error: "final_offer" });
+    // Friends and family and the grant auto-negotiate the same way, named as countering them is.
+    expect((await act({ type: "autoNegotiateFunding", terms: { amount: 1 } })).statusCode).toBe(400);
+  });
+
   it("lets an unanswered offer lapse after its days, as a decline, pausing time", async () => {
     const { url, result } = await approached();
     const offer = result.company.investors.offer!;
@@ -4550,6 +4567,23 @@ describe("pay reviews", () => {
     const played = await next();
     expect(played.statusCode).toBe(200);
     expect(played.json<ContinueResult>().company.day).toBe(4);
+  });
+
+  it("auto-negotiates a review to staff's last counter, leaving the counter or the tribunal to the student", async () => {
+    const { act, result } = await reviewing();
+    const { minOffer } = result.company.payReview!;
+    expect((await act({ type: "autoNegotiatePay" })).statusCode).toBe(400);
+    const played = (await act({ type: "autoNegotiatePay", rise: minOffer })).json<CompanyView>();
+    if (played.payReview) {
+      expect(played.payReview).toMatchObject({ studentOffers: [minOffer, minOffer], final: true, canAcceptCounter: true });
+      expect(played.payReview.rounds.every((r) => r.auto)).toBe(true);
+      expect(played.cash).toBe(result.company.cash);
+      expect((await act({ type: "autoNegotiatePay", rise: minOffer })).json()).toMatchObject({ error: "final_offer" });
+      const settled = (await act({ type: "acceptPayCounter" })).json<CompanyView>();
+      expect(settled.lastPayReview).toMatchObject({ outcome: "counterAccepted", rise: played.payReview.staffFigure });
+    } else {
+      expect(played.lastPayReview).toMatchObject({ outcome: "offerAccepted", rise: minOffer });
+    }
   });
 
   it("rolls each review's inflation fresh, on the reviews' RNG as saved after the review before", async () => {

@@ -123,6 +123,40 @@ test("an angel approaches with a notification; their offer shows its target, and
   await expect(student.getByTestId("grant-review")).toBeHidden();
 });
 
+test("auto-negotiating the angel plays on to their final offer with a transcript, and leaves Accept and Decline to the student", async ({
+  browser,
+  request,
+}) => {
+  const student = await startAndWaitForAngel(browser, request, "Auto Angel Ltd");
+  const id = student.url().replace(/\/finance$/, "").split("/").at(-1)!;
+  await student.getByTestId("investor-panel").getByTestId("angel-review").click();
+  const modal = student.getByRole("dialog", { name: "Angel investor's offer" });
+  const talks = modal.getByTestId("negotiation");
+  const share = Number(await talks.getByTestId("counter-share").inputValue());
+  await talks.getByTestId("counter-share").fill(String(Math.round(share * 9) / 10));
+  await expect(talks.getByTestId("counter-odds")).toContainText("That asks 10% better terms");
+  const before = await (await request.get(`/api/codes/${code}/companies/${id}`)).json();
+
+  await talks.getByTestId("auto-negotiate").click();
+  await expect(talks.getByTestId("negotiation-stage")).toHaveText("Final offer");
+  await expect(talks.getByTestId("auto-round")).toHaveCount(2);
+  await expect(talks.getByTestId("auto-round").nth(0)).toContainText(
+    /Offer 2: they (moved most of the way|met you halfway|barely moved|dug in: their offer got worse) \(£[\d,]+ for [\d.]+%\)\./,
+  );
+  await expect(talks.getByTestId("auto-round").nth(1)).toContainText(/Offer 3: they /);
+  await expect(talks.getByTestId("negotiation-round")).toHaveCount(2);
+  await expect(talks.getByTestId("auto-negotiate")).toBeHidden();
+  // It never accepts: the final offer stands, and the student answers it.
+  const after = await (await request.get(`/api/codes/${code}/companies/${id}`)).json();
+  expect(after.cash).toBe(before.cash);
+  expect(after.investors.angel).toBeNull();
+  await expect(modal.getByTestId("angel-accept")).toBeEnabled();
+  await expect(modal.getByTestId("angel-decline")).toBeEnabled();
+  await modal.getByTestId("angel-accept").click();
+  await expect(modal).toBeHidden();
+  await expect(student.getByTestId("investor-panel").getByTestId("angel-deal")).toContainText(`${after.investors.offer.investor} put in`);
+});
+
 test("declining an angel brings another a few days later", async ({ browser, request }) => {
   const student = await startAndWaitForAngel(browser, request, "Picky Ltd");
   const panel = student.getByTestId("investor-panel");

@@ -727,6 +727,22 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
     };
   }
 
+  /**
+   * Auto-negotiates a funder's open offer from the counter `terms`: the same rolls as countering by hand, repeating
+   * the counter until the final offer, which stands until it's answered.
+   */
+  function autoNegotiateFunding(state: GameState, funder: string, terms: Partial<Terms>): GameState {
+    checkOpen(state, funder);
+    checkTerms(funder, terms);
+    const n = negotiationOf(state, funder);
+    const done = negotiator.auto(n, terms, TERMS[funder], state.negotiationRng, rollBonus(state));
+    return {
+      ...state,
+      negotiationRng: done.rng,
+      funding: { ...state.funding, negotiating: { ...state.funding.negotiating, [funder]: done.negotiation } },
+    };
+  }
+
   /** The funding once a funder is answered: its negotiation is over. */
   const answered = (state: GameState, funder: FunderId, funding: Partial<Funding>): Funding => ({
     ...state.funding,
@@ -861,6 +877,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
     acceptFunding,
     declineFunding,
     counterFunding,
+    autoNegotiateFunding,
     counterOdds,
     grantDay,
   };

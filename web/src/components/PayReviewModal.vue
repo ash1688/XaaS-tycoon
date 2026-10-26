@@ -10,7 +10,9 @@ import AppModal from "./AppModal.vue";
 // settled. It shows this review's inflation and the caps, the offers and counters so far, a cash rise and staff scheme
 // levels to offer (sliders and toggles floored at the levels held) with what they cost, what the offer is worth to staff
 // and the odds on staff's counter, and their counter to accept. Before the take it or leave it offer it warns that the
-// next step is the tribunal, with its fee and odds, and once settled says what the tribunal picked. The summary and the
+// next step is the tribunal, with its fee and odds, and once settled says what the tribunal picked. Auto-negotiate plays
+// the same offer on until staff accept or only the final offer is left, with a short transcript; it never goes to the
+// tribunal, which (like agreeing staff's last counter) stays a button for the student. The summary and the
 // cash rise sit side by side, and the schemes are a table, each one's description behind More. It opens by itself;
 // closed to look around, the note in the shell opens it again, and the day still can't go on.
 const props = defineProps<{ open: boolean }>();
@@ -101,6 +103,46 @@ async function offer() {
   const schemes = offeredSchemes.value;
   game.track("control", { control: "pay-offer", value: [String(rise.value), ...raised.value.map((s) => `${s.id}=${s.to}`)].join(" ") });
   await game.act(raised.value.length ? { type: "offerPayRise", rise: rise.value, schemes } : { type: "offerPayRise", rise: rise.value });
+}
+
+// Auto-negotiate: the offer it started from (how many were made before) and the review it ran in, for the transcript.
+const autoRun = ref<{ from: number; startDay: number } | null>(null);
+async function autoNegotiate() {
+  if (rise.value === null || !review.value) return;
+  const schemes = offeredSchemes.value;
+  const from = review.value.studentOffers.length;
+  const startDay = review.value.startDay;
+  game.track("control", { control: "pay-auto-negotiate", value: [String(rise.value), ...raised.value.map((s) => `${s.id}=${s.to}`)].join(" ") });
+  await game.act(
+    raised.value.length ? { type: "autoNegotiatePay", rise: rise.value, schemes } : { type: "autoNegotiatePay", rise: rise.value },
+  );
+  if (!game.error) autoRun.value = { from, startDay };
+}
+
+/** What Auto-negotiate did, offer by offer: staff came down, held or dug in, or accepted. */
+const autoTranscript = computed((): string[] => {
+  const run = autoRun.value;
+  if (!run) return [];
+  const last = game.company?.lastPayReview;
+  const source = review.value?.startDay === run.startDay ? review.value : last?.startDay === run.startDay ? last : null;
+  if (!source) return [];
+  const { studentOffers: offers, staffFigures: figures } = source;
+  return offers.slice(run.from).map((value, k) => {
+    const i = run.from + k;
+    const to = figures[i + 1];
+    if (to === undefined) return `Offer ${i + 1} (${pct(value)}): staff accepted.`;
+    const from = figures[i]!;
+    const how = to < from ? `they came down to ${pct(to)}` : to > from ? `they dug in and asked for ${pct(to)}` : `they held at ${pct(to)}`;
+    return `Offer ${i + 1} (${pct(value)}): ${how}.`;
+  });
+});
+
+/** Takes it to the tribunal: the last offer made again, as the final offer, which staff have already turned down. */
+async function tribunalNow() {
+  const terms = review.value?.offerTerms.at(-1);
+  if (!terms) return;
+  game.track("control", { control: "pay-tribunal", value: String(terms.rise) });
+  await game.act({ type: "offerPayRise", rise: terms.rise, schemes: terms.schemes });
 }
 
 async function acceptCounter() {
@@ -221,6 +263,10 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
               <strong>{{ RESULT[r.result] }}: {{ moveText(r.move, review.staffFigures[i]!, review.staffFigures[i + 1]!) }}</strong>. They now ask {{ pct(review.staffFigures[i + 1]!) }}.
             </li>
           </ol>
+
+          <p v-if="autoTranscript.length" class="auto-transcript" role="status" data-testid="pay-auto-transcript">
+            <strong>Auto-negotiated.</strong> {{ autoTranscript.join(" ") }}
+          </p>
 
           <p v-if="review.final" class="warn-note" role="status" data-testid="pay-final-warning">
             <span class="badge warn-badge">Take it or leave it: next is a tribunal</span> This is your take it or leave it
@@ -361,13 +407,40 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
           </div>
           <p v-else-if="previewError" class="error" data-testid="pay-preview-error">{{ previewError }}</p>
           <p v-else class="muted">Type a rise from {{ pct(review.minOffer) }} to {{ pct(review.maxAsk) }} to see what it costs.</p>
-          <button type="submit" :disabled="game.busy || !preview" data-testid="pay-offer">
-            Offer {{ rise === null ? "" : pct(rise) }}<template v-if="raised.length"> + {{ raised.length }} {{ raised.length === 1 ? "scheme" : "schemes" }}</template>
-            ({{ review.offersLeft }} {{ review.offersLeft === 1 ? "offer" : "offers" }} left)
-          </button>
+          <div class="confirm-buttons">
+            <button type="submit" :disabled="game.busy || !preview" data-testid="pay-offer">
+              Offer {{ rise === null ? "" : pct(rise) }}<template v-if="raised.length"> + {{ raised.length }} {{ raised.length === 1 ? "scheme" : "schemes" }}</template>
+              ({{ review.offersLeft }} {{ review.offersLeft === 1 ? "offer" : "offers" }} left)
+            </button>
+            <button
+              v-if="!review.final"
+              type="button"
+              class="ghost"
+              :disabled="game.busy || !preview"
+              data-testid="pay-auto-negotiate"
+              @click="autoNegotiate"
+            >
+              Auto-negotiate
+            </button>
+            <template v-else-if="review.canAcceptCounter">
+              <button type="button" :disabled="game.busy" data-testid="pay-final-accept" @click="acceptCounter">
+                Accept {{ pct(review.staffFigure) }}
+              </button>
+              <button type="button" class="ghost" :disabled="game.busy" data-testid="pay-tribunal" @click="tribunalNow">
+                Tribunal ({{ formatCash(review.tribunalFee) }} fee)
+              </button>
+            </template>
+          </div>
+          <p v-if="!review.final" class="muted">
+            Auto-negotiate makes this offer, then the same again after each counter, with the same rolls as by hand, schemes as
+            set. If staff accept, it's settled; if not, it stops on their last counter for you to accept or take to a tribunal.
+          </p>
         </form>
       </template>
       <template v-else-if="settled">
+        <p v-if="autoTranscript.length" class="auto-transcript" data-testid="pay-auto-transcript">
+          <strong>Auto-negotiated.</strong> {{ autoTranscript.join(" ") }}
+        </p>
         <p v-if="tribunal" class="warn-note" data-testid="pay-tribunal-result">
           <span class="badge warn-badge">Tribunal</span> With no deal, the tribunal sat and picked
           <strong>{{ PICK[tribunal.pick].toLowerCase() }}</strong>. Its fee of {{ formatCash(tribunal.fee) }} came out of your cash.

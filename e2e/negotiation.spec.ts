@@ -61,3 +61,48 @@ test("negotiate friends and family's offer: see the odds, counter twice, and acc
 
   expect((await teacher.request.delete(`/api/teacher/codes/${code}`)).ok()).toBe(true);
 });
+
+test("auto-negotiate friends and family's offer from one counter to the final offer, never accepting it", async ({ browser, request }) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  const code = await createCode(teacher);
+
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}`);
+  await student.getByText("Social network").click();
+  await student.locator("label.choice", { hasText: "Build on a SaaS platform (SaaS)" }).click();
+  await student.getByLabel("Company name").fill("Autohaggle Ltd");
+  await student.getByRole("button", { name: "Start company" }).click();
+  await expect(student.getByRole("heading", { name: "Autohaggle Ltd" })).toBeVisible();
+  await goTo(student, "Finance");
+  const id = student.url().replace(/\/finance$/, "").split("/").at(-1)!;
+  const { cash } = await (await request.get(`/api/codes/${code}/companies/${id}`)).json();
+
+  await student.getByTestId("ff-review").click();
+  const modal = student.getByRole("dialog", { name: "Friends and family offer" });
+  const talks = modal.getByTestId("negotiation");
+  // Like Counter, it needs a counter the odds allow.
+  await expect(talks.getByTestId("auto-negotiate")).toBeDisabled();
+  await talks.getByTestId("counter-amount").fill("16500");
+  await expect(talks.getByTestId("counter-odds")).toBeVisible();
+  await talks.getByTestId("auto-negotiate").click();
+
+  await expect(talks.getByTestId("negotiation-stage")).toHaveText("Final offer");
+  const transcript = talks.getByTestId("auto-transcript");
+  await expect(transcript).toContainText("Auto-negotiated.");
+  await expect(transcript.getByTestId("auto-round")).toHaveCount(2);
+  await expect(transcript).toContainText(/Offer 2: they .+\.\s+Offer 3: they .+\./);
+  await expect(talks.getByTestId("negotiation-round").first()).toContainText("You asked £16,500");
+  await expect(talks.getByTestId("funding-counter")).toBeHidden();
+
+  // Still the student's to answer: nothing taken yet.
+  const after = await (await request.get(`/api/codes/${code}/companies/${id}`)).json();
+  expect(after.cash).toBe(cash);
+  expect(after.funding.friendsAndFamilyOffer).not.toBeNull();
+  await expect(modal.getByTestId("funding-accept")).toBeVisible();
+  await expect(modal.getByTestId("funding-decline")).toBeVisible();
+
+  expect((await teacher.request.delete(`/api/teacher/codes/${code}`)).ok()).toBe(true);
+});

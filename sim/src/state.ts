@@ -1147,6 +1147,11 @@ export type Action =
   | { type: "pickInvestor"; investor: string }
   /** Counters the open approach's offer on `amount` and `share` (theirs after, 0–1), as counterFunding does. */
   | { type: "counterInvestor"; terms: Partial<Terms> }
+  /**
+   * Auto-negotiates the open approach's offer (the picked VC's, while VCs wait): counters with `terms`, then repeats
+   * that counter on each offer, with the same rolls as by hand, until the final offer. It never accepts.
+   */
+  | { type: "autoNegotiateInvestor"; terms: Partial<Terms> }
   /** Buys all the vulture VC's shares back after a rescue buyout, at its price, at once. Refused without the cash. */
   | { type: "buyBack" }
   /**
@@ -1154,6 +1159,8 @@ export type Action =
    * `amount` and `days`. A term left out stays as offered. A roll sets the next offer; the third is final.
    */
   | { type: "counterFunding"; funder: FunderId; terms: Partial<Terms> }
+  /** Auto-negotiates a funder's offer from the counter `terms`, as autoNegotiateInvestor does. */
+  | { type: "autoNegotiateFunding"; funder: FunderId; terms: Partial<Terms> }
   /**
    * Pays off the loan being repaid, at once, with what's left of the money borrowed: the interest still to come is
    * saved. Refused without enough cash.
@@ -1209,6 +1216,12 @@ export type Action =
    * plus the levels added, valued as staff see them.
    */
   | { type: "offerPayRise"; rise: number; schemes?: Partial<SchemeLevels> }
+  /**
+   * Auto-negotiates the open pay review: offers `rise` and `schemes` as offerPayRise does, then the same offer again
+   * after each staff counter, with the same rolls, until staff accept or only the final offer is left. It never makes
+   * the final offer, so never goes to the tribunal: that, or agreeing staff's last counter, is the student's.
+   */
+  | { type: "autoNegotiatePay"; rise: number; schemes?: Partial<SchemeLevels> }
   /** Accepts staff's counter in the open pay review: their figure is the cash rise, with no schemes. */
   | { type: "acceptPayCounter" }
   /** Hires a candidate from an open C-suite role's shortlist, by id ("cfo-2"), for good. */

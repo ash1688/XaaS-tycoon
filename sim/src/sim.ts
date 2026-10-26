@@ -837,6 +837,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
         return ipo.ringBell(state, action.float);
       case "counterFunding":
         return shares.counterFunding(state, action.funder, action.terms);
+      case "autoNegotiateFunding":
+        return shares.autoNegotiateFunding(state, action.funder, action.terms);
       case "buyBack":
         return rescue.buyBack(state);
       case "acceptInvestor":
@@ -845,6 +847,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
         return investors.declineInvestor(state);
       case "counterInvestor":
         return investors.counterInvestor(state, action.terms);
+      case "autoNegotiateInvestor":
+        return investors.autoNegotiateInvestor(state, action.terms);
       case "pickInvestor":
         return investors.pickInvestor(state, action.investor);
       case "buyApi":
@@ -869,6 +873,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
         return campaigns.stopCampaign(state, action.id);
       case "offerPayRise":
         return payReview.offer(state, action.rise, action.schemes);
+      case "autoNegotiatePay":
+        return payReview.autoOffer(state, action.rise, action.schemes);
       case "acceptPayCounter":
         return payReview.acceptCounter(state);
       case "hireExecutive":
