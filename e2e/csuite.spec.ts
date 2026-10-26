@@ -14,6 +14,7 @@ test.afterEach(async ({ request }) => {
 
 const nav = (page: Page) => page.getByRole("navigation", { name: "Game" });
 const goTo = (page: Page, name: string) => nav(page).getByRole("link", { name, exact: true }).click();
+const openTab = (page: Page, name: string) => page.getByRole("tab", { name, exact: true }).click();
 
 test("hires a head of development from the shortlist, for good, and the IPO checklist counts them towards the full C-suite", async ({
   browser,
@@ -53,8 +54,10 @@ test("hires a head of development from the shortlist, for good, and the IPO chec
   await expect(csuite.getByTestId("csuite-pay")).toContainText("a day");
 
   await goTo(student, "Finance");
+  await openTab(student, "Valuation");
   await expect(student.getByTestId("cap-executive")).toContainText(`${name} (Head of development)`);
   // One of the 11 hired: the IPO's full C-suite line counts it, still short.
+  await openTab(student, "IPO");
   await expect(student.getByTestId("ipo-csuite")).toHaveAttribute("data-met", "false");
   await expect(student.getByTestId("ipo-csuite")).toContainText("1 of 11 hired");
 });

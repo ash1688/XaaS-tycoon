@@ -628,7 +628,7 @@ describe("the bots and text play", () => {
     expect(final.lines.join("\n")).toMatch(/your next offer is FINAL: if staff don't accept it, it goes to a TRIBUNAL, which charges £2,000/);
     const odds = runScript(plain, final.state, `payodds ${pct(minOffer)}`, who).lines.join("\n");
     expect(odds).toMatch(/the tribunal sits for £2,000 and picks:/);
-    expect(odds).toMatch(/your offer \d+% → [\d.]+% cash\n {4}the middle \d+% → [\d.]+% cash\n {4}staff's figure \d+% → [\d.]+% cash, no schemes/);
+    expect(odds).toMatch(/your offer \d+% → [\d.]+% cash\n {4}the middle \d+% → [\d.]+% cash\n {4}staff's figure \d+% → [\d.]+% cash$/m);
     const settled = runScript(plain, final.state, `offer ${pct(minOffer)}; next 1`, who);
     expect(settled.lines[1]).toMatch(/^pay review settled: no deal on the final offer, so the tribunal sat \(fee £2,000\) and picked (your final offer|the middle|staff's figure), [\d.]+%/);
     expect(settled.lines.join("\n")).toMatch(/The tribunal settled quarter 2's pay review on/);

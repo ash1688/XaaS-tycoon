@@ -38,7 +38,7 @@ export interface PayHistoryEntry {
   /** The cash rise agreed, 0.04 = 4%, and how far it was above inflation (below when negative). */
   rise: number;
   realTerms: number;
-  /** The schemes it raised: none on an accepted counter or a tribunal's pick of staff's figure, which are cash only. */
+  /** The schemes it raised: the student's latest offer's, however it settled. */
   schemeRaises: SchemeRaise[];
   /** The new shares share save issued to the staff share scheme: 0 if it wasn't raised. */
   shareSaveShares: number;

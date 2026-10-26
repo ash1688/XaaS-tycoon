@@ -36,6 +36,7 @@ test.afterEach(async ({ request }) => {
 
 const goTo = (page: Page, name: string) =>
   page.getByRole("navigation", { name: "Game" }).getByRole("link", { name, exact: true }).click();
+const openTab = (page: Page, name: string) => page.getByRole("tab", { name, exact: true }).click();
 
 /** Plays on a day at a time, leaving any angel's offer to lapse, until `testid` shows. */
 async function continueUntil(page: Page, testid: string, most = 25) {
@@ -67,6 +68,7 @@ test("Series A's three VCs approach; picking one closes the others, accepting se
   await student.getByRole("button", { name: "Start company" }).click();
   await expect(student.getByTestId("day")).toHaveText(/^1 of/);
   await goTo(student, "Finance");
+  await openTab(student, "Funding");
   const panel = student.getByTestId("investor-panel");
   await expect(panel.getByTestId("vc")).toContainText("You don't need their money to float");
   await expect(panel.getByTestId("vc-round-seriesA")).toContainText("Series A not yet");
@@ -108,8 +110,10 @@ test("Series A's three VCs approach; picking one closes the others, accepting se
   await expect(panel.getByTestId("vc-round-seriesA")).toContainText(`${name} put in`);
   await expect(panel.getByTestId("vc-tranche")).toContainText("still to come, once you hit their growth target");
   await expect(panel.getByTestId("vc-lead")).toContainText(`${name} is your lead VC`);
+  await openTab(student, "Valuation");
   await expect(student.getByTestId("driver-investor")).toContainText(`${name}, your Series A VC, valued the business at`);
   await expect(student.getByTestId("cap-vc")).toContainText(`${name} (VC)`);
+  await openTab(student, "Funding");
 
   // Series B: the lead VC is back alongside two new VCs, after Series A's second tranche came in.
   await continueUntil(student, "vc-note");

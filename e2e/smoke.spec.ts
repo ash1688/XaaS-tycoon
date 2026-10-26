@@ -252,18 +252,22 @@ test("running out of cash brings a vulture VC's rescue, a buy-back, then liquida
   await expect(student.getByTestId("home-alerts")).toContainText("A vulture VC owns 75% of the company");
   await expect(student.getByRole("button", { name: "Continue" })).toBeEnabled();
   await goTo(student, "Finance");
+  await openTab(student, "Funding");
   const panel = student.getByTestId("rescue-panel");
   await expect(panel.getByTestId("rescue-terms")).toContainText("30,000 new shares, 75% of the company");
   await expect(panel.getByTestId("rescue-cuts")).toContainText("Forced cost cuts");
   await expect(panel.getByTestId("rescue-buy-back")).toContainText("will sell all of it back for");
   await expect(panel.getByTestId("buy-back")).toBeDisabled();
+  await openTab(student, "Valuation");
   await expect(student.getByTestId("cap-table")).toContainText("Vulture VC");
+  await openTab(student, "Funding");
 
   // With the cash, the student buys its shares back at its price.
   await setCash(1_000_000);
   await student.reload();
   await panel.getByTestId("buy-back").click();
   await expect(panel.getByTestId("rescue-bought-back")).toContainText("You bought its shares back on day 2");
+  await openTab(student, "Valuation");
   await expect(student.getByTestId("cap-table")).not.toContainText("Vulture VC");
 
   // The second time is liquidation: the game ends.
@@ -288,6 +292,7 @@ test("running out of cash brings a vulture VC's rescue, a buy-back, then liquida
   await expect(student.getByTestId("read-only")).toContainText("This game has ended");
   await expect(student.getByRole("button", { name: "Hire one mid developer" })).toBeDisabled();
   await goTo(student, "Finance");
+  await openTab(student, "Funding");
   await expect(student.getByTestId("loan-liquidated")).toContainText("banks don't lend");
   await expect(student.getByTestId("loan-open")).toBeHidden();
   await goTo(student, "Home");

@@ -794,15 +794,15 @@ export interface PayReviewRecord {
   /** The cash rise agreed, 0.04 = 4%. */
   rise: number;
   /**
-   * The scheme levels held after it: raised by the student's offer when staff accepted it or a tribunal picked it or
-   * the middle, and unchanged on an accepted counter or a tribunal's pick of staff's figure, which are cash only.
+   * The scheme levels held after it: raised by the student's latest offer however it settled. An accepted counter or a
+   * tribunal's pick keeps that offer's schemes, with its own cash on top.
    */
   schemes: SchemeLevels;
   /** The new shares share save issued to the staff share scheme when it settled: 0 if share save wasn't raised. */
   shareSaveShares: number;
   /**
-   * Set when a tribunal settled it: what it picked, the fee charged and the odds it had. Schemes (#193) apply on the
-   * student's figure or the middle, but not staff's, which is cash only.
+   * Set when a tribunal settled it: what it picked, the fee charged and the odds it had. The final offer's schemes
+   * (#193) apply whichever it picks.
    */
   tribunal: { pick: TribunalPick; fee: number; chances: Record<TribunalPick, number> } | null;
 }
@@ -1227,7 +1227,7 @@ export type Action =
    * the final offer, so never goes to the tribunal: that, or agreeing staff's last counter, is the student's.
    */
   | { type: "autoNegotiatePay"; rise: number; schemes?: Partial<SchemeLevels> }
-  /** Accepts staff's counter in the open pay review: their figure is the cash rise, with no schemes. */
+  /** Accepts staff's counter in the open pay review: the schemes in the latest offer, with the counter's cash on top. */
   | { type: "acceptPayCounter" }
   /** Hires a candidate from an open C-suite role's shortlist, by id ("cfo-2"), for good. */
   | { type: "hireExecutive"; role: CsuiteRole; candidate: string };

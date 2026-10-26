@@ -4,6 +4,7 @@ import { createCode } from "./staff.ts";
 
 const goTo = (page: Page, name: string) =>
   page.getByRole("navigation", { name: "Game" }).getByRole("link", { name, exact: true }).click();
+const openTab = (page: Page, name: string) => page.getByRole("tab", { name, exact: true }).click();
 
 test("pick the shares, see the valuation and cap table, take friends and family as previewed, and turn down the grant", async ({
   browser,
@@ -33,6 +34,7 @@ test("pick the shares, see the valuation and cap table, take friends and family 
 
   // Finance: the student owns all 20,000 shares, and the valuation shows what's pushing it up or down.
   await goTo(student, "Finance");
+  await openTab(student, "Valuation");
   const capTable = student.getByTestId("cap-table");
   await expect(capTable.getByTestId("shares-in-issue")).toHaveText("20,000");
   await expect(capTable.getByTestId("cap-student").getByTestId("cap-share")).toHaveText("100%");
@@ -43,20 +45,23 @@ test("pick the shares, see the valuation and cap table, take friends and family 
   }
 
   // Friends and family's offer previews the new shares and the dilution; accepting makes the cap table match it.
-  const url = student.url().replace(/\/finance$/, "");
+  const url = new URL(student.url()).pathname.replace(/\/finance$/, "");
   const id = url.split("/").at(-1)!;
   const { funding } = await (await request.get(`/api/codes/${code}/companies/${id}`)).json();
   const offer = funding.friendsAndFamilyOffer;
   const pct = (share: number) => `${(Math.round(share * 1000) / 10).toLocaleString("en-GB")}%`;
+  await openTab(student, "Funding");
   await student.getByTestId("ff-review").click();
   const modal = student.getByRole("dialog", { name: "Friends and family offer" });
   await expect(modal.getByTestId("ff-their-share")).toHaveText(pct(offer.theirShare));
   await expect(modal.getByTestId("ff-your-share")).toHaveText(`100% → ${pct(offer.yourShareAfter)}`);
   await modal.getByTestId("funding-accept").click();
   await expect(modal).toBeHidden();
+  await openTab(student, "Valuation");
   await expect(capTable.getByTestId("shares-in-issue")).toHaveText((20_000 + offer.newShares).toLocaleString("en-GB"));
   await expect(capTable.getByTestId("cap-student").getByTestId("cap-share")).toHaveText(pct(offer.yourShareAfter));
   await expect(capTable.getByTestId("cap-friendsAndFamily").getByTestId("cap-share")).toHaveText(pct(offer.theirShare));
+  await openTab(student, "Funding");
   await expect(student.getByTestId("ff-taken")).toContainText(`${offer.newShares.toLocaleString("en-GB")} shares`);
   await expect(student.getByTestId("ff-review")).toBeHidden();
 

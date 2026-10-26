@@ -1360,6 +1360,12 @@ describe("PaaS managed services and SaaS with no servers", () => {
     const off = (await act({ type: "setManagedService", service: "cache", size: null })).json<CompanyView>();
     expect(off.managed!.cache).toBeNull();
     expect((await get()).managed).toEqual(off.managed);
+    // A change that changes nothing is refused with why, not a quiet success (playtest 1: + seemed to add, but didn't).
+    const again = await act({ type: "setManagedService", service: "database", size: "large" });
+    expect(again.statusCode).toBe(400);
+    expect(again.json()).toMatchObject({ error: "same_size", message: "Your database is already large: pick another size to resize it." });
+    expect((await act({ type: "setManagedService", service: "cache", size: null })).json()).toMatchObject({ error: "no_cache" });
+    expect((await get()).managed).toEqual(off.managed);
   });
 
   it("validates the PaaS actions, and the sim refuses what doesn't fit", async () => {

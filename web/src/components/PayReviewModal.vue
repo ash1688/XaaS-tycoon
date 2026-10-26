@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { quarterName, TRIBUNAL_PICKS, type PayOfferTerms, type RollResult, type SchemeLevels, type TribunalPick } from "@xaas/sim";
+import { cashOnTop, quarterName, TRIBUNAL_PICKS, type PayOfferTerms, type RollResult, type SchemeLevels, type TribunalPick } from "@xaas/sim";
 import type { PayOfferView } from "@xaas/server/api-types";
 import { api, formatCash } from "../api";
 import { useGame } from "../game";
@@ -12,7 +12,8 @@ import AppModal from "./AppModal.vue";
 // and the odds on staff's counter, and their counter to accept. Before the take it or leave it offer it warns that the
 // next step is the tribunal, with its fee and odds, and once settled says what the tribunal picked. Auto-negotiate plays
 // the same offer on until staff accept or only the final offer is left, with a short transcript; it never goes to the
-// tribunal, which (like agreeing staff's last counter) stays a button for the student. The summary and the
+// tribunal, which (like agreeing staff's last counter) stays a button for the student. Staff's counter keeps the schemes
+// in the latest offer and asks the rest in cash, so it's shown as that cash plus your schemes. The summary and the
 // cash rise sit side by side, and the schemes are a table, each one's description behind More. It opens by itself;
 // closed to look around, the note in the shell opens it again, and the day still can't go on.
 const props = defineProps<{ open: boolean }>();
@@ -71,6 +72,17 @@ function offerText(terms: PayOfferTerms | undefined, value: number): string {
     .map((s) => (s.toggle ? s.name : `${s.name} to ${terms.schemes[s.id]}`));
   return added.length ? `${pct(terms.rise)} cash + ${added.join(", ")} (worth ${pct(value)} to staff)` : pct(terms.rise);
 }
+/** Staff's figure against an offer in words: "4.2%", or with schemes in the offer "3.1% cash plus your schemes". */
+function askText(figure: number, terms: PayOfferTerms | undefined, value: number): string {
+  if (!terms || value === terms.rise) return pct(figure);
+  return `${pct(cashOnTop(figure, { value, cash: terms.rise }))} cash plus your schemes`;
+}
+/** Staff's latest counter, as the buttons put it: "4.2%", or "3.1% plus your schemes". */
+const counterLabel = computed(() => {
+  const c = review.value?.counter;
+  if (!c) return "";
+  return c.schemesText ? `${pct(c.cash)} plus your schemes` : pct(c.cash);
+});
 
 const PREVIEW_DELAY_MS = 250;
 const preview = ref<PayOfferView>();
@@ -132,7 +144,8 @@ const autoTranscript = computed((): string[] => {
     const to = figures[i + 1];
     if (to === undefined) return `Offer ${i + 1} (${pct(value)}): staff accepted.`;
     const from = figures[i]!;
-    const how = to < from ? `they came down to ${pct(to)}` : to > from ? `they dug in and asked for ${pct(to)}` : `they held at ${pct(to)}`;
+    const ask = askText(to, source.offerTerms[i], value);
+    const how = to < from ? `they came down to ${ask}` : to > from ? `they dug in and asked for ${ask}` : `they held at ${ask}`;
     return `Offer ${i + 1} (${pct(value)}): ${how}.`;
   });
 });
@@ -146,7 +159,7 @@ async function tribunalNow() {
 }
 
 async function acceptCounter() {
-  game.track("control", { control: "pay-accept-counter", value: String(review.value?.staffFigure ?? "") });
+  game.track("control", { control: "pay-accept-counter", value: String(review.value?.counter?.cash ?? "") });
   await game.act({ type: "acceptPayCounter" });
 }
 
@@ -225,12 +238,16 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
             </table>
             <div class="pay-rise-box">
               <div v-if="review.canAcceptCounter" class="pay-counter" data-testid="pay-counter">
-                <p>
+                <p v-if="review.counter?.schemesText">
+                  <span class="badge">Staff counter</span> Your staff are asking for <strong>{{ pct(review.counter.cash) }}</strong>
+                  cash plus your schemes ({{ review.counter.schemesText }}). Agree it now, or make another offer.
+                </p>
+                <p v-else>
                   <span class="badge">Staff counter</span> Your staff are asking for <strong>{{ pct(review.staffFigure) }}</strong>
-                  in cash. Agree it now, as a cash rise with no schemes, or make another offer.
+                  in cash. Agree it now, or make another offer.
                 </p>
                 <button type="button" :disabled="game.busy" data-testid="pay-accept-counter" @click="acceptCounter">
-                  Agree {{ pct(review.staffFigure) }}
+                  Agree {{ counterLabel }}
                 </button>
               </div>
               <p v-else class="muted">Staff open at their ask of {{ pct(review.staffFigure) }}. Make the first offer.</p>
@@ -260,7 +277,7 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
                 − {{ r.penalty }} for asking them down {{ percent(r.ask) }}</template
               ><template v-if="r.bonus > 0"> + {{ r.bonus }} bonus</template
               ><template v-else-if="r.bonus < 0"> − {{ -r.bonus }} for dealing with staff directly</template> = {{ signed(r.total) }}:
-              <strong>{{ RESULT[r.result] }}: {{ moveText(r.move, review.staffFigures[i]!, review.staffFigures[i + 1]!) }}</strong>. They now ask {{ pct(review.staffFigures[i + 1]!) }}.
+              <strong>{{ RESULT[r.result] }}: {{ moveText(r.move, review.staffFigures[i]!, review.staffFigures[i + 1]!) }}</strong>. They now ask {{ askText(review.staffFigures[i + 1]!, review.offerTerms[i], review.studentOffers[i]!) }}.
             </li>
           </ol>
 
@@ -272,8 +289,8 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
             <span class="badge warn-badge">Take it or leave it: next is a tribunal</span> This is your take it or leave it
             offer. If staff don't accept it, the review goes to a <strong>tribunal</strong>, which charges a
             <strong>{{ formatCash(review.tribunalFee) }}</strong> fee and sets the rise: your offer, their
-            {{ pct(review.staffFigure) }} or the middle. It favours whichever is closest to a fair rise for how your company is
-            doing, so a lowball offer is likely to lose. Your schemes apply if it picks your offer or the middle, but not theirs.
+            {{ counterLabel }} or the middle. It favours whichever is closest to a fair rise for how your company is
+            doing, so a lowball offer is likely to lose. Your schemes apply whichever it picks.
           </p>
 
           <fieldset class="pay-schemes" data-testid="pay-schemes">
@@ -383,7 +400,7 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
                 <tbody>
                   <tr v-for="r in (['high', 'middle', 'low'] as const)" :key="r" :data-testid="`pay-odds-${r}`">
                     <th scope="row">{{ r[0]!.toUpperCase() + r.slice(1) }} roll, {{ percent(preview.odds.chances[r]) }}</th>
-                    <td>they ask {{ pct(preview.odds.outcomes[r].rise!) }}</td>
+                    <td>they ask {{ askText(preview.odds.outcomes[r].rise!, preview, preview.value) }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -398,7 +415,7 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
                   <tr v-for="p in TRIBUNAL_PICKS" :key="p" :data-testid="`pay-tribunal-${p}`">
                     <th scope="row">{{ PICK[p] }}, {{ percent(preview.tribunal.chances[p]) }}</th>
                     <td>
-                      a {{ pct(preview.tribunal.cash[p]) }} rise<template v-if="raised.length">{{ p === "staff" ? ", no schemes" : " + your schemes" }}</template>
+                      a {{ pct(preview.tribunal.cash[p]) }} rise<template v-if="raised.length"> + your schemes</template>
                     </td>
                   </tr>
                 </tbody>
@@ -424,7 +441,7 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
             </button>
             <template v-else-if="review.canAcceptCounter">
               <button type="button" :disabled="game.busy" data-testid="pay-final-accept" @click="acceptCounter">
-                Accept {{ pct(review.staffFigure) }}
+                Accept {{ counterLabel }}
               </button>
               <button type="button" class="ghost" :disabled="game.busy" data-testid="pay-tribunal" @click="tribunalNow">
                 Tribunal ({{ formatCash(review.tribunalFee) }} fee)

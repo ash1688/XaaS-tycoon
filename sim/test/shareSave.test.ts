@@ -153,17 +153,18 @@ describe("when share save applies", () => {
   const open = untilReview(plain, begin());
   const { minOffer } = open.payReview!;
 
-  it("not on an offer staff counter, nor on accepting their counter, which is cash only", () => {
+  it("not on an offer staff counter, but on accepting their counter, which keeps it", () => {
     const countered = offer(plain, open, minOffer, { shareSave: 1 });
     expect(countered.payReview).not.toBeNull();
     expect(countered.shareholders).toEqual(open.shareholders);
     const accepted = plain.applyAction(countered, { type: "acceptPayCounter" });
-    expect(accepted.pastPayReviews.at(-1)).toMatchObject({ outcome: "counterAccepted", shareSaveShares: 0 });
-    expect(accepted.shareholders).toEqual(open.shareholders);
-    expect(accepted.staffSchemes.shareSave).toBe(0);
+    const issued = Math.round(inIssue(countered) * perLevel);
+    expect(accepted.pastPayReviews.at(-1)).toMatchObject({ outcome: "counterAccepted", shareSaveShares: issued });
+    expect(holder(accepted, "staffScheme")).toBe(issued);
+    expect(accepted.staffSchemes.shareSave).toBe(1);
   });
 
-  it("on a tribunal's pick of your figure or the middle, but not staff's", () => {
+  it("on a tribunal, whatever it picks", () => {
     const atFinal = offer(plain, offer(plain, open, minOffer), minOffer);
     const levels = { shareSave: 1 };
     const worth = plain.payOfferPreview(atFinal, minOffer, levels).schemeValue;
@@ -175,10 +176,10 @@ describe("when share save applies", () => {
       const record = settled.pastPayReviews.at(-1)!;
       const pick = record.tribunal!.pick;
       seen.add(pick);
-      const issued = pick === "staff" ? 0 : Math.round(inIssue(atFinal) * perLevel);
+      const issued = Math.round(inIssue(atFinal) * perLevel);
       expect(record.shareSaveShares).toBe(issued);
       expect(holder(settled, "staffScheme")).toBe(issued);
-      expect(settled.staffSchemes.shareSave).toBe(pick === "staff" ? 0 : 1);
+      expect(settled.staffSchemes.shareSave).toBe(1);
     }
     expect([...seen].sort()).toEqual(["middle", "staff", "student"]);
   });

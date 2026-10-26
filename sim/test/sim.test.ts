@@ -2193,7 +2193,8 @@ describe("PaaS managed services", () => {
 
   it("picks managed database and cache sizes at once, each giving the platform's units", () => {
     for (const size of SERVER_SIZES) {
-      const state = service(service(begin(), "database", size), "cache", size);
+      // A new company here starts with a small database: setting the size it has is refused.
+      const state = service(size === "small" ? begin() : service(begin(), "database", size), "cache", size);
       const units = paasConfig.models.paas.servers!.managed!.units.database[size];
       expect(paas.units(state)).toMatchObject({ dbu: { capacity: units }, ch: { capacity: units } });
       expect(paas.managed(state)).toMatchObject({ database: { size, units }, cache: { size, units } });
@@ -2284,6 +2285,33 @@ describe("PaaS managed services", () => {
       expect(codeOf(() => service(other, "cache", "small"))).toBe("not_managed");
       expect(paas.managed(other)).toBeNull();
     }
+  });
+
+  // Playtest 1: a + that sent the size already running "worked" but changed nothing. Now it says why.
+  it("refuses a managed service change that changes nothing, rather than quietly doing nothing", () => {
+    // A new company here starts with a small database.
+    const state = begin();
+    expect(paas.managed(state)).toMatchObject({ database: { size: "small" }, cache: null });
+    const copy = structuredClone(state);
+    const refusal = (attempt: () => unknown) => {
+      try {
+        attempt();
+      } catch (e) {
+        return [(e as SimError).code, (e as SimError).message];
+      }
+    };
+    expect(refusal(() => service(state, "database", "small"))).toEqual([
+      "same_size",
+      "Your database is already small: pick another size to resize it.",
+    ]);
+    expect(refusal(() => service(state, "cache", null))).toEqual(["no_cache", "You have no cache to remove."]);
+    const cached = service(state, "cache", "medium");
+    expect(codeOf(() => service(cached, "cache", "medium"))).toBe("same_size");
+    expect(state).toEqual(copy);
+    // A real change still goes through: one of each, at the new size.
+    const resized = service(cached, "database", "large");
+    expect(paas.managed(resized)).toMatchObject({ database: { size: "large" }, cache: { size: "medium" } });
+    expect(resized.servers.filter((s) => s.type === "database")).toHaveLength(1);
   });
 
   it("is deterministic, and resumes identically after a JSON round trip", () => {

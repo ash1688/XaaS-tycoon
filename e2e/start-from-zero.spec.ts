@@ -129,33 +129,34 @@ test("on PaaS, a managed database added from the empty state brings users from d
   await expect(student.getByTestId("launch-step-servers")).toContainText("Set up app instances and a managed database");
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Infrastructure", exact: true }).click();
 
-  // Nothing runs yet, and the controls say so: no instances, no database and no cache. + is there to add a database.
+  // Nothing runs yet, and the controls say so: no instances, no database and no cache. One button adds a database
+  // at the size picked, saying what it gives and costs.
   const platform = student.getByTestId("platform-panel");
   await expect(platform.getByTestId("instances-value")).toHaveText("0");
-  await expect(platform.getByTestId("managed-database-value")).toHaveText("None");
   await expect(platform.getByTestId("no-database")).toContainText("None yet");
-  await expect(platform.getByRole("button", { name: "Remove the database" })).toBeDisabled();
-  await expect(platform.getByTestId("managed-database-why")).toHaveText("You have no database to remove.");
-  await expect(platform.getByRole("button", { name: "Add a small database" })).toBeEnabled();
-  await expect(platform.getByTestId("managed-cache-value")).toHaveText("None");
-  // With none running, the dropdown only picks the size + adds: still nothing is running.
+  await expect(platform.getByTestId("managed-database-apply")).toHaveText("Add a small database (10 DBU, £1,125 a month)");
+  await expect(platform.getByTestId("managed-cache-current")).toHaveText("None");
+  await expect(platform.getByRole("button", { name: "Remove the cache" })).toHaveCount(0);
+  // With none running, the dropdown only picks the size the button adds: still nothing is running.
   await platform.getByTestId("managed-database-size").selectOption("medium");
-  await expect(platform.getByTestId("managed-database-value")).toHaveText("None");
-  await expect(platform.getByRole("button", { name: "Add a medium database" })).toBeEnabled();
+  await expect(platform.getByTestId("no-database")).toBeVisible();
+  await expect(platform.getByRole("button", { name: /^Add a medium database/ })).toBeEnabled();
   await platform.getByTestId("managed-database-size").selectOption("small");
 
-  // One instance, and + adds the small database.
+  // One instance, and the button adds the small database. Then it offers the next size up, not another database.
   await platform.getByRole("button", { name: "One more app instance" }).click();
   await expect(platform.getByTestId("instances-value")).toHaveText("1");
-  await platform.getByRole("button", { name: "Add a small database" }).click();
-  await expect(platform.getByTestId("managed-database-value")).toHaveText("1 small");
-  await expect(platform.getByTestId("managed-database-size")).toHaveValue("small");
+  await platform.getByRole("button", { name: /^Add a small database/ }).click();
+  await expect(platform.getByTestId("managed-database-current")).toHaveText("1 small · 10 DBU · £1,125/mo");
   await expect(platform.getByTestId("no-database")).toHaveCount(0);
-  // The cache is added with + and taken away with −.
-  await platform.getByRole("button", { name: "Add a small cache" }).click();
-  await expect(platform.getByTestId("managed-cache-value")).toHaveText("1 small");
+  await expect(platform.getByTestId("managed-database-size")).toHaveValue("medium");
+  await expect(platform.getByTestId("managed-database-apply")).toHaveText("Resize to medium (25 DBU, £2,500 a month)");
+  await expect(platform.getByRole("button", { name: /Add .*database|Remove the database/ })).toHaveCount(0);
+  // The cache is added with its button and taken away with Remove the cache.
+  await platform.getByRole("button", { name: /^Add a small cache/ }).click();
+  await expect(platform.getByTestId("managed-cache-current")).toHaveText("1 small · 10 CH · £375/mo");
   await platform.getByRole("button", { name: "Remove the cache" }).click();
-  await expect(platform.getByTestId("managed-cache-value")).toHaveText("None");
+  await expect(platform.getByTestId("managed-cache-current")).toHaveText("None");
 
   for (const day of [2, 3, 4]) {
     await student.getByRole("button", { name: "Continue" }).click();

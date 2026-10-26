@@ -4,6 +4,7 @@ import { createCode } from "./staff.ts";
 
 const goTo = (page: Page, name: string) =>
   page.getByRole("navigation", { name: "Game" }).getByRole("link", { name, exact: true }).click();
+const openTab = (page: Page, name: string) => page.getByRole("tab", { name, exact: true }).click();
 
 test("start without a loan, take one later on worse terms, see the debt on Finance, and pay it off early", async ({
   browser,
@@ -50,9 +51,10 @@ test("start without a loan, take one later on worse terms, see the debt on Finan
     await expect(student.getByTestId("day")).toContainText(`${day} of ${E2E_FINAL_DAY}`);
   }
   await goTo(student, "Finance");
+  await expect(student.getByTestId("balance-debt")).toHaveText("£0");
+  await openTab(student, "Funding");
   const panel = student.getByTestId("loan-panel");
   await expect(panel.getByTestId("loan-status")).toHaveText("None");
-  await expect(student.getByTestId("balance-debt")).toHaveText("£0");
   await panel.getByTestId("loan-open").click();
   const modal = student.getByRole("dialog", { name: "Take a bank loan" });
   // Day 3: 10.4% interest, £38,640 over 119 days, rounded up to £325 a day.
@@ -75,11 +77,13 @@ test("start without a loan, take one later on worse terms, see the debt on Finan
   // The next day's repayment shows as debt in the balance sheet.
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).toContainText(`4 of ${E2E_FINAL_DAY}`);
+  await openTab(student, "Overview");
   await expect(student.getByTestId("balance-debt")).toHaveText("−£325");
   await expect(student.getByTestId("balance-sheet").locator(".cat-debt")).toContainText("Debt");
   // Of it, only the interest counts against profit: £3,675 of £38,675 is interest, so £31 of the £325.
   await expect(student.getByTestId("balance-principal")).toHaveText("£294");
   await expect(student.getByTestId("balance-debt-split")).toContainText("£31 is interest and £294 is paying back");
+  await openTab(student, "Funding");
   await expect(panel.getByTestId("loan-remaining")).toHaveText(`£${(325 * 118).toLocaleString("en-GB")}`);
   await expect(panel).toContainText("118 repayments left");
   await expect(panel).toContainText("until day 122");
@@ -92,6 +96,7 @@ test("start without a loan, take one later on worse terms, see the debt on Finan
 
   // Paying it off early costs what's left of the £35,000, £34,706, and saves the £3,644 of interest still to come.
   await goTo(student, "Finance");
+  await openTab(student, "Funding");
   await expect(panel.getByTestId("loan-payoff")).toContainText("£34,706");
   await expect(panel.getByTestId("loan-payoff")).toContainText("£3,644");
   await panel.getByTestId("loan-repay-open").click();

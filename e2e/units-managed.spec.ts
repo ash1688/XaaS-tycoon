@@ -44,14 +44,19 @@ test("on PaaS, raising the instance count grows CU capacity at once, with manage
   await expect(student.getByTestId("tier-cu-figures")).toHaveText("4.8 / 30 CU");
   await expect(platform.getByTestId("platform-note")).toContainText("you need just 1 ops");
 
-  // A bigger managed database, at once too: the size dropdown resizes the one there is. It can't be removed, and there's
-  // only ever one.
-  await expect(platform.getByTestId("managed-database-value")).toHaveText("1 small");
-  await expect(platform.getByRole("button", { name: "Remove the database" })).toBeDisabled();
-  await expect(platform.getByRole("button", { name: "Add another database" })).toBeDisabled();
-  await expect(platform.getByTestId("managed-database-why")).toContainText("Your product needs a database");
+  // A bigger managed database, at once too: there's only ever one, so the size picker and Resize grow it, saying what
+  // it gives and costs. It can't be removed.
+  await expect(platform.getByTestId("managed-database-current")).toHaveText("1 small · 10 DBU · £1,125/mo");
+  await expect(platform.getByRole("button", { name: /Add .*database|Remove the database/ })).toHaveCount(0);
+  await platform.getByTestId("managed-database-size").selectOption("small");
+  await expect(platform.getByTestId("managed-database-apply")).toHaveCount(0);
+  await expect(platform.getByTestId("managed-database-change")).toHaveText("This is the size you run: pick another to resize it.");
   await platform.getByTestId("managed-database-size").selectOption("medium");
-  await expect(platform.getByTestId("managed-database-value")).toHaveText("1 medium");
+  // The dropdown alone changes nothing: the button does.
+  await expect(platform.getByTestId("managed-database-current")).toHaveText("1 small · 10 DBU · £1,125/mo");
+  await expect(platform.getByTestId("managed-database-change")).toHaveText("15 DBU more, £1,375 a month more. Ready at once.");
+  await platform.getByRole("button", { name: "Resize to medium (25 DBU, £2,500 a month)" }).click();
+  await expect(platform.getByTestId("managed-database-current")).toHaveText("1 medium · 25 DBU · £2,500/mo");
   await expect(student.getByRole("meter", { name: /^Database \(DBU\)/ })).toHaveAttribute("aria-valuemax", "25");
   await expect(platform.getByTestId("platform-cost")).toHaveText("£5,875");
 

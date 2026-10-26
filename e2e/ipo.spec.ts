@@ -44,6 +44,7 @@ async function seriesAApproached(id: string) {
 
 const goTo = (page: Page, name: string) =>
   page.getByRole("navigation", { name: "Game" }).getByRole("link", { name, exact: true }).click();
+const openTab = (page: Page, name: string) => page.getByRole("tab", { name, exact: true }).click();
 
 test("float a company that's ready, ring the opening bell and watch the first day end the game", async ({ browser, request }) => {
   await request.post("/api/teacher/login", { data: { password: E2E_TEACHER_PASSWORD } });
@@ -67,6 +68,7 @@ test("float a company that's ready, ring the opening bell and watch the first da
 
   // Finance: the checklist, not all green yet, so Apply isn't allowed.
   await goTo(student, "Finance");
+  await openTab(student, "IPO");
   const panel = student.getByTestId("ipo-panel");
   await expect(panel.locator("li")).toHaveCount(6);
   await expect(panel.getByTestId("ipo-csuite")).toHaveAttribute("data-met", "false");
@@ -99,6 +101,7 @@ test("float a company that's ready, ring the opening bell and watch the first da
     await expect(student.getByTestId(`csuite-${role}`).getByTestId("csuite-executive")).toBeVisible();
   }
   await goTo(student, "Finance");
+  await openTab(student, "IPO");
   await expect(panel.getByTestId("ipo-csuite")).toHaveAttribute("data-met", "true");
   await expect(panel.getByTestId("ipo-csuite")).toContainText("All 11 hired");
   await expect(panel.getByTestId("ipo-status")).toHaveText("Ready to apply");

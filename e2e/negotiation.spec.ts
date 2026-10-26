@@ -4,6 +4,7 @@ import { createCode } from "./staff.ts";
 
 const goTo = (page: Page, name: string) =>
   page.getByRole("navigation", { name: "Game" }).getByRole("link", { name, exact: true }).click();
+const openTab = (page: Page, name: string) => page.getByRole("tab", { name, exact: true }).click();
 
 test("negotiate friends and family's offer: see the odds, counter twice, and accept the final offer", async ({ browser, request }) => {
   const teacher = await (await browser.newContext()).newPage();
@@ -20,6 +21,7 @@ test("negotiate friends and family's offer: see the odds, counter twice, and acc
   await student.getByRole("button", { name: "Start company" }).click();
   await expect(student.getByRole("heading", { name: "Haggle Ltd" })).toBeVisible();
   await goTo(student, "Finance");
+  await openTab(student, "Funding");
 
   await student.getByTestId("ff-review").click();
   const modal = student.getByRole("dialog", { name: "Friends and family offer" });
@@ -50,7 +52,7 @@ test("negotiate friends and family's offer: see the odds, counter twice, and acc
   await expect(talks.getByTestId("funding-counter")).toBeHidden();
 
   // Accepting takes the final offer, as it stands.
-  const id = student.url().replace(/\/finance$/, "").split("/").at(-1)!;
+  const id = new URL(student.url()).pathname.replace(/\/finance$/, "").split("/").at(-1)!;
   const { funding, cash } = await (await request.get(`/api/codes/${code}/companies/${id}`)).json();
   const offer = funding.friendsAndFamilyOffer;
   await modal.getByTestId("funding-accept").click();
@@ -77,7 +79,8 @@ test("auto-negotiate friends and family's offer from one counter to the final of
   await student.getByRole("button", { name: "Start company" }).click();
   await expect(student.getByRole("heading", { name: "Autohaggle Ltd" })).toBeVisible();
   await goTo(student, "Finance");
-  const id = student.url().replace(/\/finance$/, "").split("/").at(-1)!;
+  await openTab(student, "Funding");
+  const id = new URL(student.url()).pathname.replace(/\/finance$/, "").split("/").at(-1)!;
   const { cash } = await (await request.get(`/api/codes/${code}/companies/${id}`)).json();
 
   await student.getByTestId("ff-review").click();

@@ -153,9 +153,9 @@ npm run -s play -- summary <game>
   worth 1% of the company to the staff share scheme on the cap table, diluting you; `payodds` shows your stake after. Staff weigh the offer's worth: the cash plus each level added × its worth to them × about 70% (they want cash).
   Only levels added this review count. Each scheme then costs every day for good, as staff spend, for every permanent
   member of staff: the pension and death in service a share of pay, the health plan and discount scheme £ per person,
-  each with its own cost for what staff see in it. Levels only go up: lowering one is refused. Accepting staff's
-  counter is cash only, and so is a tribunal that picks staff's figure; one that picks yours or the middle keeps your
-  schemes. `pay` lists the schemes, levels and costs; `payodds 2.5 pension=2` shows the offer's worth and each
+  each with its own cost for what staff see in it. Levels only go up: lowering one is refused. Staff's counter
+  keeps the schemes in your latest offer and asks the rest in cash, so accepting it starts them; a tribunal keeps your
+  schemes whichever figure it picks. `pay` lists the schemes, levels and costs; `payodds 2.5 pension=2` shows the offer's worth and each
   scheme's cost.
 - `payhistory` lists every pay review settled: its date, inflation, staff's opening ask, how it ended (your offer
   accepted, staff's counter accepted, or the tribunal's pick and fee), the cash rise against inflation, the schemes
