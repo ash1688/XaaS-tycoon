@@ -104,6 +104,10 @@ function describe(e: PlayEventView): string {
       return `Hired one ${p.agency ? "agency " : ""}${poolName(p.pool)}`;
     case "letGo":
       return `Let go one ${p.agency ? "agency " : ""}${poolName(p.pool)}`;
+    case "cancelHire":
+      return `Cancelled hiring one ${p.agency ? "agency " : ""}${poolName(p.pool)}`;
+    case "letGoAgency":
+      return `Let go all agency staff${p.pool ? ` (${String(p.pool)})` : ""}`;
     case "moveStaff":
       return `Moved one ${poolName(p.from ?? "?")} to ${poolName(p.to)}`;
     case "buildFeature":

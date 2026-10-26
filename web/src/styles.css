@@ -1022,6 +1022,15 @@ fieldset > p {
   font-size: 0.9rem;
 }
 
+/* Letting a team's agency staff all go: its own line, with what goes and the pay saved. */
+.staff-bulk-agency {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.6rem;
+}
+
 .ops-needed {
   display: flex;
   flex-wrap: wrap;

@@ -1,13 +1,19 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
+import type { StaffGrade } from "@xaas/sim";
 import { formatCash, formatCount } from "../api";
 import GradeCounter from "../components/GradeCounter.vue";
+import StaffBulk from "../components/StaffBulk.vue";
 import { useGame } from "../game";
 
 // Customer care: today's tickets, what support cleared, the backlog left and the satisfaction it sets, with a quick
-// hire. Support is the company's job on every model, SaaS included. On a product with user content, the reports and
-// the moderators who handle them too.
+// hire, one at a time or in bulk as on People. Support is the company's job on every model, SaaS included. On a
+// product with user content, the reports and the moderators who handle them too.
 const game = useGame();
+const supportGrade = ref<StaffGrade>("mid");
+const supportAgency = ref(false);
+const moderatorsGrade = ref<StaffGrade>("mid");
+const moderatorsAgency = ref(false);
 const pool = computed(() => game.meta?.staff.find((s) => s.id === "support"));
 const moderators = computed(() => game.meta?.staff.find((s) => s.id === "moderators"));
 // How much unhandled reports take off the satisfaction target, as a whole percentage.
@@ -71,13 +77,19 @@ const satisfactionChange = computed(() =>
       <div class="staff-info">
         <strong>Support staff</strong>
         <span class="muted" data-testid="support-needed">
-          A mid clears {{ formatCount(game.meta.ticketsPerPerson) }} tickets a day. You need the work of about
-          {{ game.supportNeeded }} for your users' usual {{ formatCount(game.company.usualTickets) }} a day<template
-            v-if="game.company.backlog"
-          >, and more to clear the backlog</template>.
+          A mid clears {{ formatCount(game.meta.ticketsPerPerson) }} tickets a day.
+          <template v-if="game.company.usualTickets">
+            You need the work of about {{ game.supportNeeded }} mid{{ game.supportNeeded === 1 ? "" : "s" }} for your
+            users' usual {{ formatCount(game.company.usualTickets) }} a day<template v-if="game.company.backlog"
+              >, and more to clear the backlog</template
+            >.
+          </template>
+          <template v-else-if="game.company.backlog">Your users aren't raising new tickets, but there's a backlog to clear.</template>
+          <template v-else>Your users aren't raising tickets yet.</template>
         </span>
       </div>
-      <GradeCounter :pool="'support'" source="support-panel" />
+      <GradeCounter v-model:grade="supportGrade" v-model:agency="supportAgency" :pool="'support'" source="support-panel" />
+      <StaffBulk v-model:grade="supportGrade" v-model:agency="supportAgency" :pool="'support'" source="support-panel" />
     </div>
     <p>
       Your customers raise tickets every day, paying and free alike, and more when you're down. Support is your job on
@@ -119,13 +131,19 @@ const satisfactionChange = computed(() =>
         <div class="staff-info">
           <strong>Moderators</strong>
           <span class="muted" data-testid="moderators-needed">
-            A mid handles {{ formatCount(game.meta.reportsPerPerson) }} reports a day. You need the work of about
-            {{ game.moderatorsNeeded }} for your users' usual {{ formatCount(game.moderation.usualReports) }} a day<template
-              v-if="game.moderation.backlog"
-            >, and more to clear the unhandled ones</template>.
+            A mid handles {{ formatCount(game.meta.reportsPerPerson) }} reports a day.
+            <template v-if="game.moderation.usualReports">
+              You need the work of about {{ game.moderatorsNeeded }} mid{{ game.moderatorsNeeded === 1 ? "" : "s" }} for
+              your users' usual {{ formatCount(game.moderation.usualReports) }} a day<template v-if="game.moderation.backlog"
+                >, and more to clear the unhandled ones</template
+              >.
+            </template>
+            <template v-else-if="game.moderation.backlog">Your users aren't reporting new posts, but there are reports to handle.</template>
+            <template v-else>Your users aren't reporting posts yet.</template>
           </span>
         </div>
-        <GradeCounter :pool="'moderators'" source="support-panel" />
+        <GradeCounter v-model:grade="moderatorsGrade" v-model:agency="moderatorsAgency" :pool="'moderators'" source="support-panel" />
+        <StaffBulk v-model:grade="moderatorsGrade" v-model:agency="moderatorsAgency" :pool="'moderators'" source="support-panel" />
       </div>
       <p>
         Your users post content, and report some of it. Moderators handle the reports. Reports nobody handles pull

@@ -1031,6 +1031,51 @@ describe("agency staff and severance", () => {
     );
   });
 
+  // Lead times as the game's, so hires wait to start.
+  const waits = createSim({
+    ...config,
+    staffGrades: {
+      junior: { ...config.staffGrades.junior, leadDays: 3 },
+      mid: { ...config.staffGrades.mid, leadDays: 7 },
+      senior: { ...config.staffGrades.senior, leadDays: 14 },
+    },
+  });
+  const beginWaiting = () => waits.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 });
+
+  it("cancels hires still to start, the latest first, at no cost", () => {
+    const first = waits.applyAction(beginWaiting(), { type: "hire", pool: "support", grade: "junior", count: 2 });
+    const hired = waits.applyAction(waits.advance(first).state, { type: "hire", pool: "support", grade: "junior", count: 3 });
+    const withAgency = waits.applyAction(hired, agencyHire("support"));
+    const cut = waits.applyAction(withAgency, { type: "cancelHire", pool: "support", grade: "junior", count: 4 });
+    expect(cut.hiring).toEqual([
+      { pool: "support", grade: "junior", count: 1, agency: false, arrivesOn: 4 },
+      { pool: "support", grade: "mid", count: 1, agency: true, arrivesOn: 3 },
+    ]);
+    expect(cut.cash).toBe(withAgency.cash);
+    expect(waits.applyAction(cut, { type: "cancelHire", pool: "support", agency: true }).hiring).toHaveLength(1);
+    expect(() => waits.applyAction(cut, { type: "cancelHire", pool: "support", grade: "junior", count: 2 })).toThrow(
+      expect.objectContaining({ code: "no_hires", message: "You only have 1 junior support still to start." }),
+    );
+    expect(() => waits.applyAction(cut, { type: "cancelHire", pool: "developers" })).toThrow(
+      expect.objectContaining({ code: "no_hires", message: "You have no mid developers still to start." }),
+    );
+  });
+
+  it("lets go all agency staff in a pool or every pool, and cancels their hires still to start", () => {
+    const state = {
+      ...waits.applyAction(waits.applyAction(beginWaiting(), agencyHire("support", 2)), { type: "hire", pool: "support" }),
+      agency: { ...beginWaiting().agency, support: { ...none, junior: 1, senior: 2 }, developers: { ...none, mid: 3 } },
+    };
+    const support = waits.applyAction(state, { type: "letGoAgency", pool: "support" });
+    expect(support.agency.support).toEqual(none);
+    expect(support.agency.developers).toEqual({ ...none, mid: 3 });
+    expect(support.hiring).toEqual([{ pool: "support", grade: "mid", count: 1, agency: false, arrivesOn: 8 }]);
+    expect(support.cash).toBe(state.cash);
+    const all = waits.applyAction(state, { type: "letGoAgency" });
+    expect(all.agency.developers).toEqual(none);
+    expect(all.staff).toEqual(state.staff);
+  });
+
   it("keeps agency staff in their pool: only permanent staff move", () => {
     const state = { ...begin(), agency: { ...begin().agency, developers: { ...none, mid: 1 } } };
     expect(() => s.applyAction(state, { type: "moveStaff", from: "developers", to: "ops" })).toThrow(

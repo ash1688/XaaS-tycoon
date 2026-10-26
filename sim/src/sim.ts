@@ -786,6 +786,14 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
         // Some permanent staff let go may join a rival. Agency staff go back to their agency.
         return action.agency ? left : rivals.staffLeft(left, action.pool, action.grade ?? "mid", action.count ?? 1);
       }
+      case "cancelHire":
+        return staff.cancelHire(state, action.pool, action.grade, action.count, action.agency);
+      case "letGoAgency":
+        return staff.letGoAgency(state, action.pool);
+      case "cancelHire":
+        return staff.cancelHire(state, action.pool, action.grade, action.count, action.agency);
+      case "letGoAgency":
+        return staff.letGoAgency(state, action.pool);
       case "buildFeature":
         return features.startBuild(state, action.feature);
       case "buyAddon":
