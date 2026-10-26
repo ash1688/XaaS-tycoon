@@ -9,9 +9,10 @@ import AppModal from "./AppModal.vue";
 // A pay review: before quarters 2, 3 and 4 the staff come to the student about pay, and the game holds until it's
 // settled. It shows this review's inflation and the caps, the offers and counters so far, a cash rise and staff scheme
 // levels to offer (sliders and toggles floored at the levels held) with what they cost, what the offer is worth to staff
-// and the odds on staff's counter, and their counter to accept. Before the final offer it warns that the next step is
-// the tribunal, with its fee and odds, and once settled says what the tribunal picked. It opens by itself; closed to look
-// around, the note in the shell opens it again, and the day still can't go on.
+// and the odds on staff's counter, and their counter to accept. Before the take it or leave it offer it warns that the
+// next step is the tribunal, with its fee and odds, and once settled says what the tribunal picked. The summary and the
+// cash rise sit side by side, and the schemes are a table, each one's description behind More. It opens by itself;
+// closed to look around, the note in the shell opens it again, and the day still can't go on.
 const props = defineProps<{ open: boolean }>();
 const emit = defineEmits<{ close: [] }>();
 
@@ -49,11 +50,11 @@ const raised = computed(() =>
 const offeredSchemes = computed(() => Object.fromEntries(raised.value.map((s) => [s.id, s.to])) as Partial<SchemeLevels>);
 /** A scheme's worth to staff, to a hundredth of a point: 0.53%. */
 const finePct = (n: number) => `${(Math.round(Math.round(n * 1e6) / 100) / 100).toFixed(2)}%`;
-/** A scheme's cost model in words: "0.4% of pay", "£0.30 a person", or for share save its shares too. */
+/** A scheme's cost model in words: "0.4% of pay a day", "£0.30 a person a day", or for share save its shares too. */
 const costModel = (s: { wageShare: number; perPerson: number; sharesPerLevel: number }) =>
   [
-    s.wageShare ? `${(s.wageShare * 100).toFixed(1)}% of pay` : "",
-    s.perPerson ? `£${s.perPerson.toFixed(2)} a person` : "",
+    s.wageShare ? `${(s.wageShare * 100).toFixed(1)}% of pay a day` : "",
+    s.perPerson ? `£${s.perPerson.toFixed(2)} a person a day` : "",
     s.sharesPerLevel ? `new shares worth ${percent(s.sharesPerLevel)} of your company, once` : "",
   ]
     .filter(Boolean)
@@ -158,113 +159,143 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
           The day can't go on until you've agreed a rise. It's paid from day {{ review.startDay }} to every team, new hires
           and agency staff included.
         </p>
-        <table class="quote" data-testid="pay-review-terms">
-          <tbody>
-            <tr>
-              <th scope="row">Inflation this review</th>
-              <td data-testid="pay-inflation">{{ pct(review.inflation) }}</td>
-            </tr>
-            <tr>
-              <th scope="row">Least you can offer <span class="muted">inflation less a point</span></th>
-              <td data-testid="pay-min-offer">{{ pct(review.minOffer) }}</td>
-            </tr>
-            <tr>
-              <th scope="row">Most staff ask <span class="muted">inflation plus four points</span></th>
-              <td data-testid="pay-max-ask">{{ pct(review.maxAsk) }}</td>
-            </tr>
-            <tr>
-              <th scope="row">Your team costs now <span class="muted">pay and staff schemes</span></th>
-              <td>{{ formatCash(review.dailyStaffCost) }} a day</td>
-            </tr>
-          </tbody>
-        </table>
-        <p class="muted">A rise below inflation is a pay cut in real terms: your staff's money buys less than it did.</p>
-        <p v-if="!review.headOfPeople" class="muted" data-testid="pay-dealing-directly">
-          You're dealing with staff directly: with no head of people, they're stricter on the roll ({{ signed(review.rollBonus) }}
-          on each counter) and want cash, counting staff schemes at {{ percent(review.schemeValuation) }} of their worth.
-        </p>
-
-        <ol v-if="review.rounds.length" class="negotiation-rounds" data-testid="pay-rounds">
-          <li v-for="(r, i) in review.rounds" :key="i" data-testid="pay-round">
-            You offered {{ offerText(review.offerTerms[i], review.studentOffers[i]!) }}. Rolled {{ r.die }}<template v-if="r.penalty">
-              − {{ r.penalty }} for asking them down {{ percent(r.ask) }}</template
-            ><template v-if="r.bonus > 0"> + {{ r.bonus }} bonus</template
-            ><template v-else-if="r.bonus < 0"> − {{ -r.bonus }} for dealing with staff directly</template> = {{ signed(r.total) }}:
-            <strong>{{ RESULT[r.result] }}: {{ moveText(r.move, review.staffFigures[i]!, review.staffFigures[i + 1]!) }}</strong>. They now ask {{ pct(review.staffFigures[i + 1]!) }}.
-          </li>
-        </ol>
-
-        <div v-if="review.canAcceptCounter" class="pay-counter" data-testid="pay-counter">
-          <p>
-            <span class="badge">Staff counter</span> Your staff are asking for <strong>{{ pct(review.staffFigure) }}</strong>
-            in cash. You can agree it now, as a cash rise with no schemes, or make another offer.
+        <form class="counter-form pay-form" novalidate @submit.prevent="offer">
+          <div class="pay-top">
+            <table class="quote" data-testid="pay-review-terms">
+              <tbody>
+                <tr>
+                  <th scope="row">Inflation this review</th>
+                  <td data-testid="pay-inflation">{{ pct(review.inflation) }}</td>
+                </tr>
+                <tr>
+                  <th scope="row">Least you can offer <span class="muted">inflation less a point</span></th>
+                  <td data-testid="pay-min-offer">{{ pct(review.minOffer) }}</td>
+                </tr>
+                <tr>
+                  <th scope="row">Most staff ask <span class="muted">inflation plus four points</span></th>
+                  <td data-testid="pay-max-ask">{{ pct(review.maxAsk) }}</td>
+                </tr>
+                <tr>
+                  <th scope="row">Your team costs now <span class="muted">pay and staff schemes</span></th>
+                  <td>{{ formatCash(review.dailyStaffCost) }} a day</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="pay-rise-box">
+              <div v-if="review.canAcceptCounter" class="pay-counter" data-testid="pay-counter">
+                <p>
+                  <span class="badge">Staff counter</span> Your staff are asking for <strong>{{ pct(review.staffFigure) }}</strong>
+                  in cash. Agree it now, as a cash rise with no schemes, or make another offer.
+                </p>
+                <button type="button" :disabled="game.busy" data-testid="pay-accept-counter" @click="acceptCounter">
+                  Agree {{ pct(review.staffFigure) }}
+                </button>
+              </div>
+              <p v-else class="muted">Staff open at their ask of {{ pct(review.staffFigure) }}. Make the first offer.</p>
+              <label>
+                Cash rise (%)
+                <input
+                  v-model.number="draft"
+                  type="number"
+                  inputmode="decimal"
+                  :min="typed(review.minOffer)"
+                  :max="typed(review.maxAsk)"
+                  step="0.1"
+                  data-testid="pay-rise"
+                />
+              </label>
+              <p class="muted">A rise below inflation is a pay cut in real terms: your staff's money buys less than it did.</p>
+            </div>
+          </div>
+          <p v-if="!review.headOfPeople" class="muted" data-testid="pay-dealing-directly">
+            You're dealing with staff directly: with no head of people, they're stricter on the roll ({{ signed(review.rollBonus) }}
+            on each counter) and want cash, valuing staff schemes at only {{ percent(review.schemeValuation) }} of their usual worth.
           </p>
-          <button :disabled="game.busy" data-testid="pay-accept-counter" @click="acceptCounter">
-            Agree {{ pct(review.staffFigure) }}
-          </button>
-        </div>
-        <p v-else class="muted">Staff open at their ask of {{ pct(review.staffFigure) }}. Make the first offer.</p>
 
-        <p v-if="review.final" class="warn-note" role="status" data-testid="pay-final-warning">
-          <span class="badge warn-badge">Final offer: next is a tribunal</span> This is your last offer. If staff don't accept
-          it, the review goes to a <strong>tribunal</strong>, which charges a <strong>{{ formatCash(review.tribunalFee) }}</strong>
-          fee and sets the rise: your offer, their {{ pct(review.staffFigure) }} or the middle. It favours whichever is closest
-          to a fair rise for how your company is doing, so a lowball offer is likely to lose. Your schemes apply if it picks your
-          offer or the middle, but not theirs.
-        </p>
+          <ol v-if="review.rounds.length" class="negotiation-rounds" data-testid="pay-rounds">
+            <li v-for="(r, i) in review.rounds" :key="i" data-testid="pay-round">
+              You offered {{ offerText(review.offerTerms[i], review.studentOffers[i]!) }}. Rolled {{ r.die }}<template v-if="r.penalty">
+                − {{ r.penalty }} for asking them down {{ percent(r.ask) }}</template
+              ><template v-if="r.bonus > 0"> + {{ r.bonus }} bonus</template
+              ><template v-else-if="r.bonus < 0"> − {{ -r.bonus }} for dealing with staff directly</template> = {{ signed(r.total) }}:
+              <strong>{{ RESULT[r.result] }}: {{ moveText(r.move, review.staffFigures[i]!, review.staffFigures[i + 1]!) }}</strong>. They now ask {{ pct(review.staffFigures[i + 1]!) }}.
+            </li>
+          </ol>
 
-        <form class="counter-form" novalidate @submit.prevent="offer">
-          <label>
-            Cash rise (%)
-            <input
-              v-model.number="draft"
-              type="number"
-              inputmode="decimal"
-              :min="typed(review.minOffer)"
-              :max="typed(review.maxAsk)"
-              step="0.1"
-              data-testid="pay-rise"
-            />
-          </label>
+          <p v-if="review.final" class="warn-note" role="status" data-testid="pay-final-warning">
+            <span class="badge warn-badge">Take it or leave it: next is a tribunal</span> This is your take it or leave it
+            offer. If staff don't accept it, the review goes to a <strong>tribunal</strong>, which charges a
+            <strong>{{ formatCash(review.tribunalFee) }}</strong> fee and sets the rise: your offer, their
+            {{ pct(review.staffFigure) }} or the middle. It favours whichever is closest to a fair rise for how your company is
+            doing, so a lowball offer is likely to lose. Your schemes apply if it picks your offer or the middle, but not theirs.
+          </p>
+
           <fieldset class="pay-schemes" data-testid="pay-schemes">
             <legend>Staff schemes</legend>
             <p class="muted">
-              Benefits instead of cash: each costs you every day from now on, for every permanent member of staff, and can't be
-              taken away once given. <template v-if="!review.headOfPeople">Without a head of people, staff</template
-              ><template v-else>Staff</template> count {{ percent(review.schemeValuation) }} of a scheme's worth.
+              Benefits instead of cash. Each costs you every day from now on, for every permanent member of staff, and can't be
+              taken away once given.
+              <template v-if="review.headOfPeople">
+                Your head of people has staff value schemes at {{ percent(review.schemeValuation) }} of their usual worth.
+              </template>
+              <template v-else>
+                Without a head of people, staff value schemes at only {{ percent(review.schemeValuation) }} of their usual worth.
+              </template>
+              The worth below allows for that.
             </p>
-            <div v-for="s in review.schemes" :key="s.id" class="pay-scheme" :data-testid="`pay-scheme-${s.id}`">
-              <label v-if="s.toggle">
-                <input
-                  type="checkbox"
-                  :checked="levels[s.id] > 0"
-                  :disabled="s.level > 0"
-                  :data-testid="`pay-scheme-${s.id}-input`"
-                  @change="levels[s.id] = ($event.target as HTMLInputElement).checked ? 1 : 0"
-                />
-                <span><strong>{{ s.name }}</strong><template v-if="s.level > 0"> (held: on)</template></span>
-              </label>
-              <label v-else>
-                <span>
-                  <strong>{{ s.name }}</strong>: level {{ levels[s.id] }} of {{ s.maxLevel }}<template v-if="s.level > 0">
-                    (held: {{ s.level }})</template
-                  >
-                </span>
-                <input
-                  v-model.number="levels[s.id]"
-                  type="range"
-                  :min="s.level"
-                  :max="s.maxLevel"
-                  step="1"
-                  :data-testid="`pay-scheme-${s.id}-input`"
-                />
-              </label>
-              <span class="muted">
-                {{ s.blurb }} {{ s.toggle ? "It costs" : "Each level costs" }} {{ costModel(s) }} a day, and is worth
-                {{ finePct(s.staffValue * review.schemeValuation) }} to staff.
-                <template v-if="s.level > 0">Now {{ formatCash(s.costPerDay) }} a day.</template>
-              </span>
-            </div>
+            <table class="pay-scheme-table">
+              <thead>
+                <tr>
+                  <th scope="col">Scheme</th>
+                  <th scope="col">Level</th>
+                  <th scope="col">Cost to you</th>
+                  <th scope="col">Worth to staff</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="s in review.schemes" :key="s.id" class="pay-scheme" :data-testid="`pay-scheme-${s.id}`">
+                  <th scope="row">
+                    <strong>{{ s.name }}</strong>
+                    <details class="how-it-works scheme-more">
+                      <summary>More</summary>
+                      {{ s.blurb }}
+                    </details>
+                  </th>
+                  <td data-label="Level">
+                    <label v-if="s.toggle" class="scheme-level">
+                      <input
+                        type="checkbox"
+                        :checked="levels[s.id] > 0"
+                        :disabled="s.level > 0"
+                        :aria-label="s.name"
+                        :data-testid="`pay-scheme-${s.id}-input`"
+                        @change="levels[s.id] = ($event.target as HTMLInputElement).checked ? 1 : 0"
+                      />
+                      <span>{{ levels[s.id] > 0 ? "On" : "Off" }}<template v-if="s.level > 0"> (held)</template></span>
+                    </label>
+                    <label v-else class="scheme-level">
+                      <input
+                        v-model.number="levels[s.id]"
+                        type="range"
+                        :min="s.level"
+                        :max="s.maxLevel"
+                        step="1"
+                        :aria-label="`${s.name} level`"
+                        :data-testid="`pay-scheme-${s.id}-input`"
+                      />
+                      <span>{{ levels[s.id] }} of {{ s.maxLevel }}<template v-if="s.level > 0"> (held {{ s.level }})</template></span>
+                    </label>
+                  </td>
+                  <td data-label="Cost to you">
+                    {{ costModel(s) }}{{ s.toggle ? "" : ", each level" }}
+                    <small v-if="s.level > 0" class="muted">Now {{ formatCash(s.costPerDay) }} a day</small>
+                  </td>
+                  <td data-label="Worth to staff">
+                    {{ finePct(s.staffValue * review.schemeValuation) }}{{ s.toggle ? "" : " each level" }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </fieldset>
           <div v-if="preview" class="counter-odds" data-testid="pay-preview">
             <p v-if="raised.length" data-testid="pay-worth">

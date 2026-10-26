@@ -514,7 +514,7 @@ export interface Sim {
   /** Feature gaps still slowing growth, oldest first. Shown every day, not just the day the event fired. */
   featureGaps(state: GameState): FeatureGapView[];
   /**
-   * The C-suite, for the People page: every role with when it opens, who fills it, or its shortlist with each
+   * The C-suite, for the C-suite page: every role with when it opens, who fills it, or its shortlist with each
    * candidate's effects, salary and equity ask now; and the equity cap, used and left.
    */
   csuite(state: GameState): CsuiteView;

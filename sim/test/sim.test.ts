@@ -1400,7 +1400,7 @@ describe("capacity and outages", () => {
     expect(state.outageDays).toBe(1);
     expect(tight.uptime(state)).toBeLessThan(100);
     expect(log[0]!.entries[0]).toMatchObject({ kind: "outage", cashDelta: 0 });
-    expect(log[0]!.entries[0]!.text).toMatch(/^Outage/);
+    expect(log[0]!.entries[0]!.text).toMatch(/^Load hit \d+% of capacity\. Down \d+ hours/);
   });
 
   it("is down for longer the further load is over capacity", () => {
@@ -1530,11 +1530,11 @@ describe("servers on IaaS", () => {
     const units = flat.units(flat.advance(dbBound).state)!;
     expect(units.binding).toBe("dbu");
     expect(units.usersSupported).toBe(1_000);
-    expect(outages(flat.advance(dbBound).log)).toEqual([expect.stringMatching(/^Outage: the database \(DBU\) hit 150% of capacity\./)]);
+    expect(outages(flat.advance(dbBound).log)).toEqual([expect.stringMatching(/^The database \(DBU\) hit 150% of capacity\./)]);
 
     const cuBound = withUsers(fleet(begin(), ["app", "small"], BIG_DB), 1_500);
     expect(flat.units(flat.advance(cuBound).state)!.binding).toBe("cu");
-    expect(outages(flat.advance(cuBound).log)).toEqual([expect.stringMatching(/^Outage: compute \(CU\) hit 150% of capacity\./)]);
+    expect(outages(flat.advance(cuBound).log)).toEqual([expect.stringMatching(/^Compute \(CU\) hit 150% of capacity\./)]);
     // Within both tiers, no outage: big enough on one tier doesn't make up for the other.
     expect(outages(flat.advance(withUsers(fleet(begin(), BIG_APP, BIG_DB), 1_500)).log)).toEqual([]);
     // The single capacity figure is the binding tier's, as load: 1,000 users at 1 load each.
@@ -2127,7 +2127,7 @@ describe("PaaS managed services", () => {
   it("raises the instance count at once: the CU is there for the very next day, with no waiting", () => {
     const busy = withUsers(service(begin(), "database", "medium"), 2_500);
     // 25 CU of demand against one instance's 10: an outage.
-    expect(outages(paas.advance(busy).log)).toEqual([expect.stringMatching(/^Outage: compute \(CU\) hit 250% of capacity\./)]);
+    expect(outages(paas.advance(busy).log)).toEqual([expect.stringMatching(/^Compute \(CU\) hit 250% of capacity\./)]);
     const scaled = instances(busy, 3);
     expect(paas.units(scaled)!.cu.capacity).toBe(30);
     expect(paas.servers(scaled).every((s) => s.status === "ready")).toBe(true);
@@ -2164,7 +2164,7 @@ describe("PaaS managed services", () => {
   it("lets a managed cache take load off the managed database, by the same rule as servers", () => {
     // 2,000 users need 20 DBU and 20 CU: the small database's 10 DBU alone is over, but a small cache takes 10.
     const busy = withUsers(instances(begin(), 2), 2_000);
-    expect(outages(paas.advance(busy).log)).toEqual([expect.stringMatching(/^Outage: the database \(DBU\) hit 200% of capacity\./)]);
+    expect(outages(paas.advance(busy).log)).toEqual([expect.stringMatching(/^The database \(DBU\) hit 200% of capacity\./)]);
     const cached = service(busy, "cache", "small");
     expect(outages(paas.advance(cached).log)).toEqual([]);
     expect(paas.units(paas.advance(cached).state)).toMatchObject({ dbu: { demand: 10, beforeCache: 20 }, ch: { absorbed: 10 } });
@@ -2328,7 +2328,7 @@ describe("SaaS with no servers", () => {
     };
     const s = createSim({ ...config, events: [outage] });
     const { state, log } = s.advance(crowd(begin(s)), 5);
-    expect(outages(log).map((e) => e.text)).toEqual(["Outage: Provider outage. Down 6 hours; growth slowed."]);
+    expect(outages(log).map((e) => e.text)).toEqual(["Provider outage. Down 6 hours; growth slowed."]);
     expect(state.outageDays).toBe(1);
     expect(state.downtimeHours).toBe(6);
   });
@@ -4806,7 +4806,7 @@ describe("scripted events", () => {
       expect(spikeDay.demand.cu / quietDay.demand.cu).toBeCloseTo(2_000, -1);
       expect(spikeDay.demand.dbu / quietDay.demand.dbu).toBeCloseTo(2_000, -1);
       const outage = play(s, "iaas", 2, 2).log[1]!.entries.find((e) => e.kind === "outage")!;
-      expect(outage.text).toMatch(/^Outage: compute \(CU\) hit \d+% of capacity\./);
+      expect(outage.text).toMatch(/^Compute \(CU\) hit \d+% of capacity\./);
     });
 
     it("degrades IaaS short of ops: an outage, and no scaling charge", () => {
@@ -4851,7 +4851,7 @@ describe("scripted events", () => {
         expect(state).toMatchObject({ outageDays: 1, downtimeHours: 6, cash: without.cash - 50 });
         expect(charges(log, "OS security patch: Cleaning up")).toHaveLength(1);
         expect(log[0]!.entries.find((e) => e.kind === "outage")!.text).toBe(
-          "Outage: OS security patch. Down 6 hours; growth slowed.",
+          "OS security patch. Down 6 hours; growth slowed.",
         );
         expect(s.events(state)[0]).toMatchObject({ shortOfOps: true, hit: true });
       }
@@ -5012,7 +5012,7 @@ describe("provider events and the SaaS feature gap", () => {
         expect(s.uptime(state)).toBeLessThan(100);
         expect(log.filter((d) => d.entries.some((e) => e.kind === "outage")).map((d) => d.day)).toEqual([3, 4]);
         expect(log[1]!.entries.find((e) => e.kind === "outage")!.text).toBe(
-          "Outage: Provider outage. Down 5 hours; growth slowed.",
+          "Provider outage. Down 5 hours; growth slowed.",
         );
         expect(s.events(play(s, model, 2).state)[0]).toMatchObject({ id: "providerOutage", owner: "provider", hit: true });
       }
@@ -6459,7 +6459,7 @@ describe("free-to-paid conversion", () => {
       expect(next.users).toBe(state.users);
       const [entry] = conversionLog(log);
       expect(entry).toMatchObject({ cashDelta: 0, kind: "conversion" });
-      expect(entry!.text).toMatch(/^Free to paid: \d[\d,]* of \d[\d,]* free users started paying \([\d.]+% a day\)\.$/);
+      expect(entry!.text).toMatch(/^\d[\d,]* of \d[\d,]* free users started paying \([\d.]+% a day\)\.$/);
       total += next.conversionsToday;
       state = next;
     }

@@ -336,7 +336,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
         id: "growth",
         label: "Growth",
         amount: part(growthM),
-        detail: `Paying users over the last ${v.averageDays} days ${growth >= 0 ? "up" : "down"} ${percent(Math.abs(growth))} on the ${v.averageDays} days to ${v.growthDays} days ago (counting from the end of the launch, and a rise only above the best ${v.averageDays} days before then): ${multipleText(growthM)} revenue`,
+        detail: `Paying users over the last ${v.averageDays} days: ${growth >= 0 ? "up" : "down"} ${percent(Math.abs(growth))} on the ${v.averageDays} days ${v.growthDays === v.averageDays ? "before" : `to ${v.growthDays} days ago`} (counting from the end of the launch, and a rise only above the best ${v.averageDays} days before then): ${multipleText(growthM)} revenue`,
       },
       {
         id: "satisfaction",
@@ -376,8 +376,8 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
       amount: Math.round(users * perUser),
       detail:
         perUser < v.valuePerPayingUser
-          ? `${count.format(users)} lately × ${pounds(perUser)}: ${pounds(v.valuePerPayingUser)} each at the fair price of ${pounds(fair)} a month, but they paid ${pounds(monthlyPerUser!)}`
-          : `${count.format(users)} lately × ${pounds(perUser)}`,
+          ? `${count.format(users)} paying users lately × ${pounds(perUser)} each. A paying user adds ${pounds(v.valuePerPayingUser)} at the fair price of ${pounds(fair)} a month, and less as yours paid ${pounds(monthlyPerUser!)} a month`
+          : `${count.format(users)} paying users lately × ${pounds(perUser)} each`,
     });
     return { annualRevenue, multiple, growth, recentUptime, drivers, value: drivers.reduce((sum, d) => sum + d.amount, 0) };
   }

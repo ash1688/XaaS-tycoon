@@ -1,19 +1,17 @@
 <script setup lang="ts">
 import { formatCash } from "../../api";
 import { days, useGame } from "../../game";
-import CsuitePanel from "../../panels/CsuitePanel.vue";
 import PayHistoryPanel from "../../panels/PayHistoryPanel.vue";
 import StaffPanel from "../../panels/StaffPanel.vue";
 import { formatShare } from "../../shares";
 
-// People: the staff, the C-suite, what each team does, the staff schemes agreed in pay reviews, and the pay history.
+// People: the staff, what each team does, the staff schemes agreed in pay reviews, and the pay history.
 const game = useGame();
 </script>
 
 <template>
   <div class="page-grid">
     <StaffPanel />
-    <CsuitePanel />
     <section v-if="game.meta && game.company" class="card" aria-labelledby="teams-heading">
       <h2 id="teams-heading">Who does what</h2>
       <ul class="teams">

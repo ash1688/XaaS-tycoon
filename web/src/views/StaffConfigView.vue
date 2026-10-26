@@ -493,7 +493,7 @@ const inputId = (f: ConfigField) => `cfg-${f.path.replace(/\./g, "-")}`;
       </div>
     </div>
 
-    <AppModal :open="!!dialog" :title="dialogTitle" @close="dialog = undefined">
+    <AppModal small :open="!!dialog" :title="dialogTitle" @close="dialog = undefined">
       <form
         v-if="dialog?.kind === 'saveAs' || dialog?.kind === 'rename'"
         class="preset-name-form"

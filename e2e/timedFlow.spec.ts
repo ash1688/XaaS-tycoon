@@ -29,9 +29,9 @@ test("with timed flow on, days play by themselves at the speed picked, and Pause
   await student.goto(`/play/${code}/${id}`);
   await expect(student.getByTestId("day")).toContainText(`1 of ${E2E_FINAL_DAY}`);
   // A game opens paused, at normal speed.
-  await expect(student.getByTestId("timed-status")).toContainText(`A day plays every ${E2E_TIMED_FLOW_SECONDS}s`);
+  await expect(student.getByTestId("timed-status")).toContainText(`Play: a day every ${E2E_TIMED_FLOW_SECONDS}s`);
   await student.getByLabel("Speed").selectOption("Slow");
-  await expect(student.getByTestId("timed-status")).toContainText(`A day plays every ${2 * E2E_TIMED_FLOW_SECONDS}s`);
+  await expect(student.getByTestId("timed-status")).toContainText(`Play: a day every ${2 * E2E_TIMED_FLOW_SECONDS}s`);
   await student.getByLabel("Speed").selectOption("Normal");
 
   // Play from the keyboard: the countdown shows and days advance with no clicks on Continue.

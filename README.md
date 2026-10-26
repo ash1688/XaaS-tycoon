@@ -58,7 +58,7 @@ The image is a multi-stage build: production dependencies only, running as the `
 | `GAME_START_DATE` | No | Starts every new game on this date (`YYYY-MM-DD`) instead of a random date this year, for example `2026-11-01` to show Black Friday. Leave unset in production. The e2e tests use `2026-10-01`, a month with no holidays. |
 | `GAME_MVP` | No | `off` gives every product an MVP of no size, so games launch as soon as they can serve users. For tests and demos about play after the launch; leave unset in production. The e2e tests use it. |
 | `TIMED_FLOW` | No | `off` takes timed flow off the game page for every game, leaving Continue only. On unless set. |
-| `TIMED_FLOW_SECONDS` | No | Seconds a tick at normal speed with timed flow on. Default 15. |
+| `TIMED_FLOW_SECONDS` | No | Seconds a tick at normal speed with timed flow on. Default 10. |
 
 `DATABASE_URL` and `PORT` are set by the compose file. The server checks `DATABASE_URL`, `TEACHER_PASSWORD` and `SESSION_SECRET` before connecting to anything, and exits with a message naming the one that's missing.
 
@@ -113,7 +113,7 @@ Adding a number to `GameConfig` (in `sim/src/config.ts`) means listing it in `co
 
 ### Timed flow
 
-Time runs on its own. The game page has **Play/Pause** and four speeds (Slow, Normal, Fast and Fastest: 2×, 1×, ⅓ and ⅒ of `TIMED_FLOW_SECONDS`, default 15, a tick), with a countdown to the next tick. A game opens paused, so the student can look before playing. A **tick** is a day, or a week in a career; **Continue** plays one tick too. The sim still plays one day at a time, and after every day it checks its **pause triggers**: an event that hurts or an outage, an alert (over capacity, satisfaction falling below the poor mark, the grant withdrawn, paid API calls dropped), a new offer, cash about to run out (5 days or fewer) or something finished (a feature built, the launch over, servers ready, a migration step, the grant's condition met). The tick stops on the day one fires, so a crisis on the second day of a career week stops the clock there, and the page pauses and shows why.
+Time runs on its own. The game page has **Play/Pause** and four speeds (Slow, Normal, Fast and Fastest: 2×, 1×, ⅓ and ⅒ of `TIMED_FLOW_SECONDS`, default 10, a tick), with a countdown to the next tick. A game opens paused, so the student can look before playing. A **tick** is a day, or a week in a career; **Continue** plays one tick too. The sim still plays one day at a time, and after every day it checks its **pause triggers**: an event that hurts or an outage, an alert (over capacity, satisfaction falling below the poor mark, the grant withdrawn, paid API calls dropped), a new offer, cash about to run out (5 days or fewer) or something finished (a feature built, the launch over, servers ready, a migration step, the grant's condition met). The tick stops on the day one fires, so a crisis on the second day of a career week stops the clock there, and the page pauses and shows why.
 
 It's read at startup and passed to the page through `/api/meta` (and each game's meta), so you can change it by restarting the server, without rebuilding the web client. Each tick calls the same continue endpoint as the button, one request at a time. It pauses while the tab is hidden and carries on when the student comes back, and stops when the game ends or a tick fails. Actions such as hiring or starting a migration still work while it plays. The student's speed is remembered in their browser.
 

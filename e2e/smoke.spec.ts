@@ -1260,7 +1260,7 @@ test("free users start paying each day, and Customers shows what's helping or hu
   await expect(mix.getByTestId("mix-shifts")).toContainText("A rise loses casual users first");
 
   // The day log says so too.
-  await expect((await openDayLog(student)).locator('[data-kind="conversion"]')).toContainText("Free to paid:");
+  await expect((await openDayLog(student)).locator('[data-kind="conversion"]')).toContainText("free users started paying");
 });
 
 test("Customers shows market share against the rivals as a pie, and when they'll answer a price change", async ({ browser, request }) => {

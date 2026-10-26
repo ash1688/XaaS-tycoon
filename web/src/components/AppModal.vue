@@ -5,8 +5,9 @@ import { useGameIfAny } from "../game";
 // A modal dialog: labelled by its title, keeps keyboard focus inside while open, closes on Escape, the close button or
 // a click on the backdrop, and hands focus back to whatever opened it. The rest of the page is inert while it's open.
 // A backdrop click straight after opening is ignored: it's the second click of a double-click on whatever opened it,
-// which used to close the modal before it could be read.
-const props = defineProps<{ open: boolean; title: string }>();
+// which used to close the modal before it could be read. It's near full screen, so a page's panel has room; small is
+// for a short confirm.
+const props = defineProps<{ open: boolean; title: string; small?: boolean }>();
 const emit = defineEmits<{ close: [] }>();
 
 const id = useId();
@@ -84,7 +85,7 @@ function onKeydown(e: KeyboardEvent) {
     <div v-if="open" class="modal-backdrop" @mousedown.self="onBackdrop">
       <div
         ref="dialog"
-        class="modal"
+        :class="['modal', { small }]"
         role="dialog"
         aria-modal="true"
         :aria-labelledby="`${id}-title`"
