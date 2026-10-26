@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { runScript } from "../scripts/textPlay.ts";
 import { hasHeadOfPeople, peopleLead, peopleLeadFor } from "../src/peopleLead.ts";
 import { createSim, defaultConfig, type GameConfig, type GameState, type PeopleLeadConfig, type Sim } from "../src/index.ts";
+import { inPhase } from "./phases.ts";
 
 // The people-lead seam: one modifier that every head-of-people effect on a pay review reads (the roll bonus or penalty
 // on staff counters, walk-away softening, the scheme valuation and the tribunal lean). Without a head of people it gives
@@ -25,7 +26,9 @@ const withLead = (values: PeopleLeadConfig) =>
   createSim({ ...plainConfig, payReview: { ...plainConfig.payReview, peopleLead: { ...lead, none: values } } });
 const plain = createSim(plainConfig);
 const headed = withLead(lead.headOfPeople);
-const begin = (s: Sim, seed = 42) => s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed });
+/** A new game in Grow from day 16 (#236): reviews' rises start on days 46, 91 and 136. */
+const begin = (s: Sim, seed = 42) =>
+  inPhase(s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed }), "grow", 16);
 
 function untilReview(s: Sim, state: GameState): GameState {
   let current = state;

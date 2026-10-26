@@ -54,8 +54,12 @@ test("on IaaS, VMs rented on day 1 bring the first users on day 2, building up o
     "Your first users start arriving at the end of the day your servers are ready, more each day for 3 days.",
   );
   await expect(servers).toContainText("(done)");
-  await expect(student.getByTestId("launch-step-ops")).toContainText("Hire ops: 1 needed");
-  await expect(student.getByTestId("launch-step-ops")).toContainText("(done)");
+  // Hiring ops opens with the Launch phase (#236), so the step has no link to People yet.
+  const ops = student.getByTestId("launch-step-ops");
+  await expect(ops).toContainText("Ops: 1 needed to run your servers, and you have 1.");
+  await expect(ops).toContainText("Hiring more opens when you press Launch");
+  await expect(ops).toContainText("(done)");
+  await expect(ops.getByRole("link")).toHaveCount(0);
 
   // The game's launch users arrive over days 2 to 4, more each day. Home shows those who have joined, never the total.
   const ramp = [

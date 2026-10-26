@@ -39,7 +39,7 @@ watch(
     <ServersPanel v-else />
     <RacksPanel v-if="game.company?.racks" />
     <HardwarePanel />
-    <BenefitsPanel />
+    <BenefitsPanel v-if="game.isOpen('features')" />
     <DriftPanel />
     <StackPanel />
     <MigrationPanel class="span-all" />

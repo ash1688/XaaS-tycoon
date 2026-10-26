@@ -2,7 +2,7 @@
 import { expect, test, type APIRequestContext, type Browser } from "@playwright/test";
 import postgres from "postgres";
 import { E2E_DATABASE_URL, E2E_FINAL_DAY, E2E_TEACHER_PASSWORD, E2E_TIMED_FLOW_SECONDS } from "../playwright.config.ts";
-import { createCode } from "./staff.ts";
+import { createCode, reachPhase, withPreset } from "./staff.ts";
 
 async function newCompany(browser: Browser, request: APIRequestContext, name: string) {
   const teacher = await (await browser.newContext()).newPage();
@@ -16,6 +16,25 @@ async function newCompany(browser: Browser, request: APIRequestContext, name: st
   const { id } = await created.json();
   return { code: code!, id: id as string };
 }
+
+// Pay reviews start payReview.growDays into the Grow phase (#236), a month by default: too late for a 30-day game. On
+// this preset, a game put into Grow on day 7 has its first rise on day 9, the start of quarter 2.
+const PAY_REVIEW_SOON = { "payReview.growDays": 2 };
+
+/** A company on day 7, with cash to spare, whose first pay review opens once the day is played (see dueReview). */
+async function newCompanyForReview(browser: Browser, request: APIRequestContext, name: string) {
+  const company = await withPreset(request, "Pay review soon", PAY_REVIEW_SOON, () => newCompany(browser, request, name));
+  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
+  try {
+    await sql`update companies set state = jsonb_set(jsonb_set(state, '{day}', '7'::jsonb), '{cash}', '500000'::jsonb) where id = ${company.id}`;
+  } finally {
+    await sql.end();
+  }
+  return company;
+}
+
+/** Puts a company from newCompanyForReview into Grow today, day 7, so its first pay review opens after day 8. */
+const dueReview = (id: string) => reachPhase(id, "grow");
 
 const dayOf = async (text: Promise<string>) => Number((await text).match(/^\d+/)![0]);
 
@@ -115,14 +134,9 @@ test("timed flow stops when the game ends", async ({ browser, request }) => {
 });
 
 test("a pay review stops timed flow and holds the game until the student settles it in its modal", async ({ browser, request }) => {
-  const { code, id } = await newCompany(browser, request, "Pay Day Ltd");
-  // Day 6 of 30, with cash to spare: the first review opens after day 7, before quarter 2 starts on day 8.
-  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
-  try {
-    await sql`update companies set state = jsonb_set(jsonb_set(state, '{day}', '6'::jsonb), '{cash}', '500000'::jsonb) where id = ${id}`;
-  } finally {
-    await sql.end();
-  }
+  // Day 7 of 30, with cash to spare: the first review opens after day 8, before quarter 2 starts on day 9.
+  const { code, id } = await newCompanyForReview(browser, request, "Pay Day Ltd");
+  await dueReview(id);
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
@@ -130,8 +144,8 @@ test("a pay review stops timed flow and holds the game until the student settles
   await student.getByRole("button", { name: "Play" }).click();
   const modal = student.getByRole("dialog", { name: "Pay review" });
   await expect(modal).toBeVisible({ timeout: 15_000 });
-  await expect(student.getByTestId("day")).toContainText(`7 of ${E2E_FINAL_DAY}`);
-  await expect(modal).toContainText("Quarter 2 starts on day 8, and your staff want to talk about pay.");
+  await expect(student.getByTestId("day")).toContainText(`8 of ${E2E_FINAL_DAY}`);
+  await expect(modal).toContainText("Your staff want to talk about pay (Quarter 2), with the rise from day 9.");
   await expect(modal.getByTestId("pay-inflation")).toHaveText(/^\d\.\d%$/);
   await expect(modal.getByTestId("pay-dealing-directly")).toContainText("You're dealing with staff directly");
   const maxAsk = (await modal.getByTestId("pay-max-ask").innerText()).replace("%", "");
@@ -172,14 +186,14 @@ test("a pay review stops timed flow and holds the game until the student settles
 
   // The game plays on.
   await student.getByRole("button", { name: "Continue" }).click();
-  await expect(student.getByTestId("day")).toContainText(`8 of ${E2E_FINAL_DAY}`);
+  await expect(student.getByTestId("day")).toContainText(`9 of ${E2E_FINAL_DAY}`);
 });
 
 test("a pay review with no deal after the final offer warns of the tribunal, shows its odds, and goes to it", async ({ browser, request }) => {
-  const { code, id } = await newCompany(browser, request, "Tribunal Ltd");
+  const { code, id } = await newCompanyForReview(browser, request, "Tribunal Ltd");
+  await dueReview(id);
   const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
   try {
-    await sql`update companies set state = jsonb_set(jsonb_set(state, '{day}', '6'::jsonb), '{cash}', '500000'::jsonb) where id = ${id}`;
     const student = await (await browser.newContext()).newPage();
     await student.goto(`/play/${code}/${id}`);
     await student.getByRole("button", { name: "Continue" }).click();
@@ -214,7 +228,7 @@ test("a pay review with no deal after the final offer warns of the tribunal, sho
 
     // The clock is free again, and the next day's log says what the tribunal did.
     await student.getByRole("button", { name: "Continue" }).click();
-    await expect(student.getByTestId("day")).toContainText(`8 of ${E2E_FINAL_DAY}`);
+    await expect(student.getByTestId("day")).toContainText(`9 of ${E2E_FINAL_DAY}`);
     await expect(student.getByText(/The tribunal settled quarter 2's pay review on/)).toBeVisible();
 
     // The pay history on the People page has it, with the tribunal's pick and fee.
@@ -230,10 +244,10 @@ test("a pay review with no deal after the final offer warns of the tribunal, sho
 
 /** A company whose first pay review is open, with staff's walk-away figure set to `walkAway` (their ask or the least offer). */
 async function reviewWith(browser: Browser, request: APIRequestContext, name: string, walkAway: "maxAsk" | "minOffer") {
-  const { code, id } = await newCompany(browser, request, name);
+  const { code, id } = await newCompanyForReview(browser, request, name);
+  await dueReview(id);
   const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
   try {
-    await sql`update companies set state = jsonb_set(jsonb_set(state, '{day}', '6'::jsonb), '{cash}', '500000'::jsonb) where id = ${id}`;
     const student = await (await browser.newContext()).newPage();
     await student.goto(`/play/${code}/${id}`);
     await student.getByRole("button", { name: "Continue" }).click();
@@ -328,19 +342,19 @@ test("staff's counter to an offer with schemes keeps them: agreeing it starts th
 });
 
 test("the People page's pay history is empty before the first review, then lists each review settled", async ({ browser, request }) => {
-  const { code, id } = await newCompany(browser, request, "Payroll Ltd");
-  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
-  try {
-    await sql`update companies set state = jsonb_set(jsonb_set(state, '{day}', '6'::jsonb), '{cash}', '500000'::jsonb) where id = ${id}`;
-  } finally {
-    await sql.end();
-  }
+  const { code, id } = await newCompanyForReview(browser, request, "Payroll Ltd");
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "People" }).click();
   const history = student.getByTestId("pay-history");
+  // Before Grow there's no day for the first review yet.
   await expect(history.getByTestId("pay-history-empty")).toHaveText(
-    "No pay reviews yet. The first comes at the start of quarter 2, on day 8.",
+    "No pay reviews yet. The first comes about a month into the Grow phase, when your first angel investor has approached.",
+  );
+  await dueReview(id);
+  await student.reload();
+  await expect(history.getByTestId("pay-history-empty")).toHaveText(
+    "No pay reviews yet. The first comes in quarter 2, with its rise from day 9.",
   );
   await expect(history.getByTestId("pay-multiplier")).toContainText("Pay is ×1.000 the day rates: no rises yet.");
 
@@ -358,7 +372,7 @@ test("the People page's pay history is empty before the first review, then lists
   await expect(history.getByTestId("pay-history-empty")).toHaveCount(0);
   const row = history.getByTestId("pay-history-q2");
   await expect(row).toContainText("Quarter 2");
-  await expect(row).toContainText("(day 8)");
+  await expect(row).toContainText("(day 9)");
   await expect(row).toContainText(inflation);
   await expect(row.getByTestId("pay-history-ended")).toHaveText("Agreed: staff accepted your first offer");
   await expect(row.getByTestId("pay-history-rise")).toContainText(`${maxAsk}%`);
@@ -366,5 +380,5 @@ test("the People page's pay history is empty before the first review, then lists
   await expect(row.getByTestId("pay-history-fee")).toHaveCount(0);
   const multiplier = (1 + Number(maxAsk) / 100).toFixed(3);
   await expect(history.getByTestId("pay-multiplier")).toContainText(`Pay is ×${multiplier} the day rates: +${maxAsk}% from every rise so far`);
-  await expect(history.getByTestId("pay-history-next")).toContainText(/quarter 3, on day \d+\./);
+  await expect(history.getByTestId("pay-history-next")).toContainText(/quarter 3, with its rise from day \d+\./);
 });

@@ -48,8 +48,8 @@ const activeCount = computed(
 <template>
   <section v-if="game.company" class="card" aria-labelledby="features-heading" data-testid="features">
     <div class="row-between panel-head">
-      <h2 id="features-heading">{{ game.onSaas ? "Add-on shop" : "Features" }}</h2>
-      <span class="muted">
+      <h2 id="features-heading">{{ !game.isOpen("features") ? "MVP" : game.onSaas ? "Add-on shop" : "Features" }}</h2>
+      <span v-if="game.isOpen('features')" class="muted">
         {{ activeCount }} of {{ game.company.features.length }} {{ game.onSaas ? "active" : "built" }}
       </span>
     </div>
@@ -134,7 +134,9 @@ const activeCount = computed(
         }}).
       </p>
     </div>
-    <template v-if="game.onSaas">
+    <!-- Features and add-ons open in Grow (#236): until then the panel is the MVP and the developer slider. -->
+    <template v-if="!game.isOpen('features')" />
+    <template v-else-if="game.onSaas">
       <p class="features-note" data-testid="features-saas-note">
         On SaaS you don't build features yourself: you buy them as add-ons from the provider. They work straight away,
         but each one is billed <strong>per user, every month</strong>, so the bill grows as your users grow.
@@ -155,11 +157,11 @@ const activeCount = computed(
         yours to change.
       </p>
     </template>
-    <p v-else class="muted features-intro">
+    <p v-else-if="game.isOpen('features')" class="muted features-intro">
       Your developers build features, one at a time. Each developer does one developer-day of work a day.
     </p>
     <p
-      v-if="game.leftBehind.length && !game.onSaas"
+      v-if="game.isOpen('features') && game.leftBehind.length && !game.onSaas"
       class="lockin lockin-done"
       role="status"
       data-testid="addons-left-behind"
@@ -169,7 +171,7 @@ const activeCount = computed(
       {{ game.leftBehind.length === 1 ? "It's" : "They're" }} not built here: build
       {{ game.leftBehind.length === 1 ? "it" : "them" }} below to get the growth back.
     </p>
-    <ul class="features">
+    <ul v-if="game.isOpen('features')" class="features">
       <li
         v-for="feature in game.company.features"
         :key="feature.id"

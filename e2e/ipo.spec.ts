@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
-import postgres from "postgres";
-import { E2E_DATABASE_URL, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
+import { E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
+import { reachPhase } from "./staff.ts";
 
 // The IPO: an until-IPO game, the readiness checklist on Finance turning green, applying, the opening-bell page, and
 // the game ending with the cash raised, the market value at the close and the student's stake.
@@ -32,16 +32,6 @@ test.afterEach(async ({ request }) => {
   code = preset = null;
 });
 
-/** As if the angel and Series A had approached the company on day 1 and been declined: every C-suite role opens. */
-async function seriesAApproached(id: string) {
-  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
-  try {
-    await sql`update companies set state = jsonb_set(jsonb_set(state, '{investors,vc,firstApproachDay,seriesA}', '1'), '{investors,firstApproachDay}', '1') where id = ${id}`;
-  } finally {
-    await sql.end();
-  }
-}
-
 const goTo = (page: Page, name: string) =>
   page.getByRole("navigation", { name: "Game" }).getByRole("link", { name, exact: true }).click();
 const openTab = (page: Page, name: string) => page.getByRole("tab", { name, exact: true }).click();
@@ -66,8 +56,15 @@ test("float a company that's ready, ring the opening bell and watch the first da
   await student.getByRole("button", { name: "Start company" }).click();
   await expect(student.getByTestId("day")).toHaveText("1");
 
-  // Finance: the checklist, not all green yet, so Apply isn't allowed.
+  // The IPO, and most of the C-suite, open in the Scale phase (#236), when Series A approaches: no later round is
+  // needed. Until then Finance has no IPO tab.
   await goTo(student, "Finance");
+  await expect(student.getByRole("tab", { name: "Funding", exact: true })).toBeVisible();
+  await expect(student.getByRole("tab", { name: "IPO", exact: true })).toBeHidden();
+  await reachPhase(student.url().split("/").at(-2)!, "scale");
+  await student.reload();
+
+  // Finance: the checklist, not all green yet, so Apply isn't allowed.
   await openTab(student, "IPO");
   const panel = student.getByTestId("ipo-panel");
   await expect(panel.locator("li")).toHaveCount(6);
@@ -87,10 +84,6 @@ test("float a company that's ready, ring the opening bell and watch the first da
   await expect(panel.getByTestId("ipo-status")).toHaveText("Not ready");
   await expect(panel.getByTestId("ipo-apply")).toBeDisabled();
 
-  // Once Series A has approached (declined), every C-suite role is open: no later round is needed.
-  await seriesAApproached(student.url().split("/").at(-2)!);
-  await student.reload();
-  await expect(panel.getByTestId("ipo-status")).toHaveText("Not ready");
   // Hired on the C-suite page, the first on each shortlist, the C-suite is full and it's ready.
   await goTo(student, "C-suite");
   await expect(student.getByTestId("csuite-ipo")).toContainText("Every role must be filled to float: 0 of 11 hired");

@@ -20,7 +20,7 @@ import type {
   TeacherGamesView,
   TeacherSummaryView,
 } from "../src/api-types.ts";
-import { setupTestDb } from "./testDb.ts";
+import { reachPhase, setupTestDb } from "./testDb.ts";
 
 const PASSWORD = "test-teacher-password";
 const iaasServers = defaultConfig.models.iaas.servers!;
@@ -557,7 +557,9 @@ describe("staff actions", () => {
   });
 
   it("hires moderators only on a product with user content, and shows its reports", async () => {
-    const { code, act } = await setup();
+    const { code, company, act } = await setup();
+    // Moderators open in Grow.
+    await reachPhase(testDb.db, company.id, "grow");
     const refused = await act({ type: "hire", pool: "moderators" });
     expect(refused.statusCode).toBe(400);
     expect(refused.json()).toMatchObject({ error: "no_content" });
@@ -565,8 +567,10 @@ describe("staff actions", () => {
     expect(shop).toMatchObject({ moderators: 0, moderation: null });
     expect(shop.staff.map((p) => p.pool)).not.toContain("moderators");
 
-    const social = (await newCompany(code, { name: "Chatter", productType: "social", model: "saas" })).json<CompanyView>();
-    const url = `/api/codes/${code}/companies/${social.id}`;
+    const created = (await newCompany(code, { name: "Chatter", productType: "social", model: "saas" })).json<CompanyView>();
+    await reachPhase(testDb.db, created.id, "grow");
+    const url = `/api/codes/${code}/companies/${created.id}`;
+    const social = (await app.inject({ method: "GET", url })).json<CompanyView>();
     expect(social.staff.map((p) => p.pool)).toContain("moderators");
     expect(social.moderation).toMatchObject({ backlog: 0, dailyClearance: 0, lawsuitOdds: 1 });
     // With no moderators, the reports the users raise go unhandled, and the lawsuit odds rise.
@@ -2071,8 +2075,10 @@ describe("the IPO", () => {
     const code = await newCode();
     const created = await newCompany(code, { name: "Acme", productType: "ecommerce", model: "saas", ...body });
     expect(created.statusCode).toBe(201);
-    const company = created.json<CompanyView>();
-    const url = `/api/codes/${code}/companies/${company.id}`;
+    // The IPO opens in Scale.
+    await reachPhase(testDb.db, created.json<CompanyView>().id, "scale");
+    const url = `/api/codes/${code}/companies/${created.json<CompanyView>().id}`;
+    const company = (await app.inject({ method: "GET", url })).json<CompanyView>();
     const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
     const next = () => app.inject({ method: "POST", url: `${url}/continue` });
     return { code, company, url, act, next };
@@ -2099,7 +2105,8 @@ describe("the IPO", () => {
     // Everything else is met, but the C-suite is empty.
     expect(waiting.ipo.conditions.filter((c) => !c.met).map((c) => c.id)).toEqual(["csuite"]);
     expect((await act({ type: "applyForIpo" })).json()).toMatchObject({ error: "ipo_not_ready" });
-    // As if the angel and Series A had approached on day 1 and been declined: every role opens, and no later round is needed.
+    // As if the angel and Series A had approached on day 1 and been declined, so no later round is needed. Every role is
+    // open in Scale.
     await testDb.db
       .update(companies)
       .set({
@@ -2174,14 +2181,15 @@ describe("the C-suite (#108)", () => {
     return { company, url, act, next };
   }
 
-  it("shows every role, opening the heads from day 1 with shortlists of three", async () => {
-    const { company } = await setup();
-    const { csuite } = company;
-    expect(csuite).toMatchObject({ equityCap: 0.1, equityUsed: 0, equityLeft: 0.1, dailyPay: 0 });
-    expect(csuite.roles.map((r) => [r.role, r.open])).toEqual([
-      ["headOfDevelopment", true],
-      ["headOfOps", true],
-      ["headOfSupport", true],
+  it("shows every role, opening them a phase at a time (#236), with shortlists of three", async () => {
+    const { company, url } = await setup();
+    expect(company.csuite).toMatchObject({ equityCap: 0.1, equityUsed: 0, equityLeft: 0.1, dailyPay: 0 });
+    const roles = async () => (await app.inject({ method: "GET", url })).json<CompanyView>().csuite.roles;
+    // None before Grow, which opens the CFO, CTO and head of people; Scale opens the rest.
+    expect(company.csuite.roles.map((r) => [r.role, r.open])).toEqual([
+      ["headOfDevelopment", false],
+      ["headOfOps", false],
+      ["headOfSupport", false],
       ["cfo", false],
       ["cto", false],
       ["headOfPeople", false],
@@ -2191,14 +2199,22 @@ describe("the C-suite (#108)", () => {
       ["ciso", false],
       ["legalCounsel", false],
     ]);
-    const dev = csuite.roles[0]!;
+    await reachPhase(testDb.db, company.id, "grow");
+    expect((await roles()).filter((r) => r.open).map((r) => r.role)).toEqual(["cfo", "cto", "headOfPeople"]);
+    await reachPhase(testDb.db, company.id, "scale");
+    const scaled = await roles();
+    expect(scaled.every((r) => r.open)).toBe(true);
+    const dev = scaled[0]!;
     expect(dev.shortlist).toHaveLength(3);
     expect(dev.shortlist[0]).toMatchObject({ id: "headOfDevelopment-1", name: expect.any(String), salary: expect.any(Number), equity: expect.any(Number) });
     expect(dev.shortlist[0]!.effects[0]!.text).toMatch(/developer output/);
   });
 
   it("hires for good: pay from the next day, equity in new shares, and no second hire", async () => {
-    const { company, act, next } = await setup();
+    const { company: created, url, act, next } = await setup();
+    // The head of ops opens in Scale.
+    await reachPhase(testDb.db, created.id, "scale");
+    const company = (await app.inject({ method: "GET", url })).json<CompanyView>();
     const candidate = company.csuite.roles.find((r) => r.role === "headOfOps")!.shortlist[1]!;
     const hired = await act({ type: "hireExecutive", role: "headOfOps", candidate: candidate.id });
     expect(hired.statusCode).toBe(200);
@@ -2217,9 +2233,12 @@ describe("the C-suite (#108)", () => {
   });
 
   it("refuses a role not open yet, an unknown candidate, a bad payload and letting an executive go", async () => {
-    const { act } = await setup();
+    const { company, act } = await setup();
     expect((await act({ type: "hireExecutive", role: "cfo", candidate: "cfo-1" })).json()).toMatchObject({ error: "role_not_open" });
-    expect((await act({ type: "hireExecutive", role: "headOfOps", candidate: "cfo-1" })).json()).toMatchObject({ error: "unknown_candidate" });
+    // Grow opens the CFO, CTO and head of people, but the head of ops waits for Scale.
+    await reachPhase(testDb.db, company.id, "grow");
+    expect((await act({ type: "hireExecutive", role: "headOfOps", candidate: "headOfOps-1" })).json()).toMatchObject({ error: "role_not_open" });
+    expect((await act({ type: "hireExecutive", role: "cto", candidate: "cfo-1" })).json()).toMatchObject({ error: "unknown_candidate" });
     for (const payload of [
       { type: "hireExecutive", role: "headOfOps" },
       { type: "hireExecutive", candidate: "headOfOps-1" },
@@ -2685,6 +2704,8 @@ describe("features", () => {
   async function setup(model = "iaas") {
     const code = await newCode();
     const company = (await newCompany(code, { name: "Acme", productType: "ecommerce", model })).json<CompanyView>();
+    // Features open in Grow.
+    await reachPhase(testDb.db, company.id, "grow");
     const url = `/api/codes/${code}/companies/${company.id}`;
     const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
     return { code, company, url, act };
@@ -2784,6 +2805,8 @@ describe("SaaS add-ons", () => {
   async function setup(model = "saas", developers = minConfigDevelopers) {
     const code = await newCode();
     const company = (await newCompany(code, { name: "Acme", productType: "ecommerce", model })).json<CompanyView>();
+    // Add-ons open in Grow, with features.
+    await reachPhase(testDb.db, company.id, "grow");
     const url = `/api/codes/${code}/companies/${company.id}`;
     const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
     for (let i = 0; i < developers; i++) await act({ type: "hire", pool: "developers" });
@@ -3088,6 +3111,8 @@ describe("leaving SaaS (vendor lock-in)", () => {
   async function setup() {
     const code = await newCode();
     const company = (await newCompany(code, { name: "Acme", productType: "ecommerce", model: "saas" })).json<CompanyView>();
+    // Add-ons open in Grow.
+    await reachPhase(testDb.db, company.id, "grow");
     const url = `/api/codes/${code}/companies/${company.id}`;
     const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
     for (let i = 0; i < minConfigDevelopers; i++) await act({ type: "hire", pool: "developers" });
@@ -4262,6 +4287,8 @@ describe("paid APIs", () => {
     await useOverrides({ "productTypes.ecommerce.api.price": 500 });
     const code = await newCode();
     const company = (await newCompany(code, { name: "Acme", productType, model })).json<CompanyView>();
+    // The paid API opens in Grow.
+    await reachPhase(testDb.db, company.id, "grow");
     const url = `/api/codes/${code}/companies/${company.id}`;
     const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
     const next = async () => (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
@@ -4347,6 +4374,8 @@ describe("tiers, model benefits and the hardware slider (#123)", () => {
   async function setup(model = "iaas") {
     const code = await newCode();
     const company = (await newCompany(code, { name: "Acme", productType: "ecommerce", model, takeLoan: model === "onprem" })).json<CompanyView>();
+    // Tier items and benefits open in Grow, with features.
+    await reachPhase(testDb.db, company.id, "grow");
     const url = `/api/codes/${code}/companies/${company.id}`;
     const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
     const openTiers = async () => {
@@ -4428,9 +4457,10 @@ describe("campaigns (#115) and marketers (#180)", () => {
     const url = `/api/codes/${code}/companies/${company.id}`;
     const act = (payload: object) => app.inject({ method: "POST", url: `${url}/actions`, payload });
     const next = async () => (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
-    // The first angel investor has approached, as Campaigns open.
+    // The first angel investor has approached, opening Grow (#236) and with it campaigns and marketers.
     const approached = async () => {
       await testDb.db.execute(sql`update companies set state = jsonb_set(state, '{investors,firstApproachDay}', '1'::jsonb) where id = ${company.id}`);
+      await reachPhase(testDb.db, company.id, "grow");
     };
     return { company, act, next, approached };
   }
@@ -4520,14 +4550,15 @@ describe("campaigns (#115) and marketers (#180)", () => {
 });
 
 describe("pay reviews", () => {
-  // A 12-day game with plenty of cash: a quarter is 3 days, so the first review opens after day 3, before day 4.
+  // A 12-day game with plenty of cash, put in Grow on day 1 (#236), with the first rise 3 days into it: a quarter is 3
+  // days, so the reviews' rises start on days 4, 7 and 10, and the first review opens after day 3.
   const paySim = createSim({
     ...defaultConfig,
     startingCash: 100_000,
     finalDay: 12,
     events: [],
     calendar: { ...defaultConfig.calendar, holidays: [] },
-    payReview: { ...defaultConfig.payReview, walkAwaySpread: 0 },
+    payReview: { ...defaultConfig.payReview, walkAwaySpread: 0, growDays: 3 },
   });
   let payApp: Awaited<ReturnType<typeof buildApp>>;
 
@@ -4549,6 +4580,7 @@ describe("pay reviews", () => {
     });
     const company = created.json<CompanyView>();
     expect(company).toMatchObject({ payReview: null, payMultiplier: 1 });
+    await reachPhase(testDb.db, company.id, "grow");
     const url = `/api/codes/${code}/companies/${company.id}`;
     const act = (payload: object) => payApp.inject({ method: "POST", url: `${url}/actions`, payload });
     const next = () => payApp.inject({ method: "POST", url: `${url}/continue` });
@@ -4635,6 +4667,7 @@ describe("pay reviews", () => {
       payload: { name: "Acme", productType: "social", model: "iaas" },
     });
     const { id } = created.json<CompanyView>();
+    await reachPhase(testDb.db, id, "grow");
     await testDb.db
       .update(companies)
       .set({ state: sql`jsonb_set(${companies.state}, '{payReviewRng}', '12345')` })

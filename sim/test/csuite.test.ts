@@ -10,6 +10,7 @@ import {
   type GameState,
   type Sim,
 } from "../src/index.ts";
+import { allOpen, inPhase } from "./phases.ts";
 
 // The C-suite through the sim's public interface: roles opening as the company grows, shortlists, hiring for good with
 // equity under the cap, each role's effect through the seam it plugs into, and executives' pay, with the board's pay
@@ -26,6 +27,8 @@ const sim = createSim(quiet);
 /** No MVP to build, so a company launches (and runs servers, bills and outages) from day 1. */
 const NO_MVP = { ...quiet.mvp, baseDevDays: { ecommerce: 0, social: 0, video: 0, payments: 0, assistant: 0, games: 0 } };
 const begin = (s: Sim = sim, model = "saas", seed = 42) => s.newGame({ companyName: "Acme", productType: "social", model, seed });
+/** A new game with every role open: in Scale (#236), for tests about an executive rather than when their role opens. */
+const opened = (s: Sim = sim) => allOpen(begin(s));
 
 const refusal = (fn: () => unknown) => {
   try {
@@ -39,15 +42,19 @@ const refusal = (fn: () => unknown) => {
 
 const roleView = (s: Sim, state: GameState, role: CsuiteRole) => s.csuite(state).roles.find((r) => r.role === role)!;
 
-/** The state as if the first angel investor had approached today: the CFO, CTO and head of people open. */
-const angelApproached = (state: GameState): GameState => ({ ...state, investors: { ...state.investors, firstApproachDay: state.day } });
-/** The state as if Series A had approached today (and the angel before it): every role is open. */
+/** The state as if the first angel investor had approached today, opening Grow: the CFO, CTO and head of people open. */
+const angelApproached = (state: GameState): GameState =>
+  inPhase({ ...state, investors: { ...state.investors, firstApproachDay: state.day } }, "grow");
+/** The state as if Series A had approached today (and the angel before it), opening Scale: every role is open. */
 const seriesAApproached = (state: GameState): GameState => {
   const angel = angelApproached(state);
-  return {
-    ...angel,
-    investors: { ...angel.investors, vc: { ...angel.investors.vc, firstApproachDay: { ...angel.investors.vc.firstApproachDay, seriesA: state.day } } },
-  };
+  return inPhase(
+    {
+      ...angel,
+      investors: { ...angel.investors, vc: { ...angel.investors.vc, firstApproachDay: { ...angel.investors.vc.firstApproachDay, seriesA: state.day } } },
+    },
+    "scale",
+  );
 };
 
 /** Hires a role's candidate, the strongest unless another place on the shortlist is given (0 = first listed). */
@@ -67,11 +74,16 @@ const effect = (s: Sim, state: GameState, role: CsuiteRole, key: string) =>
   roleView(s, state, role).executive!.effects.find((e) => e.key === key)!.value;
 
 describe("roles and shortlists", () => {
-  it("opens the heads of development, ops and support from day 1, the rest later, each with three candidates who vary", () => {
+  it("opens no role on day 1, the heads of development, ops and support only in Scale, each with three candidates who vary", () => {
     const state = begin();
     const view = sim.csuite(state);
     expect(view.roles.map((r) => r.role)).toEqual([...CSUITE_ROLES]);
-    expect(view.roles.filter((r) => r.open).map((r) => r.role)).toEqual(["headOfDevelopment", "headOfOps", "headOfSupport"]);
+    // The heads opened from day 1 until the phases (#236): now they open with the rest in Scale.
+    expect(view.roles.filter((r) => r.open).map((r) => r.role)).toEqual([]);
+    expect(roleView(sim, state, "headOfOps").opens).toBe("Opens in the Scale phase, when Series A venture capitalists approach.");
+    expect(refusal(() => hire(sim, state, "headOfOps"))).toBe("role_not_open");
+    // In Scale every role is open, its shortlist showing.
+    for (const r of sim.csuite(opened()).roles) expect(r).toMatchObject({ open: true, openDay: 1, shortlist: state.csuite.shortlists[r.role] });
     for (const r of view.roles) {
       const list = state.csuite.shortlists[r.role];
       expect(list).toHaveLength(3);
@@ -125,8 +137,10 @@ describe("roles and shortlists", () => {
       lines.push(...played.log.flatMap((d) => d.entries.map((e) => e.text)));
     }
     expect(state.investors.firstApproachDay).toBe(state.day);
+    // The angel's approach opens Grow (#236), and with it these three: the heads wait for Scale.
+    expect(state).toMatchObject({ phase: "grow", phaseDays: { grow: state.day } });
     const open = early.csuite(state).roles.filter((r) => r.open);
-    expect(open.map((r) => r.role)).toEqual(["headOfDevelopment", "headOfOps", "headOfSupport", "cfo", "cto", "headOfPeople"]);
+    expect(open.map((r) => r.role)).toEqual(["cfo", "cto", "headOfPeople"]);
     expect(open.filter((r) => r.openDay === state.day).map((r) => r.role)).toEqual(["cfo", "cto", "headOfPeople"]);
     expect(lines.filter((l) => l.startsWith("You can hire a"))).toEqual([
       "You can hire a CFO now: 3 candidates are on the shortlist on the C-suite page.",
@@ -135,18 +149,27 @@ describe("roles and shortlists", () => {
     ]);
   });
 
-  it("opens the COO, CIO, CMO, CISO and legal counsel when Series A approaches, taken or not", () => {
+  it("opens the heads, COO, CIO, CMO, CISO and legal counsel when Series A approaches, taken or not", () => {
     const state = angelApproached(begin());
-    expect(sim.csuite(state).roles.filter((r) => !r.open).map((r) => r.role)).toEqual(["cmo", "coo", "cio", "ciso", "legalCounsel"]);
+    expect(sim.csuite(state).roles.filter((r) => !r.open).map((r) => r.role)).toEqual([
+      "headOfDevelopment",
+      "headOfOps",
+      "headOfSupport",
+      "cmo",
+      "coo",
+      "cio",
+      "ciso",
+      "legalCounsel",
+    ]);
     const approached = seriesAApproached(begin());
     expect(sim.csuite(approached).roles.every((r) => r.open)).toBe(true);
-    expect(roleView(sim, approached, "ciso")).toMatchObject({ opens: "Opens when Series A venture capitalists approach." });
+    expect(roleView(sim, approached, "ciso")).toMatchObject({ opens: "Opens in the Scale phase, when Series A venture capitalists approach." });
     // Every role is needed to float, so no role's blurb singles itself out.
     expect(sim.csuite(approached).roles.filter((r) => /IPO|float/.test(r.blurb))).toEqual([]);
   });
 
   it("refuses an unknown role or candidate, and a role already filled", () => {
-    const state = begin();
+    const state = opened();
     expect(refusal(() => sim.applyAction(state, { type: "hireExecutive", role: "ceo" as CsuiteRole, candidate: "ceo-1" }))).toBe("unknown_role");
     expect(refusal(() => sim.applyAction(state, { type: "hireExecutive", role: "headOfOps", candidate: "cfo-1" }))).toBe("unknown_candidate");
     const hired = hire(sim, state, "headOfOps", 0);
@@ -157,7 +180,7 @@ describe("roles and shortlists", () => {
 
 describe("pay and equity", () => {
   it("pays a salary a day from the next day played, and the equity ask at once in new shares", () => {
-    const state = begin();
+    const state = opened();
     const candidate = state.csuite.shortlists.headOfDevelopment[0]!;
     const before = sim.capTable(state);
     const hired = hire(sim, state, "headOfDevelopment", 0);
@@ -196,7 +219,7 @@ describe("pay and equity", () => {
   });
 
   it("leaves the staff share scheme out of the cap", () => {
-    const state = begin();
+    const state = opened();
     const withScheme: GameState = { ...state, shareholders: [...state.shareholders, { id: "staffScheme", shares: 5_000, day: 1 }] };
     const asks = (s: GameState) => roleView(sim, s, "headOfOps").shortlist.map((c) => c.equity);
     expect(asks(withScheme)).toEqual(asks(state));
@@ -207,18 +230,18 @@ describe("pay and equity", () => {
   });
 
   it("has no let-go action, and pay review rises leave executives' pay alone", () => {
-    const hired = hire(sim, begin(), "headOfSupport", 0);
+    const hired = hire(sim, opened(), "headOfSupport", 0);
     const salary = hired.csuite.hired[0]!.salary;
     expect(refusal(() => sim.applyAction(hired, { type: "letGo", pool: "csuite" as never }))).toBe("unknown_pool");
     // After rises that put staff pay up 50%, the executive is still paid their own package.
     const risen = { ...hired, payMultiplier: 1.5 };
     const day = sim.advance(risen).log[0]!.entries;
     expect(day.find((e) => e.text.startsWith("Head of support pay"))!.cashDelta).toBe(-salary);
-    expect(sim.runway(risen).dailyCosts - sim.runway({ ...begin(), payMultiplier: 1.5 }).dailyCosts).toBe(salary);
+    expect(sim.runway(risen).dailyCosts - sim.runway({ ...opened(), payMultiplier: 1.5 }).dailyCosts).toBe(salary);
   });
 
   it("keeps executives through a rescue buyout's cost cuts", () => {
-    const hired = hire(sim, begin(), "headOfOps", 0);
+    const hired = hire(sim, opened(), "headOfOps", 0);
     const broke = { ...hired, cash: 10 };
     let state = broke;
     while (state.rescue === null && state.day < 30) state = sim.advance(state).state;
@@ -231,7 +254,7 @@ describe("pay and equity", () => {
 describe("the board's pay holiday", () => {
   /** Two executives hired, and cash set to this many days of running costs (their pay included). */
   const withCash = (days: number, s: Sim = sim): GameState => {
-    const hired = hire(s, hire(s, begin(s), "headOfOps", 0), "headOfSupport", 0);
+    const hired = hire(s, hire(s, opened(s), "headOfOps", 0), "headOfSupport", 0);
     return { ...hired, cash: Math.round(days * s.runway(hired).dailyCosts) };
   };
   const pay = (state: GameState) => state.csuite.hired.reduce((sum, e) => sum + e.salary, 0);
@@ -292,7 +315,7 @@ describe("each role's effect, through its seam", () => {
   const built = createSim({ ...quiet, mvp: NO_MVP, launch: { ...quiet.launch, auto: 1 } });
 
   it("head of development: more developer output on the MVP, features and optimisation", () => {
-    const state = begin();
+    const state = opened();
     const hired = hire(sim, state, "headOfDevelopment");
     const boost = 1 + effect(sim, hired, "headOfDevelopment", "output");
     expect(boost).toBeGreaterThan(1.1);
@@ -300,7 +323,7 @@ describe("each role's effect, through its seam", () => {
     expect(sim.advance(hired).state.mvp.progress).toBeCloseTo(sim.advance(state).state.mvp.progress * boost, 1);
     const devs = (s: Sim, st: GameState) => s.staff(st).find((p) => p.pool === "developers")!.output;
     expect(devs(sim, hired)).toBeCloseTo(devs(sim, state) * boost, 2);
-    const sliding = built.applyAction(begin(built), { type: "setOptimisation", share: 0.5 });
+    const sliding = built.applyAction(opened(built), { type: "setOptimisation", share: 0.5 });
     const slidingHired = hire(built, sliding, "headOfDevelopment");
     expect(built.optimisation(slidingHired).output).toBeCloseTo(built.optimisation(sliding).output * boost, 2);
   });
@@ -322,7 +345,7 @@ describe("each role's effect, through its seam", () => {
       ],
     };
     const s = createSim(outage);
-    const state = begin(s);
+    const state = opened(s);
     const hired = hire(s, state, "headOfOps");
     const ops = (st: GameState) => s.staff(st).find((p) => p.pool === "ops")!.output;
     expect(ops(hired)).toBeCloseTo(ops(state) * (1 + effect(s, hired, "headOfOps", "output")), 2);
@@ -332,7 +355,7 @@ describe("each role's effect, through its seam", () => {
   });
 
   it("head of support: more tickets cleared, and satisfaction recovers faster but falls no faster", () => {
-    const state = begin();
+    const state = opened();
     const hired = hire(sim, state, "headOfSupport");
     expect(sim.dailyClearance(hired)).toBeCloseTo(sim.dailyClearance(state) * (1 + effect(sim, hired, "headOfSupport", "output")), 0);
     const low = (s: GameState): GameState => ({ ...s, satisfaction: 40 });
@@ -371,9 +394,9 @@ describe("each role's effect, through its seam", () => {
     // Loans: the rate comes down by the CFO's cut.
     const cut = effect(sim, angel, "cfo", "loanRateCut");
     expect(sim.loanQuote(hired)!.rate).toBeCloseTo(sim.loanQuote(state)!.rate * (1 - cut), 5);
-    // Pay reviews: the CFO plays no part, so staff counters keep the no-head-of-people penalty.
+    // Pay reviews: the CFO plays no part, so staff counters keep the no-head-of-people penalty. Reviews start in Grow.
     const reviews = createSim({ ...quiet, payReview: defaultConfig.payReview });
-    let open = hire(reviews, reviews.applyAction(begin(reviews), { type: "acceptFunding", funder: "grant" }), "cfo");
+    let open = inPhase(hire(reviews, reviews.applyAction(begin(reviews), { type: "acceptFunding", funder: "grant" }), "cfo"), "grow");
     while (!open.payReview) open = reviews.advance(open).state;
     const review = reviews.payReview(open)!;
     expect(review).toMatchObject({ headOfPeople: false, rollBonus: quiet.payReview.peopleLead.none.rollBonus });
@@ -506,11 +529,13 @@ describe("each role's effect, through its seam", () => {
 
 describe("text play", () => {
   it("shows the C-suite and hires from a shortlist", () => {
-    const state = begin();
     const who = { player: "test" };
+    const shut = runScript(sim, begin(), "csuite", who).lines.join("\n");
+    expect(shut).toMatch(/Head of development \(shut\): Opens in the Scale phase/);
+    expect(shut).toMatch(/CFO \(shut\): Opens once you take outside money/);
+    const state = opened();
     const shown = runScript(sim, state, "csuite", who).lines.join("\n");
     expect(shown).toMatch(/Head of development \(open\)/);
-    expect(shown).toMatch(/CFO \(shut\): Opens once you take outside money/);
     const id = state.csuite.shortlists.headOfOps[1]!.id;
     expect(shown).toContain(id);
     const turn = runScript(sim, state, `appoint ${id}`, who);

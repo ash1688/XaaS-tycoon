@@ -43,14 +43,23 @@ describe("balance harness", () => {
   it("plays the pay review strategies to an ending, settling every review their way", () => {
     const pay = STRATEGIES.filter((s) => ["cash-only", "scheme-heavy", "tribunal-gambler"].includes(s.id));
     expect(pay).toHaveLength(3);
-    const played = runAll(short, { seeds: [1], strategies: pay });
+    // Reviews start growDays into Grow, which opens at the angel's approach (#236): a game long enough for a few.
+    const long: GameConfig = { ...short, finalDay: 120, payReview: { ...short.payReview, growDays: 10 } };
+    const played = runAll(long, { seeds: [1], strategies: pay });
     expect(played).toHaveLength(MODEL_IDS.length * PRODUCT_TYPE_IDS.length * 3);
+    /** The reviews a game finished after the angel approached on `angel` has: growDays on, then a quarter apart. */
+    const reviewsAfter = (angel: number | null) => {
+      if (angel === null) return 0;
+      let n = 0;
+      while (angel + long.payReview.growDays + Math.floor((n * long.finalDay) / 4) <= long.finalDay) n++;
+      return n;
+    };
     for (const r of played.filter((x) => x.outcome !== "cant-start")) {
-      if (r.outcome === "finished") expect(r.pay.reviews).toBe(3);
+      if (r.outcome === "finished") expect(r.pay.reviews).toBe(reviewsAfter(r.rounds.angel));
       if (r.strategy === "tribunal-gambler") {
         // It never takes a counter: staff take the least allowed (when cash is tight, it can be fair) or a tribunal sits.
         expect(r.pay.outcomes.counterAccepted).toBe(0);
-        expect(r.pay.tribunalFees).toBe(r.pay.outcomes.tribunal * short.payReview.tribunal.fee);
+        expect(r.pay.tribunalFees).toBe(r.pay.outcomes.tribunal * long.payReview.tribunal.fee);
       }
       if (r.strategy !== "scheme-heavy") expect(r.pay.schemeSpend).toBe(0);
     }

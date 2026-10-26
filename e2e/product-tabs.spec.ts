@@ -1,10 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 import postgres from "postgres";
 import { E2E_DATABASE_URL, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
+import { reachPhase } from "./staff.ts";
 
-// Product's sub-tabs (playtest 1): Price, Features and Tiers (and API on a product with one), one at a time. The open tab stays in the URL through a
-// reload, and the arrow keys move along them. Tier conditions join on
-// with a space and a small letter, and developer-day counts are singular at 1.
+// Product's sub-tabs (playtest 1): Price, Features and Tiers (and API on a product with one), one at a time, once the
+// Grow phase opens them (#236); Build has only the MVP. The open tab stays in the URL through a reload, and the arrow
+// keys move along them. Tier conditions join on with a space and a small letter, and developer-day counts are singular
+// at 1.
 
 let code: string | null = null;
 test.afterEach(async ({ request }) => {
@@ -38,12 +40,17 @@ test("Product splits into Price, Features and Tiers tabs, kept in the URL and mo
   const { id } = await created.json();
   const game = `/play/${code}/${id}`;
 
-  // The e2e server runs with no MVP, so Product opens on Price (with an MVP to build, Features comes first). The shop
-  // sells a paid API, so it has an API tab too.
+  // In Build, Product has only the MVP: Price opens with Launch, the rest with Grow.
   const student = await (await browser.newContext()).newPage();
   await student.goto(game);
   await goTo(student, "Product");
   const tabs = student.getByRole("tablist", { name: "Product" });
+  await expect(tabs.getByRole("tab")).toHaveText(["MVP"]);
+
+  // The e2e server runs with no MVP, so Product opens on Price (with an MVP to build, Features comes first). The shop
+  // sells a paid API, so it has an API tab too.
+  await reachPhase(id, "grow");
+  await student.reload();
   await expect(tabs.getByRole("tab")).toHaveText(["Price", "Features", "Tiers", "API"]);
   await expect(tabs.getByRole("tab", { name: "Price" })).toHaveAttribute("aria-selected", "true");
   await expect(student.getByRole("tabpanel", { name: "Price" })).toBeVisible();

@@ -141,10 +141,13 @@ describe("the rounds approaching", () => {
       expect(o.yourShareAfter).toBeCloseTo(a.yourShareBefore * (1 - o.theirShare), 5);
     }
     expect(pauses.at(-1)).toMatchObject({ day: state.day, reason: { kind: "offer", id: "offer-seriesA" } });
-    // Last but for the C-suite roles Series A opens.
-    expect(log.at(-1)!.entries.filter((e) => !e.text.startsWith("You can hire a")).at(-1)!.text).toMatch(
+    // Last but for the Scale phase and the C-suite roles Series A opens (#236).
+    const today = log.at(-1)!.entries;
+    expect(today.filter((e) => e.kind !== "phase" && !e.text.startsWith("You can hire a")).at(-1)!.text).toMatch(
       /^Series A: three venture capitalists want to invest in Acme\./,
     );
+    expect(today.find((e) => e.kind === "phase")!.text).toMatch(/^A new phase: Scale\./);
+    expect(state).toMatchObject({ phase: "scale", phaseDays: { scale: state.day } });
   });
 
   it("leans each VC's offer: most cash asks the most, least ownership the least and values the company highest", () => {
@@ -389,7 +392,11 @@ describe("a 180-day game's two rounds", () => {
       // Each round's cash buys its share at the same valuation: added together, as the four-round game's two would.
       const cashFor = (share: number) => Math.round((share * lean.share * premium) / (1 - share * lean.share) / 1000) * 1000;
       expect(o.amount).toBe(cashFor(0.2) + cashFor(0.15));
-      expect(o.theirShare).toBeCloseTo(0.2 * lean.share + 0.15 * lean.share, 2);
+      // Each round's share is what its cash, rounded to £1,000, buys at that valuation: on a small company the rounding
+      // moves it off 20% and 15% (as the lean asks), so the two are worked out from the cash, then added together.
+      const shareFor = (share: number) => cashFor(share) / (premium + cashFor(share));
+      const ask = a.vcs.find((p) => p.investor === o.investor)!.negotiation.offers[0]!;
+      expect(ask.share).toBeCloseTo(shareFor(0.2) + shareFor(0.15), 6);
     }
   });
 

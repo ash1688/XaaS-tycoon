@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createSim, defaultConfig, SimError, type DayLog, type GameConfig, type GameState, type ModelId } from "../src/index.ts";
+import { inPhase } from "./phases.ts";
 
 // Paid APIs (#117), through the sim's public interface on the default config: buying one, calls against APIU, the
 // income they earn and lose, traffic growth, app servers switched to APIU, PaaS API instances and the SaaS fee.
@@ -27,9 +28,9 @@ const apiIncome = (log: DayLog[]) =>
     .filter((e) => e.kind === "income" && e.text.startsWith(`Income: ${shopApi.name}`))
     .reduce((sum, e) => sum + e.cashDelta, 0);
 
-/** A launched shop with plenty of cash and room for its users, on a model with or without servers. */
+/** A launched shop with plenty of cash and room for its users, on a model with or without servers, in Grow so the API is open. */
 function shop(model: ModelId = "iaas", s: typeof sim = sim): GameState {
-  let state = s.newGame({ companyName: "Shop Ltd", productType: "ecommerce", model, seed: 3 });
+  let state = inPhase(s.newGame({ companyName: "Shop Ltd", productType: "ecommerce", model, seed: 3 }), "grow");
   state = { ...state, cash: 1_000_000, staff: { ...state.staff, ops: { junior: 0, mid: 3, senior: 0 } } };
   if (model === "iaas") {
     state = act(state, { type: "rentServer", server: "app", size: "massive" }, { type: "rentServer", server: "database", size: "massive" });
@@ -44,7 +45,7 @@ describe("buying a paid API", () => {
   it("is offered on e-commerce with its price, and not on a product without one", () => {
     const view = sim.api(shop());
     expect(view).toMatchObject({ name: "Shop API", price: shopApi.price, owned: false, calls: 0, pricePerCall: 0.01 });
-    const social = sim.newGame({ companyName: "Friends", productType: "social", model: "saas", seed: 1 });
+    const social = inPhase(sim.newGame({ companyName: "Friends", productType: "social", model: "saas", seed: 1 }), "grow");
     expect(sim.api(social)).toBeNull();
     expect(code(() => sim.applyAction(social, { type: "buyApi" }))).toBe("no_api");
   });
@@ -283,7 +284,7 @@ describe("a product's API is data-driven", () => {
       },
     };
     const own = createSim(config);
-    const state = own.newGame({ companyName: "Friends", productType: "social", model: "saas", seed: 1 });
+    const state = inPhase(own.newGame({ companyName: "Friends", productType: "social", model: "saas", seed: 1 }), "grow");
     expect(own.api(state)).toMatchObject({ name: "Social API", price: 1_000 });
     expect(own.api(own.applyAction(state, { type: "buyApi" }))!.owned).toBe(true);
   });
@@ -291,7 +292,7 @@ describe("a product's API is data-driven", () => {
 
 describe("API servers on-prem", () => {
   it("need rack space like any other server", () => {
-    let state = sim.newGame({ companyName: "Shop Ltd", productType: "ecommerce", model: "onprem", seed: 3, takeLoan: true });
+    let state = inPhase(sim.newGame({ companyName: "Shop Ltd", productType: "ecommerce", model: "onprem", seed: 3, takeLoan: true }), "grow");
     state = act({ ...state, cash: 1_000_000 }, { type: "buyApi" }, { type: "buyServer", server: "api", size: "small" });
     const api = state.servers.find((s) => s.type === "api")!;
     expect(state.racks.map((r) => r.id)).toContain(api.rack);

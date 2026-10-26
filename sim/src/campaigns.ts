@@ -3,6 +3,7 @@ import { CUSTOMER_TYPE_IDS, STAFF_GRADES, type CustomerTypeId, type GameConfig, 
 import { cmoBoost } from "./executives.ts";
 import { count, pounds } from "./finance.ts";
 import { marketGrowth, marketGrowthCap, marketSize } from "./market.ts";
+import { phaseReached } from "./phases.ts";
 import type { UsersLost } from "./mix.ts";
 import { SimError, type Campaign, type GameState, type LogEntry } from "./state.ts";
 
@@ -115,8 +116,8 @@ const oneType = (type: CustomerTypeId) =>
 /** Earned users kept to the millionth, so state stays tidy. */
 const tidy = (n: number) => Math.round(n * 1e6) / 1e6;
 
-/** Whether campaigns have opened: the first angel investor has approached, whatever the student made of them. */
-export const campaignsUnlocked = (state: Pick<GameState, "investors">) => state.investors.firstApproachDay !== null;
+/** Whether campaigns have opened: the game has reached Grow, which the first angel investor's approach opens. */
+export const campaignsUnlocked = (state: Pick<GameState, "phase">) => phaseReached(state, "grow");
 
 /** Whether a campaign runs on a day. */
 const runsOn = (c: Campaign, day: number) => day >= c.startDay && day <= c.endDay;

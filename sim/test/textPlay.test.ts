@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createSim, defaultConfig, SimError, type GameConfig, type GameState } from "../src/index.ts";
 import { advanceUntil, parseCommand, renderCommands, renderStatus, renderSummary, runCommand, runScript } from "../scripts/textPlay.ts";
 import { withFullCsuite } from "./executives.ts";
+import { allOpen, inPhase } from "./phases.ts";
 
 /** No MVP to build: the MVP has its own tests. */
 const NO_MVP: GameConfig["mvp"] = { ...defaultConfig.mvp, baseDevDays: { ecommerce: 0, social: 0, video: 0, payments: 0, assistant: 0, games: 0 } };
@@ -12,6 +13,8 @@ const sim = createSim({ ...defaultConfig, mvp: NO_MVP, launch: AUTO_LAUNCH, fina
 const who = { player: "test", playstyle: "average-joe" };
 const start = (): GameState =>
   sim.newGame({ companyName: "Test Co", productType: "social", model: "paas", seed: 3, takeLoan: true });
+/** The same, in the Launch phase (#236): price, ops, support and moderators open. */
+const launchPhase = (): GameState => inPhase(start(), "launch");
 
 /** Runs one command line against a state, as play.ts does. */
 function run(state: GameState, text: string) {
@@ -44,7 +47,7 @@ describe("parseCommand", () => {
 
 describe("runCommand", () => {
   it("hires a grade in one go, shows them waiting, and stops when they start", () => {
-    const turn = run(start(), "hire support junior 3");
+    const turn = run(launchPhase(), "hire support junior 3");
     expect(turn.rows).toHaveLength(1);
     expect(turn.rows[0]).toMatchObject({ kind: "game", type: "hire", ok: true, player: "test", params: { pool: "support", grade: "junior", count: 3 } });
     // Juniors start 3 days after hiring: not on the team or paid until then.
@@ -63,7 +66,7 @@ describe("runCommand", () => {
       action: { type: "hire", pool: "support", agency: true, grade: "junior", count: 2 },
     });
     expect(parseCommand("letgo ops agency")).toMatchObject({ action: { type: "letGo", pool: "ops", agency: true, count: 1 } });
-    const hired = run(start(), "hire support agency 2");
+    const hired = run(launchPhase(), "hire support agency 2");
     expect(renderStatus(sim, hired.state)).toMatch(/hired, not started: 2 agency mid on day 2 \(1d\)/);
     expect(renderStatus(sim, hired.state)).toMatch(/agency staff: 1\.25x the pay and 0\.5x the work .*start 1d after hiring/);
     const started = run(hired.state, "next 1");
@@ -111,7 +114,7 @@ describe("runCommand", () => {
   });
 
   it("shows the customer mix with thresholds, and a rise's reaction by customer type", () => {
-    const state = advanceUntil(sim, run(start(), "instances 2").state, 20, who).state;
+    const state = advanceUntil(sim, run(launchPhase(), "instances 2").state, 20, who).state;
     expect(renderStatus(sim, state)).toMatch(
       /customer mix: casual 70\.\d% \(threshold £5\), enthusiasts 20\.\d% \(threshold £6\.25\), professionals \d\.\d% \(threshold £10\), businesses \d\.\d% \(threshold £15\)/,
     );
@@ -122,7 +125,7 @@ describe("runCommand", () => {
   });
 
   it("shows who new users join as, and what features and the price pull in", () => {
-    const state = advanceUntil(sim, run(start(), "instances 2").state, 20, who).state;
+    const state = advanceUntil(sim, run(launchPhase(), "instances 2").state, 20, who).state;
     expect(renderStatus(sim, state)).toMatch(
       // The product's mix, tilted a little by the rivals.
       /new users join as: casual \d+\.\d%( \(rivals x[\d.]+\))?, enthusiasts \d+\.\d%( \(rivals x[\d.]+\))?, professionals \d+\.\d%( \(rivals x[\d.]+\))?, businesses \d+\.\d%( \(rivals x[\d.]+\))?\n/,
@@ -340,6 +343,39 @@ describe("rendering", () => {
     expect(commands).not.toMatch(/^\s+rent /m);
   });
 
+  it("shows the phase, hides the commands for jobs not open yet, and says why one is refused (#236)", () => {
+    const build = start();
+    const status = renderStatus(sim, build).split("\n");
+    expect(status[1]).toBe(
+      "phase: Build (from day 1) | next: Launch, when you press Launch | open: Deployment model, Funding: the bank loan, friends and family and grants, Developers, Servers or racks",
+    );
+    expect(renderStatus(sim, build)).toMatch(/^price £5\/month \(fair £5\) \| set from Launch$/m);
+    const commands = renderCommands(sim, build);
+    expect(commands).toMatch(/^ {2}hire <developers> /m);
+    expect(commands).not.toMatch(/^ {2}(price|preview|build|addon|benefit|buyapi|ipo|apply) /m);
+    const refused = run(build, "hire support");
+    expect(refused.lines[0]).toBe(
+      "hire refused: Support staff: not open until the Launch phase, when you press Launch. You're in the Build phase.",
+    );
+    expect(refused.rows[0]).toMatchObject({ type: "hire", ok: false, error: "not_yet" });
+
+    const launch = inPhase(build, "launch", 5);
+    expect(renderStatus(sim, launch).split("\n")[1]).toMatch(/^phase: Launch \(from day 5\) \| next: Grow, when your first angel investor approaches \| open: .*, Price, Ops staff, Support staff, Moderators$/);
+    expect(renderStatus(sim, launch)).toMatch(/^price £5\/month \(fair £5\) \| can change$/m);
+    expect(renderCommands(sim, launch)).toMatch(/^ {2}hire <developers\|ops\|support\|moderators> /m);
+    expect(renderCommands(sim, launch)).toMatch(/^ {2}price </m);
+    expect(renderCommands(sim, launch)).not.toMatch(/^ {2}(build|buyapi|ipo) /m);
+
+    const grow = inPhase(build, "grow");
+    expect(renderCommands(sim, grow)).toMatch(/^ {2}hire <developers\|ops\|support\|moderators\|researchers\|marketers> /m);
+    expect(renderCommands(sim, grow)).toMatch(/^ {2}build </m);
+    expect(renderCommands(sim, grow)).not.toMatch(/^ {2}ipo /m);
+
+    const scale = allOpen(build);
+    expect(renderStatus(sim, scale).split("\n")[1]).toMatch(/^phase: Scale \(from day 1\) \| open: .*, The IPO$/);
+    expect(renderCommands(sim, scale)).toMatch(/^ {2}ipo /m);
+  });
+
   it("shows the loan with its payoff, pays it off early, and then offers another", () => {
     const state = run(start(), "next 10").state;
     const loan = sim.loan(state)!;
@@ -357,8 +393,9 @@ describe("rendering", () => {
 });
 
 describe("the paid API", () => {
+  /** In the Grow phase, where the paid API opens (#236). */
   const shop = (model: "iaas" | "paas" | "saas") =>
-    sim.newGame({ companyName: "Shop Co", productType: "ecommerce", model, seed: 3, takeLoan: true });
+    inPhase(sim.newGame({ companyName: "Shop Co", productType: "ecommerce", model, seed: 3, takeLoan: true }), "grow");
 
   it("reads its commands", () => {
     expect(parseCommand("buyapi")).toEqual({ kind: "action", action: { type: "buyApi" }, times: 1 });
@@ -721,7 +758,9 @@ describe("the IPO", () => {
 
   it("shows the checklist, and offers apply only once every condition is met", () => {
     const s = ipoSim(0);
-    const state = start();
+    // The IPO opens in Scale (#236).
+    expect(renderCommands(sim, start())).not.toMatch(/^ {2}ipo /m);
+    const state = allOpen(start());
     expect(renderStatus(sim, state)).toMatch(/ipo: 1\/6 readiness conditions met; still to meet: trading history, users and revenue, uptime record, predictable costs, the full c-suite$/m);
     expect(renderCommands(sim, state)).toMatch(/ipo {3}\(the IPO readiness checklist/);
     expect(renderCommands(sim, state)).not.toMatch(/apply/);
@@ -903,7 +942,8 @@ describe("the calendar", () => {
 });
 
 describe("moderators", () => {
-  const shop = () => sim.newGame({ companyName: "Test Co", productType: "ecommerce", model: "paas", seed: 3 });
+  /** Both in the Launch phase, where moderators open (#236). */
+  const shop = () => inPhase(sim.newGame({ companyName: "Test Co", productType: "ecommerce", model: "paas", seed: 3 }), "launch");
   const launchedSocial = () => {
     let state = run(start(), "instances 2").state;
     state = run(state, "managed database small").state;
@@ -950,7 +990,7 @@ describe("rivals", () => {
   });
 
   it("drives the rivals with a price change: they answer it two weeks on, and the log says so", () => {
-    const priced = run(run(start(), "next 10").state, "price 6").state;
+    const priced = run(run(launchPhase(), "next 10").state, "price 6").state;
     expect(renderStatus(sim, priced)).toMatch(new RegExp(`rivals answer your £6 on day ${priced.day + 15}`));
     // Advances stop early when something needs the player, so keep going past the day the rivals answer.
     let state = priced;
@@ -1021,7 +1061,8 @@ describe("the payments app", () => {
 
 describe("the new products (#118)", () => {
   it("names the product and shows its SaaS per-user fee", () => {
-    const state = sim.advance(sim.newGame({ companyName: "Test Co", productType: "assistant", model: "saas", seed: 3 }), 3).state;
+    // In Grow, where the paid API opens (#236).
+    const state = inPhase(sim.advance(sim.newGame({ companyName: "Test Co", productType: "assistant", model: "saas", seed: 3 }), 3).state, "grow");
     const status = renderStatus(sim, state);
     expect(status).toContain("== Test Co | AI assistant (assistant) on saas |");
     expect(status).toMatch(/capacity: the provider's \(no limit\) \| £2\.80\/user\/month on [\d,]+ users = £[\d,]+\/month, plus £900\/month/);
@@ -1029,7 +1070,7 @@ describe("the new products (#118)", () => {
   });
 
   it("plays a games network: its features and paid API are commands", () => {
-    let state = sim.newGame({ companyName: "Test Co", productType: "games", model: "saas", seed: 3 });
+    let state = inPhase(sim.newGame({ companyName: "Test Co", productType: "games", model: "saas", seed: 3 }), "grow");
     expect(renderStatus(sim, state)).toContain("Games network (games) on saas");
     const turn = runScript(sim, { ...state, cash: 50_000 }, "addon achievements; buyapi", who);
     state = turn.state;
@@ -1071,7 +1112,8 @@ describe("tiers, model benefits and the hardware slider (#123)", () => {
   });
 
   it("shows the tiers, locked features and the next tier's condition, and offers unlocks then benefits once their tier is open", () => {
-    const state = start();
+    // Features, unlocks and benefits open in Grow (#236).
+    const state = inPhase(start(), "grow");
     expect(renderStatus(sim, state)).toMatch(/^tiers: open 1 \| tier 2 needs users 0\/14,000 OR a CTO hired \(unlocks photos, managedMonitoring\)$/m);
     expect(renderStatus(sim, state)).toMatch(/messaging locked \(tier 3\)/);
     expect(renderCommands(sim, state)).not.toMatch(/^ {2}benefit /m);
@@ -1106,7 +1148,7 @@ describe("campaigns (#115) and marketers (#180)", () => {
   function grownUp() {
     let state = sim.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 });
     while (sim.launch(state).status !== "launched") state = sim.advance(state).state;
-    return { ...state, cash: 100_000, investors: { ...state.investors, firstApproachDay: state.day } };
+    return inPhase({ ...state, cash: 100_000, investors: { ...state.investors, firstApproachDay: state.day } }, "grow");
   }
 
   it("reads starting and stopping a campaign", () => {

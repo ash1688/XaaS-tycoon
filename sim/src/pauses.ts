@@ -80,7 +80,7 @@ export function createPauses(config: GameConfig, views: PauseViews) {
 
     // A pay review opening: the day can't go on until it's settled.
     if (after.payReview && !before.payReview) {
-      add("payReview", "pay-review", `Pay review: your staff want to talk about pay before ${quarterName(after.payReview)} starts`);
+      add("payReview", "pay-review", `Pay review for ${quarterName(after.payReview)}: your staff want to talk about pay`);
     }
 
     // Cash ran out and a vulture VC rescued the company: it now owns most of it, and the next cash-out is liquidation.

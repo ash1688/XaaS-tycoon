@@ -2321,6 +2321,11 @@ button.danger-fill {
   margin: 0;
 }
 
+/* The phase (#236), under the company's name: its badge and the milestone that opens the next. */
+.game-head .phase-line {
+  margin: -0.4rem 0 0.75rem;
+}
+
 .game-error {
   margin: 0 0 1rem;
 }

@@ -39,6 +39,7 @@ import { createCustomerMix } from "./mix.ts";
 import { isNameAllowed } from "./nameFilter.ts";
 import type { CounterOdds, Terms } from "./negotiation.ts";
 import { createPauses, type TickResult } from "./pauses.ts";
+import { actionJob, advancePhase, checkJobOpen, phaseView, startingPhase, type PhaseView } from "./phases.ts";
 import { payHistory, type PayHistoryView } from "./payHistory.ts";
 import { createPayReview, type PayOfferPreview, type PayReviewView } from "./payReview.ts";
 import { schemeEntries, schemeViews, type SchemeLevels, type StaffSchemeView } from "./staffSchemes.ts";
@@ -91,6 +92,7 @@ export { seriesApproachDay, twoRoundGame, vcLadder, type VcRung } from "./invest
 export type { FloatPreview, IpoCondition, IpoConditionId, IpoOffer, IpoStatus, IpoView } from "./ipo.ts";
 export type { LaunchView } from "./launch.ts";
 export type { MvpView } from "./mvp.ts";
+export { JOB_PHASES, JOBS, PHASE_NAMES, phaseReached, type Job, type PhaseStepView, type PhaseView } from "./phases.ts";
 export type { ResearchView } from "./research.ts";
 export type { OptimisationView } from "./optimisation.ts";
 export type { LoanQuote, LoanView } from "./loan.ts";
@@ -104,7 +106,7 @@ export type { PayOfferPreview, PayReviewView, SchemeOfferPreview, TribunalOdds }
 export type { PayHistoryEntry, PayHistoryView, SchemeRaise, StaffShareSchemeView } from "./payHistory.ts";
 export type { SchemeLevels, ShareSaveIssue, StaffSchemeId, StaffSchemeView } from "./staffSchemes.ts";
 export { STAFF_SCHEMES } from "./staffSchemes.ts";
-export { cashOnTop, inflationNow, quarterName, REVIEW_QUARTERS, TRIBUNAL_PICKS, type ReviewSlot } from "./payReview.ts";
+export { cashOnTop, inflationNow, quarterName, TRIBUNAL_PICKS, type ReviewSlot } from "./payReview.ts";
 export type { DriftView } from "./drift.ts";
 export type { RescueView } from "./rescue.ts";
 export type { TicketOutlook } from "./support.ts";
@@ -143,6 +145,7 @@ export { interestIn, profitCosts } from "./finance.ts";
 export {
   FUNDER_IDS,
   GAME_STATE_VERSION,
+  PHASE_IDS,
   isCurrentState,
   isDifficultyId,
   isCsuiteRole,
@@ -207,6 +210,7 @@ export {
   type PayReviewOutcome,
   type PayReviewRecord,
   type PayOfferTerms,
+  type PhaseId,
   type TribunalPick,
   type Server,
   type Shareholder,
@@ -441,8 +445,8 @@ export interface Sim {
    */
   staffSchemes(state: GameState): StaffSchemeView[];
   /**
-   * The days pay reviews start, in order: the first days of quarters 2, 3 and 4, and in a long game's later years of
-   * every quarter (listed up to the end of next year until IPO).
+   * The days pay reviews start, in order: none before the Grow phase, the first about 30 days into it (growDays), then
+   * a quarter apart (listed up to the end of next year until IPO).
    */
   payReviewDays(state: GameState): number[];
   /**
@@ -461,6 +465,11 @@ export interface Sim {
    * launched; the day they started (or will start) arriving, and the launch total.
    */
   launch(state: GameState): LaunchView;
+  /**
+   * The phase the game is in, the day it opened and the next one's milestone, every phase with what it opens, and
+   * which jobs are open: one not open yet is hidden in the game, and its actions are refused.
+   */
+  phase(state: GameState): PhaseView;
   /**
    * The MVP every game opens with: developer-days done of its total, whether it's done, and the day it will be at
    * today's developers. Users can arrive from the end of that day, once there are servers to serve them (see launch).
@@ -714,6 +723,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       ...payReview.startingPayReview(seed),
       ...drift.startingDrift(seed),
       csuite: startingCsuite(config, seed),
+      ...startingPhase(),
     };
     // The loan arrives with the upfront bill. A model that costs more up front than the company has would run it out
     // of cash on day 1, so it's refused instead: on-prem needs the loan.
@@ -739,7 +749,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       load: Math.round(customers.baseLoad(launched.state, users, 1)),
       demand: customers.baseDemand(launched.state, users, 1),
     };
-    return finance.settle(started, 1, [...borrowed.entries, ...upfront, ...launched.entries]).state;
+    return advancePhase(finance.settle(started, 1, [...borrowed.entries, ...upfront, ...launched.entries]).state).state;
   }
 
   /** Refuses a game from an older version, then ends one that has played its final day. */
@@ -774,8 +784,18 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     return state;
   }
 
+  /**
+   * Refuses an action for a job that isn't open in the game's phase, plays it, and moves the phase on if it reached a
+   * milestone (pressing Launch).
+   */
   function applyAction(saved: GameState, action: Action): GameState {
     const state = loadPlaying(saved);
+    const job = actionJob(action);
+    if (job) checkJobOpen(state, job);
+    return advancePhase(playAction(state, action)).state;
+  }
+
+  function playAction(state: GameState, action: Action): GameState {
     switch (action.type) {
       case "hire":
         return staff.changeStaff(state, action.type, action.pool, action.grade, action.count, action.agency);
@@ -1068,10 +1088,12 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       joined: (ramping ? 0 : organic.arrived) + wave.joined + (users - wave.users),
       left: (ramping ? 0 : organic.lost.reduce((sum, l) => sum + l.users, 0)) + (wave.left?.users ?? 0),
     });
+    // An approach today may open a phase: the first angel's Grow, Series A's Scale. So may an auto launch.
+    const phased = advancePhase(funded.state);
     // Then any tier whose condition is now met opens, for good.
-    const opened = tiers.tiersDay(funded.state);
+    const opened = tiers.tiersDay(phased.state);
     const tiered: GameState =
-      opened.tiers.length > funded.state.tiers.length ? { ...funded.state, tiers: opened.tiers } : funded.state;
+      opened.tiers.length > phased.state.tiers.length ? { ...phased.state, tiers: opened.tiers } : phased.state;
     // At a year's end in a long game, running prices rise and new kit gets better, from tomorrow (drift).
     const drifted = drift.yearEnd(tiered, day);
     // Last of all, a pay review if the next day starts a quarter that has one: it holds the clock until it's settled.
@@ -1081,7 +1103,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       // First, what a tribunal settled before today.
       ...payReview.tribunalEntries(yesterday, day),
       ...payReview.schemeStartEntries(yesterday, day),
-      ...settled.entries, ...released.entries, ...holiday.entries, ...funded.entries, ...opened.entries, ...drifted.entries, ...reviewed.entries,
+      ...settled.entries, ...released.entries, ...holiday.entries, ...funded.entries, ...phased.entries, ...opened.entries, ...drifted.entries, ...reviewed.entries,
       // C-suite roles that opened today, with their shortlists.
       ...csuite.openedEntries(yesterday, reviewed.state)];
     // Kit added today (managed autoscaling, a migration's new setup) gives what new kit gives now.
@@ -1293,6 +1315,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     },
     drift: (s) => drift.driftView(load(s)),
     launch: (s) => launch.launchView(load(s)),
+    phase: (s) => phaseView(load(s)),
     mvp: (s) => mvpView(load(s)),
     optimisation: (s) => {
       const state = load(s);

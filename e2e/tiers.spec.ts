@@ -1,13 +1,14 @@
 import { expect, test } from "@playwright/test";
 import postgres from "postgres";
 import { E2E_DATABASE_URL, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { createCode, launch, openTiers } from "./staff.ts";
+import { createCode, launch, openTiers, reachPhase } from "./staff.ts";
 
-/** Gives a company research, as if its first angel had approached on day 1, with these research points banked. */
+/** Gives a company research, as if its first angel had approached and opened Grow (#236), with these points banked. */
 async function withResearch(id: string, points: number) {
+  await reachPhase(id, "grow");
   const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
   try {
-    await sql`update companies set state = jsonb_set(jsonb_set(state, '{investors,firstApproachDay}', '1'), '{researchPoints}', ${sql.json(points)}) where id = ${id}`;
+    await sql`update companies set state = jsonb_set(state, '{researchPoints}', ${sql.json(points)}) where id = ${id}`;
   } finally {
     await sql.end();
   }
@@ -28,6 +29,8 @@ test("tiers lock later features and model benefits, and the on-prem hardware sli
   });
   const { id } = await created.json();
   await launch(request, code, id, "onprem");
+  // Features, tiers and model benefits open in the Grow phase (#236).
+  await reachPhase(id, "grow");
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);

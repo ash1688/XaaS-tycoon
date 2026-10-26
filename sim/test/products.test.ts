@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createSim, defaultConfig, MODEL_IDS, PRODUCT_TYPE_IDS, type GameConfig, type GameState, type ProductTypeId } from "../src/index.ts";
+import { inPhase } from "./phases.ts";
 
 // The AI assistant and games network (#118), through the sim's public interface on the default config.
 /** No MVP to build, so a game launches as soon as it has somewhere to serve users: the MVP has its own tests. */
@@ -30,7 +31,8 @@ describe("new products", () => {
       const others = PRODUCT_TYPE_IDS.filter((p) => p !== productType).flatMap((p) => defaultConfig.productTypes[p].features.map((f) => f.id));
       for (const f of features) expect(others, f.id).not.toContain(f.id);
       expect(sim.api(state), productType).toMatchObject({ owned: false });
-      const bought = sim.applyAction({ ...state, cash: 100_000 }, { type: "buyApi" });
+      // Bought in Grow, as the API opens there.
+      const bought = sim.applyAction({ ...inPhase(state, "grow"), cash: 100_000 }, { type: "buyApi" });
       expect(sim.api(bought)!.owned).toBe(true);
       mixes.add(JSON.stringify(sim.customerMix(state).types.map((t) => t.share)));
     }

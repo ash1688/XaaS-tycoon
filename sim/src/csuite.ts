@@ -1,37 +1,35 @@
 import { CSUITE_ROLES, type CsuiteRole, type GameConfig } from "./config.ts";
 import { effectAt, executiveIn, withinRange } from "./executives.ts";
 import { count, pounds } from "./finance.ts";
-import { seriesApproachDay } from "./investors.ts";
 import { peopleLeadFor } from "./peopleLead.ts";
 import { nextRandom, seedRng } from "./rng.ts";
 import { isCsuiteRole, SimError, type Candidate, type Csuite, type Executive, type GameState, type LogEntry } from "./state.ts";
 
 /**
- * When each role opens. Like the angel, a round opens its roles when it approaches, whether the student takes its money
- * or not.
+ * When each role opens: with its phase (see phases.ts), Grow at the first angel approach and Scale at Series A's,
+ * whether the student takes the money or not. The CFO can open earlier, with the first outside money taken.
  */
-export type CsuiteStage = "start" | "outsideMoney" | "angel" | "seriesA";
+export type CsuiteStage = "outsideMoney" | "grow" | "scale";
 
 const STAGES: Record<CsuiteRole, CsuiteStage> = {
-  headOfDevelopment: "start",
-  headOfOps: "start",
-  headOfSupport: "start",
+  headOfDevelopment: "scale",
+  headOfOps: "scale",
+  headOfSupport: "scale",
   cfo: "outsideMoney",
-  cto: "angel",
-  headOfPeople: "angel",
-  cmo: "seriesA",
-  coo: "seriesA",
-  cio: "seriesA",
-  ciso: "seriesA",
-  legalCounsel: "seriesA",
+  cto: "grow",
+  headOfPeople: "grow",
+  cmo: "scale",
+  coo: "scale",
+  cio: "scale",
+  ciso: "scale",
+  legalCounsel: "scale",
 };
 
 const STAGE_TEXT: Record<CsuiteStage, string> = {
-  start: "Open from the start.",
   outsideMoney:
-    "Opens once you take outside money (friends and family, the grant or an investor; the bank loan doesn't count), or when your first angel investor approaches.",
-  angel: "Opens when your first angel investor approaches.",
-  seriesA: "Opens when Series A venture capitalists approach.",
+    "Opens once you take outside money (friends and family, the grant or an investor; the bank loan doesn't count), or in the Grow phase, when your first angel investor approaches.",
+  grow: "Opens in the Grow phase, when your first angel investor approaches.",
+  scale: "Opens in the Scale phase, when Series A venture capitalists approach.",
 };
 
 /** What each role does, in a sentence, whoever fills it. */
@@ -183,26 +181,25 @@ export function createCsuite(config: GameConfig) {
   const roleName = (role: CsuiteRole) => config.csuite.roles[role].name;
 
   /**
-   * The day a role opened, or null while it's shut. The CFO opens on the first outside money taken (friends and
-   * family, the grant, or an investor, who has to approach first) or the first angel approach, whichever comes first.
+   * The day a role opened, or null while it's shut: the day its phase opened. The CFO opens on the first outside money
+   * taken (friends and family, the grant, or an investor, who has to approach first) or with Grow, whichever comes
+   * first.
    */
   function openDay(state: GameState, role: CsuiteRole): number | null {
     switch (STAGES[role]) {
-      case "start":
-        return 1;
       case "outsideMoney": {
         const { friendsAndFamily, grant } = state.funding;
         const days = [
           friendsAndFamily?.status === "accepted" ? friendsAndFamily.day : null,
           grant && grant.status !== "declined" ? grant.day : null,
-          state.investors.firstApproachDay,
+          state.phaseDays.grow,
         ].filter((d): d is number => d !== null);
         return days.length ? Math.min(...days) : null;
       }
-      case "angel":
-        return state.investors.firstApproachDay;
-      case "seriesA":
-        return seriesApproachDay(state, "seriesA");
+      case "grow":
+        return state.phaseDays.grow;
+      case "scale":
+        return state.phaseDays.scale;
     }
   }
 

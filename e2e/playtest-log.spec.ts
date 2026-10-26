@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { createCode } from "./staff.ts";
+import { createCode, reachPhase } from "./staff.ts";
 
 test("a student's play and UI use show in the teacher's timeline and export, under a pseudonym", async ({ browser, request }) => {
   const teacher = await (await browser.newContext()).newPage();
@@ -16,6 +16,8 @@ test("a student's play and UI use show in the teacher's timeline and export, und
   });
   expect(created.status()).toBe(201);
   const { id, day: firstDay } = await created.json();
+  // Setting a price opens in the Launch phase (#236), and an IaaS company with no servers hasn't launched.
+  await reachPhase(id, "launch");
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
   for (const day of [firstDay + 1, firstDay + 2, firstDay + 3]) {

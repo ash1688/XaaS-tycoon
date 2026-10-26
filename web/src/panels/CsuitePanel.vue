@@ -6,11 +6,10 @@ import { useGame } from "../game";
 import { formatShare } from "../shares";
 
 // The C-suite, on its own page: every role, when it opens, who fills it, and each open role's shortlist to hire from.
-// Hire hires at once: the panel says up front that hiring is for good.
+// Hire hires at once: the panel says up front that hiring is for good. A role that isn't open yet is hidden (#236).
 const game = useGame();
 const csuite = computed(() => game.company?.csuite ?? null);
 const open = computed(() => csuite.value?.roles.filter((r) => r.open) ?? []);
-const shut = computed(() => csuite.value?.roles.filter((r) => !r.open) ?? []);
 const hiredCount = computed(() => csuite.value?.roles.filter((r) => r.executive).length ?? 0);
 async function hire(role: CsuiteRole, candidate: string) {
   await game.actFrom("hire-executive", { type: "hireExecutive", role, candidate });
@@ -26,7 +25,7 @@ async function hire(role: CsuiteRole, candidate: string) {
       shrink as the C-suite's {{ formatShare(csuite.equityCap) }} cap fills: {{ formatShare(csuite.equityLeft) }} left.
       The staff share scheme doesn't count towards it.
     </p>
-    <p data-testid="csuite-ipo">
+    <p v-if="game.isOpen('ipo')" data-testid="csuite-ipo">
       Every role must be filled to float: {{ hiredCount }} of {{ csuite.roles.length }} hired.
     </p>
     <p v-if="csuite.payHoliday.since !== null" class="pay-holiday" role="status" data-testid="csuite-pay-holiday">
@@ -89,12 +88,6 @@ async function hire(role: CsuiteRole, candidate: string) {
         </table>
       </div>
     </div>
-    <ul v-if="shut.length" class="shut" data-testid="csuite-shut">
-      <li v-for="r in shut" :key="r.role" :data-testid="`csuite-${r.role}`">
-        <strong>{{ r.name }}</strong>
-        <span class="muted">{{ r.opens }} {{ r.blurb }}</span>
-      </li>
-    </ul>
   </section>
 </template>
 
@@ -118,15 +111,5 @@ async function hire(role: CsuiteRole, candidate: string) {
 }
 .shortlist td.hire {
   white-space: nowrap;
-}
-.shut {
-  margin: 0.75rem 0 0;
-  padding-left: 1.1rem;
-}
-.shut li {
-  margin-bottom: 0.3rem;
-}
-.shut .muted {
-  display: block;
 }
 </style>

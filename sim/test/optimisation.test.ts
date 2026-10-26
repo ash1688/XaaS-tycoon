@@ -10,6 +10,7 @@ import {
   type ModelId,
   type ProductTypeId,
 } from "../src/index.ts";
+import { inPhase } from "./phases.ts";
 
 // The developer slider and optimisation (#177), through the sim's public interface: after launch the slider splits
 // developer output between features and optimisation, whose developer-days build up into a saving on resource need per
@@ -81,7 +82,8 @@ describe("the developer slider", () => {
   });
 
   it("splits developer output between the feature build and optimisation after launch", () => {
-    const building = act(begin(), { type: "buildFeature", feature: "wishlists" });
+    // In Grow, as features open there.
+    const building = act(inPhase(begin(), "grow"), { type: "buildFeature", feature: "wishlists" });
     const at = (share: number) => {
       const day = sim.advance(act(building, { type: "setOptimisation", share })).state;
       return { feature: day.features.wishlists!.progress, optimisation: day.optimisationDays };
