@@ -3,10 +3,12 @@ import { createSim, defaultConfig, SimError, type GameConfig, type GameState } f
 import { advanceUntil, parseCommand, renderCommands, renderStatus, renderSummary, runCommand, runScript } from "../scripts/textPlay.ts";
 import { withFullCsuite } from "./executives.ts";
 
-/** No MVP to build, so a game launches as soon as it has somewhere to serve users: the MVP has its own tests. */
+/** No MVP to build: the MVP has its own tests. */
 const NO_MVP: GameConfig["mvp"] = { ...defaultConfig.mvp, baseDevDays: { ecommerce: 0, social: 0, video: 0, payments: 0, assistant: 0, games: 0 } };
+/** Launch presses itself once there is somewhere to serve users, as the tests here were written for: Launch has its own test. */
+const AUTO_LAUNCH: GameConfig["launch"] = { ...defaultConfig.launch, auto: 1 };
 // No pay reviews, which would hold the clock every ten days of a 40-day game: they have their own tests below.
-const sim = createSim({ ...defaultConfig, mvp: NO_MVP, finalDay: 40, payReview: { ...defaultConfig.payReview, on: 0 } });
+const sim = createSim({ ...defaultConfig, mvp: NO_MVP, launch: AUTO_LAUNCH, finalDay: 40, payReview: { ...defaultConfig.payReview, on: 0 } });
 const who = { player: "test", playstyle: "average-joe" };
 const start = (): GameState =>
   sim.newGame({ companyName: "Test Co", productType: "social", model: "paas", seed: 3, takeLoan: true });
@@ -198,7 +200,7 @@ describe("advanceUntil", () => {
 
   it("stops for viral growth, and shows whose job it is to carry the new users", () => {
     const viral = defaultConfig.events.find((e) => e.id === "viralGrowth")!;
-    const s = createSim({ ...defaultConfig, mvp: NO_MVP, finalDay: 40, payReview: { ...defaultConfig.payReview, on: 0 }, events: [{ ...viral, encounter: undefined, schedule: { type: "fixed", days: [10] } }] });
+    const s = createSim({ ...defaultConfig, mvp: NO_MVP, launch: AUTO_LAUNCH, finalDay: 40, payReview: { ...defaultConfig.payReview, on: 0 }, events: [{ ...viral, encounter: undefined, schedule: { type: "fixed", days: [10] } }] });
     const begun = s.newGame({ companyName: "Test Co", productType: "social", model: "paas", seed: 3, takeLoan: true });
     let state = runCommand(s, begun, parseCommand("instances 3"), who).state;
     state = runCommand(s, state, parseCommand("managed database medium"), who).state;
@@ -239,7 +241,7 @@ describe("advanceUntil", () => {
     // No moderation, as on main before moderators: this is about something else.
     const careers = createSim({
       ...defaultConfig,
-      mvp: NO_MVP,
+      mvp: NO_MVP, launch: AUTO_LAUNCH,
       allowedGameLengths: { "180-days": 0, "until-ipo": 0, "1-year": 0, career: 1 },
       productTypes: { ...defaultConfig.productTypes, social: { ...defaultConfig.productTypes.social, moderation: undefined } },
     });
@@ -317,13 +319,13 @@ describe("racks, cabling, power and cooling", () => {
 
 describe("rendering", () => {
   it("shows a longer game's length and final day", () => {
-    const yearly = createSim({ ...defaultConfig, allowedGameLengths: { "180-days": 0, "until-ipo": 0, "1-year": 1, career: 1 } });
+    const yearly = createSim({ ...defaultConfig, launch: AUTO_LAUNCH, allowedGameLengths: { "180-days": 0, "until-ipo": 0, "1-year": 1, career: 1 } });
     const career = yearly.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3, gameLength: "career" });
     expect(renderStatus(yearly, career)).toMatch(/day 1\/17155 \(Career \(47 years, age 18 to 65\), Normal, a week a tick\)/);
   });
 
   it("shows the game's difficulty", () => {
-    const any = createSim({ ...defaultConfig, allowedDifficulties: { easy: 1, normal: 1, hard: 1 } });
+    const any = createSim({ ...defaultConfig, launch: AUTO_LAUNCH, allowedDifficulties: { easy: 1, normal: 1, hard: 1 } });
     const hard = any.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3, difficulty: "hard" });
     expect(renderStatus(any, hard)).toMatch(/day 1\/180 \(180 days, Hard\)/);
     expect(renderSummary(any, hard)).toMatch(/"difficulty": "hard"/);
@@ -486,7 +488,7 @@ describe("shares and funding", () => {
   });
 
   it("stops time when the grant's condition ends", () => {
-    const short = createSim({ ...defaultConfig, mvp: NO_MVP, finalDay: 40, funding: { ...defaultConfig.funding, grant: { ...defaultConfig.funding.grant, days: 5 } } });
+    const short = createSim({ ...defaultConfig, mvp: NO_MVP, launch: AUTO_LAUNCH, finalDay: 40, funding: { ...defaultConfig.funding, grant: { ...defaultConfig.funding.grant, days: 5 } } });
     const state = short.applyAction(
       short.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 }),
       { type: "acceptFunding", funder: "grant" },
@@ -504,6 +506,7 @@ describe("the angel investor", () => {
   // A low hidden target, so an angel approaches within days of the launch.
   const early = createSim({
     ...defaultConfig,
+    launch: AUTO_LAUNCH,
     payReview: { ...defaultConfig.payReview, on: 0 },
     finalDay: 60,
     investors: { ...defaultConfig.investors, angel: { ...defaultConfig.investors.angel, target: { dailyRevenue: 300, days: 3 } } },
@@ -593,6 +596,7 @@ describe("venture capital", () => {
   const vc = defaultConfig.investors.vc;
   const early = createSim({
     ...defaultConfig,
+    launch: AUTO_LAUNCH,
     payReview: { ...defaultConfig.payReview, on: 0 },
     finalDay: 60,
     investors: {
@@ -679,6 +683,7 @@ describe("the IPO", () => {
   const ipoSim = (cold: number) =>
     createSim({
       ...defaultConfig,
+      launch: AUTO_LAUNCH,
       events: [],
       allowedGameLengths: { "180-days": 1, "until-ipo": 1, "1-year": 0, career: 0 },
       ipo: {
@@ -771,6 +776,7 @@ describe("the IPO checklist over time", () => {
   it("stops time when the company is no longer ready", () => {
     const s = createSim({
       ...defaultConfig,
+      launch: AUTO_LAUNCH,
       // No moderation, as on main before moderators, no angel, whose offer lapsing stops time, and no tier 2 opening,
       // which stops it too: this is about something else.
       productTypes: { ...defaultConfig.productTypes, social: { ...defaultConfig.productTypes.social, moderation: undefined } },
@@ -843,7 +849,7 @@ describe("rescue buyout and liquidation", () => {
   });
 
   it("ends in liquidation the second time, and still shows the rescue after", () => {
-    const long = createSim({ ...defaultConfig, finalDay: 120, payReview: { ...defaultConfig.payReview, on: 0 } });
+    const long = createSim({ ...defaultConfig, launch: AUTO_LAUNCH, finalDay: 120, payReview: { ...defaultConfig.payReview, on: 0 } });
     const begun = long.newGame({ companyName: "Test Co", productType: "social", model: "paas", seed: 3, takeLoan: true });
     let turn = advanceUntil(long, long.applyAction(begun, { type: "hire", pool: "developers", grade: "senior", count: 40 }), 120, who);
     while (turn.state.status === "playing") turn = advanceUntil(long, turn.state, 120, who);
@@ -859,7 +865,7 @@ describe("rescue buyout and liquidation", () => {
 });
 
 describe("the calendar", () => {
-  const full = createSim(defaultConfig);
+  const full = createSim({ ...defaultConfig, launch: AUTO_LAUNCH });
   const shop = (startDate: string) =>
     full.newGame({ companyName: "Test Co", productType: "ecommerce", model: "saas", seed: 3, startDate });
   /** Plays on until time stops for a holiday. */
@@ -960,7 +966,7 @@ describe("rivals", () => {
 });
 
 describe("the payments app", () => {
-  const full = createSim({ ...defaultConfig, mvp: NO_MVP });
+  const full = createSim({ ...defaultConfig, mvp: NO_MVP, launch: AUTO_LAUNCH });
   const pay = (): GameState =>
     full.advance(full.newGame({ companyName: "Pay Co", productType: "payments", model: "saas", seed: 3 }), 20).state;
   const runFull = (state: GameState, text: string) => {
@@ -1044,6 +1050,7 @@ describe("playtest polish (#164)", () => {
     const spike = defaultConfig.events.find((e) => e.id === "trafficSpike")!;
     const warned = createSim({
       ...defaultConfig,
+      launch: AUTO_LAUNCH,
       encounters: { ...defaultConfig.encounters, thresholdMin: 10, thresholdMax: 10 },
       events: [{ ...spike, encounter: { chance: 1 } }],
     });
@@ -1133,5 +1140,33 @@ describe("campaigns (#115) and marketers (#180)", () => {
     const users = sim.campaigns(played).campaigns[0]!.users;
     expect(users).toBeGreaterThan(0);
     expect(renderStatus(sim, played)).toMatch(new RegExp(String.raw`^ {2}#1 businesses \(senior marketer\) £\d+/£1600, day \d+/10, ${users} users at £\d+\.\d\d running$`, "m"));
+  });
+});
+
+describe("launch", () => {
+  // The real game: an MVP to build, and Launch to press once it's done.
+  const button = createSim({ ...defaultConfig, finalDay: 40, payReview: { ...defaultConfig.payReview, on: 0 } });
+  const play = (state: GameState, text: string) => {
+    const command = parseCommand(text);
+    return command.kind === "next" ? advanceUntil(button, state, command.days, who) : runCommand(button, state, command, who);
+  };
+
+  it("reads launch", () => {
+    expect(parseCommand("launch")).toEqual({ kind: "action", action: { type: "launch" }, times: 1 });
+  });
+
+  it("offers launch once the MVP is done, says what's missing, and goes live the next day", () => {
+    const state = button.newGame({ companyName: "Test Co", productType: "ecommerce", model: "iaas", seed: 3, takeLoan: true });
+    expect(renderCommands(button, state)).not.toMatch(/^ {2}launch /m);
+    let done = state;
+    while (!done.mvp.doneDay) done = play(done, "next 1").state;
+    expect(renderCommands(button, done)).toMatch(/^ {2}launch {3}\(go live/m);
+    expect(renderStatus(button, done)).toMatch(
+      /launch: ready \(ready: type launch\); launching now would be short: No app server: no users can be served; No database: no users can be served/,
+    );
+    const launched = play(done, "launch").state;
+    expect(launched.launchDay).toBe(done.day + 1);
+    expect(renderStatus(button, launched)).toMatch(new RegExp(`launch: launching, go-live day ${done.day + 1}`));
+    expect(play(launched, "next 1").state.users).toBeGreaterThan(0);
   });
 });

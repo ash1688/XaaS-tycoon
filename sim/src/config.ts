@@ -1311,6 +1311,12 @@ export interface LaunchConfig {
    * scaled to add up to 1, so the whole launch total always arrives.
    */
   rampShares: number[];
+  /**
+   * 1 makes Launch press itself at the end of the first day the MVP is done and servers can serve users, for tests and
+   * demos about what comes after launch. 0, the game: the company waits, ready to launch, until the
+   * student presses Launch.
+   */
+  auto: number;
 }
 
 /**
@@ -1892,7 +1898,7 @@ export const defaultConfig: GameConfig = {
   maxCompanyNameLength: 40,
   // Users trickle in over 3 days, building up, from the day the MVP is done and servers are ready. On-prem kit bought on
   // day 1 arrives on day 5, well inside the MVP, so its delivery overlaps the build.
-  launch: { rampShares: [0.2, 0.3, 0.5] },
+  launch: { rampShares: [0.2, 0.3, 0.5], auto: 0 },
   // Tuned in the balance pass (#181): the starting two developers (2 developer-days a day) finish on-prem in 8–11 days
   // played, SaaS in 4–5. A shorter opening burn brought careful play's break-even into day 60–75.
   mvp: {

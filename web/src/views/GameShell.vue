@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { quarterName } from "@xaas/sim";
 import { formatCash } from "../api";
+import LaunchButton from "../components/LaunchButton.vue";
 import PayReviewModal from "../components/PayReviewModal.vue";
 import { days, provideGame } from "../game";
 
@@ -176,6 +177,7 @@ async function closeMenu() {
         <ul>
           <li v-for="p in game.pauses" :key="p.id">{{ p.text }}</li>
         </ul>
+        <LaunchButton v-if="game.pauses.some((p) => p.id === 'mvp')" />
       </div>
       <div v-if="game.lowCash && game.runway" class="low-cash" role="status" data-testid="low-cash">
         <span class="badge">Low cash</span>

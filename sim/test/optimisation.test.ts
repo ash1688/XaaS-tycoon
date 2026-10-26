@@ -22,6 +22,7 @@ const quiet: GameConfig = { ...defaultConfig, events: [] };
 const noMvp: GameConfig = {
   ...quiet,
   mvp: { ...quiet.mvp, baseDevDays: { ecommerce: 0, social: 0, video: 0, payments: 0, assistant: 0, games: 0 } },
+  launch: { ...quiet.launch, auto: 1 },
 };
 const sim = createSim(noMvp);
 const withMvp = createSim(quiet);

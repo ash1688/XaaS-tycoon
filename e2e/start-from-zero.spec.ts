@@ -29,7 +29,9 @@ test("on IaaS, VMs rented on day 1 bring the first users on day 2, building up o
   await expect(student.getByTestId("launch-headline")).toHaveText("Waiting for capacity");
   await expect(student.getByTestId("launch-text")).toContainText("Nothing is set up to serve users yet");
   const servers = student.getByTestId("launch-step-servers");
-  await expect(servers).toContainText("Rent your first servers: at least one app server and one database (a cache is optional)");
+  await expect(servers).toContainText(
+    "Rent your first servers: at least one app server and one database (a cache is optional; rented servers cost nothing until you launch)",
+  );
   await expect(servers).toContainText("(to do)");
 
   // The checklist links to Infrastructure, where the VMs are rented.
@@ -47,9 +49,9 @@ test("on IaaS, VMs rented on day 1 bring the first users on day 2, building up o
   // Ready the next day, so the first users arrive then. They need an ops person: a new company has one.
   await student.getByRole("navigation", { name: "Game" }).getByRole("link", { name: "Home", exact: true }).click();
   await expect(card).toHaveAttribute("data-status", "upcoming");
-  await expect(student.getByTestId("launch-headline")).toHaveText("Launch in 1 day");
+  await expect(student.getByTestId("launch-headline")).toHaveText("Launching once your servers are ready");
   await expect(student.getByTestId("launch-text")).toHaveText(
-    "Your first users start arriving at the end of day 2, when your servers are ready, more each day for 3 days.",
+    "Your first users start arriving at the end of the day your servers are ready, more each day for 3 days.",
   );
   await expect(servers).toContainText("(done)");
   await expect(student.getByTestId("launch-step-ops")).toContainText("Hire ops: 1 needed");
@@ -100,6 +102,23 @@ test("a company that sets nothing up waits for capacity, with no users", async (
   await expect(student.getByTestId("launch-text")).toContainText("Nothing is set up to serve users yet");
   await expect(student.getByTestId("launch-step-servers")).toContainText("(to do)");
   await expect(student.getByTestId("users")).toHaveText("0");
+});
+
+test("Launch with nothing set up names what's missing, and goes ahead", async ({ browser, request }) => {
+  // The e2e server has no MVP and launches by itself once servers are ready, but Launch can still be pressed.
+  const student = await newCompany(browser, request, "Short Ltd");
+  const card = student.getByTestId("launch-card");
+  await expect(card.getByTestId("launch-missing").getByRole("listitem")).toHaveText([
+    "No app server: no users can be served",
+    "No database: no users can be served",
+  ]);
+  await card.getByRole("button", { name: "Launch anyway" }).click();
+  await expect(card).toHaveAttribute("data-status", "launching");
+  await expect(student.getByTestId("launch-headline")).toHaveText("Going live on day 2");
+  await expect(card.getByTestId("launch-action")).toHaveCount(0);
+  await student.getByRole("button", { name: "Continue" }).click();
+  await expect(student.getByTestId("launch-headline")).toHaveText("Launching: users arriving (day 1 of 3)");
+  expect(await student.users()).toBeGreaterThan(0);
 });
 
 test("on PaaS, a managed database added from the empty state brings users from day 2", async ({

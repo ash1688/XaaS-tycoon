@@ -22,6 +22,7 @@ const rich: GameConfig = {
   startingCash: 10_000_000,
   events: [],
   mvp: { ...defaultConfig.mvp, baseDevDays: { ecommerce: 0, social: 0, video: 0, payments: 0, assistant: 0, games: 0 } },
+  launch: { ...defaultConfig.launch, auto: 1 },
   allowedGameLengths: { "180-days": 1, "until-ipo": 1, "1-year": 1, career: 1 },
   payReview: { ...defaultConfig.payReview, on: 0 },
 };

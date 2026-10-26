@@ -24,7 +24,8 @@ import {
 
 /** No events and no holidays, so the only thing moving a campaign is the campaign. */
 // No pay reviews either: they have their own tests (payReview.test.ts).
-const quiet: GameConfig = { ...defaultConfig, events: [], calendar: { ...defaultConfig.calendar, holidays: [] }, payReview: { ...defaultConfig.payReview, on: 0 } };
+// Launch presses itself, as Campaigns come after it: Launch has its own tests (mvp.test.ts).
+const quiet: GameConfig = { ...defaultConfig, launch: { ...defaultConfig.launch, auto: 1 }, events: [], calendar: { ...defaultConfig.calendar, holidays: [] }, payReview: { ...defaultConfig.payReview, on: 0 } };
 const sim = createSim(quiet);
 const { costPerUser } = quiet.campaigns;
 const marketSize = quiet.productTypes.social.growth.marketSize;

@@ -106,8 +106,9 @@ const sim = createSim({
       },
     },
   },
-  launch: { rampShares: [1] },
-  // No MVP to build, so a company launches as soon as it can serve users: the sim tests the MVP.
+  // No MVP to build, and Launch presses itself, so a company launches as soon as it can serve users: the sim tests the
+  // MVP and Launch.
+  launch: { rampShares: [1], auto: 1 },
   mvp: { ...defaultConfig.mvp, baseDevDays: { ecommerce: 0, social: 0, video: 0, payments: 0, assistant: 0, games: 0 } },
   // Seeds are random here, so migrations never overrun.
   migration: { ...defaultConfig.migration, overrun: { ...defaultConfig.migration.overrun, chance: 0 } },
@@ -1806,6 +1807,8 @@ describe("the angel investor", () => {
   // A hidden target any launched company hits on its first day of income, so an angel approaches within days.
   const angelSim = createSim({
     ...defaultConfig,
+    // Launch presses itself once there are servers: the sim tests Launch.
+    launch: { ...defaultConfig.launch, auto: 1 },
     events: [],
     calendar: { ...defaultConfig.calendar, holidays: [] },
     investors: {
@@ -1935,6 +1938,8 @@ describe("venture capital rounds", () => {
   const vc = defaultConfig.investors.vc;
   const vcSim = createSim({
     ...defaultConfig,
+    // Launch presses itself once there are servers: the sim tests Launch.
+    launch: { ...defaultConfig.launch, auto: 1 },
     events: [],
     calendar: { ...defaultConfig.calendar, holidays: [] },
     investors: {
@@ -3559,7 +3564,7 @@ describe("launch", () => {
   // The default 3-day ramp, and IaaS with no starter setup, so a new IaaS company has nothing to serve users with.
   const ramped = createSim({
     ...sim.config,
-    launch: { rampShares: [0.2, 0.3, 0.5] },
+    launch: { ...sim.config.launch, rampShares: [0.2, 0.3, 0.5] },
     models: {
       ...sim.config.models,
       iaas: { ...sim.config.models.iaas, servers: { ...sim.config.models.iaas.servers!, starter: [] } },
@@ -3587,13 +3592,13 @@ describe("launch", () => {
       expect(company.launch).toEqual({
         status: "waiting",
         day: null,
-        daysLeft: null,
         rampDays: 3,
         rampDay: 0,
         arrived: 0,
         needsServers: true,
         setUp: false,
         opsNeeded: 0,
+        missing: ["No app server: no users can be served", "No database: no users can be served"],
       });
       const next = (await rampApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
       expect(next.company).toMatchObject({ day: 2, users: 0, launch: { status: "waiting" } });
@@ -3616,6 +3621,33 @@ describe("launch", () => {
       const third = await next();
       expect(third.company).toMatchObject({ users: 2_000, launch: { status: "launched", day: 1, rampDay: 3, arrived: 2_000 } });
     });
+  });
+
+  it("waits, ready to launch, until Launch is pressed, warning of what's missing but going ahead", async () => {
+    // Launch doesn't press itself, and IaaS has no starter setup: nothing to serve users with.
+    const button = createSim({ ...ramped.config, launch: { ...ramped.config.launch, auto: 0 } });
+    const buttonApp = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), sim: button });
+    try {
+      const code = await newCode();
+      const payload = { name: "Acme", productType: "ecommerce", model: "iaas" };
+      const company = (await buttonApp.inject({ method: "POST", url: `/api/codes/${code}/companies`, payload })).json<CompanyView>();
+      const url = `/api/codes/${code}/companies/${company.id}`;
+      expect(company).toMatchObject({ users: 0, launch: { status: "ready", day: null } });
+      expect(company.launch.missing).toEqual(["No app server: no users can be served", "No database: no users can be served"]);
+      const waited = (await buttonApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+      expect(waited.company).toMatchObject({ day: 2, users: 0, launch: { status: "ready" } });
+      const launched = await buttonApp.inject({ method: "POST", url: `${url}/actions`, payload: { type: "launch" } });
+      expect(launched.statusCode).toBe(200);
+      expect(launched.json<CompanyView>().launch).toMatchObject({ status: "launching", day: 3, rampDay: 0, missing: [] });
+      const live = (await buttonApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+      expect(live.company).toMatchObject({ day: 3, launch: { status: "launching", day: 3, rampDay: 1 } });
+      expect(live.company.users).toBeGreaterThan(0);
+      const again = await buttonApp.inject({ method: "POST", url: `${url}/actions`, payload: { type: "launch" } });
+      expect(again.statusCode).toBe(400);
+      expect(again.json()).toMatchObject({ error: "already_launched" });
+    } finally {
+      await buttonApp.close();
+    }
   });
 
   it("is launched in full as the game starts on a config with a one-day ramp and servers in place", async () => {

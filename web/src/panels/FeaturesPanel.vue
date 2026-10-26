@@ -2,6 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { formatCash, formatCount, formatPrice } from "../api";
 import { devDays, namesList, useGame } from "../game";
+import LaunchButton from "../components/LaunchButton.vue";
 
 // Features to build, one at a time, or on SaaS the add-on shop.
 const game = useGame();
@@ -12,9 +13,9 @@ const pulls = (appeal?: Partial<Record<string, number>>) => {
   const names = Object.keys(appeal ?? {}).map((id) => types.find((t) => t.id === id)?.name.toLowerCase() ?? id);
   return names.length ? ` · pulls in ${namesList(names)}` : "";
 };
-// The MVP every game opens with: shown, with the launch day it gives, until it's done.
+// The MVP every game opens with: shown, with the day it'll be done, until it's done; then Launch until it's pressed.
 const mvp = computed(() => (game.company && !game.company.mvp.done ? game.company.mvp : null));
-const launchDay = computed(() => game.company?.launch.day ?? null);
+const readyToLaunch = computed(() => game.company?.launch.status === "ready");
 
 // The developer slider, once the MVP is done: the share of developer time on optimisation, set when it's let go.
 const optimisation = computed(() => (game.company && !mvp.value ? game.company.optimisation : null));
@@ -57,7 +58,7 @@ const activeCount = computed(
       <p class="muted">
         Before anyone can use your product, your developers build a minimum viable product{{
           game.onSaas ? ": on SaaS, the storefront, payment gateways and the like" : ""
-        }}. All their work goes into it, and no users arrive until it's done.
+        }}. All their work goes into it, and no users arrive until it's done and you press Launch.
       </p>
       <div
         class="meter"
@@ -79,12 +80,16 @@ const activeCount = computed(
         <strong v-else class="warn-text">No developers: hire some to build it.</strong>
       </p>
       <p data-testid="mvp-launch-day">
-        <template v-if="launchDay !== null">Estimated launch: <strong>day {{ launchDay }}</strong>.</template>
-        <template v-else-if="mvp.launchDay !== null">
-          Done by day {{ mvp.launchDay }}. You launch once it's done and your servers are ready.
+        <template v-if="mvp.launchDay !== null">
+          Done by <strong>day {{ mvp.launchDay }}</strong>. Then press Launch when your servers are ready.
         </template>
         <template v-else>Estimated launch: not until someone builds it.</template>
       </p>
+    </div>
+    <div v-else-if="readyToLaunch" class="mvp" data-testid="mvp-ready">
+      <strong>MVP: ready to launch</strong>
+      <p class="muted">Your MVP is done. Press Launch when you're set up: no users arrive until you do.</p>
+      <LaunchButton />
     </div>
     <div v-if="optimisation" class="optimisation" data-testid="optimisation">
       <label for="optimisation-slider">

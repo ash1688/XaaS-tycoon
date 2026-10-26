@@ -397,7 +397,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const mvp = sim.mvp(state);
   if (!mvp.done) {
     const due = mvp.launchDay === null ? "no developers to finish it" : `done by the end of day ${mvp.launchDay}`;
-    lines.push(`MVP: ${+mvp.progress.toFixed(1)}/${mvp.total} developer-days (${due}); no users until it's done`);
+    lines.push(`MVP: ${+mvp.progress.toFixed(1)}/${mvp.total} developer-days (${due}); no users until it's done and you launch`);
   } else {
     const o = sim.optimisation(state);
     lines.push(
@@ -424,9 +424,9 @@ export function renderStatus(sim: Sim, state: GameState): string {
   }
   const launch = sim.launch(state);
   if (launch.status !== "launched") {
-    lines.push(
-      `launch: ${launch.status}${launch.daysLeft !== null ? `, ${launch.daysLeft} days to go` : ""}${launch.status === "waiting" && !launch.setUp ? " (set up servers first)" : ""}`,
-    );
+    const when = launch.day !== null ? `, go-live day ${launch.day}` : launch.status === "ready" ? " (ready: type launch)" : "";
+    const short = launch.missing.length ? `; launching now would be short: ${launch.missing.join("; ")}` : "";
+    lines.push(`launch: ${launch.status}${when}${short}`);
   }
 
   const units = sim.units(state);
@@ -1146,6 +1146,9 @@ export function renderCommands(sim: Sim, state: GameState): string {
         .join(", ")}`,
     );
   }
+  if (sim.launch(state).status === "ready") {
+    lines.push(`  launch   (go live: your first users arrive at the end of the next day played; hosting bills start then)`);
+  }
   lines.push(`  optimise <0–100>   (% of developer time on optimisation rather than features, once the MVP is done)`);
   const toUnlock = unlockable(sim, state);
   if (toUnlock.length) {
@@ -1550,6 +1553,8 @@ export function parseCommand(text: string): Command {
     }
     case "odds":
       return { kind: "odds", funder: funder(args[0]), terms: terms(args.slice(1)) };
+    case "launch":
+      return one({ type: "launch" });
     case "buyapi":
       return one({ type: "buyApi" });
     case "switch":

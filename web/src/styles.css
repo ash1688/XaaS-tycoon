@@ -3443,6 +3443,29 @@ body.modal-open {
   z-index: 1;
 }
 
+/* Launch, once the MVP is done: what it would be short of, then the button. Above the Home card's whole-card button. */
+.launch-action {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  flex-basis: 100%;
+  gap: 0.35rem;
+  margin: 0.6rem 0 0;
+}
+
+/* In the pause banner too, whose own paragraph and list rules would stretch and recolour these. */
+.launch-action p {
+  flex: none;
+}
+
+.launch-action .launch-missing {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--warn);
+}
+
 /* Servers in units (IaaS): a bar each for CU, DBU and CH, the binding tier outlined. */
 .unit-intro {
   margin: 0 0 0.75rem;

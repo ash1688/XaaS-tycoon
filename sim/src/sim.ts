@@ -584,7 +584,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const migration = createMigration(config, infra, features, events, servers, benefits);
   const summary = createSummary(config, infra);
   const loan = createLoan(config, finance);
-  const launch = createLaunch(config, servers, pricing);
+  const launch = createLaunch(config, servers, pricing, infra.units);
   const shares = createShares(config, finance, conversion);
   const api = createApi(config, features, finance, infra.apiuOn);
   const encounters = createEncounters(config, servers);
@@ -851,6 +851,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
         return investors.autoNegotiateInvestor(state, action.terms);
       case "pickInvestor":
         return investors.pickInvestor(state, action.investor);
+      case "launch":
+        return launch.launch(state);
       case "buyApi":
         return api.buyApi(state);
       case "switchServer":
@@ -888,7 +890,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const day = yesterday.day + 1;
     // Hires due today start first, so they work and are paid today.
     const arrivals = staff.arrive(yesterday, day);
-    // Until the MVP is done, all of the developers' work goes into it. Done today, users can arrive at the end of it.
+    // Until the MVP is done, all of the developers' work goes into it. Done today, Launch can be pressed for tomorrow.
     const building = mvpDay(config, { ...arrivals.state, output: staffOutput(config, arrivals.state, "developers"), day });
     const start: GameState = { ...arrivals.state, mvp: building.mvp };
 

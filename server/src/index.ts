@@ -39,12 +39,13 @@ if (startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
   process.exit(1);
 }
 
-// Optional: GAME_MVP=off gives every product an MVP of no size, so a game launches as soon as it can serve users. For
-// tests and demos that are about something after the launch.
+// Optional: GAME_MVP=off gives every product an MVP of no size and presses Launch by itself, so a game launches as soon
+// as it can serve users. For tests and demos that are about something after the launch.
 const mvpOff = process.env.GAME_MVP === "off";
 const mvp = mvpOff
   ? { ...defaultConfig.mvp, baseDevDays: { ecommerce: 0, social: 0, video: 0, payments: 0, assistant: 0, games: 0 } }
   : defaultConfig.mvp;
+const launch = mvpOff ? { ...defaultConfig.launch, auto: 1 } : defaultConfig.launch;
 
 // Optional: GAME_PAY_REVIEWS=off turns pay reviews off, so a game's clock never holds for one. For tests and demos about
 // something else.
@@ -95,7 +96,7 @@ const app = await buildApp({
   db,
   teacherPassword,
   sessionSecret,
-  sim: createSim({ ...defaultConfig, finalDay, mvp, payReview }),
+  sim: createSim({ ...defaultConfig, finalDay, mvp, launch, payReview }),
   timedFlow,
   startDate,
   trustProxy,

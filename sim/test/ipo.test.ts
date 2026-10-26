@@ -7,6 +7,8 @@ import { withFullCsuite } from "./executives.ts";
 
 const quiet: GameConfig = {
   ...defaultConfig,
+  // Launch presses itself once servers can serve users: Launch has its own tests (mvp.test.ts).
+  launch: { ...defaultConfig.launch, auto: 1 },
   events: [],
   // No pay reviews: they have their own tests (payReview.test.ts).
   payReview: { ...defaultConfig.payReview, on: 0 },

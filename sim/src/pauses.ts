@@ -187,7 +187,7 @@ export function createPauses(config: GameConfig, views: PauseViews) {
 
     // Something finished: the MVP, a tier available, a feature built, the launch, servers ready, a migration step.
     for (const t of after.tiers.slice(before.tiers.length)) add("finished", `tier-${t.tier}`, `Tier ${t.tier} available`);
-    if (views.mvp(after).done && !views.mvp(before).done) add("finished", "mvp", "Your MVP is done");
+    if (views.mvp(after).done && !views.mvp(before).done) add("finished", "mvp", "Your MVP is ready: press Launch when you're set up");
     const building = new Set(views.features(before).filter((f) => f.status === "building").map((f) => f.id));
     for (const f of views.features(after)) {
       if (building.has(f.id) && f.status !== "building") add("finished", `feature-${f.id}`, `${f.name} is built`);

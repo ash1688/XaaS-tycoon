@@ -27,6 +27,7 @@ const quiet: GameConfig = {
   events: [],
   startingCash: 250_000,
   mvp: { ...defaultConfig.mvp, baseDevDays: { ecommerce: 0, social: 0, video: 0, payments: 0, assistant: 0, games: 0 } },
+  launch: { ...defaultConfig.launch, auto: 1 },
 };
 const sim = createSim(quiet);
 const { tiers: tierConfig, hardware } = defaultConfig;

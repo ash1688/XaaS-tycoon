@@ -10,6 +10,7 @@ import CapacityPanel from "../../panels/CapacityPanel.vue";
 import DayLog from "../../panels/DayLog.vue";
 import EventCards from "../../panels/EventCards.vue";
 import FeaturesPanel from "../../panels/FeaturesPanel.vue";
+import LaunchButton from "../../components/LaunchButton.vue";
 import MigrationPanel from "../../panels/MigrationPanel.vue";
 import PriceWavePanel from "../../panels/PriceWavePanel.vue";
 import SpendPanel from "../../panels/SpendPanel.vue";
@@ -42,8 +43,8 @@ const holidayEffect = (h: HolidayView) =>
 // Earlier days played this session, newest first, under the latest one in the full log.
 const earlierDays = computed(() => game.dayLogs.slice(0, -1).toReversed());
 
-// The launch: waiting for capacity, its first users due, users trickling in over the ramp, and for a week after it,
-// the day it happened. Before the users come, a checklist of what to set up.
+// The launch: the MVP being built, ready to launch until the student presses Launch, users trickling in over the ramp
+// from go-live, and for a week after it, the day it happened. Before go-live, a checklist of what to set up.
 const launch = computed(() => game.company?.launch);
 const launchOver = computed(() => (launch.value?.day ?? 0) + (launch.value?.rampDays ?? 1) - 1);
 const showLaunch = computed(() => {
@@ -51,14 +52,19 @@ const showLaunch = computed(() => {
   const c = game.company;
   return !!l && !!c && !game.over && (l.status !== "launched" || c.day <= launchOver.value + 7);
 });
-const beforeUsers = computed(() => launch.value?.status === "waiting" || launch.value?.status === "upcoming");
+const beforeUsers = computed(() => ["waiting", "upcoming", "ready"].includes(launch.value?.status ?? ""));
 const launchHeadline = computed(() => {
   const l = launch.value;
-  if (!l) return "";
+  const c = game.company;
+  if (!l || !c) return "";
   if (l.status === "launched") return `Launched on day ${l.day}`;
+  if (l.status === "launching" && l.rampDay === 0) return `Going live on day ${l.day}`;
   if (l.status === "launching") return `Launching: users arriving (day ${l.rampDay} of ${l.rampDays})`;
-  if (l.status === "waiting") return "Waiting for capacity";
-  return `Launch in ${days(l.daysLeft ?? 0)}`;
+  if (l.status === "ready") return "Ready to launch";
+  // A done MVP that is waiting or upcoming launches by itself (a test or demo config): only the servers decide.
+  if (c.mvp.done) return l.status === "waiting" ? "Waiting for capacity" : "Launching once your servers are ready";
+  if (l.status === "waiting") return "Nobody is building your MVP";
+  return `MVP done in ${days(c.mvp.daysLeft ?? 0)}`;
 });
 const launchText = computed(() => {
   const l = launch.value;
@@ -69,17 +75,25 @@ const launchText = computed(() => {
   if (l.status === "launched") {
     return `Your first ${formatCount(l.arrived)} users joined from day ${l.day} to day ${launchOver.value}. They grow from here.`;
   }
+  if (l.status === "launching" && l.rampDay === 0) {
+    return `Your first users arrive at the end of day ${l.day}${ramp}. Hosting bills start that day.`;
+  }
   if (l.status === "launching") {
     return `${formatCount(l.arrived)} users have joined so far, more on the way. Then normal growth takes over.`;
   }
-  // A config can make the MVP no size: then only the servers decide.
-  const ready = c.mvp.total > 0 ? "once your MVP is done and your servers are ready" : "when your servers are ready";
-  if (l.status === "upcoming") return `Your first users start arriving at the end of day ${l.day}, ${ready}${ramp}.`;
-  if (c.mvp.launchDay === null) {
-    return `Nobody is building your MVP. Your first users start arriving once it's done and your servers are ready${ramp}. Until then there's no income, but your staff are still paid.`;
+  if (l.status === "ready") {
+    return `Your MVP is done. Press Launch when you're set up: your first users arrive at the end of the next day${ramp}. Servers you rent cost nothing until then, but your staff are still paid every day you wait.`;
   }
-  const delivery = game.buysServers ? ` Bought kit takes ${days(c.serverOptions[0]?.readyDays ?? 0)} to arrive${c.mvp.done ? "" : ", so order it while the MVP is built"}.` : "";
-  return `Nothing is set up to serve users yet. Your first users start arriving ${ready}${ramp}. Until then there's no income, but your staff are still paid.${delivery}`;
+  if (c.mvp.done) {
+    return l.status === "waiting"
+      ? `Nothing is set up to serve users yet. Your first users start arriving when your servers are ready${ramp}. Until then there's no income, but your staff are still paid.`
+      : `Your first users start arriving at the end of the day your servers are ready${ramp}.`;
+  }
+  const delivery = game.buysServers ? ` Bought kit takes ${days(c.serverOptions[0]?.readyDays ?? 0)} to arrive, so order it while the MVP is built.` : "";
+  if (l.status === "waiting") {
+    return `Nobody is building your MVP. Once it's done you can press Launch, and your first users start arriving${ramp}. Until then there's no income, but your staff are still paid.${delivery}`;
+  }
+  return `Your MVP is done by the end of day ${c.mvp.launchDay}. Then you can press Launch, and your first users start arriving${ramp}. Until then there's no income, but your staff are still paid.${delivery}`;
 });
 // What to do before launch, each with the page that does it.
 const launchSteps = computed(() => {
@@ -104,7 +118,7 @@ const launchSteps = computed(() => {
       id: "servers",
       text: game.managed
         ? "Set up app instances and a managed database"
-        : `${game.buysServers ? "Buy" : "Rent"} your first servers: at least one app server and one database${c.mvp.done ? "" : ", ready by the time your MVP is done"} (a cache is optional)`,
+        : `${game.buysServers ? "Buy" : "Rent"} your first servers: at least one app server and one database${c.mvp.done ? "" : ", ready by the time your MVP is done"} (a cache is optional; rented servers cost nothing until you launch)`,
       done: l.setUp,
       page: "infrastructure",
       pageName: "Infrastructure",
@@ -342,7 +356,7 @@ const alerts = computed(() => {
         v-if="showLaunch && launch"
         title="Launch"
         full
-        :tone="launch.status === 'waiting' ? 'warn' : launch.status === 'launched' || launch.status === 'launching' ? 'ok' : undefined"
+        :tone="launch.status === 'waiting' || launch.status === 'ready' ? 'warn' : launch.status === 'launched' || launch.status === 'launching' ? 'ok' : undefined"
       >
         <div data-testid="launch-card" :data-status="launch.status">
           <p class="overview-value" data-testid="launch-headline">{{ launchHeadline }}</p>
@@ -358,6 +372,7 @@ const alerts = computed(() => {
               </span>
             </li>
           </ul>
+          <LaunchButton />
         </div>
         <template #detail>
           <p>{{ launchText }}</p>
@@ -372,12 +387,15 @@ const alerts = computed(() => {
               </span>
             </li>
           </ul>
+          <LaunchButton />
           <p>
-            Your first users start arriving at the end of the first day your MVP is done and you have servers ready to
-            serve them: rented VMs are ready the day after you rent them, a platform's instances at once, and bought kit
-            when it arrives. They trickle in over {{ days(launch.rampDays) }}, more each day, and you won't know how many
-            until they've all joined; then normal growth takes over. Until the first arrive there are no users, no
-            income, no tickets and no hosting bills, but staff and any loan repayments are still charged.
+            Once your MVP is done, the company waits, ready to launch, until you press Launch. Go-live is the next day
+            played: your first users arrive at the end of it, so have servers ready to serve them by then (rented VMs
+            are ready the day after you rent them, a platform's instances at once, and bought kit when it arrives). You
+            can launch without an app server, a database or ops, but users you can't serve leave. They trickle in over
+            {{ days(launch.rampDays) }}, more each day, and you won't know how many until they've all joined; then
+            normal growth takes over. Until go-live there are no users, no income, no tickets and no hosting bills, but
+            staff and any loan repayments are still charged.
           </p>
         </template>
       </OverviewCard>
