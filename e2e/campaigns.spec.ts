@@ -28,6 +28,7 @@ test.afterEach(async ({ request }) => {
 
 const nav = (page: Page) => page.getByRole("navigation", { name: "Game" });
 const goTo = (page: Page, name: string) => nav(page).getByRole("link", { name, exact: true }).click();
+const openTab = (page: Page, name: string) => page.getByRole("tab", { name, exact: true }).click();
 
 async function playDay(page: Page) {
   const day = Number(await page.getByTestId("day").textContent().then((t) => t!.trim().split(/\s/)[0]));
@@ -62,6 +63,7 @@ test("the Marketing page opens at the first angel approach, and a campaign runs 
   // No marketers yet: the form is disabled, and says why.
   await goTo(student, "Marketing");
   await expect(student.getByTestId("marketers-free")).toHaveText("0 of 0 free");
+  await openTab(student, "New campaign");
   await expect(student.getByTestId("campaign-why")).toHaveText("Each campaign needs a marketer to run it: hire one on People.");
   await expect(student.getByTestId("campaign-start")).toBeDisabled();
 
@@ -75,10 +77,13 @@ test("the Marketing page opens at the first angel approach, and a campaign runs 
   await expect(student.getByTestId("marketers-idle")).toContainText("1 marketer isn't running a campaign");
 
   await goTo(student, "Marketing");
+  await openTab(student, "Overview");
   await expect(student.getByTestId("marketers-free")).toHaveText("1 of 1 free");
   await expect(student.getByTestId("campaigns-running")).toHaveText("0 of 1");
   // No campaign has grown the market yet, out of its cap.
   await expect(student.getByTestId("campaigns-market-grown")).toHaveText(/^\+0 of \+[\d,]+$/);
+  await expect(student.getByRole("tab", { name: "Campaigns" })).toHaveCount(0);
+  await openTab(student, "New campaign");
   const form = student.getByTestId("campaign-new");
   await expect(form.getByTestId("campaign-marketer")).toHaveText("Run by a mid marketer: ×1 users per pound.");
   await form.getByLabel("Customer type").selectOption("casual");
@@ -87,14 +92,18 @@ test("the Marketing page opens at the first angel approach, and a campaign runs 
   await expect(form.getByTestId("campaign-estimate")).toContainText("spending £100 a day");
   await form.getByRole("button", { name: "Start campaign" }).click();
 
+  await expect(student.getByTestId("campaign-start")).toBeDisabled();
+  await expect(student.getByTestId("campaign-why")).toContainText("Your one marketer is running a campaign");
+  // The first campaign brings the Campaigns tab, with it running.
+  await openTab(student, "Campaigns");
   const row = student.locator("[data-campaign='1']");
   await expect(row).toHaveAttribute("data-status", "starting");
   await expect(row.getByTestId("campaign-spent")).toHaveText("£0 of £1,400");
   await expect(row.getByTestId("campaign-marketer-grade")).toHaveText("Mid");
+  await openTab(student, "Overview");
   await expect(student.getByTestId("campaigns-running")).toHaveText("1 of 1");
   await expect(student.getByTestId("marketers-free")).toHaveText("0 of 1 free");
-  await expect(student.getByTestId("campaign-start")).toBeDisabled();
-  await expect(student.getByTestId("campaign-why")).toContainText("Your one marketer is running a campaign");
+  await openTab(student, "Campaigns");
 
   await playDay(student);
   await expect(row).toHaveAttribute("data-status", "running");
@@ -102,13 +111,16 @@ test("the Marketing page opens at the first angel approach, and a campaign runs 
   await expect(row.getByTestId("campaign-spent")).toHaveText("£100 of £1,400");
   await expect(row.getByTestId("campaign-users")).toHaveText(/^[1-9]\d*$/);
   await expect(row.getByTestId("campaign-cost-per-user")).toHaveText(/^£\d+(\.\d\d)?$/);
-  await expect(student.getByTestId("campaigns-spent")).toHaveText("£100");
   // Its users grew the market, for good, and the stats row says how far.
   await expect(row.getByTestId("campaign-market-added")).toHaveText(/^\+[1-9][\d,]*$/);
+  await openTab(student, "Overview");
+  await expect(student.getByTestId("campaigns-spent")).toHaveText("£100");
   await expect(student.getByTestId("campaigns-market-grown")).toHaveText(/^\+[1-9][\d,]* of \+[\d,]+$/);
 
+  await openTab(student, "Campaigns");
   await row.getByRole("button", { name: "Stop the campaign for casual users" }).click();
   await expect(row).toHaveAttribute("data-status", "stopped");
+  await openTab(student, "Overview");
   await expect(student.getByTestId("campaigns-running")).toHaveText("0 of 1");
   await expect(student.getByTestId("marketers-free")).toHaveText("1 of 1 free");
 });

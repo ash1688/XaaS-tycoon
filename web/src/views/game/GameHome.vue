@@ -131,7 +131,7 @@ const alerts = computed(() => {
       id: "low-cash",
       text: game.runway.days ? `Cash runs out in about ${days(game.runway.days)}` : "Cash runs out tomorrow",
       detail: `You're losing ${formatCash(-game.runway.dailyNet)} a day. ${c.loanQuote ? "Take a bank loan or cut costs" : "Cut costs"} before you go below £0: ${c.rescue ? "there's no second rescue, so it's liquidation." : "a vulture VC would rescue you, but take most of the company."}`,
-      page: "finance",
+      page: "finance?tab=funding",
       pageName: "Finance",
     });
   // A rescue changes who owns the company: shown until the vulture VC's shares are bought back.
@@ -140,7 +140,7 @@ const alerts = computed(() => {
       id: "rescue",
       text: `A vulture VC owns ${Math.round(c.rescue.vultureShare * 100)}% of the company`,
       detail: `It rescued you on day ${c.rescue.day} with ${formatCash(c.rescue.amount)} and forced cost cuts. It sells its shares back for ${formatCash(c.rescue.buyBackPrice)}, and there's no second rescue: run out of cash again and it's liquidation.`,
-      page: "finance",
+      page: "finance?tab=funding",
       pageName: "Finance",
     });
   if (game.loadLevel !== "ok")

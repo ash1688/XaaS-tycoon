@@ -208,7 +208,7 @@ const describe = computed(() =>
       <h2>The opening bell</h2>
       <p>
         Your company can't float yet. Meet every condition on the IPO readiness checklist, then apply.
-        <RouterLink :to="`${game.base}/finance`">Open Finance</RouterLink>
+        <RouterLink :to="`${game.base}/finance?tab=ipo`">Open Finance</RouterLink>
       </p>
     </section>
   </div>
