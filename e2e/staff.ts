@@ -171,8 +171,21 @@ export async function withOnlyEncounter<T>(
     "encounters.riskRise.lowSatisfaction": 0,
     ...Object.fromEntries(ids.map((id) => [`events.${id}.encounter.chance`, id === event ? 1 : 0])),
   };
+  return withPreset(request, `Only ${event}`, overrides, start);
+}
+
+/**
+ * Plays the games started while `start` runs on a preset of these overrides: it's active only while `start` runs,
+ * then Default is again and the preset goes, so later games and specs play the defaults.
+ */
+export async function withPreset<T>(
+  request: APIRequestContext,
+  name: string,
+  overrides: Record<string, number>,
+  start: () => Promise<T>,
+): Promise<T> {
   expect((await request.post("/api/teacher/login", { data: { password: E2E_TEACHER_PASSWORD } })).ok()).toBe(true);
-  const created = await request.post("/api/teacher/presets", { data: { name: `Only ${event}`, overrides } });
+  const created = await request.post("/api/teacher/presets", { data: { name, overrides } });
   expect(created.ok()).toBe(true);
   const { id } = (await created.json()) as { id: string };
   try {

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { createCode } from "./staff.ts";
+import { createCode, reachPhase } from "./staff.ts";
 
 const goTo = (page: Page, name: string) =>
   page.getByRole("navigation", { name: "Game" }).getByRole("link", { name, exact: true }).click();
@@ -29,6 +29,9 @@ test("hires still to start show in the counts, − cancels them first, and agenc
   await student.getByLabel("Company name").fill("Hires Ltd");
   await student.getByRole("button", { name: "Start company" }).click();
   await expect(student.getByRole("heading", { name: "Hires Ltd" })).toBeVisible();
+  // Support and moderators open in the Launch phase (#236).
+  await reachPhase(student.url().split("/").at(-1)!, "launch");
+  await student.reload();
 
   // No users yet, so no tickets or reports: said plainly, not "you need the work of 0".
   await goTo(student, "People");

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { createCode, launch } from "./staff.ts";
+import { createCode, launch, reachPhase } from "./staff.ts";
 
 test("a shop buys its paid API, serves calls from API servers, and switches an app server to APIU and back", async ({
   browser,
@@ -20,8 +20,14 @@ test("a shop buys its paid API, serves calls from API servers, and switches an a
   await student.goto(`/play/${code}/${id}`);
   const nav = student.getByRole("navigation", { name: "Game" });
 
-  // On the Product page's API tab: the Shop API, for sale.
+  // The paid API opens in the Grow phase (#236): until then Product has no API tab.
   await nav.getByRole("link", { name: "Product", exact: true }).click();
+  await expect(student.getByRole("tab", { name: "Price" })).toBeVisible();
+  await expect(student.getByRole("tab", { name: "API" })).toBeHidden();
+  await reachPhase(id, "grow");
+  await student.reload();
+
+  // On the Product page's API tab: the Shop API, for sale.
   await student.getByRole("tab", { name: "API" }).click();
   const panel = student.getByTestId("api-panel");
   await expect(panel.getByRole("heading", { name: "Shop API" })).toBeVisible();

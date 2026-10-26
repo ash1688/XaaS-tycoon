@@ -13,7 +13,7 @@ const sim = createSim({ ...defaultConfig, mvp: NO_MVP, launch: AUTO_LAUNCH, fina
 const who = { player: "test", playstyle: "average-joe" };
 const start = (): GameState =>
   sim.newGame({ companyName: "Test Co", productType: "social", model: "paas", seed: 3, takeLoan: true });
-/** The same, in the Launch phase (#236): price, ops and support open. */
+/** The same, in the Launch phase (#236): price, ops, support and moderators open. */
 const launchPhase = (): GameState => inPhase(start(), "launch");
 
 /** Runs one command line against a state, as play.ts does. */
@@ -360,9 +360,9 @@ describe("rendering", () => {
     expect(refused.rows[0]).toMatchObject({ type: "hire", ok: false, error: "not_yet" });
 
     const launch = inPhase(build, "launch", 5);
-    expect(renderStatus(sim, launch).split("\n")[1]).toMatch(/^phase: Launch \(from day 5\) \| next: Grow, when your first angel investor approaches \| open: .*, Price, Ops staff, Support staff$/);
+    expect(renderStatus(sim, launch).split("\n")[1]).toMatch(/^phase: Launch \(from day 5\) \| next: Grow, when your first angel investor approaches \| open: .*, Price, Ops staff, Support staff, Moderators$/);
     expect(renderStatus(sim, launch)).toMatch(/^price £5\/month \(fair £5\) \| can change$/m);
-    expect(renderCommands(sim, launch)).toMatch(/^ {2}hire <developers\|ops\|support> /m);
+    expect(renderCommands(sim, launch)).toMatch(/^ {2}hire <developers\|ops\|support\|moderators> /m);
     expect(renderCommands(sim, launch)).toMatch(/^ {2}price </m);
     expect(renderCommands(sim, launch)).not.toMatch(/^ {2}(build|buyapi|ipo) /m);
 
@@ -942,27 +942,26 @@ describe("the calendar", () => {
 });
 
 describe("moderators", () => {
-  /** Both in the Grow phase, where moderators open (#236). */
-  const shop = () => inPhase(sim.newGame({ companyName: "Test Co", productType: "ecommerce", model: "paas", seed: 3 }), "grow");
+  /** Both in the Launch phase, where moderators open (#236). */
+  const shop = () => inPhase(sim.newGame({ companyName: "Test Co", productType: "ecommerce", model: "paas", seed: 3 }), "launch");
   const launchedSocial = () => {
     let state = run(start(), "instances 2").state;
     state = run(state, "managed database small").state;
     while (sim.launch(state).status !== "launched") state = run(state, "next 1").state;
-    return inPhase(state, "grow");
+    return state;
   };
 
   it("shows reports and hires moderators on a content product, and neither on a shop", () => {
     const state = launchedSocial();
     const status = renderStatus(sim, state);
     expect(status).toMatch(/reports \d+\/day \| moderators can handle 0\/day \(a mid 60\), handled 0 yesterday \| unhandled \d+ \| satisfaction target ×[\d.]+ \| lawsuit odds ×[\d.]+/);
-    // With Grow's researchers and marketers.
-    expect(renderCommands(sim, state)).toContain("hire <developers|ops|support|moderators|researchers|marketers>");
+    expect(renderCommands(sim, state)).toContain("hire <developers|ops|support|moderators>");
     const hired = run(state, "hire moderators junior 2");
     expect(hired.rows[0]).toMatchObject({ ok: true, params: { pool: "moderators", grade: "junior", count: 2 } });
     expect(renderStatus(sim, hired.state)).toMatch(/moderators 0 .*hired, not started: 2 junior/);
 
     expect(renderStatus(sim, shop())).not.toMatch(/reports|moderators/);
-    expect(renderCommands(sim, shop())).toContain("hire <developers|ops|support|researchers|marketers>");
+    expect(renderCommands(sim, shop())).toContain("hire <developers|ops|support>");
     const refused = run(shop(), "hire moderators");
     expect(refused.lines[0]).toMatch(/refused: .*no user content to moderate/);
     expect(refused.rows[0]).toMatchObject({ ok: false, error: "no_content", moderators: 0 });

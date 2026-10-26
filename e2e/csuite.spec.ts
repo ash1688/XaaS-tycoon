@@ -1,9 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import { E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
+import { reachPhase } from "./staff.ts";
 
-// The C-suite (#108) on its own page: the heads open from day 1 with shortlists, the rest say when they open, Hire
-// hires at once and for good, the executive's pay and shares show, the board's pay holiday is explained, and the IPO
-// needs every role filled.
+// The C-suite (#108) on its own page: roles open with their phases (#236), each with a shortlist, Hire hires at once
+// and for good, the executive's pay and shares show, the board's pay holiday is explained, and the IPO needs every
+// role filled.
 
 let code: string | null = null;
 test.afterEach(async ({ request }) => {
@@ -31,17 +32,30 @@ test("hires a head of development from the shortlist, for good, and the IPO chec
   await student.getByRole("button", { name: "Start company" }).click();
   await expect(student.getByTestId("day")).toHaveText(/^1 of/);
 
+  // No role is open in Build, so there's no C-suite page yet.
+  await expect(nav(student).getByRole("link", { name: "People", exact: true })).toBeVisible();
+  await expect(nav(student).getByRole("link", { name: "C-suite", exact: true })).toBeHidden();
+  const id = student.url().split("/").at(-1)!;
+
+  // Grow opens the CFO, CTO and head of people; the rest, and the IPO, wait for Scale.
+  await reachPhase(id, "grow");
+  await student.reload();
   await goTo(student, "C-suite");
   const csuite = student.getByTestId("csuite");
   await expect(csuite.getByRole("heading", { name: "C-suite" })).toBeVisible();
+  await expect(csuite.getByTestId("csuite-cfo")).toBeVisible();
+  await expect(csuite.getByTestId("csuite-headOfDevelopment")).toBeHidden();
+  await expect(csuite.getByTestId("csuite-ipo")).toBeHidden();
+
+  await reachPhase(id, "scale");
+  await student.reload();
   await expect(csuite).toContainText("10% left");
-  // Shut roles say when they open; the IPO needs every role.
-  await expect(csuite.getByTestId("csuite-cfo")).toContainText("Opens once you take outside money");
+  // The IPO needs every role.
   await expect(csuite.getByTestId("csuite-ipo")).toContainText("Every role must be filled to float: 0 of 11 hired");
   await expect(csuite.getByTestId("csuite-pay-holiday-rule")).toContainText(
     "If cash falls below 7 days of running costs, the board forgoes its pay until there are 21 days' worth in the bank.",
   );
-  await expect(csuite.getByTestId("csuite-legalCounsel")).toContainText("Opens when Series A venture capitalists approach");
+  await expect(csuite.getByTestId("csuite-legalCounsel")).toBeVisible();
 
   const dev = csuite.getByTestId("csuite-headOfDevelopment");
   const candidate = dev.getByTestId("candidate-headOfDevelopment-1");

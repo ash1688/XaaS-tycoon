@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import postgres from "postgres";
 import { E2E_DATABASE_URL, E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { createCode, launch, openTiers, pinLaunchUsers, withOnlyEncounter } from "./staff.ts";
+import { createCode, launch, openTiers, pinLaunchUsers, reachPhase, withOnlyEncounter } from "./staff.ts";
 
 // The game's pages are reached through its nav bar.
 const goTo = (page: Page, name: string) =>
@@ -97,16 +97,15 @@ test("teacher creates a code, student starts a game and presses Continue", async
   // £700 a month and £300 of power and cooling, plus £450 and £540 for the VMs.
   await expect(student.getByTestId("model-costs")).toContainText("£1,990 a month");
 
-  // Staff: the VMs need 1 ops, and a new company starts with 1.
+  // Staff: in Build (#236) only developers can be hired; the ops and support a new company starts with are a note.
   await goTo(student, "People");
   await expect(student.getByTestId("developers-count")).toHaveText("2");
-  await expect(student.getByTestId("ops-needed")).toContainText("needs 1 ops staff");
-  await expect(student.getByTestId("ops-needed")).not.toContainText("Understaffed");
+  await expect(student.getByTestId("starting-team")).toContainText("Hiring more opens in the Launch phase");
+  await expect(student.getByTestId("ops-needed")).toBeHidden();
   // A mid hired now starts in 7 days: shown waiting, not on the team or paid until then.
   await student.getByRole("button", { name: "Hire one mid developer" }).click();
   await expect(student.getByTestId("developers-hiring")).toHaveText("1 mid hired: starts on day 8, in 7 days.");
   await expect(student.getByTestId("developers-count")).toHaveText("2");
-  await expect(student.getByTestId("support-count")).toHaveText("1");
   await expect(student.getByTestId("staff-cost")).toHaveText("£460");
   // The grades: a junior would start in 3 days, a senior in 14.
   await student.getByRole("radio", { name: "Junior" }).first().check();
@@ -114,9 +113,16 @@ test("teacher creates a code, student starts a game and presses Continue", async
     "Juniors: £90 each a day, 0.65× a mid's work, start 3 days after hiring, £1,260 severance each if let go.",
   );
 
-  // Features: IaaS builds them in developer-days, one at a time. Every tier is opened, so any can be built.
+  // On to the Grow phase, where every pool and features open. Every tier is opened too, so any feature can be built.
   await openTiers(game.split("/").at(-1)!);
+  await reachPhase(game.split("/").at(-1)!, "grow");
   await student.reload();
+  // The VMs need 1 ops, and a new company starts with 1.
+  await expect(student.getByTestId("ops-needed")).toContainText("needs 1 ops staff");
+  await expect(student.getByTestId("ops-needed")).not.toContainText("Understaffed");
+  await expect(student.getByTestId("support-count")).toHaveText("1");
+
+  // Features: IaaS builds them in developer-days, one at a time.
   await goTo(student, "Product");
   await openTab(student, "Features");
   const features = student.getByTestId("features");
@@ -321,8 +327,9 @@ test("a SaaS company buys an add-on and pays for it per user", async ({ browser,
     data: { name: "Shopfront Ltd", productType: "social", model: "saas" },
   });
   const { id } = await created.json();
-  // Every tier open, so any add-on can be bought.
+  // Every tier open, and the Grow phase that opens features (#236), so any add-on can be bought.
   await openTiers(id);
+  await reachPhase(id, "grow");
   // SaaS needs nothing set up: the social network's 4,000 users arrive over days 1 to 3.
   await launch(request, code, id, "saas");
 
@@ -506,8 +513,9 @@ test("leaving SaaS warns that add-ons will be lost, then leaves them behind", as
     data: { name: "Locked In Ltd", productType: "social", model: "saas" },
   });
   const { id } = await created.json();
-  // Every tier open, so any add-on can be bought.
+  // Every tier open, and the Grow phase that opens features (#236), so any add-on can be bought.
   await openTiers(id);
+  await reachPhase(id, "grow");
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}/product?tab=features`);
@@ -684,6 +692,9 @@ test("on SaaS, a feature the platform can't provide shows a card, then stays on 
   await expect(student.getByTestId("home-alerts")).toContainText("Feature gap");
   await gap.getByRole("button", { name: "See Application / features in the stack" }).click();
   await expect(application).toBeFocused();
+  // The add-on shop opens in the Grow phase (#236).
+  await reachPhase(id, "grow");
+  await student.reload();
   await goTo(student, "Product");
   await openTab(student, "Add-ons");
   await expect(student.getByTestId("gap-shop-note")).toContainText("a feed that ranks posts your way");
@@ -742,6 +753,8 @@ test("a company plays to the final day and sees its summary, again when reopened
   } finally {
     await sql.end();
   }
+  // In the Grow phase (#236), so ops can be staffed and the features tab is open.
+  await reachPhase(id, "grow");
   // Move a developer into ops, at once, for the ops IaaS needs, so the game runs smoothly to the end.
   await request.post(`/api/codes/${code}/companies/${id}/actions`, { data: { type: "moveStaff", to: "ops" } });
 
@@ -925,6 +938,8 @@ test("a Home card opens an accessible modal with its controls, and Continue work
     data: { name: "Modal Ltd", productType: "social", model: "iaas" },
   });
   const { id } = await created.json();
+  // Hiring ops and support opens in the Launch phase (#236).
+  await reachPhase(id, "launch");
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);

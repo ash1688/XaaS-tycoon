@@ -962,7 +962,7 @@ describe("staff grades and lead times", () => {
 describe("agency staff and severance", () => {
   // Agency staff at 2× the pay and ½ the work of permanent staff, from the next day; severance of 10 days' pay.
   const s = createSim({ ...config, severance: { days: 10 } });
-  // In Grow, so features can be built and moderators hired.
+  // In Grow, so features can be built and every pool hired.
   const begin = () => inPhase(s.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 }), "grow");
   const pool = (state: GameState, p: StaffPool) => s.staff(state).find((v) => v.pool === p)!;
   const none = { junior: 0, mid: 0, senior: 0 };
@@ -6166,9 +6166,9 @@ describe("moderators and reports on user content", () => {
     moderation: { reportsPerPerson: 10, backlogPerUserAtZero: 0.05, lawsuitOddsAtZero: 4, warnShare: 0.1 },
   });
   const s = moderated;
-  // In Grow, where moderators open.
+  // In Launch, where moderators open.
   const begin = (moderators = 0, productType = "social") =>
-    withStaff(inPhase(s.newGame({ companyName: "Acme", productType, model: "iaas", seed: 42 }), "grow"), { ops: s.opsNeeded("iaas"), support: 50, moderators });
+    withStaff(inPhase(s.newGame({ companyName: "Acme", productType, model: "iaas", seed: 42 }), "launch"), { ops: s.opsNeeded("iaas"), support: 50, moderators });
   const supportLog = (log: DayLog[]) => log.flatMap((d) => d.entries.filter((e) => e.kind === "support").map((e) => e.text));
 
   it("can be hired only on a product with user content", () => {
@@ -6179,12 +6179,11 @@ describe("moderators and reports on user content", () => {
     ] as Action[]) {
       expect(() => s.applyAction(shop, action)).toThrow(expect.objectContaining({ code: "no_content" }));
     }
-    // Grow's researchers and marketers are there too, but no moderators.
-    expect(s.staff(shop).map((p) => p.pool)).toEqual(["developers", "ops", "support", "researchers", "marketers"]);
+    expect(s.staff(shop).map((p) => p.pool)).toEqual(["developers", "ops", "support"]);
     expect(s.moderation(shop)).toBeNull();
     // On the social network they're the fourth pool, hired, moved and let go like any other.
     const social = s.applyAction(begin(), { type: "hire", pool: "moderators", grade: "senior", count: 2 });
-    expect(s.staff(social).map((p) => p.pool)).toEqual(["developers", "ops", "support", "moderators", "researchers", "marketers"]);
+    expect(s.staff(social).map((p) => p.pool)).toEqual(["developers", "ops", "support", "moderators"]);
     expect(team(social, "moderators")).toBe(2);
     expect(team(s.applyAction(social, { type: "moveStaff", to: "moderators", from: "support" }), "moderators")).toBe(3);
     expect(team(s.applyAction(social, { type: "letGo", pool: "moderators", grade: "senior" }), "moderators")).toBe(1);

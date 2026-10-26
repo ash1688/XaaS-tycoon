@@ -51,8 +51,8 @@ npm run -s play -- summary <game>
   staff, and on the `letgo` line); it's refused if you haven't the cash. `move` only moves permanent staff.
 - The game opens its jobs a **phase** at a time, and the status's `phase:` line says which phase you're in, what's
   open and what opens the next. **Build** (day 1): your deployment model, funding (the loan, friends and family, the
-  grant), developers and servers or racks. **Launch** (when you type `launch`): your price, ops and support. **Grow**
-  (when your first angel investor approaches, whatever you do with the offer): moderators, researchers, marketers,
+  grant), developers and servers or racks. **Launch** (when you type `launch`): your price, ops, support and moderators. **Grow**
+  (when your first angel investor approaches, whatever you do with the offer): researchers, marketers,
   features and tiers, model benefits, the paid API, campaigns, and the CFO, CTO and head of people. **Scale** (when
   Series A VCs approach): the rest of the C-suite and the IPO. A job that isn't open yet isn't listed under commands,
   and doing it anyway is refused with when it opens. Until Launch your price is the fair price. You start with one ops

@@ -1,8 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
+import { reachPhase } from "./staff.ts";
 
 // Finance's and Marketing's sub-tabs (playtest 1), the same as Product's: one tab at a time, kept in the URL through a
-// reload and moved with the arrow keys. Finance has Overview, Valuation, Funding and IPO, and links about an offer or
+// reload and moved with the arrow keys. Finance has Overview, Valuation and Funding, then IPO in Scale (#236), and links about an offer or
 // the IPO open the right one. Marketing has Overview and New campaign, then Campaigns from the first one, and no tabs
 // at all while it's locked.
 
@@ -50,6 +51,10 @@ test("Finance splits into Overview, Valuation, Funding and IPO tabs, kept in the
   await student.goto(game);
   await goTo(student, "Finance");
   const tabs = student.getByRole("tablist", { name: "Finance" });
+  // The IPO tab waits for the Scale phase.
+  await expect(tabs.getByRole("tab")).toHaveText(["Overview", "Valuation", "Funding"]);
+  await reachPhase(id, "scale");
+  await student.reload();
   await expect(tabs.getByRole("tab")).toHaveText(["Overview", "Valuation", "Funding", "IPO"]);
   await expect(tabs.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
   await expect(student.getByTestId("cash")).toBeVisible();

@@ -513,8 +513,8 @@ From the playtest after the C-suite (2026-10-26): the opening was too many plate
 | Phase | Opens | Ends | What opens |
 |---|---|---|---|
 | Build | Day 1 | The MVP is done | Deployment model, funding (loan, friends and family, grants), developers, servers or racks |
-| Launch | The MVP is done (the student presses Launch) | The first angel approach | Price, ops, support |
-| Grow | The first angel approach | The Series A approach | Moderators, researchers, marketers, features and tiers, deals, campaigns, the CFO, CTO and head of people |
+| Launch | The MVP is done (the student presses Launch) | The first angel approach | Price, ops, support, moderators |
+| Grow | The first angel approach | The Series A approach | Researchers, marketers, features and tiers, deals, campaigns, the CFO, CTO and head of people |
 | Scale | The Series A approach | The float, or the end of the game | The rest of the C-suite, the IPO |
 
 The CFO keeps its early route (outside money opens it as soon as it's taken). Pay reviews start no sooner than about 30 days into Grow, rather than on a fixed quarter, so a student isn't settling pay before they've launched. *Exactly which jobs open where is a placeholder for the slice that builds it.*
@@ -527,8 +527,8 @@ The CFO keeps its early route (outside money opens it as soon as it's taken). Pa
 What each checklist covers:
 
 - **Build:** developers, then the launch kit, shown once the MVP is 75% built so permanent hires and servers are ready by launch day. The kit is the minimum for launch-day demand on the student's model: on-prem and IaaS need app servers, a database, a load balancer once there's more than one app server, and the ops to run them; PaaS and SaaS need less, which is the lesson. Plus enough support for the first users' tickets.
-- **Launch:** servers, ops and support for current demand.
-- **Grow:** adds researchers, marketers and moderators sized to the company, and the C-suite roles as they open.
+- **Launch:** servers, ops, support and (on a product with user content) moderators for current demand.
+- **Grow:** adds researchers and marketers sized to the company, and the C-suite roles as they open.
 - **Scale:** the rest of the C-suite and the six float checks, so the late game always has a visible to-do list.
 
 **Launching short.** The student can press Launch without the minimum, with a plain warning such as "No database: no users can be served". It's a teaching game, so they can get it wrong, but never without being told.

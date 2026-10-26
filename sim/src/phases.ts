@@ -31,7 +31,9 @@ export const JOB_PHASES: Record<Job, PhaseId> = {
   price: "launch",
   ops: "launch",
   support: "launch",
-  moderators: "grow",
+  // The designer's call (#236): at Launch, not Grow, so a product with user content can handle its reports from the
+  // first users. In Grow, sensible play liquidated 4 social games in 120.
+  moderators: "launch",
   researchers: "grow",
   marketers: "grow",
   features: "grow",
@@ -71,9 +73,8 @@ const OPENS_WITH: Record<PhaseId, string> = {
 /** What opens in each phase, in words. Grow and Scale's C-suite roles open in csuite.ts. */
 const OPENS: Record<PhaseId, string[]> = {
   build: ["Deployment model", "Funding: the bank loan, friends and family and grants", "Developers", "Servers or racks"],
-  launch: ["Price", "Ops staff", "Support staff"],
+  launch: ["Price", "Ops staff", "Support staff", "Moderators"],
   grow: [
-    "Moderators",
     "Researchers",
     "Marketers",
     "Features and tiers",

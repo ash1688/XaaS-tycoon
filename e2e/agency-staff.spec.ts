@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { createCode } from "./staff.ts";
+import { createCode, reachPhase } from "./staff.ts";
 
 const goTo = (page: Page, name: string) =>
   page.getByRole("navigation", { name: "Game" }).getByRole("link", { name, exact: true }).click();
@@ -21,6 +21,14 @@ test("hire agency staff for the next day, shown apart, and see severance before 
   await student.getByLabel("Company name").fill("Temps Ltd");
   await student.getByRole("button", { name: "Start company" }).click();
   await expect(student.getByRole("heading", { name: "Temps Ltd" })).toBeVisible();
+  const id = student.url().split("/").at(-1)!;
+
+  // Hiring support opens at launch (#236): before it, People has no support panel.
+  await goTo(student, "People");
+  await expect(student.getByTestId("developers-count")).toBeVisible();
+  await expect(student.getByTestId("support-agency-pick")).toBeHidden();
+  await reachPhase(id, "launch");
+  await student.reload();
 
   // Agency staff: 1.25× a permanent mid's £100 for half the work, from the next day, with no severance.
   await goTo(student, "People");
