@@ -748,7 +748,8 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
 
   /**
    * Sets the size of a managed service on a managed platform, ready at once like an instance. The cache can be turned
-   * off (a null size); the database can't, since every product stores data.
+   * off (a null size); the database can't, since every product stores data. A change that changes nothing (the size
+   * already running, or no cache to turn off) is refused with why, rather than quietly doing nothing.
    */
   function setManagedService(state: GameState, service: string, size: string | null): GameState {
     managedConfig(state);
@@ -758,7 +759,10 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
       throw new SimError("database_required", "Your product needs a database: pick a size rather than turning it off.");
     }
     const current = ofType(state, service);
-    if (current.length === (size ? 1 : 0) && current.every((s) => s.size === size)) return state;
+    if (!size && current.length === 0) throw new SimError("no_cache", "You have no cache to remove.");
+    if (size && current.length === 1 && current[0]?.size === size) {
+      throw new SimError("same_size", `Your ${service} is already ${size}: pick another size to resize it.`);
+    }
     const kept = state.servers.filter((s) => s.type !== service);
     if (!size) return { ...state, servers: kept };
     const server: Server = { id: state.nextServerId, type: service, size, readyDay: state.day };
