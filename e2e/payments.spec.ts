@@ -23,6 +23,7 @@ test("a payments app sets its fee and transaction fee in one change, and sees bo
 
   // On Product: a monthly fee and a transaction fee, judged together as a usual month per business.
   await goTo(student, "Product");
+  await student.getByRole("tab", { name: "Price" }).click();
   const pricing = student.getByTestId("pricing");
   await expect(pricing.getByTestId("price")).toHaveText("£10");
   await expect(pricing.getByTestId("transaction-rate")).toHaveText("2%");

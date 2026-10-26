@@ -6,6 +6,8 @@ import { createCode, launch, openTiers, pinLaunchUsers, withOnlyEncounter } from
 // The game's pages are reached through its nav bar.
 const goTo = (page: Page, name: string) =>
   page.getByRole("navigation", { name: "Game" }).getByRole("link", { name, exact: true }).click();
+/** A sub-tab within a page, such as Product's Price, Features and Tiers. */
+const openTab = (page: Page, name: string) => page.getByRole("tab", { name, exact: true }).click();
 
 /**
  * Pins a launched company's paying users to the product's split of its launch users, as if no free user had started
@@ -116,6 +118,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await openTiers(game.split("/").at(-1)!);
   await student.reload();
   await goTo(student, "Product");
+  await openTab(student, "Features");
   const features = student.getByTestId("features");
   await expect(features.locator('[data-feature="photos"]')).toHaveAttribute("data-status", "notStarted");
   // Each feature pulls in a customer type among new users.
@@ -130,7 +133,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   // Continue is in the nav bar, so it plays the day from any page, here Product.
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).toContainText(`2 of ${E2E_FINAL_DAY}`);
-  await expect(student).toHaveURL(`${game}/product`);
+  await expect(student).toHaveURL(`${game}/product?tab=features`);
   // 2 developers did 2 developer-days on the build; 14 left at 2 a day is 7 days.
   await expect(student.getByTestId("feature-progress-photos")).toContainText("2 of 16 developer-days");
   await expect(student.getByTestId("feature-progress-photos")).toContainText("7 days left with 2 developers");
@@ -177,7 +180,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await expect(elsewhere.getByTestId("developers-count")).toHaveText("2");
   await expect(elsewhere.getByTestId("developers-hiring")).toHaveText("1 mid hired: starts on day 8, in 6 days.");
   // A page opens straight from its address, as a bookmark would.
-  await elsewhere.goto(`${game}/product`);
+  await elsewhere.goto(`${game}/product?tab=features`);
   await expect(elsewhere.getByTestId("feature-progress-photos")).toContainText("2 of 16 developer-days");
 
   // The teacher's live dashboard picks the game up on its next refresh, without a reload, under its code.
@@ -321,6 +324,7 @@ test("a SaaS company buys an add-on and pays for it per user", async ({ browser,
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}`);
   await goTo(student, "Product");
+  await openTab(student, "Add-ons");
   const shop = student.getByTestId("features");
   await expect(shop.getByRole("heading", { name: "Add-on shop" })).toBeVisible();
   await expect(student.getByTestId("addon-price-messaging")).toContainText("£0.08 per user a month");
@@ -335,6 +339,7 @@ test("a SaaS company buys an add-on and pays for it per user", async ({ browser,
   await student.getByTestId("severance-confirm").click();
   await expect(student.getByTestId("developers-count")).toHaveText("1");
   await goTo(student, "Product");
+  await openTab(student, "Add-ons");
   await expect(student.getByTestId("config-team")).toContainText("Hire 1 more to buy add-ons");
   await expect(student.getByRole("button", { name: "Buy Direct messages add-on" })).toBeDisabled();
   // A new developer would take days to start; moving the ops person in is at once.
@@ -344,6 +349,7 @@ test("a SaaS company buys an add-on and pays for it per user", async ({ browser,
 
   // Bought add-ons are active at once. 4,000 users at £0.08 is £320 a month.
   await goTo(student, "Product");
+  await openTab(student, "Add-ons");
   await student.getByRole("button", { name: "Buy Direct messages add-on" }).click();
   await expect(shop.locator('[data-feature="messaging"]')).toHaveAttribute("data-status", "addon");
   await expect(shop.locator('[data-feature="messaging"]')).toContainText("Active");
@@ -499,7 +505,7 @@ test("leaving SaaS warns that add-ons will be lost, then leaves them behind", as
   await openTiers(id);
 
   const student = await (await browser.newContext()).newPage();
-  await student.goto(`/play/${code}/${id}/product`);
+  await student.goto(`/play/${code}/${id}/product?tab=features`);
   await student.getByRole("button", { name: "Buy Direct messages add-on" }).click();
   await expect(student.getByTestId("features").locator('[data-feature="messaging"]')).toHaveAttribute(
     "data-status",
@@ -531,6 +537,7 @@ test("leaving SaaS warns that add-ons will be lost, then leaves them behind", as
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(panel).toContainText("1 completed");
   await goTo(student, "Product");
+  await openTab(student, "Features");
   const features = student.getByTestId("features");
   await expect(features.getByRole("heading", { name: "Features" })).toBeVisible();
   await expect(student.getByTestId("addons-left-behind")).toContainText("Direct messages stayed with the SaaS provider");
@@ -673,6 +680,7 @@ test("on SaaS, a feature the platform can't provide shows a card, then stays on 
   await gap.getByRole("button", { name: "See Application / features in the stack" }).click();
   await expect(application).toBeFocused();
   await goTo(student, "Product");
+  await openTab(student, "Add-ons");
   await expect(student.getByTestId("gap-shop-note")).toContainText("a feed that ranks posts your way");
 });
 
@@ -797,6 +805,7 @@ test("a company plays to the final day and sees its summary, again when reopened
   await expect(elsewhere.getByRole("button", { name: "Continue" })).toBeDisabled();
   // Its pages are a read-only record.
   await goTo(elsewhere, "Product");
+  await openTab(elsewhere, "Features");
   await expect(elsewhere.getByTestId("read-only")).toBeVisible();
   await expect(elsewhere.getByRole("button", { name: "Build Notifications" })).toBeDisabled();
 });
@@ -1000,6 +1009,7 @@ test("a student sets a price, plays a day and sees the income on Finance", async
 
   // The price is set in a modal on Product, with the fair price as a hint.
   await goTo(student, "Product");
+  await openTab(student, "Price");
   await expect(student.getByTestId("price")).toHaveText("£5");
   await student.getByRole("button", { name: "Change price" }).click();
   const dialog = student.getByRole("dialog", { name: "Set your price" });
@@ -1061,7 +1071,7 @@ test("a student previews prices live, raises the price, and sees the backlash an
   await pinPaidUsers(id, 1_200);
 
   const student = await (await browser.newContext()).newPage();
-  await student.goto(`/play/${code}/${id}/product`);
+  await student.goto(`/play/${code}/${id}/product?tab=price`);
   await expect(student.getByTestId("price-lock")).toHaveText("Unlocked");
   await student.getByRole("button", { name: "Change price" }).click();
   const dialog = student.getByRole("dialog", { name: "Set your price" });

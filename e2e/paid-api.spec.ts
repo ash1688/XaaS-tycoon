@@ -20,8 +20,9 @@ test("a shop buys its paid API, serves calls from API servers, and switches an a
   await student.goto(`/play/${code}/${id}`);
   const nav = student.getByRole("navigation", { name: "Game" });
 
-  // On the Product page: the Shop API, for sale.
+  // On the Product page's API tab: the Shop API, for sale.
   await nav.getByRole("link", { name: "Product", exact: true }).click();
+  await student.getByRole("tab", { name: "API" }).click();
   const panel = student.getByTestId("api-panel");
   await expect(panel.getByRole("heading", { name: "Shop API" })).toBeVisible();
   await expect(panel.getByTestId("api-pitch")).toContainText("1 APIU serves 1,000 calls a day");
@@ -49,6 +50,7 @@ test("a shop buys its paid API, serves calls from API servers, and switches an a
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).toContainText("6 of");
   await nav.getByRole("link", { name: "Product", exact: true }).click();
+  await student.getByRole("tab", { name: "API" }).click();
   await expect(panel.getByTestId("api-apiu")).toHaveText("6");
   await expect(panel.getByTestId("api-dropped")).toHaveCount(0);
   await expect(panel.getByTestId("api-served")).not.toHaveText("0");

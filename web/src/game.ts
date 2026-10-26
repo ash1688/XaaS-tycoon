@@ -10,6 +10,8 @@ import { createUiLog } from "./playLog";
 const SPEED_KEY = "xaas-timed-speed";
 
 export const days = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
+/** "1 developer-day", "1,200 developer-days". */
+export const devDays = (n: number) => `${formatCount(n)} developer-day${n === 1 ? "" : "s"}`;
 
 /** "day 40 of 180", or "day 40" in a game with no last day (until IPO). */
 export const dayOf = (day: number, finalDay: number | null) => (finalDay === null ? `day ${day}` : `day ${day} of ${finalDay}`);
