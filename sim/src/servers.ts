@@ -161,6 +161,11 @@ export interface UnitsView {
   loadBalancerOnceReady: LoadBalancerView;
   /** Extra VMs an event rented met the day's demand: capacity shown includes them, for that day only. */
   burst: boolean;
+  /**
+   * The share of every tier's capacity lost to missing ops (0.3 is 30%): each tier's capacity is its servers' rating
+   * less this. 0 when ops are fully staffed.
+   */
+  opsCut: number;
 }
 
 /** One size of a managed service, for the picker. */

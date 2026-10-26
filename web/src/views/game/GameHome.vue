@@ -103,7 +103,7 @@ const launchSteps = computed(() => {
       id: "servers",
       text: game.managed
         ? "Set up app instances and a managed database"
-        : `${game.buysServers ? "Buy" : "Rent"} your first servers: an app server and a database`,
+        : `${game.buysServers ? "Buy" : "Rent"} your first servers: at least one app server and one database${c.mvp.done ? "" : ", ready by the time your MVP is done"} (a cache is optional)`,
       done: l.setUp,
       page: "infrastructure",
       pageName: "Infrastructure",
@@ -555,7 +555,7 @@ const alerts = computed(() => {
           {{ game.tightest.name }} sets your capacity: {{ formatCount(game.tightest.demand) }} of
           {{ formatCount(game.tightest.capacity) }} {{ game.tightest.unit }}.
           <span v-if="game.tightest.capacity > 0 && game.tightest.level === 'high'" class="warn-text">
-            Nearly full: {{ game.tierFix(game.tightest.id) }} before it hits 100%.
+            Nearly full: {{ game.tierFix(game.tightest.id, "before it hits 100%") }}.
           </span>
           <span v-if="game.units?.loadBalancer.uncovered" class="warn-text">Load balancer needed.</span>
           <span v-else-if="game.lbShortSoon" class="warn-text">Load balancer needed once your new servers are ready.</span>

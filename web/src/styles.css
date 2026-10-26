@@ -4304,3 +4304,194 @@ select:disabled {
 .pay-review .pay-scheme input[type="checkbox"] {
   width: auto;
 }
+
+/* "How this works": a panel's longer explanation, closed until asked for. */
+.how-it-works {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+}
+
+.how-it-works > summary {
+  cursor: pointer;
+  width: fit-content;
+  color: var(--accent);
+}
+
+.how-it-works[open] > summary {
+  margin-bottom: 0.35rem;
+}
+
+.how-it-works p,
+.how-it-works ul {
+  margin-top: 0;
+}
+
+/* Capacity before launch: what has to be ready for the first users. */
+.launch-needs {
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  background: var(--you-soft);
+  border-left: 4px solid var(--you);
+  font-size: 0.9rem;
+}
+
+.launch-needs p {
+  margin: 0 0 0.25rem;
+}
+
+.launch-needs ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.launch-needs li.done {
+  color: var(--provider);
+}
+
+.cut-note {
+  font-size: 0.8rem;
+}
+
+.cancel-warning .badge {
+  margin-right: 0.35rem;
+  color: var(--warn);
+}
+
+/* Infrastructure: dense cards, so the page fits more on a screen. */
+.infra-page {
+  gap: 1rem;
+}
+
+.infra-page > .card {
+  padding: 1rem 1.1rem;
+}
+
+.infra-page .panel-head {
+  margin-bottom: 0.25rem;
+}
+
+.infra-page .unit-tier {
+  margin-bottom: 0.4rem;
+  padding: 0.4rem 0.6rem;
+}
+
+.infra-page .meter {
+  height: 0.6rem;
+  margin: 0.2rem 0;
+}
+
+.infra-page .capacity-note,
+.infra-page .server-rules,
+.infra-page .tier-warning,
+.infra-page .server-actions {
+  font-size: 0.85rem;
+}
+
+.infra-page .capacity {
+  margin-bottom: 0;
+}
+
+.infra-page .lb-status {
+  margin-bottom: 0.5rem;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.9rem;
+}
+
+.infra-page .server-group {
+  margin-top: 0.6rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.infra-page .server-group h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.infra-page .server-list {
+  gap: 0.25rem;
+  margin-top: 0.25rem;
+}
+
+.infra-page .server-list li {
+  padding: 0.3rem 0.6rem;
+}
+
+.infra-page .server-info {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.6rem;
+}
+
+.infra-page .server-info .muted,
+.infra-page .pending-note {
+  font-size: 0.85rem;
+}
+
+.infra-page .server-step {
+  margin-top: 0.35rem;
+}
+
+.infra-page .size-select {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.infra-page .step-note {
+  margin-top: 0.25rem;
+  font-size: 0.8rem;
+}
+
+.infra-page .server-actions {
+  margin-top: 0.6rem;
+}
+
+.infra-page .features {
+  gap: 0.35rem;
+}
+
+.infra-page .features li {
+  padding: 0.4rem 0.7rem;
+}
+
+.infra-page .legend {
+  margin-bottom: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.infra-page .resp-stack {
+  gap: 0.25rem;
+}
+
+.infra-page .resp-stack li {
+  padding: 0.3rem 0.75rem;
+  border-left-width: 4px;
+  font-size: 0.9rem;
+}
+
+.infra-page .migration-note {
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.9rem;
+}
+
+.infra-page .server-step {
+  flex-wrap: nowrap;
+}
+
+.infra-page .size-select {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.infra-page .size-select select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.infra-page .server-actions {
+  display: block;
+}

@@ -18,10 +18,13 @@ const benefits = computed(() => game.company?.benefits.filter((b) => b.onModel) 
         <strong data-testid="benefits-monthly">{{ formatCash(game.company.monthlyBenefitCost) }}</strong> a month
       </span>
     </div>
-    <p class="muted">
-      What {{ game.modelName(game.company.model) }} offers on top. Each is unlocked with research points once its tier
-      is available, then costs a set-up fee and a monthly fee. They belong to this model: migrating loses them, with no refund.
-    </p>
+    <details class="how-it-works">
+      <summary>How this works</summary>
+      <p class="muted">
+        What {{ game.modelName(game.company.model) }} offers on top. Each is unlocked with research points once its tier
+        is available, then costs a set-up fee and a monthly fee. They belong to this model: migrating loses them, with no refund.
+      </p>
+    </details>
     <ul class="features">
       <li v-for="b in benefits" :key="b.id" :data-benefit="b.id" :data-active="b.active">
         <div class="row-between feature-head">
