@@ -801,6 +801,8 @@ export async function buildApp(opts: AppOptions) {
               enum: [
                 "hire",
                 "letGo",
+                "cancelHire",
+                "letGoAgency",
                 "buildFeature",
                 "buyAddon",
                 "setOptimisation",
@@ -841,10 +843,11 @@ export async function buildApp(opts: AppOptions) {
                 "hireExecutive",
               ],
             },
+            // letGoAgency: one pool, or every pool if left out.
             pool: { enum: [...STAFF_POOLS] },
-            // hire, letGo and moveStaff: the grade, mid if left out.
+            // hire, letGo, cancelHire and moveStaff: the grade, mid if left out.
             grade: { enum: [...STAFF_GRADES] },
-            // hire and letGo: agency staff rather than permanent, false if left out.
+            // hire, letGo and cancelHire: agency staff rather than permanent, false if left out.
             agency: { type: "boolean" },
             // Checked against the product's list by the sim.
             feature: { type: "string", maxLength: 64 },
@@ -883,7 +886,7 @@ export async function buildApp(opts: AppOptions) {
             gives: { enum: ["cu", "apiu"] },
             // setInstances: how many app instances to run on PaaS, and setApiInstances how many API instances (which
             // can be none). The sim checks it against the platform's most.
-            // hire and letGo: how many people at once, one if left out. Capped so a typo can't hire thousands.
+            // hire, letGo and cancelHire: how many people at once, one if left out. Capped so a typo can't hire thousands.
             count: { type: "integer", minimum: 0, maximum: 999 },
             // setManagedService: a managed service on PaaS and its size, or null to turn the cache off.
             service: { enum: [...MANAGED_SERVICES] },
@@ -907,7 +910,7 @@ export async function buildApp(opts: AppOptions) {
             terms: { type: "object", properties: COUNTER_TERMS, additionalProperties: false },
           },
           allOf: [
-            { if: { properties: { type: { enum: ["hire", "letGo"] } } }, then: { required: ["pool"] } },
+            { if: { properties: { type: { enum: ["hire", "letGo", "cancelHire"] } } }, then: { required: ["pool"] } },
             { if: { properties: { type: { enum: ["buildFeature", "buyAddon"] } } }, then: { required: ["feature"] } },
             { if: { properties: { type: { const: "moveStaff" } } }, then: { required: ["to"] } },
             { if: { properties: { type: { const: "startMigration" } } }, then: { required: ["model"] } },
@@ -920,7 +923,7 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { const: "counterFunding" } } }, then: { required: ["funder", "terms"] } },
             { if: { properties: { type: { const: "counterInvestor" } } }, then: { required: ["terms"] } },
             { if: { properties: { type: { const: "pickInvestor" } } }, then: { required: ["investor"] } },
-            { if: { properties: { type: { enum: ["hire", "letGo", "setInstances"] } } }, then: { properties: { count: { type: "integer", minimum: 1 } } } },
+            { if: { properties: { type: { enum: ["hire", "letGo", "cancelHire", "setInstances"] } } }, then: { properties: { count: { type: "integer", minimum: 1 } } } },
             { if: { properties: { type: { const: "setApiInstances" } } }, then: { required: ["count"] } },
             { if: { properties: { type: { const: "switchServer" } } }, then: { required: ["id", "gives"] } },
             { if: { properties: { type: { const: "ringBell" } } }, then: { required: ["float"] } },

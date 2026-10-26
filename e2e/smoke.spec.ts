@@ -938,7 +938,7 @@ test("a Home card opens an accessible modal with its controls, and Continue work
   await modal.getByTestId("support-amount").fill("25");
   await expect(modal.getByTestId("support-bulk")).toContainText("£1,875 a day for 25 junior support staff");
   await modal.getByTestId("support-hire-many").click();
-  await expect(modal.getByTestId("support-hiring")).toHaveText("25 junior hired: start on day 4, in 3 days.");
+  await expect(modal.getByTestId("support-hiring")).toHaveText("25 juniors hired: they start on day 4, in 3 days.");
   await expect(modal.getByTestId("support-count")).toHaveText("1");
   // Letting go is of those on the team, by grade: no juniors have started yet.
   await expect(modal.getByTestId("support-let-go-many")).toBeDisabled();
@@ -1186,7 +1186,7 @@ test("a SaaS company without support builds a backlog, hires support from Home a
   await modal.getByRole("radio", { name: "Junior" }).check();
   // Six days' tickets by the time they start, and that day's: ten juniors, each doing 0.65 of a mid's 30, clear them.
   for (let i = 0; i < 10; i++) await modal.getByRole("button", { name: "Hire one junior support person" }).click();
-  await expect(modal.getByTestId("support-hiring")).toContainText("10 junior hired: start on day 9, in 3 days.");
+  await expect(modal.getByTestId("support-hiring")).toContainText("10 juniors hired: they start on day 9, in 3 days.");
   await expect(modal.getByTestId("support-count")).toHaveText("0");
   await modal.getByRole("button", { name: "Close" }).click();
   await expect(modal).toHaveCount(0);

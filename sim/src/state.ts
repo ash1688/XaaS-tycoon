@@ -1049,6 +1049,10 @@ export type Action =
    */
   | { type: "hire"; pool: StaffPool; grade?: StaffGrade; count?: number; agency?: boolean }
   | { type: "letGo"; pool: StaffPool; grade?: StaffGrade; count?: number; agency?: boolean }
+  /** Cancels hires of one grade still to start, permanent unless `agency`: `count` of them, one if it's left out. Free. */
+  | { type: "cancelHire"; pool: StaffPool; grade?: StaffGrade; count?: number; agency?: boolean }
+  /** Lets go every agency member of staff in `pool`, or in every pool, and cancels agency hires still to start. Free. */
+  | { type: "letGoAgency"; pool?: StaffPool }
   /** Starts building one of the product's features. One build at a time; not on SaaS. */
   | { type: "buildFeature"; feature: string }
   /** Buys one of the product's features as an add-on, active at once. SaaS only, with a configuration team. */

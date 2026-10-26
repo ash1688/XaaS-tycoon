@@ -5,10 +5,12 @@ import { formatCash, formatCount } from "../api";
 import { days, useGame } from "../game";
 import LetGoConfirm from "./LetGoConfirm.vue";
 
-// One team's quick hire: pick permanent or agency staff (permanent only for researchers and marketers) and a grade, then − and + let go or hire one of it. Letting go
-// permanent staff asks first, showing their severance; agency staff go at once, with none. The count is the permanent
-// team; agency staff are listed apart under it, and hires still to start under that with the day they start, as they
-// cost and do nothing until then.
+// One team's quick hire: pick permanent or agency staff (permanent only for researchers and marketers) and a grade,
+// then + hires one of it and − takes one away: a hire of that grade still to start if there is one (free, as they
+// aren't paid until they start), or else someone on the team. Letting go permanent staff asks first, showing their
+// severance; agency staff go at once, with none. The count is the permanent team, or the agency staff, with hires still
+// to start beside it ("0 +2 starting") so a click on + shows at once; agency staff are listed apart under it, and hires
+// still to start under that with the day they start, as they do nothing until then.
 const props = defineProps<{ pool: StaffPool; source: string }>();
 const picked = defineModel<StaffGrade>("grade", { default: "mid" });
 const agency = defineModel<boolean>("agency", { default: false });
@@ -24,13 +26,25 @@ const current = computed(() => grades.value.find((v) => v.grade === picked.value
 const who = computed(
   () => `${agency.value ? "agency " : ""}${current.value?.name.toLowerCase() ?? picked.value} ${info.value?.personName ?? props.pool}`,
 );
+// Hires still to start: of the kind picked (permanent or agency), of a grade of it, and of the picked grade.
+const waiting = computed(() => view.value?.hiring.filter((h) => h.agency === agency.value) ?? []);
+const waitingOf = (g: StaffGrade) => waiting.value.filter((h) => h.grade === g).reduce((sum, h) => sum + h.count, 0);
+const starting = computed(() => waiting.value.reduce((sum, h) => sum + h.count, 0));
+// − cancels a hire still to start first, as that's free, then lets go someone on the team.
+const cancels = computed(() => waitingOf(picked.value) > 0);
+// "mid", "mids".
+const gradeName = (g: StaffGrade, n: number) => `${gradeView(g)?.name.toLowerCase() ?? g}${n === 1 ? "" : "s"}`;
+// Hires still to start say "permanent" when agency ones are about too, so the two aren't mixed up.
+const labelPermanent = computed(() => !!view.value?.agencyAllowed && (agency.value || !!view.value?.hiring.some((h) => h.agency)));
 const agencyOnTeam = computed(() => view.value?.agency.filter((g) => g.count > 0) ?? []);
 const agencyPay = computed(() => agencyOnTeam.value.reduce((sum, g) => sum + g.count * g.dayRate, 0));
 const startsIn = (n: number) => (n === 0 ? "start at once" : n === 1 ? "start the day after hiring" : `start ${days(n)} after hiring`);
 const control = computed(() => `${props.source}-${props.pool}`);
 
 function letGo() {
-  if (agency.value) game.actFrom(control.value, { type: "letGo", pool: props.pool, grade: picked.value, agency: true });
+  if (cancels.value) {
+    game.actFrom(control.value, { type: "cancelHire", pool: props.pool, grade: picked.value, ...(agency.value ? { agency: true } : {}) });
+  } else if (agency.value) game.actFrom(control.value, { type: "letGo", pool: props.pool, grade: picked.value, agency: true });
   else confirming.value = true;
 }
 </script>
@@ -58,21 +72,25 @@ function letGo() {
     <div class="grade-pick" role="radiogroup" :aria-label="`Grade of ${info.name.toLowerCase()} to hire or let go`">
       <label v-for="g in grades" :key="g.grade" :class="{ picked: g.grade === picked }">
         <input v-model="picked" type="radio" :name="`${id}-grade`" :value="g.grade" :disabled="game.over" />
-        {{ g.name }} <span class="muted" :data-testid="`${pool}-${agency ? 'agency-' : ''}${g.grade}-count`">{{ g.count }}</span>
+        {{ g.name }} <span class="muted" :data-testid="`${pool}-${agency ? 'agency-' : ''}${g.grade}-count`">{{ g.count }}</span
+        ><span v-if="waitingOf(g.grade)" class="starting" :data-testid="`${pool}-${agency ? 'agency-' : ''}${g.grade}-starting`"
+          >+{{ waitingOf(g.grade) }}</span
+        >
       </label>
     </div>
     <div class="counter">
       <button
         class="ghost"
-        :disabled="game.busy || game.over || current.count < 1"
-        :aria-label="`Let go one ${who}`"
+        :disabled="game.busy || game.over || (current.count < 1 && !cancels)"
+        :aria-label="cancels ? `Cancel hiring one ${who}` : `Let go one ${who}`"
         @click="letGo"
       >
         −
       </button>
-      <output :data-testid="`${pool}-${agency ? 'agency-' : ''}count`" aria-live="polite">
-        {{ agency ? view.agencyCount : view.headcount }}
-      </output>
+      <span class="counter-value" aria-live="polite">
+        <output :data-testid="`${pool}-${agency ? 'agency-' : ''}count`">{{ agency ? view.agencyCount : view.headcount }}</output>
+        <span v-if="starting" class="starting" :data-testid="`${pool}-${agency ? 'agency-' : ''}starting`">+{{ starting }} starting</span>
+      </span>
       <button
         class="ghost"
         :disabled="game.busy || game.over"
@@ -90,16 +108,17 @@ function letGo() {
       <template v-if="agency">no severance.</template>
       <template v-else>{{ formatCash(current.severance) }} severance each if let go.</template>
     </p>
+    <p v-if="cancels" class="muted grade-note" :data-testid="`${pool}-minus-note`">
+      − cancels {{ agency ? "an agency" : "a" }} {{ current.name.toLowerCase() }} hire still to start first, at no cost.
+    </p>
     <p v-if="agencyOnTeam.length" class="agency-team" :data-testid="`${pool}-agency`">
       Agency staff:
-      {{ agencyOnTeam.map((g) => `${g.count} ${g.name.toLowerCase()}`).join(", ") }}, {{ formatCash(agencyPay) }} a day
+      {{ agencyOnTeam.map((g) => `${g.count} ${gradeName(g.grade, g.count)}`).join(", ") }}, {{ formatCash(agencyPay) }} a day
     </p>
     <div v-if="view.hiring.length" class="hiring" :data-testid="`${pool}-hiring`" aria-live="polite">
       <p v-for="(h, i) in view.hiring" :key="i">
-        {{ h.count }} {{ h.agency ? "agency " : "" }}{{ gradeView(h.grade)?.name.toLowerCase() }} hired: start{{
-          h.count === 1 ? "s" : ""
-        }}
-        on day {{ h.arrivesOn }}, in {{ days(h.daysLeft) }}.
+        {{ h.count }} {{ h.agency ? "agency " : labelPermanent ? "permanent " : "" }}{{ gradeName(h.grade, h.count) }} hired:
+        {{ h.count === 1 ? "starts" : "they start" }} on day {{ h.arrivesOn }}, in {{ days(h.daysLeft) }}.
       </p>
     </div>
     <LetGoConfirm v-model:open="confirming" :pool="pool" :grade="picked" :count="1" :control="control" />
@@ -132,6 +151,16 @@ function letGo() {
   border-color: var(--accent);
   background: var(--accent-soft);
   font-weight: 600;
+}
+.starting {
+  margin-left: 0.3rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+.counter-value {
+  display: inline-flex;
+  align-items: baseline;
 }
 .grade-note,
 .agency-team,

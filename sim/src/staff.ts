@@ -241,6 +241,45 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
   }
 
   /**
+   * Cancels `count` hires of a grade still to start, permanent or agency, the latest first. They aren't paid until they
+   * start, so it costs nothing. More than are waiting is refused.
+   */
+  function cancelHire(state: GameState, pool: StaffPool, grade: StaffGrade = "mid", count = 1, agency = false): GameState {
+    checkPoolAndGrade(state, pool, grade);
+    if (!Number.isInteger(count) || count < 1) throw new SimError("bad_count", "Pick a whole number of people, at least 1.");
+    const isAgency = agency === true;
+    const same = (h: GameState["hiring"][number]) => h.pool === pool && h.grade === grade && h.agency === isAgency;
+    const waiting = state.hiring.filter(same).reduce((sum, h) => sum + h.count, 0);
+    const name = `${isAgency ? "agency " : ""}${config.staffGrades[grade].name.toLowerCase()} ${poolName(pool)}`;
+    if (waiting < 1) throw new SimError("no_hires", `You have no ${name} still to start.`);
+    if (waiting < count) throw new SimError("no_hires", `You only have ${waiting} ${name} still to start.`);
+    let left = count;
+    const hiring = state.hiring
+      .toReversed()
+      .map((h) => {
+        if (!same(h) || left === 0) return h;
+        const cut = Math.min(left, h.count);
+        left -= cut;
+        return { ...h, count: h.count - cut };
+      })
+      .filter((h) => h.count > 0)
+      .toReversed();
+    return { ...state, hiring };
+  }
+
+  /**
+   * Lets go every agency member of staff in a pool, or in every pool, and cancels agency hires still to start. Agency
+   * staff go with no severance, so it costs nothing.
+   */
+  function letGoAgency(state: GameState, pool?: StaffPool): GameState {
+    if (pool !== undefined && !isStaffPool(pool)) throw new SimError("unknown_pool", PICK_POOL);
+    const pools = pool ? [pool] : STAFF_POOLS;
+    const agency = allPools((p) => (pools.includes(p) ? noStaff() : { ...state.agency[p] }));
+    const hiring = state.hiring.filter((h) => !(h.agency && pools.includes(h.pool)));
+    return { ...state, agency, hiring };
+  }
+
+  /**
    * Moves one permanent member of staff between pools, keeping their grade: a mid if `from` has one, unless a grade is
    * given. Agency staff stay where the agency placed them.
    */
@@ -331,6 +370,8 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
   return {
     startingStaff,
     changeStaff,
+    cancelHire,
+    letGoAgency,
     moveStaff,
     arrive,
     staffEntries,
