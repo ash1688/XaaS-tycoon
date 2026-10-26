@@ -47,6 +47,9 @@ const biggest = computed(() =>
       <template v-else-if="retired">Retired on {{ dayOf(summary.day, summary.finalDay) }}</template>
       <template v-else>So far: {{ dayOf(summary.day, summary.finalDay) }}</template>
       · ended on {{ modelName }}
+      · <span data-testid="summary-vc-rounds">{{
+        summary.vcRounds === 2 ? "a two-round game: Series A and B, each merging two VC rounds" : "four VC rounds"
+      }}</span>
     </p>
     <p v-if="summary.rescue" class="muted" data-testid="summary-rescue">
       Rescued by a vulture VC on day {{ summary.rescue.day }}: {{ formatCash(summary.rescue.amount) }} for

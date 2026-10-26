@@ -87,7 +87,7 @@ export type { EventView, FeatureGapView } from "./events.ts";
 export type { FeatureStatus, FeatureView } from "./features.ts";
 export type { ProviderView } from "./infrastructure.ts";
 export type { AngelView, InvestorOffer, InvestorsView, VcApproachView, VcOfferView, VcRoundView, VcView } from "./investors.ts";
-export { seriesApproachDay } from "./investors.ts";
+export { seriesApproachDay, twoRoundGame, vcLadder, type VcRung } from "./investors.ts";
 export type { FloatPreview, IpoCondition, IpoConditionId, IpoOffer, IpoStatus, IpoView } from "./ipo.ts";
 export type { LaunchView } from "./launch.ts";
 export type { MvpView } from "./mvp.ts";
@@ -188,6 +188,7 @@ export {
   type Investors,
   type VcApproach,
   type VcDeal,
+  type VcTranche,
   type VcPitch,
   type VentureCapital,
   type Loan,

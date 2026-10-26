@@ -3018,7 +3018,10 @@ export const defaultConfig: GameConfig = {
     // Placeholders, tuned on the balance harness (#101): every target is a share of the product's IPO bar, so each
     // rung is a step towards floating. On sensible play Series A approaches about two weeks after the angel, and
     // Series D by about day 95 (median; d148 at the latest), in 68 of 72 harness games before the IPO's trading history
-    // is met. Strategies that grow badly (over-priced, no support, no scaling) see few rounds or none.
+    // is met. Strategies that grow badly (over-priced, no support, no scaling) see few rounds or none. A 180-day game
+    // merges them into two (#233): on sensible play its Series A approaches at A's target about day 47 (d36-65), its
+    // second tranche's target (B's) holds about day 58, Series B approaches at C's target about day 68 (d55-106), and
+    // its second tranche's (D's) about day 89 (d67-149), in all 72 harness games.
     vc: {
       gapDays: 10,
       targetDays: 14,

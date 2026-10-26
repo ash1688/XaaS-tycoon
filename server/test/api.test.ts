@@ -1966,7 +1966,9 @@ describe("venture capital rounds", () => {
     expect(v.approach).toMatchObject({ round: "seriesA", name: "Series A", day: result.company.day, picked: null });
     expect(v.approach!.offers).toHaveLength(3);
     for (const o of v.approach!.offers) expect(o).toMatchObject({ status: "open", lead: false, leanLabel: expect.stringMatching(/^(Most cash|Fewest conditions|Least ownership)$/) });
-    expect(v.rounds.map((r) => r.firstApproachDay)).toEqual([result.company.day, null, null, null]);
+    // A 180-day game: two rounds, each merging two, its cash in two tranches.
+    expect(v.rounds.map((r) => [r.name, r.firstApproachDay])).toEqual([["Series A", result.company.day], ["Series B", null]]);
+    for (const o of v.approach!.offers) expect(o.secondTranche).toBeGreaterThan(0);
     expect(result.pauses).toContainEqual(expect.objectContaining({ kind: "offer", id: "offer-seriesA" }));
     // Series A approaching opens the last C-suite roles, which the IPO needs.
     expect(result.company.csuite.roles.every((r) => r.open)).toBe(true);
@@ -1991,12 +1993,18 @@ describe("venture capital rounds", () => {
 
     const standing = countered.investors.vc.approach!.offers[1]!;
     const accepted = (await act({ type: "acceptInvestor" })).json<CompanyView>();
-    expect(accepted.cash).toBe(countered.cash + standing.amount);
+    // The first tranche now; the second once the company hits their growth target.
+    expect(accepted.cash).toBe(countered.cash + standing.amount - standing.secondTranche!);
     expect(accepted.capTable.rows.find((r) => r.id === "vc")).toMatchObject({ name: `${standing.investor} (VC)`, shares: standing.newShares });
-    expect(Math.abs(accepted.valuation.valuation - standing.valuation)).toBeLessThanOrEqual(2);
+    // Their figure, less the cash still to come: net cash counts at face value.
+    expect(Math.abs(accepted.valuation.valuation - (standing.valuation - standing.secondTranche!))).toBeLessThanOrEqual(2);
     expect(accepted.investors.valuation).toMatchObject({ investor: standing.investor, round: "seriesA" });
     expect(accepted.investors.vc).toMatchObject({ approach: null, lead: { investor: standing.investor } });
-    expect(accepted.investors.vc.rounds[0]!.deal).toMatchObject({ investor: standing.investor, amount: standing.amount });
+    expect(accepted.investors.vc.rounds[0]!.deal).toMatchObject({
+      investor: standing.investor,
+      amount: standing.amount,
+      tranche: { amount: standing.secondTranche, target: "seriesB", paidDay: null },
+    });
   });
 
   it("declines all three, and three new VCs approach a few days later for the same round", async () => {

@@ -587,6 +587,8 @@ describe("venture capital", () => {
           ...vc.rounds,
           seriesA: { ...vc.rounds.seriesA, target: { payingUsers: 0.01, dailyRevenue: 0, minUptime: 0 } },
           seriesB: { ...vc.rounds.seriesB, target: { payingUsers: 0.01, dailyRevenue: 0, minUptime: 0 } },
+          // A 180-day game's Series B comes at Series C's target.
+          seriesC: { ...vc.rounds.seriesC, target: { payingUsers: 0.01, dailyRevenue: 0, minUptime: 0 } },
         },
       },
     },
@@ -624,7 +626,8 @@ describe("venture capital", () => {
     const shown = play(turn.state, "vc").lines.join("\n");
     expect(shown).toMatch(/^Series A: three VCs approached on day \d+\. pick <1-3 or name>/);
     for (const o of a.offers) expect(shown).toContain(`${o.investor} leans to ${o.leanLabel.toLowerCase()} [open]`);
-    expect(shown).toContain(`rounds: Series A approached day ${turn.state.day}, Series B not yet, Series C not yet, Series D not yet.`);
+    expect(shown).toContain(`rounds: Series A approached day ${turn.state.day}, Series B not yet (a 180-day game has two VC rounds, each merging two).`);
+    for (const o of a.offers) expect(shown).toMatch(new RegExp(`£[\\d,]+ on signing, £${o.secondTranche!.toLocaleString("en-GB")} once you hit their growth target\\.`));
     expect(play(turn.state, "accept angel").lines[0]).toMatch(/refused: It's VCs who are waiting on an answer/);
     expect(play(turn.state, "accept vc").lines[0]).toMatch(/refused: Pick one of the three VCs to negotiate with first/);
   });
@@ -641,8 +644,8 @@ describe("venture capital", () => {
     const countered = play(picked.state, `counter vc share ${share}`);
     expect(countered.lines[0]).toMatch(/Offer 2: .*\(1 counter left\)/);
     const accepted = play(countered.state, "accept vc");
-    expect(accepted.lines[0]).toMatch(new RegExp(`^acceptInvestor: done\\. ${a.offers[1]!.investor} put in £[\\d,]+ for [\\d.]+% in your Series A; valuation now £[\\d,]+\\. They're your lead VC\\.`));
-    expect(renderStatus(early, accepted.state)).toMatch(new RegExp(`vc: Series A approached day \\d+ \\(${a.offers[1]!.investor} put in £[\\d,]+ for [\\d.]+%\\), Series B not yet.*; lead VC ${a.offers[1]!.investor}`));
+    expect(accepted.lines[0]).toMatch(new RegExp(`^acceptInvestor: done\\. ${a.offers[1]!.investor} put in £[\\d,]+ for [\\d.]+% in your Series A, £[\\d,]+ of it to come once you hit their growth target; valuation now £[\\d,]+\\. They're your lead VC\\.`));
+    expect(renderStatus(early, accepted.state)).toMatch(new RegExp(`vc: Series A approached day \\d+ \\(${a.offers[1]!.investor} put in £[\\d,]+ for [\\d.]+%, £[\\d,]+ of it to come once you hit their growth target\\), Series B not yet.*; lead VC ${a.offers[1]!.investor}`));
     expect(renderStatus(early, accepted.state)).toContain(`${a.offers[1]!.investor} (VC) `);
     expect(play(accepted.state, "funding").lines[0]).toBe(`friends and family: closed on day ${accepted.state.day}, when you took on your Series A VC`);
 

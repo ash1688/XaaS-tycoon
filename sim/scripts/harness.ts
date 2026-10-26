@@ -5,6 +5,7 @@ import {
   FUNDER_IDS,
   CSUITE_ROLES,
   seriesApproachDay,
+  vcLadder,
   type CsuiteRole,
   ROUND_IDS,
   type RoundId,
@@ -342,6 +343,8 @@ export interface GameResult {
   pay: PayResult;
   /** The day each rung of the funding ladder first approached, or null; and the day the IPO's trading history was met. */
   rounds: Record<RoundId, number | null>;
+  /** The day the game's last VC round first approached, or null: Series D, or Series B in a 180-day game's two. */
+  lastRound: number | null;
   tradingDay: number | null;
   /**
    * The C-suite: executives hired, the day the last role was filled (the IPO needs the full C-suite), or null, what
@@ -941,6 +944,7 @@ export function playGame(sim: Sim, { model, productType, strategy, seed }: GameS
       angel: state.investors.firstApproachDay,
       ...state.investors.vc.firstApproachDay,
     },
+    lastRound: state.investors.vc.firstApproachDay[vcLadder(state).at(-1)!.round],
     tradingDay: state.launchDay === null ? null : state.launchDay + sim.config.ipo.minTradingDays - 1,
     csuite: csuiteResult(state),
   };
@@ -1048,6 +1052,7 @@ function emptyResult(model: ModelId, productType: ProductTypeId, strategy: strin
       staffSchemeValue: 0,
     },
     rounds: { angel: null, seriesA: null, seriesB: null, seriesC: null, seriesD: null },
+    lastRound: null,
     tradingDay: null,
     csuite: { hired: 0, ipoDay: null, pay: 0, equity: 0 },
   };
@@ -1227,17 +1232,17 @@ export function renderReport(results: GameResult[], { title = "Balance report", 
 
   out.push("## Funding rounds by strategy", "");
   out.push(
-    "The day the angel and each Series round first approached (declined or not), as medians, across every game that started. The IPO needs Series A to have approached (it opens the last C-suite roles) but no later round. All four: games where every round approached. D by trading: games where Series D approached by then. Latest D: the latest Series D approach, or how many never had one.",
+    "The day the angel and each Series round first approached (declined or not), as medians, across every game that started. The IPO needs Series A to have approached (it opens the last C-suite roles) but no later round. A 180-day game has two rounds, Series A and B, each merging two of the four, so C and D never come. All rounds: games where the last round (Series D, or B in a two-round game) approached. Last by trading: games where it approached by then. Latest last: its latest approach, or how many never had one.",
     "",
   );
-  out.push(table(["Strategy", "Angel", "Series A", "Series B", "Series C", "Series D", "All four", "D by trading", "Latest D"], used.map((s) => {
+  out.push(table(["Strategy", "Angel", "Series A", "Series B", "Series C", "Series D", "All rounds", "Last by trading", "Latest last"], used.map((s) => {
     const g = results.filter((r) => r.strategy === s.id && r.outcome !== "cant-start");
     const dayOf = (round: RoundId) => {
       const days = g.flatMap((r) => (r.rounds[round] === null ? [] : [r.rounds[round]!]));
       return days.length ? `d${whole(median(days))}${days.length < g.length ? ` (${g.length - days.length} never)` : ""}` : "never";
     };
-    const d = g.flatMap((r) => (r.rounds.seriesD === null ? [] : [r.rounds.seriesD]));
-    const onTime = g.filter((r) => r.rounds.seriesD !== null && r.tradingDay !== null && r.rounds.seriesD <= r.tradingDay).length;
+    const d = g.flatMap((r) => (r.lastRound === null ? [] : [r.lastRound]));
+    const onTime = g.filter((r) => r.lastRound !== null && r.tradingDay !== null && r.lastRound <= r.tradingDay).length;
     return [
       s.id,
       ...ROUND_IDS.map(dayOf),
@@ -1268,13 +1273,13 @@ export function renderReport(results: GameResult[], { title = "Balance report", 
   })), "");
 
   if (used.some((s) => s.id === "sensible")) {
-    out.push("## Sensible play: Series D approach day", "");
-    out.push("Median day Series D first approached, and in brackets the day the IPO's trading history was met. – : it never did.", "");
+    out.push("## Sensible play: last round's approach day", "");
+    out.push("Median day the last VC round (Series D, or B in a 180-day game's two) first approached, and in brackets the day the IPO's trading history was met. – : it never did.", "");
     out.push(table(["Product", ...models.map((m) => SHORT[m])], products.map((p) => [
       p,
       ...models.map((m) => {
         const g = results.filter((r) => r.strategy === "sensible" && r.model === m && r.productType === p && r.outcome !== "cant-start");
-        const d = g.flatMap((r) => (r.rounds.seriesD === null ? [] : [r.rounds.seriesD]));
+        const d = g.flatMap((r) => (r.lastRound === null ? [] : [r.lastRound]));
         const t = g.flatMap((r) => (r.tradingDay === null ? [] : [r.tradingDay]));
         return `${d.length ? `d${whole(median(d))}` : "–"}${t.length ? ` (d${whole(median(t))})` : ""}`;
       }),
