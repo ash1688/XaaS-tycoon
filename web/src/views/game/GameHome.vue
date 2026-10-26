@@ -53,6 +53,8 @@ const showLaunch = computed(() => {
   return !!l && !!c && !game.over && (l.status !== "launched" || c.day <= launchOver.value + 7);
 });
 const beforeUsers = computed(() => ["waiting", "upcoming", "ready"].includes(launch.value?.status ?? ""));
+// On the day the MVP is done the pause banner carries the Launch button, so the card leaves it out until then.
+const launchInPause = computed(() => game.pauses.some((p) => p.id === "mvp"));
 const launchHeadline = computed(() => {
   const l = launch.value;
   const c = game.company;
@@ -380,7 +382,7 @@ const alerts = computed(() => {
               </span>
             </li>
           </ul>
-          <LaunchButton />
+          <LaunchButton v-if="!launchInPause" />
         </div>
         <template #detail>
           <p>{{ launchText }}</p>
