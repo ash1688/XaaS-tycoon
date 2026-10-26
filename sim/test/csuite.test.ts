@@ -128,7 +128,7 @@ describe("roles and shortlists", () => {
     expect(open.map((r) => r.role)).toEqual(["headOfDevelopment", "headOfOps", "headOfSupport", "cfo", "cto", "headOfPeople"]);
     expect(open.filter((r) => r.openDay === state.day).map((r) => r.role)).toEqual(["cfo", "cto", "headOfPeople"]);
     expect(lines.filter((l) => l.startsWith("You can hire a"))).toEqual([
-      "You can hire a CFO now: 3 candidates are on the shortlist on the People page. You'll need one to float.",
+      "You can hire a CFO now: 3 candidates are on the shortlist on the People page.",
       "You can hire a CTO now: 3 candidates are on the shortlist on the People page.",
       "You can hire a Head of people now: 3 candidates are on the shortlist on the People page.",
     ]);
@@ -139,8 +139,9 @@ describe("roles and shortlists", () => {
     expect(sim.csuite(state).roles.filter((r) => !r.open).map((r) => r.role)).toEqual(["cmo", "coo", "cio", "ciso", "legalCounsel"]);
     const approached = seriesAApproached(begin());
     expect(sim.csuite(approached).roles.every((r) => r.open)).toBe(true);
-    expect(roleView(sim, approached, "ciso")).toMatchObject({ requiredToIpo: true, opens: "Opens when Series A venture capitalists approach." });
-    expect(sim.csuite(approached).roles.filter((r) => r.requiredToIpo).map((r) => r.role)).toEqual(["cfo", "ciso", "legalCounsel"]);
+    expect(roleView(sim, approached, "ciso")).toMatchObject({ opens: "Opens when Series A venture capitalists approach." });
+    // Every role is needed to float, so no role's blurb singles itself out.
+    expect(sim.csuite(approached).roles.filter((r) => /IPO|float/.test(r.blurb))).toEqual([]);
   });
 
   it("refuses an unknown role or candidate, and a role already filled", () => {

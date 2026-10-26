@@ -32,11 +32,11 @@ test.afterEach(async ({ request }) => {
   code = preset = null;
 });
 
-/** As if the angel and every Series round had approached the company on day 1 and been declined. */
-async function allRoundsApproached(id: string) {
+/** As if the angel and Series A had approached the company on day 1 and been declined: every C-suite role opens. */
+async function seriesAApproached(id: string) {
   const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
   try {
-    await sql`update companies set state = jsonb_set(jsonb_set(state, '{investors,vc,firstApproachDay}', ${sql.json({ seriesA: 1, seriesB: 1, seriesC: 1, seriesD: 1 })}), '{investors,firstApproachDay}', '1') where id = ${id}`;
+    await sql`update companies set state = jsonb_set(jsonb_set(state, '{investors,vc,firstApproachDay,seriesA}', '1'), '{investors,firstApproachDay}', '1') where id = ${id}`;
   } finally {
     await sql.end();
   }
@@ -68,37 +68,40 @@ test("float a company that's ready, ring the opening bell and watch the first da
   // Finance: the checklist, not all green yet, so Apply isn't allowed.
   await goTo(student, "Finance");
   const panel = student.getByTestId("ipo-panel");
-  await expect(panel.locator("li")).toHaveCount(15);
-  await expect(panel.getByTestId("ipo-seriesA")).toHaveAttribute("data-met", "false");
+  await expect(panel.locator("li")).toHaveCount(6);
+  await expect(panel.getByTestId("ipo-csuite")).toHaveAttribute("data-met", "false");
+  await expect(panel.getByTestId("ipo-csuite")).toContainText("0 of 11 hired");
   await expect(panel.getByTestId("ipo-status")).toHaveText("Not ready");
   await expect(panel.getByTestId("ipo-uptime")).toHaveAttribute("data-met", "false");
   await expect(panel.getByTestId("ipo-apply")).toBeDisabled();
 
-  // A day later the records are long enough, and every condition but the funding rounds turns green.
+  // A day later the records are long enough, and every condition but the full C-suite turns green.
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("day")).toHaveText("2");
-  for (const id of ["trading", "usersAndRevenue", "uptime", "costs", "security", "profit", "satisfaction", "payingUsers"]) {
+  for (const id of ["trading", "usersAndRevenue", "uptime", "costs", "security"]) {
     await expect(panel.getByTestId(`ipo-${id}`)).toHaveAttribute("data-met", "true");
   }
-  await expect(panel.getByTestId("ipo-seriesD")).toContainText("Series D approached");
+  await expect(panel.getByTestId("ipo-csuite")).toHaveAttribute("data-met", "false");
   await expect(panel.getByTestId("ipo-status")).toHaveText("Not ready");
   await expect(panel.getByTestId("ipo-apply")).toBeDisabled();
 
-  // Once every Series round has approached (declined or not), only the CFO, CISO and legal counsel are missing.
-  await allRoundsApproached(student.url().split("/").at(-2)!);
+  // Once Series A has approached (declined), every C-suite role is open: no later round is needed.
+  await seriesAApproached(student.url().split("/").at(-2)!);
   await student.reload();
-  for (const id of ["seriesA", "seriesB", "seriesC", "seriesD"]) await expect(panel.getByTestId(`ipo-${id}`)).toHaveAttribute("data-met", "true");
   await expect(panel.getByTestId("ipo-status")).toHaveText("Not ready");
-  // Hired on People, the first on each shortlist, it's ready.
+  // Hired on People, the first on each shortlist, the C-suite is full and it's ready.
   await goTo(student, "People");
-  for (const role of ["cfo", "ciso", "legalCounsel"]) {
+  await expect(student.getByTestId("csuite-ipo")).toContainText("Every role must be filled to float: 0 of 11 hired");
+  const roles = ["headOfDevelopment", "headOfOps", "headOfSupport", "cfo", "cto", "headOfPeople", "cmo", "coo", "cio", "ciso", "legalCounsel"];
+  for (const role of roles) {
     const first = student.getByTestId(`csuite-${role}`).locator("tbody tr").first();
     await first.getByTestId("hire-executive").click();
     await first.getByTestId("confirm-hire").click();
     await expect(student.getByTestId(`csuite-${role}`).getByTestId("csuite-executive")).toBeVisible();
   }
   await goTo(student, "Finance");
-  for (const id of ["cfo", "ciso", "legalCounsel"]) await expect(panel.getByTestId(`ipo-${id}`)).toHaveAttribute("data-met", "true");
+  await expect(panel.getByTestId("ipo-csuite")).toHaveAttribute("data-met", "true");
+  await expect(panel.getByTestId("ipo-csuite")).toContainText("All 11 hired");
   await expect(panel.getByTestId("ipo-status")).toHaveText("Ready to apply");
 
   // Applying is approved (no cold market here), and the opening-bell page takes over. The game holds until the bell.

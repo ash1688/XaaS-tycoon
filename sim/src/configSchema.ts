@@ -154,7 +154,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("ipo.minTradingDays", "Money", "IPO", "Trading history needed", "Days of trading since the launch a company needs before it can float.", range(0, 365, 1));
   add("ipo.recordDays", "Money", "IPO", "Records over", "Days the uptime, satisfaction, costs and profit records are measured over.", GAME_DAY);
   add("ipo.minUptime", "Money", "IPO", "Uptime record needed", "Uptime % over the record's days a company needs to float.", range(0, 100, 0.1));
-  add("ipo.minSatisfaction", "Money", "IPO", "Satisfaction record needed", "Average satisfaction % over the record's days a company needs to float.", range(0, 100, 1));
+  add("ipo.minSatisfaction", "Money", "IPO", "Satisfaction the market wants", "Average satisfaction % over the record's days above which the market grows more comfortable, cutting the cold-market chance and helping the first day of trading. Not needed to float.", range(0, 100, 1));
   add("ipo.maxCostSwing", "Money", "IPO", "Most costs may vary", "Daily running costs over the record's days may vary by at most this (their standard deviation ÷ their mean; 0.25 = 25%). Big one-off purchases count against it.", range(0, 5, 0.01));
   add("ipo.costDaysSetAside", "Money", "IPO", "Costliest days set aside", "The costliest days of the record left out when measuring how much costs vary, so one fraud bill or severance payment doesn't fail it.", range(0, 30, 1));
   add("ipo.comfortMargin", "Money", "IPO", "Comfortably ready at", "How far over a condition counts as comfortably ready (0.25 = 25% over), cutting the cold-market chance and helping the first day of trading.", range(0.01, 5, 0.01));

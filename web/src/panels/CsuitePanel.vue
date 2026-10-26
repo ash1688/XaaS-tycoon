@@ -11,6 +11,7 @@ const game = useGame();
 const csuite = computed(() => game.company?.csuite ?? null);
 const open = computed(() => csuite.value?.roles.filter((r) => r.open) ?? []);
 const shut = computed(() => csuite.value?.roles.filter((r) => !r.open) ?? []);
+const hiredCount = computed(() => csuite.value?.roles.filter((r) => r.executive).length ?? 0);
 /** The candidate whose Hire was pressed, waiting for Confirm. */
 const confirming = ref<string | null>(null);
 
@@ -29,12 +30,12 @@ async function hire(role: CsuiteRole, candidate: string) {
       shrink as the C-suite's {{ formatShare(csuite.equityCap) }} cap fills: {{ formatShare(csuite.equityLeft) }} left.
       The staff share scheme doesn't count towards it.
     </p>
+    <p data-testid="csuite-ipo">
+      Every role must be filled to float: {{ hiredCount }} of {{ csuite.roles.length }} hired.
+    </p>
     <p v-if="csuite.dailyPay" data-testid="csuite-pay">C-suite pay: {{ formatCash(csuite.dailyPay) }} a day.</p>
     <div v-for="r in open" :key="r.role" class="role" :data-testid="`csuite-${r.role}`">
-      <h3>
-        {{ r.name }}
-        <span v-if="r.requiredToIpo" class="required" data-testid="csuite-required">Needed to IPO</span>
-      </h3>
+      <h3>{{ r.name }}</h3>
       <p class="muted">{{ r.blurb }}</p>
       <div v-if="r.executive" data-testid="csuite-executive">
         <p>
@@ -97,7 +98,6 @@ async function hire(role: CsuiteRole, candidate: string) {
     <ul v-if="shut.length" class="shut" data-testid="csuite-shut">
       <li v-for="r in shut" :key="r.role" :data-testid="`csuite-${r.role}`">
         <strong>{{ r.name }}</strong>
-        <span v-if="r.requiredToIpo" class="required">Needed to IPO</span>
         <span class="muted">{{ r.opens }} {{ r.blurb }}</span>
       </li>
     </ul>
@@ -113,14 +113,6 @@ async function hire(role: CsuiteRole, candidate: string) {
 .role h3 {
   margin: 0 0 0.25rem;
   font-size: 1rem;
-}
-.required {
-  font-size: 0.75rem;
-  font-weight: 600;
-  margin-left: 0.4rem;
-  padding: 0.05rem 0.4rem;
-  border-radius: 0.6rem;
-  border: 1px solid currentColor;
 }
 .effects {
   margin: 0;

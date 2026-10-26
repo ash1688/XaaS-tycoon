@@ -1968,7 +1968,8 @@ describe("venture capital rounds", () => {
     for (const o of v.approach!.offers) expect(o).toMatchObject({ status: "open", lead: false, leanLabel: expect.stringMatching(/^(Most cash|Fewest conditions|Least ownership)$/) });
     expect(v.rounds.map((r) => r.firstApproachDay)).toEqual([result.company.day, null, null, null]);
     expect(result.pauses).toContainEqual(expect.objectContaining({ kind: "offer", id: "offer-seriesA" }));
-    expect(result.company.ipo.conditions.find((c) => c.id === "seriesA")).toMatchObject({ met: true, now: `Approached on day ${result.company.day}` });
+    // Series A approaching opens the last C-suite roles, which the IPO needs.
+    expect(result.company.csuite.roles.every((r) => r.open)).toBe(true);
   });
 
   it("picks one VC, negotiates with them alone, and accepts: their cash, their valuation, and a VC on the cap table", async () => {
@@ -2043,25 +2044,12 @@ describe("the IPO", () => {
 
   it("shows the readiness checklist, and refuses to apply until every condition is met", async () => {
     const { company, act } = await setup({});
-    expect(company.ipo.conditions.map((c) => c.id)).toEqual([
-      "trading",
-      "usersAndRevenue",
-      "uptime",
-      "costs",
-      "security",
-      "profit",
-      "satisfaction",
-      "payingUsers",
-      "seriesA",
-      "seriesB",
-      "seriesC",
-      "seriesD",
-      "cfo",
-      "ciso",
-      "legalCounsel",
-    ]);
-    expect(company.ipo.conditions.find((c) => c.id === "seriesB")).toMatchObject({ label: "Series B approached", met: false, now: "Not yet" });
-    expect(company.ipo.conditions.find((c) => c.id === "ciso")).toMatchObject({ label: "CISO hired", met: false, now: "Not yet" });
+    expect(company.ipo.conditions.map((c) => c.id)).toEqual(["trading", "usersAndRevenue", "uptime", "costs", "security", "csuite"]);
+    expect(company.ipo.conditions.find((c) => c.id === "csuite")).toMatchObject({
+      label: "The full C-suite",
+      met: false,
+      now: expect.stringMatching(/^0 of 11 hired; still to hire: Head of development, /),
+    });
     expect(company.ipo).toMatchObject({ status: "not-ready", ready: false, canApply: false, offer: null, result: null });
     const res = await act({ type: "applyForIpo" });
     expect(res.statusCode).toBe(400);
@@ -2072,32 +2060,30 @@ describe("the IPO", () => {
     const { company, url, act, next } = await setup();
     await next();
     const waiting = (await next()).json<ContinueResult>().company;
-    // Everything else is met, but no Series round has approached yet, and there's no CFO, CISO or legal counsel.
-    expect(waiting.ipo.conditions.filter((c) => !c.met).map((c) => c.id)).toEqual([
-      "seriesA",
-      "seriesB",
-      "seriesC",
-      "seriesD",
-      "cfo",
-      "ciso",
-      "legalCounsel",
-    ]);
+    // Everything else is met, but the C-suite is empty.
+    expect(waiting.ipo.conditions.filter((c) => !c.met).map((c) => c.id)).toEqual(["csuite"]);
     expect((await act({ type: "applyForIpo" })).json()).toMatchObject({ error: "ipo_not_ready" });
-    // As if the angel and every round had approached on day 1 and been declined.
+    // As if the angel and Series A had approached on day 1 and been declined: every role opens, and no later round is needed.
     await testDb.db
       .update(companies)
       .set({
-        state: sql`jsonb_set(jsonb_set(${companies.state}, '{investors,vc,firstApproachDay}', '{"seriesA":1,"seriesB":1,"seriesC":1,"seriesD":1}'), '{investors,firstApproachDay}', '1')`,
+        state: sql`jsonb_set(jsonb_set(${companies.state}, '{investors,vc,firstApproachDay,seriesA}', '1'), '{investors,firstApproachDay}', '1')`,
       })
       .where(eq(companies.id, company.id));
     const approachedView = (await app.inject({ method: "GET", url })).json<CompanyView>();
-    expect(approachedView.ipo.conditions.filter((c) => !c.met).map((c) => c.id)).toEqual(["cfo", "ciso", "legalCounsel"]);
-    expect((await act({ type: "applyForIpo" })).json()).toMatchObject({ error: "ipo_not_ready" });
-    // The three executives the IPO needs, each the first on their shortlist.
-    for (const role of ["cfo", "ciso", "legalCounsel"] as const) {
+    expect(approachedView.csuite.roles.every((r) => r.open)).toBe(true);
+    // Every role but one, each the first on their shortlist: still not ready, 10 of 11.
+    const rest = approachedView.csuite.roles.map((r) => r.role);
+    const last = rest.pop()!;
+    for (const role of rest) {
       const candidate = approachedView.csuite.roles.find((r) => r.role === role)!.shortlist[0]!;
       expect((await act({ type: "hireExecutive", role, candidate: candidate.id })).statusCode).toBe(200);
     }
+    const nearly = (await app.inject({ method: "GET", url })).json<CompanyView>();
+    expect(nearly.ipo.conditions.find((c) => c.id === "csuite")).toMatchObject({ met: false, now: expect.stringMatching(/^10 of 11 hired/) });
+    expect((await act({ type: "applyForIpo" })).json()).toMatchObject({ error: "ipo_not_ready" });
+    const lastCandidate = approachedView.csuite.roles.find((r) => r.role === last)!.shortlist[0]!;
+    expect((await act({ type: "hireExecutive", role: last, candidate: lastCandidate.id })).statusCode).toBe(200);
     const ready = (await app.inject({ method: "GET", url })).json<CompanyView>();
     expect(ready.ipo).toMatchObject({ status: "ready", canApply: true });
     const approved = (await act({ type: "applyForIpo" })).json<CompanyView>();
@@ -2120,7 +2106,7 @@ describe("the IPO", () => {
     expect(result.prices).toHaveLength(sim.config.ipo.ticks + 1);
     expect(result.marketValue).toBe(Math.round(result.closePrice * result.sharesAfter));
     const executives = ready.csuite.roles.flatMap((r) => (r.executive ? [["executive", r.executive.shares]] : []));
-    expect(executives).toHaveLength(3);
+    expect(executives).toHaveLength(11);
     expect(floated.capTable.rows.map((r) => [r.id, r.shares])).toEqual([["student", 10_000], ...executives, ["public", preview.newShares]]);
     const summary = (await app.inject({ method: "GET", url: `${url}/summary` })).json<SummaryView>();
     expect(summary).toMatchObject({ ending: "ipo", ipo: result });
@@ -2173,7 +2159,6 @@ describe("the C-suite (#108)", () => {
     expect(dev.shortlist).toHaveLength(3);
     expect(dev.shortlist[0]).toMatchObject({ id: "headOfDevelopment-1", name: expect.any(String), salary: expect.any(Number), equity: expect.any(Number) });
     expect(dev.shortlist[0]!.effects[0]!.text).toMatch(/developer output/);
-    expect(csuite.roles.filter((r) => r.requiredToIpo).map((r) => r.role)).toEqual(["cfo", "ciso", "legalCounsel"]);
   });
 
   it("hires for good: pay from the next day, equity in new shares, and no second hire", async () => {

@@ -82,14 +82,13 @@ export type { CampaignTypeView, CampaignView, CampaignsView } from "./campaigns.
 export { dayOfDate, gameDate } from "./calendar.ts";
 export type { ConversionDriver, ConversionDriverId, ConversionView } from "./conversion.ts";
 export type { CandidateView, CsuiteRoleView, CsuiteView, ExecutiveEffectView, ExecutiveView } from "./csuite.ts";
-export { IPO_ROLES } from "./csuite.ts";
 export type { DangerRiskView, DangerView } from "./encounters.ts";
 export type { EventView, FeatureGapView } from "./events.ts";
 export type { FeatureStatus, FeatureView } from "./features.ts";
 export type { ProviderView } from "./infrastructure.ts";
 export type { AngelView, InvestorOffer, InvestorsView, VcApproachView, VcOfferView, VcRoundView, VcView } from "./investors.ts";
 export { seriesApproachDay } from "./investors.ts";
-export type { FloatPreview, IpoCondition, IpoConditionId, IpoOffer, IpoRole, IpoStatus, IpoView } from "./ipo.ts";
+export type { FloatPreview, IpoCondition, IpoConditionId, IpoOffer, IpoStatus, IpoView } from "./ipo.ts";
 export type { LaunchView } from "./launch.ts";
 export type { MvpView } from "./mvp.ts";
 export type { ResearchView } from "./research.ts";

@@ -2,8 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import { E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
 
 // The C-suite (#108) on People: the heads open from day 1 with shortlists, the rest say when they open, hiring asks
-// to confirm and is for good, the executive's pay and shares show, and the IPO checklist needs a CFO, CISO and legal
-// counsel.
+// to confirm and is for good, the executive's pay and shares show, and the IPO needs every
+// role filled.
 
 let code: string | null = null;
 test.afterEach(async ({ request }) => {
@@ -34,9 +34,9 @@ test("hires a head of development from the shortlist, for good, and the IPO chec
   const csuite = student.getByTestId("csuite");
   await expect(csuite.getByRole("heading", { name: "C-suite" })).toBeVisible();
   await expect(csuite).toContainText("10% left");
-  // Shut roles say when they open, and which the IPO needs.
+  // Shut roles say when they open; the IPO needs every role.
   await expect(csuite.getByTestId("csuite-cfo")).toContainText("Opens once you take outside money");
-  await expect(csuite.getByTestId("csuite-cfo")).toContainText("Needed to IPO");
+  await expect(csuite.getByTestId("csuite-ipo")).toContainText("Every role must be filled to float: 0 of 11 hired");
   await expect(csuite.getByTestId("csuite-legalCounsel")).toContainText("Opens when Series A venture capitalists approach");
 
   const dev = csuite.getByTestId("csuite-headOfDevelopment");

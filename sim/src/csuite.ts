@@ -26,9 +26,6 @@ const STAGES: Record<CsuiteRole, CsuiteStage> = {
   legalCounsel: "seriesA",
 };
 
-/** The roles a company must have filled to float. */
-export const IPO_ROLES = ["cfo", "ciso", "legalCounsel"] as const satisfies readonly CsuiteRole[];
-
 const STAGE_TEXT: Record<CsuiteStage, string> = {
   start: "Open from the start.",
   outsideMoney:
@@ -42,14 +39,14 @@ const ROLE_BLURBS: Record<CsuiteRole, string> = {
   headOfDevelopment: "More developer output on all developer work: the MVP, features and optimisation.",
   headOfOps: "Ops staff cover more servers, and outages are shorter.",
   headOfSupport: "Support staff clear more tickets, and satisfaction recovers faster.",
-  cfo: "Better rolls when negotiating with investors and funders, and cheaper bank loans. Required to IPO. No part in pay reviews.",
+  cfo: "Better rolls when negotiating with investors and funders, and cheaper bank loans. No part in pay reviews.",
   cto: "Opens tier 2 straight away, and researchers earn more research points.",
   headOfPeople: "Pay reviews only: a better roll, a softer walk-away figure, schemes valued fully and a slight tribunal lean.",
   cmo: "Campaigns bring more users for each pound.",
   coo: "Cheaper everyday running costs: hosting, rent, power and provider fees, not staff pay.",
   cio: "Migrations are cheaper and quicker.",
-  ciso: "Patching needs fewer ops, and a security breach is less likely. Required to IPO: the market wants to see you take cybersecurity seriously.",
-  legalCounsel: "No effect on the business: a compliance box to tick. Required to IPO.",
+  ciso: "Patching needs fewer ops, and a security breach is less likely.",
+  legalCounsel: "No effect on the business: a compliance box to tick.",
 };
 
 const FIRST_NAMES = [
@@ -106,8 +103,6 @@ export interface CsuiteRoleView {
   name: string;
   /** What the role does, whoever fills it. */
   blurb: string;
-  /** Whether a company needs it filled to float. */
-  requiredToIpo: boolean;
   /** Whether it's open for hiring (or already filled), the day it opened, and when it opens in words. */
   open: boolean;
   openDay: number | null;
@@ -287,7 +282,6 @@ export function createCsuite(config: GameConfig) {
         role,
         name: roleName(role),
         blurb: ROLE_BLURBS[role],
-        requiredToIpo: (IPO_ROLES as readonly CsuiteRole[]).includes(role),
         open: day !== null,
         openDay: day,
         opens: STAGE_TEXT[STAGES[role]],
@@ -368,9 +362,8 @@ export function createCsuite(config: GameConfig) {
   function openedEntries(before: GameState, after: GameState): LogEntry[] {
     return CSUITE_ROLES.filter((role) => !isOpen(before, role) && isOpen(after, role) && !executiveIn(after, role)).map((role) => {
       const n = after.csuite.shortlists[role].length;
-      const required = (IPO_ROLES as readonly CsuiteRole[]).includes(role) ? " You'll need one to float." : "";
       return {
-        text: `You can hire a ${roleName(role)} now: ${count.format(n)} candidate${n === 1 ? " is" : "s are"} on the shortlist on the People page.${required}`,
+        text: `You can hire a ${roleName(role)} now: ${count.format(n)} candidate${n === 1 ? " is" : "s are"} on the shortlist on the People page.`,
         cashDelta: 0,
         kind: "staff",
       };

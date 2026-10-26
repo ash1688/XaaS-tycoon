@@ -555,26 +555,25 @@ function driftStatus(sim: Sim, state: GameState): string {
 function csuiteLine(sim: Sim, state: GameState): string {
   const view = sim.csuite(state);
   const hired = view.roles.filter((r) => r.executive).map((r) => `${r.name} ${r.executive!.name}`);
-  const open = view.roles.filter((r) => r.open && !r.executive).map((r) => `${r.name}${r.requiredToIpo ? " (needed to IPO)" : ""}`);
-  return `c-suite: ${hired.length ? `${hired.join(", ")}; ${money(view.dailyPay)}/day` : "nobody hired"} | ${open.length ? `can hire: ${open.join(", ")} ("csuite" for shortlists)` : "no role open to hire"} | equity cap ${tenth(view.equityCap)}, ${tenth(view.equityLeft)} left`;
+  const open = view.roles.filter((r) => r.open && !r.executive).map((r) => r.name);
+  return `c-suite: ${hired.length ? `${hired.join(", ")}; ${money(view.dailyPay)}/day` : "nobody hired"} (${hired.length} of ${view.roles.length}, all needed to IPO) | ${open.length ? `can hire: ${open.join(", ")} ("csuite" for shortlists)` : "no role open to hire"} | equity cap ${tenth(view.equityCap)}, ${tenth(view.equityLeft)} left`;
 }
 
 /** The C-suite in full: every role with when it opens, who fills it, or its shortlist. */
 function csuiteLines(sim: Sim, state: GameState): string[] {
   const view = sim.csuite(state);
   const lines = [
-    `c-suite: hired for good, no pay reviews; equity asks paid in new shares, shrinking as the ${tenth(view.equityCap)} cap fills (${tenth(view.equityUsed)} used, ${tenth(view.equityLeft)} left; the staff share scheme doesn't count)`,
+    `c-suite: hired for good, no pay reviews; equity asks paid in new shares, shrinking as the ${tenth(view.equityCap)} cap fills (${tenth(view.equityUsed)} used, ${tenth(view.equityLeft)} left; the staff share scheme doesn't count). Every role must be filled to IPO: ${view.roles.filter((r) => r.executive).length} of ${view.roles.length} hired`,
   ];
   for (const r of view.roles) {
-    const required = r.requiredToIpo ? " [needed to IPO]" : "";
     if (r.executive) {
       const e = r.executive;
       const effects = e.effects.length ? e.effects.map((x) => x.text).join("; ") : "no effect";
-      lines.push(`  ${r.name}: ${e.name} (hired day ${e.day}, ${money(e.salary)}/day, ${tenth(e.equity)} equity)${required}: ${effects}`);
+      lines.push(`  ${r.name}: ${e.name} (hired day ${e.day}, ${money(e.salary)}/day, ${tenth(e.equity)} equity): ${effects}`);
     } else if (!r.open) {
-      lines.push(`  ${r.name} (shut): ${r.opens}${required}`);
+      lines.push(`  ${r.name} (shut): ${r.opens}`);
     } else {
-      lines.push(`  ${r.name} (open): ${r.blurb}${required}`);
+      lines.push(`  ${r.name} (open): ${r.blurb}`);
       for (const c of r.shortlist) {
         const effects = c.effects.length ? c.effects.map((x) => x.text).join("; ") : "no effect";
         lines.push(`    ${c.id}  ${c.name}: strength ${Math.round(c.strength * 100)}%, ${money(c.salary)}/day, ${tenth(c.equity)} equity (${c.newShares.toLocaleString("en-GB")} new shares) | ${effects}`);
@@ -997,7 +996,7 @@ function vcStatus(sim: Sim, state: GameState): string | null {
 function vcLines(sim: Sim, state: GameState): string[] {
   const v = sim.investors(state).vc;
   const a = v.approach;
-  const rounds = `rounds: ${roundsText(sim, state)}. The IPO needs all four to have approached, whether or not you take their money.`;
+  const rounds = `rounds: ${roundsText(sim, state)}. The IPO needs none of them: Series A approaching opens the last C-suite roles, whether or not you take its money.`;
   if (!a) {
     return [
       v.rounds[0]!.firstApproachDay === null ? "no VCs have approached: they come to companies that grow, after the angel" : (vcStatus(sim, state) ?? ""),
