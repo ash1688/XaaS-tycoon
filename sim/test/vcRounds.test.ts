@@ -413,6 +413,23 @@ describe("a 180-day game's two rounds", () => {
     expect(after.spendByDay.at(-1)!.raised).toBe(offer.secondTranche);
   });
 
+  it("sets the valuation to their figure when the 90% cap prices the offer, as after a refused counter", () => {
+    const state = until("seriesA", sim, short()).state;
+    const offer = sim.investors(state).vc.approach!.offers[0]!;
+    const picked = sim.applyAction(state, { type: "pickInvestor", investor: offer.investor });
+    // A refused counter's penalty can ask past 90%: the offer is priced at the cap, above the multiple their ask implies.
+    const a = picked.investors.vc.approach!;
+    const vcs = a.vcs.map((p) =>
+      p.investor === offer.investor ? { ...p, negotiation: { ...p.negotiation, offers: [...p.negotiation.offers, { amount: offer.amount, share: 0.95 }] } } : p,
+    );
+    const pushed = { ...picked, investors: { ...picked.investors, vc: { ...picked.investors.vc, approach: { ...a, vcs } } } };
+    const standing = sim.investors(pushed).vc.approach!.offers[0]!;
+    expect(standing.theirShare).toBeCloseTo(0.9, 4);
+    const accepted = sim.applyAction(pushed, { type: "acceptInvestor" });
+    // Their figure, less the second tranche still to come.
+    expect(Math.abs(sim.valuation(accepted).valuation - (standing.valuation - standing.secondTranche!))).toBeLessThanOrEqual(2);
+  });
+
   it("brings Series B at old Series C's target, for C and D's offers together, with the lead VC back", () => {
     const state = until("seriesA", sim, short()).state;
     const offer = sim.investors(state).vc.approach!.offers[1]!;
