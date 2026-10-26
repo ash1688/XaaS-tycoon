@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { playDay, playGame, STRATEGIES } from "../scripts/harness.ts";
 import { advanceUntil, renderCommands, renderStatus, runScript } from "../scripts/textPlay.ts";
+import { settlePay } from "./settlingPay.ts";
+import { nextRandom } from "../src/rng.ts";
 import {
   createSim,
   defaultConfig,
@@ -171,6 +173,25 @@ describe("inflation", () => {
     expect(rest(b)).toEqual(rest(a));
     expect(b.rng).toBe(a.rng);
     expect(b.negotiationRng).toBe(a.negotiationRng);
+  });
+
+  it("is rolled fresh for each review in one game, on the RNG the review before left", () => {
+    // The playtest's kind of game (social on IaaS), settled as the harness bots do: staff's counters move the RNG too.
+    const { min, max } = rich.payReview.inflation;
+    const roll = (rng: number) => Math.round((min + nextRandom(rng)[0] * (max - min)) * 1000) / 1000;
+    let state = sim.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 7 });
+    const inflations: number[] = [];
+    while (state.status === "playing") {
+      const before = state.payReviewRng;
+      state = sim.advance(state).state;
+      if (!state.payReview) continue;
+      // Two draws for the review: inflation, then staff's walk-away figure.
+      expect(state.payReview.inflation).toBe(roll(before));
+      expect(state.payReviewRng).toBe(nextRandom(nextRandom(before)[1])[1]);
+      inflations.push(state.payReview.inflation);
+      state = settlePay(sim, state);
+    }
+    expect(inflations).toEqual([0.044, 0.032, 0.052]);
   });
 
   it("is readable as the game's inflation once the first review opens", () => {
