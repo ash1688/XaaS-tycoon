@@ -2,6 +2,7 @@
 import { computed, ref, useId, watch } from "vue";
 import type { CampaignView, CustomerTypeId } from "@xaas/sim";
 import { formatCash, formatCount, formatPrice } from "../../api";
+import SubTabs from "../../components/SubTabs.vue";
 import { useGame } from "../../game";
 
 // Marketing: open from the first angel investor's approach, whatever the student made of them. The student plans a
@@ -12,9 +13,21 @@ import { useGame } from "../../game";
 // campaign gets the most senior free marketer, and a senior brings more users per pound than a junior. With no free
 // marketer the form is disabled and says why. Each user a campaign brings in also grows the market for good (brand
 // awareness), up to a cap: the page shows how far campaigns have grown it, and what each campaign added.
+// Once open, it's in sub-tabs (the open one in ?tab=): an overview, the new campaign form, and the campaigns running
+// and past, from the first one.
 const game = useGame();
 const id = useId();
 const view = computed(() => game.company?.campaigns ?? null);
+
+type TabId = "overview" | "new" | "campaigns";
+const tabs = computed(() => {
+  const list: { id: TabId; name: string }[] = [
+    { id: "overview", name: "Overview" },
+    { id: "new", name: "New campaign" },
+  ];
+  if (view.value?.campaigns.length) list.push({ id: "campaigns", name: "Campaigns" });
+  return list;
+});
 const marketers = computed(() => game.staffPool("marketers"));
 /** "1 senior, 2 mid": the marketers on the team by grade, with how many of each are free. */
 const marketerGrades = computed(() =>
@@ -64,9 +77,9 @@ const stop = (c: CampaignView) => game.actFrom("campaign-stop", { type: "stopCam
 
 <template>
   <div v-if="game.company && view" class="page-grid single">
-    <section class="card cat-campaigns" aria-labelledby="marketing-heading" data-testid="marketing">
-      <h2 id="marketing-heading">Marketing</h2>
-      <template v-if="view.unlocked">
+    <SubTabs v-if="view.unlocked" v-slot="{ current }" name="marketing" label="Marketing" :tabs="tabs" fallback="overview">
+      <section v-if="current === 'overview'" class="card cat-campaigns" aria-labelledby="marketing-heading" data-testid="marketing">
+        <h2 id="marketing-heading">Marketing</h2>
         <div class="stats">
           <div class="stat">
             <span class="label">Marketers</span>
@@ -108,111 +121,112 @@ const stop = (c: CampaignView) => game.actFrom("campaign-stop", { type: "stopCam
           campaign ends.<template v-if="view.market.added >= view.market.cap"> Your campaigns have grown it as far as they can.</template>
         </p>
         <p v-if="marketers?.idle" class="features-note" data-testid="marketers-idle-note">{{ marketers.idle }}</p>
-      </template>
-      <p v-else class="muted" data-testid="marketing-locked">
+      </section>
+      <section v-else-if="current === 'new'" class="card cat-campaigns" aria-labelledby="campaign-new-heading" data-testid="campaign-new">
+        <h2 id="campaign-new-heading">New campaign</h2>
+        <form class="price-form" novalidate @submit.prevent="start">
+          <label :for="`${id}-type`">Customer type</label>
+          <select :id="`${id}-type`" v-model="type" :disabled="!view.canStart || game.over" data-testid="campaign-type">
+            <option v-for="t in view.types" :key="t.id" :value="t.id">
+              {{ t.name }} · {{ formatPrice(t.costPerUser) }} a user{{ t.running ? ` · ${t.running} running` : "" }}
+            </option>
+          </select>
+          <label :for="`${id}-budget`">Budget (£{{ formatCount(view.minBudget) }}–£{{ formatCount(view.maxBudget) }})</label>
+          <input
+            :id="`${id}-budget`"
+            v-model.number="budget"
+            type="number"
+            inputmode="numeric"
+            :min="view.minBudget"
+            :max="view.maxBudget"
+            step="100"
+            :disabled="!view.canStart || game.over"
+            data-testid="campaign-budget"
+          />
+          <label :for="`${id}-days`">Length in days ({{ view.minDays }}–{{ view.maxDays }})</label>
+          <input
+            :id="`${id}-days`"
+            v-model.number="days"
+            type="number"
+            inputmode="numeric"
+            :min="view.minDays"
+            :max="view.maxDays"
+            step="1"
+            :disabled="!view.canStart || game.over"
+            data-testid="campaign-days"
+          />
+          <p v-if="view.holiday" class="features-note" data-testid="campaign-holiday">
+            Started now, it's timed for {{ view.holiday.name }} in {{ view.holiday.daysUntil }} days: ×{{ view.holiday.bonus }}
+            users per pound for its whole run.
+          </p>
+          <p v-if="view.canStart && nextGrade" class="muted" data-testid="campaign-marketer">
+            Run by a {{ nextGrade.name.toLowerCase() }} marketer: ×{{ nextGrade.output }} users per pound.
+          </p>
+          <p v-if="view.canStart && estimate !== null && perDay !== null" class="muted" data-testid="campaign-estimate">
+            About {{ formatCount(estimate) }} {{ picked?.name.toLowerCase() }} at today's market, spending
+            {{ formatCash(perDay) }} a day.
+            <template v-if="estimate > 0">About {{ formatPrice(Math.round((100 * (budget as number)) / estimate) / 100) }} a user.</template>
+          </p>
+          <p v-if="tooDear" class="error" role="alert" data-testid="campaign-too-dear">
+            That's more than the {{ formatCash(game.company.cash) }} you have.
+          </p>
+          <p v-if="!view.canStart && view.why" class="muted features-note" data-testid="campaign-why">{{ view.why }}</p>
+          <div>
+            <button type="submit" :disabled="!canSubmit" data-testid="campaign-start">Start campaign</button>
+          </div>
+        </form>
+        <p v-if="game.error" class="error" role="alert">{{ game.error }}</p>
+      </section>
+      <section v-else class="card cat-campaigns" aria-labelledby="campaigns-heading" data-testid="campaigns">
+        <h2 id="campaigns-heading">Campaigns</h2>
+        <table class="compare">
+          <thead>
+            <tr>
+              <th scope="col">Aimed at</th>
+              <th scope="col">Marketer</th>
+              <th scope="col">Days</th>
+              <th scope="col">Spent</th>
+              <th scope="col">Users brought in</th>
+              <th scope="col">Cost per user</th>
+              <th scope="col">Market grown</th>
+              <th scope="col">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="c in [...onNow, ...past]" :key="c.id" :data-campaign="c.id" :data-status="c.status">
+              <td>
+                {{ c.customerTypeName }}
+                <small v-if="c.holiday" class="muted"> · {{ c.holiday }} bonus</small>
+              </td>
+              <td data-testid="campaign-marketer-grade">{{ c.gradeName }}</td>
+              <td data-testid="campaign-days-run">{{ c.daysRun }} of {{ c.days }}</td>
+              <td data-testid="campaign-spent">{{ formatCash(c.spent) }} of {{ formatCash(c.budget) }}</td>
+              <td data-testid="campaign-users">{{ formatCount(c.users) }}</td>
+              <td data-testid="campaign-cost-per-user">{{ each(c) }}</td>
+              <td data-testid="campaign-market-added">+{{ formatCount(c.marketAdded) }}</td>
+              <td>
+                {{ STATUS[c.status] }}
+                <button
+                  v-if="c.status === 'starting' || c.status === 'running'"
+                  type="button"
+                  class="ghost"
+                  :disabled="game.busy || game.over"
+                  :aria-label="`Stop the campaign for ${c.customerTypeName.toLowerCase()}`"
+                  @click="stop(c)"
+                >
+                  Stop
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </SubTabs>
+    <section v-else class="card cat-campaigns" aria-labelledby="marketing-heading" data-testid="marketing">
+      <h2 id="marketing-heading">Marketing</h2>
+      <p class="muted" data-testid="marketing-locked">
         Marketing opens once your company grows up: when your first angel investor approaches.
       </p>
-    </section>
-
-    <section v-if="view.unlocked" class="card cat-campaigns" aria-labelledby="campaign-new-heading" data-testid="campaign-new">
-      <h3 id="campaign-new-heading">New campaign</h3>
-      <form class="price-form" novalidate @submit.prevent="start">
-        <label :for="`${id}-type`">Customer type</label>
-        <select :id="`${id}-type`" v-model="type" :disabled="!view.canStart || game.over" data-testid="campaign-type">
-          <option v-for="t in view.types" :key="t.id" :value="t.id">
-            {{ t.name }} · {{ formatPrice(t.costPerUser) }} a user{{ t.running ? ` · ${t.running} running` : "" }}
-          </option>
-        </select>
-        <label :for="`${id}-budget`">Budget (£{{ formatCount(view.minBudget) }}–£{{ formatCount(view.maxBudget) }})</label>
-        <input
-          :id="`${id}-budget`"
-          v-model.number="budget"
-          type="number"
-          inputmode="numeric"
-          :min="view.minBudget"
-          :max="view.maxBudget"
-          step="100"
-          :disabled="!view.canStart || game.over"
-          data-testid="campaign-budget"
-        />
-        <label :for="`${id}-days`">Length in days ({{ view.minDays }}–{{ view.maxDays }})</label>
-        <input
-          :id="`${id}-days`"
-          v-model.number="days"
-          type="number"
-          inputmode="numeric"
-          :min="view.minDays"
-          :max="view.maxDays"
-          step="1"
-          :disabled="!view.canStart || game.over"
-          data-testid="campaign-days"
-        />
-        <p v-if="view.holiday" class="features-note" data-testid="campaign-holiday">
-          Started now, it's timed for {{ view.holiday.name }} in {{ view.holiday.daysUntil }} days: ×{{ view.holiday.bonus }}
-          users per pound for its whole run.
-        </p>
-        <p v-if="view.canStart && nextGrade" class="muted" data-testid="campaign-marketer">
-          Run by a {{ nextGrade.name.toLowerCase() }} marketer: ×{{ nextGrade.output }} users per pound.
-        </p>
-        <p v-if="view.canStart && estimate !== null && perDay !== null" class="muted" data-testid="campaign-estimate">
-          About {{ formatCount(estimate) }} {{ picked?.name.toLowerCase() }} at today's market, spending
-          {{ formatCash(perDay) }} a day.
-          <template v-if="estimate > 0">About {{ formatPrice(Math.round((100 * (budget as number)) / estimate) / 100) }} a user.</template>
-        </p>
-        <p v-if="tooDear" class="error" role="alert" data-testid="campaign-too-dear">
-          That's more than the {{ formatCash(game.company.cash) }} you have.
-        </p>
-        <p v-if="!view.canStart && view.why" class="muted features-note" data-testid="campaign-why">{{ view.why }}</p>
-        <div>
-          <button type="submit" :disabled="!canSubmit" data-testid="campaign-start">Start campaign</button>
-        </div>
-      </form>
-      <p v-if="game.error" class="error" role="alert">{{ game.error }}</p>
-    </section>
-
-    <section v-if="view.unlocked && view.campaigns.length" class="card cat-campaigns" aria-labelledby="campaigns-heading" data-testid="campaigns">
-      <h3 id="campaigns-heading">Campaigns</h3>
-      <table class="compare">
-        <thead>
-          <tr>
-            <th scope="col">Aimed at</th>
-            <th scope="col">Marketer</th>
-            <th scope="col">Days</th>
-            <th scope="col">Spent</th>
-            <th scope="col">Users brought in</th>
-            <th scope="col">Cost per user</th>
-            <th scope="col">Market grown</th>
-            <th scope="col">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="c in [...onNow, ...past]" :key="c.id" :data-campaign="c.id" :data-status="c.status">
-            <td>
-              {{ c.customerTypeName }}
-              <small v-if="c.holiday" class="muted"> · {{ c.holiday }} bonus</small>
-            </td>
-            <td data-testid="campaign-marketer-grade">{{ c.gradeName }}</td>
-            <td data-testid="campaign-days-run">{{ c.daysRun }} of {{ c.days }}</td>
-            <td data-testid="campaign-spent">{{ formatCash(c.spent) }} of {{ formatCash(c.budget) }}</td>
-            <td data-testid="campaign-users">{{ formatCount(c.users) }}</td>
-            <td data-testid="campaign-cost-per-user">{{ each(c) }}</td>
-            <td data-testid="campaign-market-added">+{{ formatCount(c.marketAdded) }}</td>
-            <td>
-              {{ STATUS[c.status] }}
-              <button
-                v-if="c.status === 'starting' || c.status === 'running'"
-                type="button"
-                class="ghost"
-                :disabled="game.busy || game.over"
-                :aria-label="`Stop the campaign for ${c.customerTypeName.toLowerCase()}`"
-                @click="stop(c)"
-              >
-                Stop
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
     </section>
   </div>
 </template>

@@ -27,11 +27,15 @@ const PAGES = computed(() => [
   { path: "/finance", name: "Finance" },
 ]);
 const onHome = computed(() => route.name === "game-home");
-const onFinance = computed(() => route.name === "game-finance");
+// On Finance's Funding tab, where the loan and investors' offers are: the notes about them say "below" there.
+const onFunding = computed(() => route.name === "game-finance" && route.query.tab === "funding");
+const funding = computed(() => `${game.base}/finance?tab=funding`);
 const onBell = computed(() => route.name === "game-ipo");
 // An investor who has approached and is waiting for an answer: a notification on every page, and a badge on Finance.
 const approach = computed(() => game.company?.investors.offer ?? null);
 const vcApproach = computed(() => game.company?.investors.vc.approach ?? null);
+// While one waits, Finance in the nav opens on its Funding tab, where the offer is.
+const offerWaiting = computed(() => !!(approach.value || vcApproach.value) && !game.over);
 // A pay review opens its modal by itself, on any page. Closed to look around, a note opens it again; the game holds
 // either way. It stays open after settling, to show what was agreed, until it's closed.
 const payModal = ref(false);
@@ -91,9 +95,9 @@ async function closeMenu() {
         </button>
         <ul id="game-nav-links" :class="{ open: menuOpen }">
           <li v-for="page in PAGES" :key="page.name">
-            <RouterLink :to="`${game.base}${page.path}`" class="nav-link">
+            <RouterLink :to="page.name === 'Finance' && offerWaiting ? funding : `${game.base}${page.path}`" class="nav-link">
               {{ page.name
-              }}<span v-if="page.name === 'Finance' && (approach || vcApproach) && !game.over" class="nav-badge" data-testid="finance-badge" aria-hidden="true">1</span>
+              }}<span v-if="page.name === 'Finance' && offerWaiting" class="nav-badge" data-testid="finance-badge" aria-hidden="true">1</span>
             </RouterLink>
           </li>
         </ul>
@@ -187,21 +191,21 @@ async function closeMenu() {
             Take a {{ formatCash(game.company.loanQuote.amount) }} bank loan now, or cut costs: let staff go or drop servers.
           </template>
           <template v-else>Cut costs now: let staff go or drop servers.</template>
-          <RouterLink v-if="!onFinance" :to="`${game.base}/finance`">Open Finance</RouterLink>
+          <RouterLink v-if="!onFunding" :to="funding">Open Finance</RouterLink>
         </p>
       </div>
       <p v-if="approach && !game.over" class="ipo-note investor-note" role="status" data-testid="investor-note">
         <span class="badge">Investor</span>
         {{ approach.investor }}, an angel investor, likes what you're doing and wants to invest
         {{ formatCash(approach.amount) }}. Answer by day {{ approach.lastDay }}, or it lapses.
-        <RouterLink v-if="!onFinance" :to="`${game.base}/finance`">See their offer on Finance</RouterLink>
+        <RouterLink v-if="!onFunding" :to="funding">See their offer on Finance</RouterLink>
         <template v-else>Their offer is below.</template>
       </p>
       <p v-if="vcApproach && !game.over" class="ipo-note investor-note" role="status" data-testid="vc-note">
         <span class="badge">{{ vcApproach.name }}</span>
         Three venture capitalists want to invest. Pick one to negotiate with by day {{ vcApproach.lastDay }}, or their
         offers lapse.
-        <RouterLink v-if="!onFinance" :to="`${game.base}/finance`">See their offers on Finance</RouterLink>
+        <RouterLink v-if="!onFunding" :to="funding">See their offers on Finance</RouterLink>
         <template v-else>Their offers are below.</template>
       </p>
       <p v-if="game.payReviewOpen && !payModal" class="ipo-note" role="status" data-testid="pay-review-note">

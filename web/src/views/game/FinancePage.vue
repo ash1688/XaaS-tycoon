@@ -3,6 +3,7 @@ import { watch } from "vue";
 import { formatCash } from "../../api";
 import { days, useGame } from "../../game";
 import CashChart from "../../components/CashChart.vue";
+import SubTabs from "../../components/SubTabs.vue";
 import BalanceSheet from "../../panels/BalanceSheet.vue";
 import CapTablePanel from "../../panels/CapTablePanel.vue";
 import FundingPanel from "../../panels/FundingPanel.vue";
@@ -13,10 +14,21 @@ import RescuePanel from "../../panels/RescuePanel.vue";
 import SpendPanel from "../../panels/SpendPanel.vue";
 import ValuationPanel from "../../panels/ValuationPanel.vue";
 
-// Finance: cash, the IPO readiness checklist, the balance sheet of income against costs, the valuation and who owns the
-// company, any rescue buyout, investors and funding, the bank loan, where the money went, and cash over time.
-// The chart's figures come from the summary so far, fetched again only once a new day has been played.
+// Finance: cash and runway, then sub-tabs (the open one in ?tab=): an overview of the balance sheet of income against
+// costs, where the money went and cash over time; the valuation and who owns the company; funding, with any rescue
+// buyout, investors, friends and family and the grant, and the bank loan; and the IPO readiness checklist, there from
+// day 1. Links about one of these, such as an investor's offer, open its tab. The chart's figures come from the summary
+// so far, fetched again only once a new day has been played.
 const game = useGame();
+
+type TabId = "overview" | "valuation" | "funding" | "ipo";
+const tabs: { id: TabId; name: string }[] = [
+  { id: "overview", name: "Overview" },
+  { id: "valuation", name: "Valuation" },
+  { id: "funding", name: "Funding" },
+  { id: "ipo", name: "IPO" },
+];
+
 watch(
   () => game.company?.day,
   () => game.ensureSummary(),
@@ -25,7 +37,7 @@ watch(
 </script>
 
 <template>
-  <div v-if="game.company" class="page-grid">
+  <div v-if="game.company" class="page-grid full">
     <section class="card span-all" aria-labelledby="cash-heading">
       <h2 id="cash-heading">Cash</h2>
       <div class="stats">
@@ -79,19 +91,29 @@ watch(
         Runway is how long your cash lasts at today's income and costs.
       </p>
     </section>
-    <IpoPanel />
-    <BalanceSheet />
-    <ValuationPanel />
-    <CapTablePanel />
-    <RescuePanel />
-    <InvestorPanel />
-    <FundingPanel />
-    <LoanPanel />
-    <SpendPanel />
-    <section class="card" aria-labelledby="cash-chart-heading">
-      <h2 id="cash-chart-heading">Cash over time</h2>
-      <CashChart v-if="game.summary" :days="game.summary.days" :final-day="game.summary.finalDay" />
-      <p v-else class="muted">Loading…</p>
-    </section>
+    <SubTabs v-slot="{ current }" name="finance" label="Finance" :tabs="tabs" fallback="overview">
+      <div v-if="current === 'overview'" class="page-grid">
+        <BalanceSheet />
+        <SpendPanel />
+        <section class="card" aria-labelledby="cash-chart-heading">
+          <h2 id="cash-chart-heading">Cash over time</h2>
+          <CashChart v-if="game.summary" :days="game.summary.days" :final-day="game.summary.finalDay" />
+          <p v-else class="muted">Loading…</p>
+        </section>
+      </div>
+      <div v-else-if="current === 'valuation'" class="page-grid">
+        <ValuationPanel />
+        <CapTablePanel />
+      </div>
+      <div v-else-if="current === 'funding'" class="page-grid">
+        <RescuePanel />
+        <InvestorPanel />
+        <FundingPanel />
+        <LoanPanel />
+      </div>
+      <div v-else class="page-grid">
+        <IpoPanel />
+      </div>
+    </SubTabs>
   </div>
 </template>

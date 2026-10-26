@@ -27,6 +27,7 @@ test.afterEach(async ({ request }) => {
 
 const goTo = (page: Page, name: string) =>
   page.getByRole("navigation", { name: "Game" }).getByRole("link", { name, exact: true }).click();
+const openTab = (page: Page, name: string) => page.getByRole("tab", { name, exact: true }).click();
 
 /** A SaaS social network on the early-angel preset, played on until an angel approaches. */
 async function startAndWaitForAngel(
@@ -50,6 +51,7 @@ async function startAndWaitForAngel(
   await student.getByRole("button", { name: "Start company" }).click();
   await expect(student.getByTestId("day")).toHaveText(/^1 of/);
   await goTo(student, "Finance");
+  await openTab(student, "Funding");
   await expect(student.getByTestId("angel")).toContainText("Investors come to you");
   await expect(student.getByTestId("investor-note")).toBeHidden();
   // Research opens only once an angel approaches.
@@ -70,7 +72,7 @@ test("an angel approaches with a notification; their offer shows its target, and
   request,
 }) => {
   const student = await startAndWaitForAngel(browser, request, "Angel Ltd");
-  const id = student.url().replace(/\/finance$/, "").split("/").at(-1)!;
+  const id = new URL(student.url()).pathname.replace(/\/finance$/, "").split("/").at(-1)!;
 
   // The notification: time stopped for it, and Finance is flagged on every page.
   await expect(student.getByTestId("pause-reasons")).toContainText("an angel investor, wants to invest");
@@ -115,7 +117,9 @@ test("an angel approaches with a notification; their offer shows its target, and
   expect(after.capTable.rows[1]).toMatchObject({ id: "angel", shares: offer.newShares });
 
   // The valuation is theirs now, and friends and family and the grant are gone.
+  await openTab(student, "Valuation");
   await expect(student.getByTestId("driver-investor")).toContainText("your angel, valued the business at");
+  await openTab(student, "Funding");
   await expect(student.getByTestId("funding-closed")).toContainText("closed on day");
   await expect(student.getByTestId("funder-friendsAndFamily")).toContainText("Closed");
   await expect(student.getByTestId("funder-grant")).toContainText("Closed");
@@ -128,7 +132,7 @@ test("auto-negotiating the angel plays on to their final offer with a transcript
   request,
 }) => {
   const student = await startAndWaitForAngel(browser, request, "Auto Angel Ltd");
-  const id = student.url().replace(/\/finance$/, "").split("/").at(-1)!;
+  const id = new URL(student.url()).pathname.replace(/\/finance$/, "").split("/").at(-1)!;
   await student.getByTestId("investor-panel").getByTestId("angel-review").click();
   const modal = student.getByRole("dialog", { name: "Angel investor's offer" });
   const talks = modal.getByTestId("negotiation");

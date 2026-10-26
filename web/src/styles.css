@@ -2350,6 +2350,11 @@ button.danger-fill {
   justify-content: center;
 }
 
+/* One full-width column, for a page of sub-tabs whose panels lay out their own cards. */
+.page-grid.full {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .page-grid > .card {
   margin: 0;
 }
@@ -2386,6 +2391,13 @@ button.danger-fill {
   border-bottom-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+/* Narrower tabs on a phone, so a row of four still fits on one line. */
+@media (max-width: 480px) {
+  .subtab {
+    padding: 0.55rem 0.65rem;
+  }
 }
 
 .subtab-panel {
