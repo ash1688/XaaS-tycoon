@@ -1,22 +1,18 @@
 <script setup lang="ts">
 import type { CsuiteRole } from "@xaas/sim";
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import { formatCash } from "../api";
 import { useGame } from "../game";
 import { formatShare } from "../shares";
 
-// The C-suite on People: every role, when it opens, who fills it, and each open role's shortlist to hire from. Hiring
-// is for good, so the Hire button asks to confirm first.
+// The C-suite, on its own page: every role, when it opens, who fills it, and each open role's shortlist to hire from.
+// Hire hires at once: the panel says up front that hiring is for good.
 const game = useGame();
 const csuite = computed(() => game.company?.csuite ?? null);
 const open = computed(() => csuite.value?.roles.filter((r) => r.open) ?? []);
 const shut = computed(() => csuite.value?.roles.filter((r) => !r.open) ?? []);
 const hiredCount = computed(() => csuite.value?.roles.filter((r) => r.executive).length ?? 0);
-/** The candidate whose Hire was pressed, waiting for Confirm. */
-const confirming = ref<string | null>(null);
-
 async function hire(role: CsuiteRole, candidate: string) {
-  confirming.value = null;
   await game.actFrom("hire-executive", { type: "hireExecutive", role, candidate });
 }
 </script>
@@ -84,18 +80,7 @@ async function hire(role: CsuiteRole, candidate: string) {
                 <span v-else class="muted">No effect on the business</span>
               </td>
               <td class="hire">
-                <template v-if="confirming === c.id">
-                  <button
-                    type="button"
-                    :disabled="game.busy || game.over"
-                    data-testid="confirm-hire"
-                    @click="hire(r.role, c.id)"
-                  >
-                    Hire for good
-                  </button>
-                  <button type="button" class="secondary" @click="confirming = null">Cancel</button>
-                </template>
-                <button v-else type="button" :disabled="game.busy || game.over" data-testid="hire-executive" @click="confirming = c.id">
+                <button type="button" :disabled="game.busy || game.over" data-testid="hire-executive" @click="hire(r.role, c.id)">
                   Hire
                 </button>
               </td>

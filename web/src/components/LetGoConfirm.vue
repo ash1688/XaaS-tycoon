@@ -28,7 +28,7 @@ async function confirm() {
 </script>
 
 <template>
-  <AppModal :open="open" :title="`Let go ${who}?`" @close="open = false">
+  <AppModal small :open="open" :title="`Let go ${who}?`" @close="open = false">
     <p v-if="game.error" class="error" role="alert">{{ game.error }}</p>
     <table class="quote" data-testid="severance-quote">
       <tbody>

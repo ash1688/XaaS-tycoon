@@ -113,7 +113,7 @@ export interface CsuiteRoleView {
   shortlist: CandidateView[];
 }
 
-/** The C-suite for the People page: every role, and the equity cap. */
+/** The C-suite for the C-suite page: every role, and the equity cap. */
 export interface CsuiteView {
   roles: CsuiteRoleView[];
   /** The most the C-suite's equity can come to, what it has taken and what's left (0.1 = 10%). */
@@ -396,7 +396,7 @@ export function createCsuite(config: GameConfig) {
     return CSUITE_ROLES.filter((role) => !isOpen(before, role) && isOpen(after, role) && !executiveIn(after, role)).map((role) => {
       const n = after.csuite.shortlists[role].length;
       return {
-        text: `You can hire a ${roleName(role)} now: ${count.format(n)} candidate${n === 1 ? " is" : "s are"} on the shortlist on the People page.`,
+        text: `You can hire a ${roleName(role)} now: ${count.format(n)} candidate${n === 1 ? " is" : "s are"} on the shortlist on the C-suite page.`,
         cashDelta: 0,
         kind: "staff",
       };

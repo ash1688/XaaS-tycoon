@@ -89,14 +89,13 @@ test("float a company that's ready, ring the opening bell and watch the first da
   await seriesAApproached(student.url().split("/").at(-2)!);
   await student.reload();
   await expect(panel.getByTestId("ipo-status")).toHaveText("Not ready");
-  // Hired on People, the first on each shortlist, the C-suite is full and it's ready.
-  await goTo(student, "People");
+  // Hired on the C-suite page, the first on each shortlist, the C-suite is full and it's ready.
+  await goTo(student, "C-suite");
   await expect(student.getByTestId("csuite-ipo")).toContainText("Every role must be filled to float: 0 of 11 hired");
   const roles = ["headOfDevelopment", "headOfOps", "headOfSupport", "cfo", "cto", "headOfPeople", "cmo", "coo", "cio", "ciso", "legalCounsel"];
   for (const role of roles) {
     const first = student.getByTestId(`csuite-${role}`).locator("tbody tr").first();
     await first.getByTestId("hire-executive").click();
-    await first.getByTestId("confirm-hire").click();
     await expect(student.getByTestId(`csuite-${role}`).getByTestId("csuite-executive")).toBeVisible();
   }
   await goTo(student, "Finance");

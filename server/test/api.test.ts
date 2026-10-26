@@ -3422,16 +3422,16 @@ describe("provider and SaaS events", () => {
 });
 
 describe("meta", () => {
-  const SPEEDS_AT_15 = [
-    { id: "slow", name: "Slow", seconds: 30 },
-    { id: "normal", name: "Normal", seconds: 15 },
-    { id: "fast", name: "Fast", seconds: 5 },
-    { id: "fastest", name: "Fastest", seconds: 1.5 },
+  const SPEEDS_AT_10 = [
+    { id: "slow", name: "Slow", seconds: 20 },
+    { id: "normal", name: "Normal", seconds: 10 },
+    { id: "fast", name: "Fast", seconds: 3.33 },
+    { id: "fastest", name: "Fastest", seconds: 1 },
   ];
 
   it("reports timed flow as on by default, with the default interval and its speeds", async () => {
     const meta = (await app.inject({ method: "GET", url: "/api/meta" })).json<MetaView>();
-    expect(meta.timedFlow).toEqual({ enabled: true, seconds: 15, speeds: SPEEDS_AT_15 });
+    expect(meta.timedFlow).toEqual({ enabled: true, seconds: 10, speeds: SPEEDS_AT_10 });
   });
 
   it("lets the teacher switch timed flow off, reaching games already being played", async () => {
@@ -3827,9 +3827,9 @@ describe("pricing and income", () => {
 
     const { company: after, log } = await next();
     const line = log[0]!.entries.find((e) => e.kind === "conversion")!;
-    expect(line.text).toMatch(/^Free to paid: \d[\d,]* of \d[\d,]* free users started paying/);
+    expect(line.text).toMatch(/^\d[\d,]* of \d[\d,]* free users started paying/);
     expect(after.conversion.today).toBeGreaterThan(0);
-    expect(line.text).toContain(`Free to paid: ${after.conversion.today} of`);
+    expect(line.text).toContain(`${after.conversion.today} of`);
     expect(after.conversion.total).toBe(after.conversion.today);
 
     // A price above the fair price hurts it.

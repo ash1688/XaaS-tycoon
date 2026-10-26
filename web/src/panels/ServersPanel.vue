@@ -424,7 +424,7 @@ async function cancel() {
     </p>
     <p v-if="game.error && !cancelling" class="error" role="alert">{{ game.error }}</p>
 
-    <AppModal :open="!!cancelling" :title="buying ? 'Sell a server' : 'Cancel a VM'" @close="cancelling = undefined">
+    <AppModal small :open="!!cancelling" :title="buying ? 'Sell a server' : 'Cancel a VM'" @close="cancelling = undefined">
       <template v-if="cancelling">
         <p v-if="game.error" class="error" role="alert">{{ game.error }}</p>
         <template v-if="buying">

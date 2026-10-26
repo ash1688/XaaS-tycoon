@@ -1,9 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
 
-// The C-suite (#108) on People: the heads open from day 1 with shortlists, the rest say when they open, hiring asks
-// to confirm and is for good, the executive's pay and shares show, and the IPO needs every
-// role filled.
+// The C-suite (#108) on its own page: the heads open from day 1 with shortlists, the rest say when they open, Hire
+// hires at once and for good, the executive's pay and shares show, the board's pay holiday is explained, and the IPO
+// needs every role filled.
 
 let code: string | null = null;
 test.afterEach(async ({ request }) => {
@@ -30,7 +30,7 @@ test("hires a head of development from the shortlist, for good, and the IPO chec
   await student.getByRole("button", { name: "Start company" }).click();
   await expect(student.getByTestId("day")).toHaveText(/^1 of/);
 
-  await goTo(student, "People");
+  await goTo(student, "C-suite");
   const csuite = student.getByTestId("csuite");
   await expect(csuite.getByRole("heading", { name: "C-suite" })).toBeVisible();
   await expect(csuite).toContainText("10% left");
@@ -48,7 +48,6 @@ test("hires a head of development from the shortlist, for good, and the IPO chec
   await expect(candidate).toContainText("developer output");
   const name = (await candidate.locator("th").textContent())!.trim();
   await candidate.getByTestId("hire-executive").click();
-  await candidate.getByTestId("confirm-hire").click();
   await expect(dev.getByTestId("csuite-executive")).toContainText(`${name}, hired on day 1`);
   await expect(dev.locator("tbody tr")).toHaveCount(0);
   await expect(csuite.getByTestId("csuite-pay")).toContainText("a day");

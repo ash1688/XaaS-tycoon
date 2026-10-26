@@ -161,7 +161,7 @@ export const DEFAULT_MAX_ACTIVE_COMPANIES = 3;
 export const DEFAULT_DASHBOARD_HOURS = 3;
 /** The widest window the dashboard can ask for: a week. */
 export const MAX_DASHBOARD_HOURS = 7 * 24;
-export const DEFAULT_TIMED_FLOW_SECONDS = 15;
+export const DEFAULT_TIMED_FLOW_SECONDS = 10;
 
 /** Whether the server allows timed flow, and the seconds a tick at normal speed. */
 export interface TimedFlowOptions {

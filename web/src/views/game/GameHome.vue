@@ -16,8 +16,9 @@ import SpendPanel from "../../panels/SpendPanel.vue";
 import StaffPanel from "../../panels/StaffPanel.vue";
 import SupportPanel from "../../panels/SupportPanel.vue";
 
-// Home: the company at a glance. Each card opens a modal with the detail and its controls. Once the game has ended,
-// its banner and summary come first, and the cards stay as a read-only record.
+// Home: the company at a glance, the day log first, as what the last day did is the first thing to read. Each card
+// opens a modal with the detail and its controls. Once the game has ended, its banner and summary come first, and the
+// cards stay as a read-only record.
 const game = useGame();
 const page = (path: string) => `${game.base}/${path}`;
 
@@ -316,6 +317,27 @@ const alerts = computed(() => {
     <h2 v-if="game.over" class="overview-heading">Where it ended</h2>
     <h2 v-else class="visually-hidden">Overview</h2>
     <div class="overview-grid">
+      <OverviewCard title="Day log" full>
+        <div data-testid="home-day-log">
+          <DayLog v-if="game.lastDay" :log="game.lastDay" brief />
+          <p v-else class="muted">Press Continue to play day {{ game.company.day }}. What each day costs shows here.</p>
+        </div>
+        <template #detail>
+          <template v-if="game.lastDay">
+            <DayLog :log="game.lastDay" data-testid="day-log" />
+            <template v-if="earlierDays.length">
+              <h3 class="earlier-heading">Earlier days</h3>
+              <details v-for="log in earlierDays" :key="log.day" class="earlier-day">
+                <summary>Day {{ log.day }}</summary>
+                <DayLog :log="log" />
+              </details>
+            </template>
+            <p class="muted">The log covers the days played since you opened this game.</p>
+          </template>
+          <p v-else>No days played since you opened this game. Press Continue to play day {{ game.company.day }}.</p>
+        </template>
+      </OverviewCard>
+
       <OverviewCard
         v-if="showLaunch && launch"
         title="Launch"
@@ -779,28 +801,6 @@ const alerts = computed(() => {
         <template #detail>
           <MigrationPanel />
           <p class="modal-link"><RouterLink :to="page('infrastructure')">Open Infrastructure</RouterLink></p>
-        </template>
-      </OverviewCard>
-
-
-      <OverviewCard title="Day log" full>
-        <div data-testid="home-day-log">
-          <DayLog v-if="game.lastDay" :log="game.lastDay" brief />
-          <p v-else class="muted">Press Continue to play day {{ game.company.day }}. What each day costs shows here.</p>
-        </div>
-        <template #detail>
-          <template v-if="game.lastDay">
-            <DayLog :log="game.lastDay" data-testid="day-log" />
-            <template v-if="earlierDays.length">
-              <h3 class="earlier-heading">Earlier days</h3>
-              <details v-for="log in earlierDays" :key="log.day" class="earlier-day">
-                <summary>Day {{ log.day }}</summary>
-                <DayLog :log="log" />
-              </details>
-            </template>
-            <p class="muted">The log covers the days played since you opened this game.</p>
-          </template>
-          <p v-else>No days played since you opened this game. Press Continue to play day {{ game.company.day }}.</p>
         </template>
       </OverviewCard>
     </div>
