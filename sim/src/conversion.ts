@@ -95,7 +95,7 @@ export function createConversion(config: GameConfig, features: Features, pricing
       converted > 0
         ? [
             {
-              text: `Free to paid: ${count.format(converted)} of ${count.format(free)} free users started paying (${percent}% a day).`,
+              text: `${count.format(converted)} of ${count.format(free)} free users started paying (${percent}% a day).`,
               cashDelta: 0,
               kind: "conversion",
             },

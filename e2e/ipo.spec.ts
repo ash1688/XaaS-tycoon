@@ -89,12 +89,11 @@ test("float a company that's ready, ring the opening bell and watch the first da
   await student.reload();
   for (const id of ["seriesA", "seriesB", "seriesC", "seriesD"]) await expect(panel.getByTestId(`ipo-${id}`)).toHaveAttribute("data-met", "true");
   await expect(panel.getByTestId("ipo-status")).toHaveText("Not ready");
-  // Hired on People, the first on each shortlist, it's ready.
-  await goTo(student, "People");
+  // Hired on the C-suite page, the first on each shortlist, it's ready.
+  await goTo(student, "C-suite");
   for (const role of ["cfo", "ciso", "legalCounsel"]) {
     const first = student.getByTestId(`csuite-${role}`).locator("tbody tr").first();
     await first.getByTestId("hire-executive").click();
-    await first.getByTestId("confirm-hire").click();
     await expect(student.getByTestId(`csuite-${role}`).getByTestId("csuite-executive")).toBeVisible();
   }
   await goTo(student, "Finance");

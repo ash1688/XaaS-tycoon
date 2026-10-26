@@ -8,6 +8,7 @@ import GameHome from "./views/game/GameHome.vue";
 import ProductPage from "./views/game/ProductPage.vue";
 import InfrastructurePage from "./views/game/InfrastructurePage.vue";
 import PeoplePage from "./views/game/PeoplePage.vue";
+import CsuitePage from "./views/game/CsuitePage.vue";
 import ResearchPage from "./views/game/ResearchPage.vue";
 import MarketingPage from "./views/game/MarketingPage.vue";
 import CustomersPage from "./views/game/CustomersPage.vue";
@@ -37,6 +38,7 @@ const router = createRouter({
         { path: "product", name: "game-product", component: ProductPage },
         { path: "infrastructure", name: "game-infrastructure", component: InfrastructurePage },
         { path: "people", name: "game-people", component: PeoplePage },
+        { path: "csuite", name: "game-csuite", component: CsuitePage },
         { path: "research", name: "game-research", component: ResearchPage },
         { path: "marketing", name: "game-marketing", component: MarketingPage },
         { path: "customers", name: "game-customers", component: CustomersPage },

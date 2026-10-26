@@ -13,13 +13,14 @@ const game = provideGame(props.code, props.id);
 game.load();
 
 const route = useRoute();
-// The pages, in nav order. A page added later goes here and in the routes in main.ts. Research and Marketing appear
-// once the first angel investor approaches, as the company grows up.
+// The pages, in nav order. A page added later goes here and in the routes in main.ts. The C-suite has its own page, after
+// People. Research and Marketing appear once the first angel investor approaches, as the company grows up.
 const PAGES = computed(() => [
   { path: "", name: "Home" },
   { path: "/product", name: "Product" },
   { path: "/infrastructure", name: "Infrastructure" },
   { path: "/people", name: "People" },
+  { path: "/csuite", name: "C-suite" },
   ...(game.company?.research.unlocked ? [{ path: "/research", name: "Research" }] : []),
   ...(game.company?.campaigns.unlocked ? [{ path: "/marketing", name: "Marketing" }] : []),
   { path: "/customers", name: "Customers" },
@@ -105,7 +106,11 @@ async function closeMenu() {
         </span>
         <div v-if="game.timedFlow && !game.over && !game.ipoApproved && !game.payReviewOpen" class="timed-flow" data-testid="timed-flow">
           <!-- One button whose label changes, so keyboard focus stays on it. -->
-          <button class="ghost play-pause" @click="togglePlay">
+          <button
+            class="ghost play-pause"
+            :title="game.playing ? 'Stop the clock' : `Play a ${game.tickName} every ${game.speed?.seconds}s on its own`"
+            @click="togglePlay"
+          >
             {{ game.playing ? "Pause" : "Play" }}
           </button>
           <select
@@ -119,7 +124,7 @@ async function closeMenu() {
           </select>
           <p class="muted timed-status" data-testid="timed-status">
             <span v-if="game.playing" role="timer">Next {{ game.tickName }} in {{ game.secondsLeft }}s</span>
-            <template v-else>Paused. A {{ game.tickName }} plays every {{ game.speed?.seconds }}s.</template>
+            <template v-else>Paused. Play: a {{ game.tickName }} every {{ game.speed?.seconds }}s. Continue: one {{ game.tickName }} now.</template>
           </p>
         </div>
         <button

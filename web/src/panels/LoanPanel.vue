@@ -125,7 +125,7 @@ async function payOff() {
       It's too late to borrow: the bank won't lend this close to the end of the game.
     </p>
 
-    <AppModal :open="taking" title="Take a bank loan" @close="taking = false">
+    <AppModal small :open="taking" title="Take a bank loan" @close="taking = false">
       <template v-if="quote">
         <p v-if="game.error" class="error" role="alert">{{ game.error }}</p>
         <LoanTerms :quote="quote" />
@@ -142,7 +142,7 @@ async function payOff() {
       </template>
     </AppModal>
 
-    <AppModal :open="paying" title="Pay off the bank loan" @close="paying = false">
+    <AppModal small :open="paying" title="Pay off the bank loan" @close="paying = false">
       <template v-if="open">
         <p v-if="game.error" class="error" role="alert">{{ game.error }}</p>
         <table class="quote" data-testid="loan-repay-quote">

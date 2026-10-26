@@ -13,6 +13,9 @@ import type { GameState, LogEntry, Rack, Server, UnitDemand } from "./state.ts";
 
 /** Demand rounded to the hundredth of a unit, so state stays tidy. */
 const tidy = (n: number) => Math.round(n * 100) / 100;
+/** An outage's log line. The day log badges it "Outage", so the text starts with its cause. */
+const outageText = (cause: string, hoursDown: number) =>
+  `${cause[0]!.toUpperCase()}${cause.slice(1)}. Down ${hoursDown} hours; growth slowed.`;
 
 /**
  * Capacity on a model with no servers and no capacity limit (SaaS): the provider scales, and you pay per user, free
@@ -286,7 +289,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
       let outage: LogEntry | undefined;
       if (hoursDown > 0) {
         const cause = served.overloaded ? served.cause : eventCause();
-        outage = { text: `Outage: ${cause}. Down ${hoursDown} hours; growth slowed.`, cashDelta: 0, kind: "outage" };
+        outage = { text: outageText(cause, hoursDown), cashDelta: 0, kind: "outage" };
       }
       return { load, demand, rng, overloaded: served.overloaded, hoursDown, charges: served.charges, outage };
     }
@@ -300,7 +303,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     if (hoursDown > 0) {
       const percent = Math.round((100 * load) / cap);
       const cause = overloaded ? `load hit ${percent}% of capacity` : eventCause();
-      outage = { text: `Outage: ${cause}. Down ${hoursDown} hours; growth slowed.`, cashDelta: 0, kind: "outage" };
+      outage = { text: outageText(cause, hoursDown), cashDelta: 0, kind: "outage" };
     }
     return { load, demand, rng, overloaded, hoursDown, charges, outage };
   }
