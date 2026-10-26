@@ -210,7 +210,7 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
       <p v-if="game.error" class="error" role="alert">{{ game.error }}</p>
       <template v-if="review">
         <p>
-          <strong>{{ quarterName(review).replace(/^q/, "Q") }} starts on day {{ review.startDay }}, and your staff want to talk about pay.</strong>
+          <strong>Your staff want to talk about pay ({{ quarterName(review).replace(/^q/, "Q") }}), with the rise from day {{ review.startDay }}.</strong>
           The day can't go on until you've agreed a rise. It's paid from day {{ review.startDay }} to every team, new hires
           and agency staff included.
         </p>

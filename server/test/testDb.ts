@@ -1,5 +1,8 @@
 import postgres from "postgres";
-import { createDb, runMigrations } from "../src/db/client.ts";
+import { eq } from "drizzle-orm";
+import { PHASE_IDS, type GameState, type PhaseId } from "@xaas/sim";
+import { createDb, runMigrations, type Db } from "../src/db/client.ts";
+import { companies } from "../src/db/schema.ts";
 
 /**
  * Creates (if needed), migrates and empties a real Postgres database for tests. The default is 127.0.0.1 rather than
@@ -28,4 +31,20 @@ export async function setupTestDb(url = process.env.TEST_DATABASE_URL ?? "postgr
     await db.execute("delete from config_presets");
   };
   return { db, close, reset };
+}
+
+/**
+ * Moves a stored game on to `phase` (#236), as if its milestone and any before it had come on `day` (the game's day by
+ * default), so its jobs are open: for tests about those jobs rather than how the game reaches them. Like the sim tests'
+ * inPhase, it changes nothing else, and a game already further on stays where it is.
+ */
+export async function reachPhase(db: Db, id: string, phase: PhaseId, day?: number) {
+  const [row] = await db.select({ state: companies.state }).from(companies).where(eq(companies.id, id));
+  const state = row!.state as GameState;
+  const from = PHASE_IDS.indexOf(state.phase);
+  const to = PHASE_IDS.indexOf(phase);
+  if (from >= to) return;
+  const phaseDays = { ...state.phaseDays };
+  for (const p of PHASE_IDS.slice(from + 1, to + 1)) phaseDays[p] = day ?? state.day;
+  await db.update(companies).set({ state: { ...state, phase, phaseDays } }).where(eq(companies.id, id));
 }

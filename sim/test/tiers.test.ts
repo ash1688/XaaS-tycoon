@@ -14,6 +14,7 @@ import {
   type Sim,
   type TierNumber,
 } from "../src/index.ts";
+import { inPhase } from "./phases.ts";
 
 // Tiers, model benefits and the hardware slider (#123), through the sim's public interface. Tier 1 is open from the
 // start; tiers 2–4 open on their conditions, in order, and stay open. Each holds product features and model benefits:
@@ -36,6 +37,9 @@ const benefit = (id: string) => tierConfig.benefits.find((b) => b.id === id)!;
 const begin = (model: ModelId = "iaas", productType: ProductTypeId = "ecommerce", s: Sim = sim) =>
   s.newGame({ companyName: "Tiered Co", productType, model, seed: 7, takeLoan: model === "onprem" });
 
+/** A new game in Grow, as features, tiers and research open there. */
+const growing = (...args: Parameters<typeof begin>) => inPhase(begin(...args), "grow");
+
 const act = (state: GameState, ...actions: Action[]) => actions.reduce((st, a) => sim.applyAction(st, a), state);
 
 const refusal = (fn: () => unknown) => {
@@ -50,9 +54,12 @@ const refusal = (fn: () => unknown) => {
 
 const texts = (log: DayLog[]) => log.flatMap((d) => d.entries.map((e) => e.text));
 
-/** The same company with tiers up to `tier` available, as if their conditions had been met on day 1, none unlocked. */
+/**
+ * The same company with tiers up to `tier` available, as if their conditions had been met on day 1, none unlocked, in
+ * Grow so it can unlock and build them.
+ */
 const available = (state: GameState, tier: TierNumber): GameState => ({
-  ...state,
+  ...inPhase(state, "grow"),
   tiers: ([2, 3, 4] as const).filter((t) => t <= tier).map((t) => ({ tier: t, day: 1 })),
 });
 
@@ -122,7 +129,7 @@ describe("tiers", () => {
   });
 
   it("refuse a feature or add-on from a locked tier, and allow tier 1's", () => {
-    const state = begin();
+    const state = growing();
     expect(sim.features(state).map((f) => [f.id, f.tier, f.unlocked])).toEqual([
       ["checkout", 3, false],
       ["reviews", 2, false],
@@ -132,7 +139,7 @@ describe("tiers", () => {
     expect(refusal(() => act(state, { type: "buildFeature", feature: "reviews" }))).toBe("locked");
     expect(() => act(state, { type: "buildFeature", feature: "reviews" })).toThrow(/tier 2.*7,000 users/);
     expect(act(state, { type: "buildFeature", feature: "wishlists" }).features.wishlists?.status).toBe("building");
-    const saas = begin("saas");
+    const saas = growing("saas");
     expect(refusal(() => act(saas, { type: "buyAddon", feature: "checkout" }))).toBe("locked");
     expect(act(saas, { type: "buyAddon", feature: "wishlists" }).features.wishlists?.status).toBe("addon");
   });
@@ -222,7 +229,7 @@ describe("model benefits", () => {
   });
 
   it("are refused before their tier, off their model, already on, or without the cash", () => {
-    const state = begin();
+    const state = growing();
     expect(refusal(() => act(state, { type: "buyBenefit", benefit: "reservedInstances" }))).toBe("locked");
     expect(refusal(() => act(opened(state, 4), { type: "buyBenefit", benefit: "cdn" }))).toBe("wrong_model");
     expect(refusal(() => act(state, { type: "buyBenefit", benefit: "teleport" }))).toBe("unknown_benefit");
@@ -365,7 +372,7 @@ describe("research point unlocks", () => {
   const item = (state: GameState, id: string) => sim.tiers(state).flatMap((t) => t.items).find((i) => i.id === id)!;
 
   it("price each item above tier 1 in RP, from config, and need none in tier 1", () => {
-    const state = begin();
+    const state = growing();
     expect(item(state, "wishlists")).toMatchObject({ tier: 1, rpPrice: 0, unlocked: true, unlockable: false });
     expect(item(state, "reviews")).toMatchObject({ tier: 2, rpPrice: 15, unlocked: false, unlockable: false });
     expect(item(state, "checkout")).toMatchObject({ tier: 3, rpPrice: 50 });
@@ -385,7 +392,7 @@ describe("research point unlocks", () => {
   });
 
   it("refuse an item whose tier isn't available, when RP are short, or one that isn't in a tier", () => {
-    const rich = withRp(begin(), 1_000);
+    const rich = withRp(growing(), 1_000);
     expect(refusal(() => act(rich, unlock("reviews")))).toBe("tier_unavailable");
     expect(refusal(() => act(available(rich, 2), unlock("checkout")))).toBe("tier_unavailable");
     const short = withRp(available(begin(), 2), 14);
@@ -420,7 +427,8 @@ describe("research point unlocks", () => {
       act(state, { type: "buildFeature", feature: "reviews" });
       expect.unreachable();
     } catch (e) {
-      expect((e as SimError).message).toBe("Product reviews needs unlocking first: 15 RP once researchers join, when your first angel investor approaches.");
+      // Features open in Grow, with researchers, so the RP are earned on the Research page.
+      expect((e as SimError).message).toBe("Product reviews needs unlocking first: 15 RP on the Research page.");
     }
     const unlocked = act(state, unlock("reviews"), unlock("reservedInstances"));
     // Building takes developer-days and buying takes cash, as before.

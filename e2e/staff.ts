@@ -52,10 +52,6 @@ function arrivedBy(launchUsers: number, k: number) {
 }
 
 /**
- * Pins a new company's launch total in the test database. Each game draws its own from a range, so a spec whose sums
- * depend on the users pins round two's number for its product instead.
- */
-/**
  * Opens every tier for a company, as if each condition had been met on day 1, and unlocks every item in them, as if
  * with research points, so a test about building or buying features can use any of the product's, not just tier 1's.
  * With `unlock: false` the tiers are only available, their items still to unlock.
@@ -72,6 +68,32 @@ export async function openTiers(id: string, { unlock = true } = {}) {
   }
 }
 
+/**
+ * Moves a company on to a phase (#236), as if its milestones, and any before it, had come today, so the jobs it opens
+ * show and can be used: for a spec about those jobs rather than how the game reaches them. Nothing else changes: no
+ * angel or Series A approaches. A company already that far on stays where it is. Reload the page after.
+ */
+export async function reachPhase(id: string, phase: "launch" | "grow" | "scale") {
+  const phases = ["build", "launch", "grow", "scale"];
+  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
+  try {
+    const [row] = await sql`select state from companies where id = ${id}`;
+    const state = row!.state as { day: number; phase: string; phaseDays: Record<string, number | null> };
+    const from = phases.indexOf(state.phase);
+    const to = phases.indexOf(phase);
+    if (from >= to) return;
+    const phaseDays = { ...state.phaseDays };
+    for (const p of phases.slice(from + 1, to + 1)) phaseDays[p] = state.day;
+    await sql`update companies set state = ${sql.json({ ...state, phase, phaseDays })} where id = ${id}`;
+  } finally {
+    await sql.end();
+  }
+}
+
+/**
+ * Pins a new company's launch total in the test database. Each game draws its own from a range, so a spec whose sums
+ * depend on the users pins round two's number for its product instead.
+ */
 export async function pinLaunchUsers(id: string, users: number) {
   const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
   try {

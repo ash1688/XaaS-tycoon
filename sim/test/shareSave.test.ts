@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { runScript } from "../scripts/textPlay.ts";
 import { configFields, createSim, defaultConfig, SimError, type GameConfig, type GameState, type SchemeLevels, type Sim } from "../src/index.ts";
+import { inPhase } from "./phases.ts";
 
 // Share save, through the sim's public interface: the staff scheme paid for in ownership. Each level added issues new
 // shares worth 1% of the company to the staff share scheme, diluting the student; levels only go up; the shares are
@@ -18,7 +19,9 @@ const plainConfig: GameConfig = {
   },
 };
 const plain = createSim(plainConfig);
-const begin = (s: Sim = plain, seed = 42) => s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed });
+/** A new game in Grow from day 16 (#236): reviews' rises start on days 46, 91 and 136. */
+const begin = (s: Sim = plain, seed = 42) =>
+  inPhase(s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed }), "grow", 16);
 const perLevel = plainConfig.payReview.shareSavePerLevel;
 const round = (n: number) => Math.round(n * 1000) / 1000;
 

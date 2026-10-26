@@ -9,6 +9,8 @@ import { formatShare } from "../shares";
 // tribunal fee and share save's new shares, and the pay multiplier after; with every rise so far compounded, and when the
 // next review comes. Read-only.
 const game = useGame();
+// Pay reviews start about a month into Grow (#236): before it, there's no first review to give a day for.
+const beforeGrow = computed(() => game.company?.phase.phases.find((p) => p.id === "grow")?.day === null);
 const history = computed(() => game.company?.payHistory ?? null);
 
 /** A rise as a percent to a tenth: 3.4%. */
@@ -42,7 +44,9 @@ const raises = (r: PayHistoryEntry) =>
     </p>
     <p v-if="!history.reviews.length" class="muted" data-testid="pay-history-empty">
       No pay reviews yet.<template v-if="history.nextReview">
-        The first comes at the start of {{ quarterName(history.nextReview) }}, on day {{ history.nextReview.startDay }}.</template
+        The first comes in {{ quarterName(history.nextReview) }}, with its rise from day {{ history.nextReview.startDay }}.</template
+      ><template v-else-if="beforeGrow && !game.over">
+        The first comes about a month into the Grow phase, when your first angel investor has approached.</template
       >
     </p>
     <ol v-else class="pay-history">
@@ -75,7 +79,7 @@ const raises = (r: PayHistoryEntry) =>
       Tribunal fees paid: {{ formatCash(history.tribunalFees) }}.
     </p>
     <p v-if="history.reviews.length && history.nextReview" class="muted" data-testid="pay-history-next">
-      The next review comes at the start of {{ quarterName(history.nextReview) }}, on day {{ history.nextReview.startDay }}.
+      The next review comes in {{ quarterName(history.nextReview) }}, with its rise from day {{ history.nextReview.startDay }}.
     </p>
   </section>
 </template>

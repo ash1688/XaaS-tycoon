@@ -32,9 +32,6 @@ import {
   type TribunalPick,
 } from "./state.ts";
 
-/** Quarters with a pay review in a game's first year: every one after the first. A long game's later years have all four. */
-export const REVIEW_QUARTERS = [2, 3, 4] as const;
-
 /** A pay review's place in the game: the quarter it opens, the game year that's in, and the quarter's first day. */
 export interface ReviewSlot {
   quarter: number;
@@ -176,8 +173,7 @@ export interface TribunalOdds {
 export const TRIBUNAL_PICKS = ["student", "middle", "staff"] as const satisfies readonly TribunalPick[];
 
 /**
- * Pay reviews: at the start of quarters 2, 3 and 4 (and in a long game's later years, every quarter) staff come to
- * the student about pay, and the clock is held until it's settled. The student offers first; staff accept an offer that reaches their hidden walk-away figure, or counter
+ * Pay reviews: about a month into the Grow phase, then once a quarter, staff come to the student about pay, and the clock is held until it's settled. The student offers first; staff accept an offer that reaches their hidden walk-away figure, or counter
  * with the investor negotiation's roll the other way round: staff's figure is the offer, and the student's the counter
  * it moves towards. The third offer is final: short of a deal it goes to the tribunal. The agreed rise multiplies every
  * pool's pay. See PayReviewConfig.
@@ -200,47 +196,52 @@ export function createPayReview(
     payReviewRng: seedRng(seed ^ 0x9a7e),
   });
 
-  /**
-   * The k-th quarter boundary of a long game (k from 1): the first day of the quarter after it, in years of
-   * openEndedYearDays. k = 1 to 3 are quarters 2 to 4 of year 1; k = 4 is quarter 1 of year 2, and so on.
-   */
-  const longSlot = (k: number): ReviewSlot => ({
-    quarter: (k % 4) + 1,
-    year: Math.floor(k / 4) + 1,
-    startDay: Math.floor((k * c.openEndedYearDays) / 4) + 1,
-  });
+  /** A year of the game: the whole of a game of a year or less, or openEndedYearDays in a long game. */
+  const yearDays = (state: GameState) => (longGame(state) ? c.openEndedYearDays : (state.finalDay ?? c.openEndedYearDays));
+
+  /** The slot for a review whose rise starts on `startDay`: the quarter of the game's year that day is in. */
+  function slotOn(state: GameState, startDay: number): ReviewSlot {
+    const q = Math.floor(((startDay - 1) * 4) / yearDays(state));
+    return { quarter: (q % 4) + 1, year: Math.floor(q / 4) + 1, startDay };
+  }
 
   /**
-   * Every pay review in the game, in order. A game of a year or less counts as one year of four quarters (its days ÷
-   * 4), with reviews at the start of quarters 2, 3 and 4: days 46, 91 and 136 in a 180-day game. A long game (until IPO
-   * or a career) has the same in its first year, then one at the start of every quarter (#95). With no last day
-   * (until IPO), they're listed up to the end of next year.
+   * The first day of the k-th review (k from 0): growDays into Grow, then a quarter (a year ÷ 4) apart. Null before
+   * Grow, which has none.
+   */
+  function reviewStart(state: GameState, k: number): number | null {
+    const grow = state.phaseDays.grow;
+    if (grow === null) return null;
+    return grow + c.growDays + Math.floor((k * yearDays(state)) / 4);
+  }
+
+  /**
+   * Every pay review in the game, in order: none before the Grow phase, the first growDays into it, then one a quarter
+   * of the game's year (its days ÷ 4, or a long game's openEndedYearDays ÷ 4) after the last, up to the final day. With
+   * no last day (until IPO), they're listed up to the end of next year.
    */
   function reviewSlots(state: GameState): ReviewSlot[] {
-    if (!longGame(state)) {
-      const days = state.finalDay ?? c.openEndedYearDays;
-      return REVIEW_QUARTERS.map((q) => ({ quarter: q, year: 1, startDay: Math.floor(((q - 1) * days) / 4) + 1 }));
-    }
-    const year = c.openEndedYearDays;
+    const year = yearDays(state);
     const last = state.finalDay ?? (Math.floor(state.day / year) + 2) * year;
     const slots: ReviewSlot[] = [];
-    for (let k = 1; ; k++) {
-      const slot = longSlot(k);
-      if (slot.startDay > last) return slots;
-      slots.push(slot);
+    for (let k = 0; ; k++) {
+      const start = reviewStart(state, k);
+      if (start === null || start > last) return slots;
+      slots.push(slotOn(state, start));
     }
   }
 
-  /** The first day of each quarter with a review, in order. */
+  /** The first day of each review, in order. */
   const quarterStarts = (state: GameState) => reviewSlots(state).map((r) => r.startDay);
 
-  /** The review whose quarter starts on `day`, if there is one. */
+  /** The review whose rise starts on `day`, if there is one. */
   function slotStarting(state: GameState, day: number): ReviewSlot | null {
-    if (!longGame(state)) return reviewSlots(state).find((r) => r.startDay === day) ?? null;
+    const first = reviewStart(state, 0);
+    if (first === null || day < first || (state.finalDay !== null && day > state.finalDay)) return null;
     // Worked out rather than listed, so a career's 47 years of reviews aren't listed every day.
-    const near = Math.floor(((day - 1) * 4) / c.openEndedYearDays);
+    const near = Math.floor(((day - first) * 4) / yearDays(state));
     for (const k of [near - 1, near, near + 1]) {
-      if (k >= 1 && longSlot(k).startDay === day) return longSlot(k);
+      if (k >= 0 && reviewStart(state, k) === day) return slotOn(state, day);
     }
     return null;
   }
@@ -302,7 +303,7 @@ export function createPayReview(
       negotiation: negotiator.open({ rise: maxAsk }),
     };
     const text =
-      `Pay review: ${quarterName(review)} starts on day ${review.startDay}, and your staff want to talk about pay. ` +
+      `Pay review for ${quarterName(review)}: your staff want to talk about pay, with the rise from day ${review.startDay}. ` +
       `Inflation is ${risePercent(inflation)}, and they're asking for ${risePercent(maxAsk)}. ` +
       `Make them an offer from ${risePercent(minOffer)}: the day can't go on until it's settled.` +
       (lead.headOfPeople ? "" : " You're dealing with staff directly: with no head of people, they're stricter and want cash.");

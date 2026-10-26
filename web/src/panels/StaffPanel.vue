@@ -4,7 +4,7 @@ import type { StaffGrade, StaffPool, StaffPoolView } from "@xaas/sim";
 import { formatCash, formatCount } from "../api";
 import GradeCounter from "../components/GradeCounter.vue";
 import StaffBulk from "../components/StaffBulk.vue";
-import { useGame } from "../game";
+import { namesList, useGame } from "../game";
 
 // Developers, ops, support, (on a product with user content) moderators and (once the first angel approaches)
 // researchers and marketers, each in junior, mid and senior grades, as permanent or agency staff (researchers and
@@ -15,8 +15,18 @@ import { useGame } from "../game";
 const game = useGame();
 const grades = reactive<Record<StaffPool, StaffGrade>>({ developers: "mid", ops: "mid", support: "mid", moderators: "mid", researchers: "mid", marketers: "mid" });
 const agency = reactive<Record<StaffPool, boolean>>({ developers: false, ops: false, support: false, moderators: false, researchers: false, marketers: false });
-// The pools this company can staff: no moderators without user content, no researchers or marketers until they open.
-const pools = computed(() => (game.meta?.staff ?? []).filter((s) => game.company?.staff.some((p) => p.pool === s.id)));
+// The pools this company can staff: no moderators without user content, and none until its phase opens (#236).
+const pools = computed(() => (game.meta?.staff ?? []).filter((s) => game.company?.staff.some((p) => p.pool === s.id && p.open)));
+// Pools not open yet that someone is in, hidden but for a note: the ops and support a company starts with, in Build.
+const startingTeam = computed(() =>
+  (game.company?.staff ?? [])
+    .filter((p) => !p.open && p.headcount + p.agencyCount > 0)
+    .map((p) => {
+      const people = p.headcount + p.agencyCount;
+      const person = game.meta?.staff.find((s) => s.id === p.pool)?.personName ?? p.pool;
+      return `${people} ${people === 1 ? person : p.name.toLowerCase()}`;
+    }),
+);
 // Agency staff in every pool, on the team and still to start, and their pay: one button lets them all go, free. Shown
 // once two teams have some, as each team has its own.
 const hasAgency = (p: StaffPoolView) => p.agencyCount > 0 || p.hiring.some((h) => h.agency);
@@ -104,7 +114,11 @@ const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.fr
         <StaffBulk v-model:grade="grades[pool.id]" v-model:agency="agency[pool.id]" :pool="pool.id" source="staff" />
       </li>
     </ul>
-    <div class="move-staff" data-testid="move-staff">
+    <p v-if="startingTeam.length" class="muted" data-testid="starting-team">
+      Also on the team from the start: {{ namesList(startingTeam) }}. Hiring more opens in the Launch phase, when you
+      press Launch.
+    </p>
+    <div v-if="sortedMoves.length" class="move-staff" data-testid="move-staff">
       <span class="muted">Retrain someone into another team, keeping their grade (a mid if there is one; no cost, any time):</span>
       <div class="move-buttons">
         <button
@@ -119,7 +133,7 @@ const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.fr
         </button>
       </div>
     </div>
-    <p :class="['ops-needed', { warn: game.understaffed }]" data-testid="ops-needed">
+    <p v-if="game.isOpen('ops')" :class="['ops-needed', { warn: game.understaffed }]" data-testid="ops-needed">
       <span>{{ game.modelName(game.company.model) }} needs <strong>{{ game.company.opsNeeded }}</strong> ops staff.</span>
       <span v-if="game.company.opsNeededOnceReady > game.company.opsNeeded" data-testid="ops-needed-soon">
         Once the kit on order arrives, you'll need <strong>{{ game.company.opsNeededOnceReady }}</strong>.

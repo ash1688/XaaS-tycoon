@@ -21,7 +21,7 @@ const game = useGame();
             Build features, a developer-day of work each a day for a mid. On SaaS they configure add-ons instead.
           </span>
         </li>
-        <li>
+        <li v-if="game.isOpen('ops')">
           <strong>Ops staff</strong>
           <span class="muted">
             Keep the infrastructure running. Too few and capacity is cut. On IaaS and on-prem, every server you run needs a
@@ -29,7 +29,7 @@ const game = useGame();
             service running.
           </span>
         </li>
-        <li>
+        <li v-if="game.isOpen('support')">
           <strong>Support staff</strong>
           <span class="muted">
             Answer your customers' tickets, on every model, SaaS included. Too few and a backlog builds, satisfaction
@@ -50,7 +50,7 @@ const game = useGame();
           </span>
         </li>
       </ul>
-      <table class="compare ops-by-model">
+      <table v-if="game.isOpen('ops')" class="compare ops-by-model">
         <caption class="muted">Ops staff each model needs</caption>
         <tbody>
           <tr v-for="m in game.meta.models" :key="m.id" :class="{ on: m.id === game.company.model }">

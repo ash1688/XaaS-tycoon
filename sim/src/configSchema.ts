@@ -662,8 +662,9 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   }
   add("support.ticketsPerPerson", "People", "", "Tickets per support person", "Tickets one support person clears a day.", range(1, 1_000, 1));
   add("addons.minConfigDevelopers", "People", "", "Developers to configure add-ons", "On SaaS, add-ons can't be bought with fewer developers than this.", HEADCOUNT);
-  add("payReview.on", "People", "Pay reviews", "Pay reviews", "Staff come about pay at the start of quarters 2, 3 and 4 (a quarter of the game each), and the clock waits until it's settled. Off, pay stays at the day rates all game.", TOGGLE);
-  add("payReview.openEndedYearDays", "People", "Pay reviews", "Year in long games", "Until IPO and a career have years this many days long: reviews at the start of quarters 2, 3 and 4 in the first, then every quarter.", range(4, 3650, 1));
+  add("payReview.on", "People", "Pay reviews", "Pay reviews", "Staff come about pay once the Grow phase is under way, then once a quarter (a quarter of the game each), and the clock waits until it's settled. Off, pay stays at the day rates all game.", TOGGLE);
+  add("payReview.growDays", "People", "Pay reviews", "Days into Grow", "Days into the Grow phase (the first angel investor's approach) the first pay review's rise starts. There's none before.", range(0, 365, 1));
+  add("payReview.openEndedYearDays", "People", "Pay reviews", "Year in long games", "Until IPO and a career have years this many days long: a review every quarter of one, once they've started.", range(4, 3650, 1));
   add("payReview.inflation.min", "People", "Pay reviews", "Least inflation", "Each review rolls its own inflation from the least to the most (0.02 = 2%).", range(0, 0.2, 0.001));
   add("payReview.inflation.max", "People", "Pay reviews", "Most inflation", "The most inflation a review can roll.", range(0, 0.2, 0.001));
   add("payReview.minOfferBelow", "People", "Pay reviews", "Least offer below inflation", "The student can't offer less than inflation less this (0.01 = one point), and never below 0%.", range(0, 0.2, 0.001));

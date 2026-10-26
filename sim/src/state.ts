@@ -37,7 +37,14 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 53;
+export const GAME_STATE_VERSION = 54;
+
+/**
+ * The four phases a game's jobs open in, in order, each opened by a milestone: Build from day 1, Launch when Launch is
+ * pressed, Grow at the first angel approach and Scale at the Series A approach. See phases.ts.
+ */
+export const PHASE_IDS = ["build", "launch", "grow", "scale"] as const;
+export type PhaseId = (typeof PHASE_IDS)[number];
 
 /**
  * A candidate on a C-suite role's shortlist. Strength, 0 to 1, sets each of the role's effects within its range; the
@@ -846,6 +853,13 @@ export interface GameState {
    * then, when it has no users (see LaunchConfig).
    */
   launchDay: number | null;
+  /**
+   * The phase the game is in: it only moves on, at each phase's milestone, and jobs open a phase at a time (see
+   * phases.ts). Build to begin with.
+   */
+  phase: PhaseId;
+  /** The day each phase opened, null until it has: Build's is 1. A milestone that skips a phase opens both at once. */
+  phaseDays: Record<PhaseId, number | null>;
   /** The MVP: no users arrive until it's done. */
   mvp: MvpProgress;
   /**
@@ -1292,7 +1306,8 @@ export interface LogEntry {
     | "ipo"
     | "rival"
     | "campaign"
-    | "drift";
+    | "drift"
+    | "phase";
 }
 
 export interface DayLog {

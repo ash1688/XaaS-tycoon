@@ -1,7 +1,6 @@
 import { TIER_NUMBERS, type GameConfig, type ModelId, type ProductTypeId, type TierNumber } from "./config.ts";
 import { hasExecutive } from "./executives.ts";
 import { count, pounds } from "./finance.ts";
-import { researchUnlocked } from "./research.ts";
 import { SimError, type GameState, type LogEntry, type TierReached } from "./state.ts";
 
 /** What an item in a tier is: a product feature (kept through a migration) or a model benefit (lost on one). */
@@ -102,16 +101,14 @@ export function isUnlocked(config: GameConfig, state: UnlockState, id: string): 
  * The refusal for an item that isn't unlocked: what the student has to do first. Either its tier isn't available
  * yet, or it is and the item needs unlocking with research points.
  */
-export function lockedMessage(config: GameConfig, state: UnlockState & Pick<GameState, "investors">, id: string): string {
+export function lockedMessage(config: GameConfig, state: UnlockState & Pick<GameState, "phase">, id: string): string {
   const item = findItem(config, state, id);
   if (!item) return "That isn't in any tier.";
   if (!tierAvailable(state, item.tier)) {
     return `${item.name} is in tier ${item.tier}, which isn't available yet. ${conditionText(config, state, item.tier)}`;
   }
-  const where = researchUnlocked(state)
-    ? "on the Research page"
-    : "once researchers join, when your first angel investor approaches";
-  return `${item.name} needs unlocking first: ${count.format(item.rpPrice)} RP ${where}.`;
+  // Features and benefits open in Grow, with researchers (#236), so research is always open by now.
+  return `${item.name} needs unlocking first: ${count.format(item.rpPrice)} RP on the Research page.`;
 }
 
 /**

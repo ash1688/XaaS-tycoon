@@ -21,6 +21,7 @@ import type {
   GameSummary,
   IpoView,
   LaunchView,
+  PhaseView,
   MvpView,
   OptimisationView,
   ResearchView,
@@ -263,6 +264,11 @@ export interface CompanyView {
    * whether they are, and before go-live what launching would be short of.
    */
   launch: LaunchView;
+  /**
+   * The phase (#236): Build, Launch, Grow or Scale, the day it opened and the next one's milestone, every phase with what
+   * it opens, and which jobs are open. The game hides a job that isn't open, and its actions are refused.
+   */
+  phase: PhaseView;
   /** The MVP every game opens with: developer-days done of its total, and the day it'll be done at today's developers. */
   mvp: MvpView;
   /**

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { inPhase } from "./phases.ts";
 import { settlingPay } from "./settlingPay.ts";
 import {
   createSim,
@@ -553,7 +554,7 @@ describe("launch", () => {
   it("puts more of the arrivals on the free tier at a price set above the fair one before they come", () => {
     const setUpWithPrice = (price?: number) => {
       const st = setUp(defaults, fresh(defaults, "iaas", "ecommerce"));
-      return price ? defaults.applyAction(st, { type: "setPrice", price }) : st;
+      return price ? defaults.applyAction(inPhase(st, "launch"), { type: "setPrice", price }) : st;
     };
     // A shop's paid share is 70% at its £6 fair price; at twice that, half as many pay. A free user or two may start
     // paying on the way, as on any day.
@@ -828,7 +829,8 @@ describe("staff grades and lead times", () => {
       senior: { ...config.staffGrades.senior, leadDays: 14 },
     },
   });
-  const begin = () => graded.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 });
+  // In Grow, so features can be built.
+  const begin = () => inPhase(graded.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 }), "grow");
   const hire = (pool: StaffPool, grade: "junior" | "mid" | "senior", count = 1): Action => ({ type: "hire", pool, grade, count });
   const apply = (state: GameState, ...actions: Action[]) => actions.reduce((s, a) => graded.applyAction(s, a), state);
   const pool = (state: GameState, p: StaffPool) => graded.staff(state).find((v) => v.pool === p)!;
@@ -960,7 +962,8 @@ describe("staff grades and lead times", () => {
 describe("agency staff and severance", () => {
   // Agency staff at 2× the pay and ½ the work of permanent staff, from the next day; severance of 10 days' pay.
   const s = createSim({ ...config, severance: { days: 10 } });
-  const begin = () => s.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 });
+  // In Grow, so features can be built and moderators hired.
+  const begin = () => inPhase(s.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 }), "grow");
   const pool = (state: GameState, p: StaffPool) => s.staff(state).find((v) => v.pool === p)!;
   const none = { junior: 0, mid: 0, senior: 0 };
   const agencyHire = (pool: StaffPool, count = 1): Action => ({ type: "hire", pool, grade: "mid", count, agency: true });
@@ -1090,7 +1093,7 @@ describe("agency staff and severance", () => {
       severance: { days: 10 },
       productTypes: { ...config.productTypes, social: { ...config.productTypes.social, moderation: { reportsPerUser: 0.01 } } },
     });
-    const social = content.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 42 });
+    const social = inPhase(content.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 42 }), "grow");
     const hired = content.advance(content.applyAction(social, { type: "hire", pool: "moderators", agency: true, count: 2 })).state;
     expect(hired.agency.moderators).toEqual({ ...none, mid: 2 });
     expect(content.staff(hired).find((p) => p.pool === "moderators")).toMatchObject({ agencyCount: 2, output: 1 });
@@ -1100,7 +1103,7 @@ describe("agency staff and severance", () => {
     expect(content.staff(permanent).find((p) => p.pool === "moderators")!.grades.find((g) => g.grade === "mid")!.severance).toBe(20);
     expect(content.applyAction(permanent, { type: "letGo", pool: "moderators" }).cash).toBe(980);
 
-    const shop = content.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 });
+    const shop = inPhase(content.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 }), "grow");
     expect(() => content.applyAction(shop, { type: "hire", pool: "moderators", agency: true })).toThrow(
       expect.objectContaining({ code: "no_content" }),
     );
@@ -1114,7 +1117,9 @@ describe("agency staff and severance", () => {
 
 describe("features", () => {
   const build = (feature: string): Action => ({ type: "buildFeature", feature });
-  const startOn = (model = "iaas", developers = 1) => withStaff(sim.newGame({ companyName: "Acme", productType: "social", model, seed: 42 }), { developers });
+  // In Grow, where features open.
+  const startOn = (model = "iaas", developers = 1) =>
+    withStaff(inPhase(sim.newGame({ companyName: "Acme", productType: "social", model, seed: 42 }), "grow"), { developers });
   const feature = (state: Parameters<typeof sim.features>[0], id: string) => sim.features(state).find((f) => f.id === id)!;
 
   it("lists the product's features from config, none started", () => {
@@ -1236,7 +1241,7 @@ describe("features", () => {
       },
     });
     const play = (s: ReturnType<typeof createSim>) => {
-      const base = withStaff(s.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 42 }), { developers: 6 });
+      const base = withStaff(inPhase(s.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 42 }), "grow"), { developers: 6 });
       return s.advance(s.applyAction(base, build("checkout")), 30).state.users;
     };
     expect(play(sim)).toBeGreaterThan(play(weaker));
@@ -1263,7 +1268,9 @@ describe("features", () => {
 
 describe("SaaS add-ons", () => {
   const buy = (feature: string): Action => ({ type: "buyAddon", feature });
-  const startOn = (model = "saas", developers = 1) => withStaff(sim.newGame({ companyName: "Acme", productType: "social", model, seed: 42 }), { developers });
+  // In Grow, where add-ons open.
+  const startOn = (model = "saas", developers = 1) =>
+    withStaff(inPhase(sim.newGame({ companyName: "Acme", productType: "social", model, seed: 42 }), "grow"), { developers });
   const feature = (state: Parameters<typeof sim.features>[0], id: string) => sim.features(state).find((f) => f.id === id)!;
   const addonCharges = (log: { entries: LogEntry[] }[]) =>
     log.map((d) => d.entries.filter((e) => e.category === "addons").reduce((sum, e) => sum - e.cashDelta, 0));
@@ -1305,7 +1312,8 @@ describe("SaaS add-ons", () => {
 
   it("needs the configuration team from config to buy one", () => {
     const strict = createSim({ ...config, addons: { minConfigDevelopers: 2, setupFeePerDevDay: 0 } });
-    const state = (developers: number) => withStaff(strict.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 42 }), { developers });
+    const state = (developers: number) =>
+      withStaff(inPhase(strict.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 42 }), "grow"), { developers });
     for (const developers of [0, 1]) {
       expect(() => strict.applyAction(state(developers), buy("checkout"))).toThrow(
         expect.objectContaining({ code: "config_team", message: expect.stringContaining("at least 2 developers") }),
@@ -3794,7 +3802,8 @@ describe("default config", () => {
     const { addons, staff } = defaultConfig;
     expect(staff.developers.startingCount).toBeGreaterThanOrEqual(addons.minConfigDevelopers);
     for (const p of ["ecommerce", "social", "video"] as const) {
-      let state = sim180.newGame({ companyName: "Acme", productType: p, model: "saas", seed: 7 });
+      // In Grow from day 1, so add-ons can be bought at once.
+      let state = inPhase(sim180.newGame({ companyName: "Acme", productType: p, model: "saas", seed: 7 }), "grow");
       // Only tier 1's are unlocked on day 1.
       for (const f of defaultConfig.productTypes[p].features.filter((x) => (x.tier ?? 1) === 1)) {
         state = sim180.applyAction(state, { type: "buyAddon", feature: f.id });
@@ -3820,7 +3829,8 @@ describe("migration", () => {
   const migrate = (model: string): Action => ({ type: "startMigration", model: model as never });
   const moveTo = (to: "developers" | "ops"): Action => ({ type: "moveStaff", to });
   // On IaaS with a developer and an ops person, migrating to PaaS from day 1, with cash for paying two providers.
-  const migrating = () => sim.applyAction(withStaff({ ...start(), cash: 100_000 }, { developers: 1, ops: 1 }), migrate("paas"));
+  // In Grow, so features can be built and bought on the way.
+  const migrating = () => sim.applyAction(withStaff(inPhase({ ...start(), cash: 100_000 }, "grow"), { developers: 1, ops: 1 }), migrate("paas"));
   const charges = (entries: LogEntry[]) => entries.filter((e) => e.category === "infrastructure").map((e) => e.text);
 
   it("starts in planning without moving time on, touching cash or staff", () => {
@@ -3976,7 +3986,7 @@ describe("migration", () => {
   });
 
   it("leaves SaaS add-ons behind on leaving SaaS, and stops billing them", () => {
-    const saasGame = sim.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 42 });
+    const saasGame = inPhase(sim.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 42 }), "grow");
     const onSaas = withStaff(saasGame, { developers: 1 });
     const bought = sim.applyAction(onSaas, { type: "buyAddon", feature: "checkout" });
     const { state, log } = sim.advance(sim.applyAction(bought, migrate("iaas")), 15);
@@ -4205,7 +4215,7 @@ describe("leaving SaaS (vendor lock-in)", () => {
   const build = (feature: string): Action => ({ type: "buildFeature", feature });
   // On SaaS with a configuration team of 1 and cash for paying two providers.
   const onSaas = () => withStaff({
-    ...sim.newGame({ companyName: "Acme", productType: "ecommerce", model: "saas", seed: 42 }),
+    ...inPhase(sim.newGame({ companyName: "Acme", productType: "ecommerce", model: "saas", seed: 42 }), "grow"),
     cash: 100_000,
   }, { developers: 1 });
   const withAddons = () => sim.applyAction(sim.applyAction(onSaas(), buy("checkout")), buy("reviews"));
@@ -4300,7 +4310,7 @@ describe("leaving SaaS (vendor lock-in)", () => {
 
   it("pauses a build under way when moving onto SaaS, and carries it on after leaving", () => {
     // Checkout takes 6 developer-days with 1 developer: started 11 days in, 3 are done by the switch.
-    const before = sim.applyAction(withStaff({ ...start(), cash: 100_000 }, { developers: 1 }), migrate("saas"));
+    const before = sim.applyAction(withStaff(inPhase({ ...start(), cash: 100_000 }, "grow"), { developers: 1 }), migrate("saas"));
     const midway = sim.advance(before, 11).state;
     const { state: switched, log } = sim.advance(sim.applyAction(midway, build("checkout")), 3);
     expect(switched.model).toBe("saas");
@@ -4720,7 +4730,7 @@ describe("migration with servers", () => {
   });
 
   it("keeps the existing rules: lost add-ons, exit penalty and staff free to move", () => {
-    const saas = withStaff(on("saas", 1_000), { developers: 3 });
+    const saas = withStaff(inPhase(on("saas", 1_000), "grow"), { developers: 3 });
     const bought = s.applyAction(saas, { type: "buyAddon", feature: calm.productTypes.social.features.find((f) => (f.tier ?? 1) === 1)!.id });
     const quote = s.migrationQuote(bought, "iaas");
     expect(quote.lostAddons).toHaveLength(1);
@@ -5045,7 +5055,7 @@ describe("provider events and the SaaS feature gap", () => {
     });
 
     it("puts SaaS add-on prices up too when config says so, in addons", () => {
-      let state = withStaff(begin(s, "saas"), { developers: 1 });
+      let state = withStaff(inPhase(begin(s, "saas"), "grow"), { developers: 1 });
       state = s.applyAction(state, { type: "buyAddon", feature: "checkout" });
       const { state: after, log } = s.advance(state, 2);
       expect(log[0]!.entries.find((e) => e.category === "addons")!.text).toContain("at £0.30 a month");
@@ -5057,7 +5067,7 @@ describe("provider events and the SaaS feature gap", () => {
 
     it("leaves add-on prices alone when it doesn't cover them", () => {
       const s2 = withEvents({ ...priceRise, effects: { ...priceRise.effects, saas: { priceRise: { percent: 100 }, detail: "" } } });
-      const state = s2.applyAction(withStaff(begin(s2, "saas"), { developers: 1 }), { type: "buyAddon", feature: "checkout" });
+      const state = s2.applyAction(withStaff(inPhase(begin(s2, "saas"), "grow"), { developers: 1 }), { type: "buyAddon", feature: "checkout" });
       const { log } = s2.advance(state, 2);
       expect(log[1]!.entries.find((e) => e.category === "addons")!.text).toContain("at £0.30 a month");
     });
@@ -5829,7 +5839,7 @@ describe("pricing and income", () => {
         ecommerce: { ...s.config.productTypes.ecommerce, pricing: { fairPrice: 30, freeShare: 0.9, conversionRate: 0, customerMix: allCasual } },
       },
     });
-    let state = begin(sm, "ecommerce", "saas");
+    let state = inPhase(begin(sm, "ecommerce", "saas"), "grow");
     state = sm.applyAction(state, { type: "hire", pool: "developers" });
     state = sm.applyAction(state, { type: "buyAddon", feature: "checkout" });
     expect(state.paidUsers).toBe(100);
@@ -6156,8 +6166,9 @@ describe("moderators and reports on user content", () => {
     moderation: { reportsPerPerson: 10, backlogPerUserAtZero: 0.05, lawsuitOddsAtZero: 4, warnShare: 0.1 },
   });
   const s = moderated;
+  // In Grow, where moderators open.
   const begin = (moderators = 0, productType = "social") =>
-    withStaff(s.newGame({ companyName: "Acme", productType, model: "iaas", seed: 42 }), { ops: s.opsNeeded("iaas"), support: 50, moderators });
+    withStaff(inPhase(s.newGame({ companyName: "Acme", productType, model: "iaas", seed: 42 }), "grow"), { ops: s.opsNeeded("iaas"), support: 50, moderators });
   const supportLog = (log: DayLog[]) => log.flatMap((d) => d.entries.filter((e) => e.kind === "support").map((e) => e.text));
 
   it("can be hired only on a product with user content", () => {
@@ -6168,11 +6179,12 @@ describe("moderators and reports on user content", () => {
     ] as Action[]) {
       expect(() => s.applyAction(shop, action)).toThrow(expect.objectContaining({ code: "no_content" }));
     }
-    expect(s.staff(shop).map((p) => p.pool)).toEqual(["developers", "ops", "support"]);
+    // Grow's researchers and marketers are there too, but no moderators.
+    expect(s.staff(shop).map((p) => p.pool)).toEqual(["developers", "ops", "support", "researchers", "marketers"]);
     expect(s.moderation(shop)).toBeNull();
     // On the social network they're the fourth pool, hired, moved and let go like any other.
     const social = s.applyAction(begin(), { type: "hire", pool: "moderators", grade: "senior", count: 2 });
-    expect(s.staff(social).map((p) => p.pool)).toEqual(["developers", "ops", "support", "moderators"]);
+    expect(s.staff(social).map((p) => p.pool)).toEqual(["developers", "ops", "support", "moderators", "researchers", "marketers"]);
     expect(team(social, "moderators")).toBe(2);
     expect(team(s.applyAction(social, { type: "moveStaff", to: "moderators", from: "support" }), "moderators")).toBe(3);
     expect(team(s.applyAction(social, { type: "letGo", pool: "moderators", grade: "senior" }), "moderators")).toBe(1);
@@ -6566,7 +6578,7 @@ describe("free-to-paid conversion", () => {
   });
 
   it("rises with add-ons bought on SaaS", () => {
-    const state = withStaff(begin(s, "saas"), { developers: 1 });
+    const state = withStaff(inPhase(begin(s, "saas"), "grow"), { developers: 1 });
     const bought = s.applyAction(state, { type: "buyAddon", feature: "search" });
     expect(multiplier(s, bought, "features")).toBeCloseTo(1.15, 10);
     expect(s.advance(bought).state.conversionsToday).toBeGreaterThan(s.advance(state).state.conversionsToday);
@@ -6954,7 +6966,7 @@ describe("alpha patch: pricing exploits and balance", () => {
   describe("SaaS add-ons", () => {
     // £100 a developer-day: checkout's 6 days cost £600 to set up, reviews' 5 £500 and search's 4 £400.
     const fees = createSim({ ...config, startingCash: 1_000, addons: { minConfigDevelopers: 1, setupFeePerDevDay: 100 } });
-    const onSaas = () => (withStaff(fees.newGame({ companyName: "Acme", productType: "ecommerce", model: "saas", seed: 42 }), { developers: 1 }));
+    const onSaas = () => withStaff(inPhase(fees.newGame({ companyName: "Acme", productType: "ecommerce", model: "saas", seed: 42 }), "grow"), { developers: 1 });
     const buy = (feature: string): Action => ({ type: "buyAddon", feature });
 
     it("charges a set-up fee for its developer-days when bought, shown on the features", () => {
@@ -7236,7 +7248,7 @@ describe("ticks and pauses", () => {
     while (ramped.launch(launching.state).status === "launching") launching = ramped.tick(launching.state);
     expect(launching.pauses).toEqual([{ kind: "finished", id: "launch", text: "Your launch is over" }]);
     const feature = s.config.productTypes.ecommerce.features[0]!;
-    const building = withStaff(s.applyAction(s.advance(begin("180-days"), 1).state, { type: "buildFeature", feature: feature.id }), {
+    const building = withStaff(s.applyAction(inPhase(s.advance(begin("180-days"), 1).state, "grow"), { type: "buildFeature", feature: feature.id }), {
       ops: 0,
       developers: 50,
     });

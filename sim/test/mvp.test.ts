@@ -12,6 +12,7 @@ import {
   type ProductTypeId,
   type Sim,
 } from "../src/index.ts";
+import { inPhase } from "./phases.ts";
 
 // The MVP every game opens with (#176), through the sim's public interface: no users until it's done and Launch is
 // pressed (#235), the launch ramp after it, its size by model and product, more developers finishing it sooner, and
@@ -159,8 +160,8 @@ describe("the MVP", () => {
     const cut = Math.round(sim.units(noOps)!.opsCut * 100);
     expect(cut).toBeGreaterThan(0);
     expect(sim.launch(noOps).missing).toEqual([`No ops: your servers run at ${100 - cut}% of their capacity`]);
-    // Set up in full, with an ops mid hired, nothing is missing.
-    const full = playTo(act(servers, { type: "hire", pool: "ops", grade: "mid", count: 2, agency: true }), 8);
+    // Set up in full, with the starting ops kept, nothing is missing: hiring more waits for Launch (#236).
+    const full = playTo(servers, 8);
     expect(sim.launch(full).missing).toEqual([]);
     // Launching bare still goes ahead: users arrive, but none can be served.
     const short = act(bare, { type: "launch" });
@@ -194,8 +195,8 @@ describe("the MVP", () => {
   });
 
   it("is the developers' only job until it's done: features wait, and they're never idle", () => {
-    const state = begin("iaas");
-    // A tier 1 feature, open from the start, so only the MVP holds it up.
+    // In Grow, as features open there, and a tier 1 feature, open from the start, so only the MVP holds it up.
+    const state = inPhase(begin("iaas"), "grow");
     const feature = defaultConfig.productTypes.ecommerce.features.find((f) => (f.tier ?? 1) === 1)!.id;
     expect(refusal(() => act(state, { type: "buildFeature", feature }))).toBe("mvp_first");
     expect(sim.staff(state).find((p) => p.pool === "developers")!.idle).toBeNull();

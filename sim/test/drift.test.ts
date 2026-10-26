@@ -10,10 +10,11 @@ import {
   type ModelId,
   type Sim,
 } from "../src/index.ts";
+import { inPhase } from "./phases.ts";
 
 // Drift (#95), through the sim's public interface: a fresh random price rise at each year's end of a long game and
-// none in a 180-day or 1-year game, the student's price and pay left alone, pay reviews every quarter after a long
-// game's first year, more units on kit added after a year's end, and the hardware slider's wear scaled to the game's
+// none in a 180-day or 1-year game, the student's price and pay left alone, pay reviews every quarter of a long game's
+// year once it's in Grow, more units on kit added after a year's end, and the hardware slider's wear scaled to the game's
 // length, with a warning before a server wears out.
 
 /** A rich company with no events or MVP to build, on any game length. Pay reviews are off unless a test turns them on. */
@@ -158,28 +159,37 @@ describe("pay reviews in long games", () => {
     }
     return current.pastPayReviews.map((r) => [r.year, r.quarter, r.startDay]);
   }
-  const start = (length: string) => begin("saas", length, 7, reviews);
+  /** In Grow from `grow` (#236): the first review's rise starts growDays (30) after it, then one a quarter. */
+  const start = (length: string, grow = 16) => inPhase(begin("saas", length, 7, reviews), "grow", grow);
 
-  it("holds Q2–Q4 in year 1, then a review every quarter from year 2, until IPO and in a career", () => {
+  it("holds a review every quarter of a 365-day year from a month into Grow, until IPO and in a career", () => {
+    // Quarters of 91.25 days from day 46, each named for the quarter of the game's year it starts in.
     const expected = [
-      [1, 2, 92],
-      [1, 3, 183],
-      [1, 4, 274],
-      [2, 1, 366],
-      [2, 2, 457],
-      [2, 3, 548],
-      [2, 4, 639],
-      [3, 1, 731],
+      [1, 1, 46],
+      [1, 2, 137],
+      [1, 3, 228],
+      [1, 4, 319],
+      [2, 1, 411],
+      [2, 2, 502],
+      [2, 3, 593],
+      [2, 4, 684],
     ];
     expect(reviewsTo(start("until-ipo"), 735)).toEqual(expected);
     expect(reviewsTo(start("career"), 735)).toEqual(expected);
   });
 
-  it("keeps a 1-year game's three and a 180-day game's three", () => {
+  it("has none in a long game before Grow", () => {
+    const build = begin("saas", "until-ipo", 7, reviews);
+    expect(reviews.payReviewDays(build)).toEqual([]);
+    expect(reviews.payHistory(reviews.advance(eveOf(build, 365)).state).nextReview).toBeNull();
+  });
+
+  it("keeps a 1-year game to its own year and a 180-day game to its three", () => {
     expect(reviewsTo(start("1-year"), 365)).toEqual([
-      [1, 2, 92],
-      [1, 3, 183],
-      [1, 4, 274],
+      [1, 1, 46],
+      [1, 2, 137],
+      [1, 3, 228],
+      [1, 4, 319],
     ]);
     expect(reviewsTo(start("180-days"), 180)).toEqual([
       [1, 2, 46],
@@ -189,13 +199,15 @@ describe("pay reviews in long games", () => {
   });
 
   it("names a later year's quarter, and drift leaves the review's inflation to its own roll", () => {
-    const eve = reviews.advance(eveOf(start("until-ipo"), 365)).state;
+    // In Grow from day 63, the fourth review's rise starts on day 366 (63 + 30 + 273), so it opens on the year's end.
+    const late = () => start("until-ipo", 63);
+    const eve = reviews.advance(eveOf(late(), 365)).state;
     expect(eve.payReview).toMatchObject({ quarter: 1, year: 2, startDay: 366 });
     expect(eve.yearEnds).toHaveLength(1);
     expect(reviews.payReview(eve)).toMatchObject({ quarter: 1, year: 2 });
-    const text = reviews.advance(eveOf(start("until-ipo"), 365)).log.at(-1)!.entries.at(-1)!.text;
-    expect(text).toMatch(/^Pay review: quarter 1 of year 2 starts on day 366/);
-    expect(reviews.payHistory(reviews.advance(eveOf(start("until-ipo"), 300)).state).nextReview).toEqual({ quarter: 1, year: 2, startDay: 366 });
+    const text = reviews.advance(eveOf(late(), 365)).log.at(-1)!.entries.at(-1)!.text;
+    expect(text).toMatch(/^Pay review for quarter 1 of year 2: your staff want to talk about pay, with the rise from day 366/);
+    expect(reviews.payHistory(reviews.advance(eveOf(late(), 300)).state).nextReview).toEqual({ quarter: 1, year: 2, startDay: 366 });
   });
 });
 

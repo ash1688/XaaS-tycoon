@@ -13,6 +13,7 @@ import {
   type HolidayConfig,
   type Sim,
 } from "../src/index.ts";
+import { inPhase } from "./phases.ts";
 
 // Campaigns (#115), through the sim's public interface: the student aims one at a customer type with a budget and a
 // length; each day it spends its share and adds new users of that type directly, on top of normal growth, at about
@@ -41,11 +42,11 @@ function launched(s: Sim = sim, state = begin(s)): GameState {
 }
 
 /**
- * A company the first angel has approached, as Campaigns open, with plenty of cash and the marketers given on the team
- * already: two mids, unless a test says otherwise.
+ * A company the first angel has approached, opening Grow and Campaigns with it, with plenty of cash and the marketers
+ * given on the team already: two mids, unless a test says otherwise.
  */
 const grownUp = (state: GameState, marketers: Partial<Record<StaffGrade, number>> = { mid: 2 }): GameState => ({
-  ...state,
+  ...inPhase(state, "grow"),
   cash: 1_000_000,
   investors: { ...state.investors, firstApproachDay: state.day },
   staff: { ...state.staff, marketers: { junior: 0, mid: 0, senior: 0, ...marketers } },

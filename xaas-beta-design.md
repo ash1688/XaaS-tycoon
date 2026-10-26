@@ -271,7 +271,7 @@ In the game, launches and releases use made-up names, not real ones.
 
 ## Pay reviews
 
-A 180-day game counts internally as one year, split into **four equal quarters** (game length ÷ 4). At the start of quarters 2, 3 and 4, staff come to the student about pay: three reviews a game. A 1-year game works the same way. **Until IPO** and **Career** games follow that pattern in year 1, then hold a review **every quarter** from year 2 onwards.
+A 180-day game counts internally as one year, split into **four equal quarters** (game length ÷ 4). Staff first come to the student about pay **about 30 days into the Grow phase** (see Phases and checklists), so never before the company has launched and grown, then **every quarter** after that until the game ends: two or three reviews in a 180-day game, none if it never reaches Grow. A 1-year game works the same way. **Until IPO** and **Career** games have years of 365 days, so a review about every 91 days once they've started.
 
 - **It stops the clock.** A notification appears and the student can't continue until the review is settled.
 - **What the student sees:**

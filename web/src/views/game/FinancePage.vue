@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watch } from "vue";
+import { computed, watch } from "vue";
 import { formatCash } from "../../api";
 import { days, useGame } from "../../game";
 import CashChart from "../../components/CashChart.vue";
@@ -16,18 +16,21 @@ import ValuationPanel from "../../panels/ValuationPanel.vue";
 
 // Finance: cash and runway, then sub-tabs (the open one in ?tab=): an overview of the balance sheet of income against
 // costs, where the money went and cash over time; the valuation and who owns the company; funding, with any rescue
-// buyout, investors, friends and family and the grant, and the bank loan; and the IPO readiness checklist, there from
-// day 1. Links about one of these, such as an investor's offer, open its tab. The chart's figures come from the summary
+// buyout, investors, friends and family and the grant, and the bank loan; and the IPO readiness checklist, from the Scale
+// phase, when the IPO opens (#236). Links about one of these, such as an investor's offer, open its tab. The chart's figures come from the summary
 // so far, fetched again only once a new day has been played.
 const game = useGame();
 
 type TabId = "overview" | "valuation" | "funding" | "ipo";
-const tabs: { id: TabId; name: string }[] = [
-  { id: "overview", name: "Overview" },
-  { id: "valuation", name: "Valuation" },
-  { id: "funding", name: "Funding" },
-  { id: "ipo", name: "IPO" },
-];
+const tabs = computed(() => {
+  const list: { id: TabId; name: string }[] = [
+    { id: "overview", name: "Overview" },
+    { id: "valuation", name: "Valuation" },
+    { id: "funding", name: "Funding" },
+  ];
+  if (game.isOpen("ipo")) list.push({ id: "ipo", name: "IPO" });
+  return list;
+});
 
 watch(
   () => game.company?.day,

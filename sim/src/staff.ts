@@ -1,7 +1,7 @@
 import { STAFF_GRADES, STAFF_POOLS, type GameConfig, type StaffGrade, type StaffPool } from "./config.ts";
 import { poolBoost } from "./executives.ts";
 import { pounds, type createFinance } from "./finance.ts";
-import { researchUnlocked } from "./research.ts";
+import { jobOpen } from "./phases.ts";
 import { isStaffGrade, isStaffPool, SimError, type GameState, type GradeCounts, type LogEntry } from "./state.ts";
 
 /** Pools that open once the company grows up, when the first angel investor approaches. */
@@ -17,11 +17,11 @@ const productPools = (config: GameConfig, state: Pick<GameState, "productType">)
   STAFF_POOLS.filter((pool) => pool !== "moderators" || config.productTypes[state.productType].moderation !== undefined);
 
 /**
- * Pools a company can staff: every pool, except moderators on a product without user content, and researchers and
- * marketers until the first angel investor approaches.
+ * Pools a company can staff now: every pool, except moderators on a product without user content, and any pool whose
+ * phase hasn't opened yet (see phases.ts).
  */
-export const poolsFor = (config: GameConfig, state: Pick<GameState, "productType" | "investors">): StaffPool[] =>
-  productPools(config, state).filter((pool) => !GROWN_UP_POOLS.includes(pool) || researchUnlocked(state));
+export const poolsFor = (config: GameConfig, state: Pick<GameState, "productType" | "phase">): StaffPool[] =>
+  productPools(config, state).filter((pool) => jobOpen(state, pool));
 
 /**
  * One grade in a pool, as permanent or agency staff: how many are on the team, what each costs and does, and how long
@@ -71,6 +71,11 @@ export interface StaffPoolView {
   agency: GradeView[];
   /** Whether agency staff can be hired: not researchers or marketers, who are permanent only. */
   agencyAllowed: boolean;
+  /**
+   * Whether the pool's phase has opened, so it can be hired into. A pool not open yet is listed only while someone is
+   * in it (the ops and support a company starts with, in Build), and hidden otherwise.
+   */
+  open: boolean;
   hiring: HireView[];
   /** Why the pool has nothing to do, in a sentence, when it hasn't: developers with nothing to build. Null otherwise. */
   idle: string | null;
@@ -166,14 +171,11 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
   const PICK_POOL = "Pick developers, ops, support, moderators, researchers or marketers.";
 
   /**
-   * Moderators handle reports on user content, so a product without any has none to hire or move. Researchers and
-   * marketers can't be hired or moved into until the first angel investor approaches.
+   * Moderators handle reports on user content, so a product without any has none to hire or move. A pool whose phase
+   * hasn't opened can't be hired or moved into: applyAction refuses that (see phases.ts).
    */
   function checkContent(state: GameState, pool: StaffPool) {
-    if (poolsFor(config, state).includes(pool)) return;
-    if (GROWN_UP_POOLS.includes(pool)) {
-      throw new SimError("not_yet", `${config.staff[pool].name} join once your company grows up: when your first angel investor approaches.`);
-    }
+    if (productPools(config, state).includes(pool)) return;
     const product = config.productTypes[state.productType].name;
     throw new SimError("no_content", `A ${product.toLowerCase()} has no user content to moderate, so it has no moderators.`);
   }
@@ -347,11 +349,13 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
   }
 
   /**
-   * Pools the company can staff: no moderators on a product without user content, no researchers or marketers until
-   * they open.
+   * Pools the company can staff: no moderators on a product without user content, and a pool whose phase hasn't opened
+   * only while someone is in it or on their way.
    */
   function staffView(state: GameState): StaffPoolView[] {
-    return poolsFor(config, state).map((pool) => ({
+    const listed = (pool: StaffPool) =>
+      jobOpen(state, pool) || headcount(state, pool) + headcount(state, pool, true) > 0 || state.hiring.some((h) => h.pool === pool);
+    return productPools(config, state).filter(listed).map((pool) => ({
       pool,
       name: config.staff[pool].name,
       headcount: headcount(state, pool),
@@ -360,6 +364,7 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
       grades: gradeViews(state, pool, false),
       agency: agencyAllowed(pool) ? gradeViews(state, pool, true) : [],
       agencyAllowed: agencyAllowed(pool),
+      open: jobOpen(state, pool),
       hiring: state.hiring
         .filter((h) => h.pool === pool)
         .map(({ grade, count, agency, arrivesOn }) => ({ grade, count, agency, arrivesOn, daysLeft: arrivesOn - state.day })),

@@ -123,13 +123,20 @@ const launchSteps = computed(() => {
       page: "infrastructure",
       pageName: "Infrastructure",
     });
-  if (l.opsNeeded > 0)
+  // Ops open with the Launch phase (#236): before then the step says when, with no page to go to.
+  if (l.opsNeeded > 0 && game.isOpen("ops"))
     steps.push({
       id: "ops",
       text: `Hire ops: ${l.opsNeeded} needed to run ${l.needsServers ? "your servers" : "the service"}`,
       done: c.ops >= l.opsNeeded,
       page: "people",
       pageName: "People",
+    });
+  else if (l.opsNeeded > 0)
+    steps.push({
+      id: "ops",
+      text: `Ops: ${l.opsNeeded} needed to run ${l.needsServers ? "your servers" : "the service"}, and you have ${c.ops}. Hiring more opens when you press Launch`,
+      done: c.ops >= l.opsNeeded,
     });
   return steps;
 });
@@ -175,7 +182,8 @@ const alerts = computed(() => {
       page: "infrastructure",
       pageName: "Infrastructure",
     });
-  if (game.understaffed)
+  // Alerts whose fix is a job not open yet (#236) wait until it opens.
+  if (game.understaffed && game.isOpen("ops"))
     list.push({
       id: "understaffed",
       text: `Understaffed: ${game.opsShort} ops short`,
@@ -193,7 +201,7 @@ const alerts = computed(() => {
       page: "customers",
       pageName: "Customers",
     });
-  else if (game.supportShort)
+  else if (game.supportShort && game.isOpen("support"))
     list.push({
       id: "support",
       text: `Support: ${game.supportShort} short`,
@@ -225,7 +233,7 @@ const alerts = computed(() => {
       page: "infrastructure",
       pageName: "Infrastructure",
     });
-  if (game.opsShortSoon)
+  if (game.opsShortSoon && game.isOpen("ops"))
     list.push({
       id: "ops-soon",
       text: `Ops needed soon: ${game.opsShortSoon} short`,
@@ -241,7 +249,7 @@ const alerts = computed(() => {
       page: "people",
       pageName: "People",
     });
-  if (game.onSaas && game.configTeamShort)
+  if (game.onSaas && game.configTeamShort && game.isOpen("features"))
     list.push({
       id: "config-team",
       text: "Can't buy add-ons",
@@ -495,8 +503,10 @@ const alerts = computed(() => {
             high price. See what's helping or hurting on Customers.
           </p>
           <p class="modal-link">
-            <RouterLink :to="page('product?tab=price')">Change the price on Product</RouterLink> ·
-            <RouterLink :to="page('customers')">Open Customers</RouterLink> ·
+            <template v-if="game.isOpen('price')">
+              <RouterLink :to="page('product?tab=price')">Change the price on Product</RouterLink> ·
+              <RouterLink :to="page('customers')">Open Customers</RouterLink> ·
+            </template>
             <RouterLink :to="page('finance')">Open Finance</RouterLink>
           </p>
         </template>
@@ -546,7 +556,7 @@ const alerts = computed(() => {
             <strong :class="userChange < 0 ? 'neg' : 'pos'">{{ signed(userChange) }}</strong> on day
             {{ game.lastDay?.day }}.
           </template>
-          {{ activeFeatures }} of {{ game.company.features.length }} features live.
+          <template v-if="game.isOpen('features')">{{ activeFeatures }} of {{ game.company.features.length }} features live.</template>
         </p>
         <template #detail>
           <div class="stats">
@@ -555,7 +565,7 @@ const alerts = computed(() => {
               <span class="value">{{ formatCount(game.company.users) }}</span>
               <small v-if="userChange !== undefined">{{ signed(userChange) }} on day {{ game.lastDay?.day }}</small>
             </div>
-            <div class="stat">
+            <div v-if="game.isOpen('features')" class="stat">
               <span class="label">Features live</span>
               <span class="value">{{ activeFeatures }} <small>of {{ game.company.features.length }}</small></span>
             </div>
@@ -566,7 +576,7 @@ const alerts = computed(() => {
           </p>
           <FeaturesPanel />
           <p class="modal-link">
-            <RouterLink :to="page('customers')">Open Customers</RouterLink> ·
+            <template v-if="game.isOpen('price')"><RouterLink :to="page('customers')">Open Customers</RouterLink> · </template>
             <RouterLink :to="page('product?tab=features')">Open Product</RouterLink>
           </p>
         </template>

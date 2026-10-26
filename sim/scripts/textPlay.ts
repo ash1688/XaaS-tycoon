@@ -347,6 +347,14 @@ function hardwareText(s: ReturnType<Sim["servers"]>[number]): string {
   return ` [${parts.join(", ")}]`;
 }
 
+/** The phase (#236): which it is and since when, and the milestone that opens the next. */
+function phaseLine(sim: Sim, state: GameState): string {
+  const phase = sim.phase(state);
+  const next = phase.next ? ` | next: ${phase.next.name}, ${phase.next.opensWith[0]!.toLowerCase()}${phase.next.opensWith.slice(1)}` : "";
+  const opens = phase.phases.filter((p) => p.day !== null).flatMap((p) => p.opens);
+  return `phase: ${phase.name} (from day ${phase.day})${next} | open: ${opens.join(", ")}`;
+}
+
 export function renderStatus(sim: Sim, state: GameState): string {
   const lines: string[] = [];
   const lock = sim.priceLockDaysLeft(state);
@@ -359,10 +367,12 @@ export function renderStatus(sim: Sim, state: GameState): string {
     `== ${state.companyName} | ${sim.config.productTypes[state.productType].name} (${state.productType}) on ${state.model} | day ${state.day}${state.finalDay === null ? "" : `/${state.finalDay}`} ` +
       `(${gameLengthName(sim.config, state.gameLength)}, ${DIFFICULTIES[state.difficulty].name}${sim.tickDays(state) === 7 ? ", a week a tick" : ""}) | ${calendar.today.text} | ${status}`,
   );
+  lines.push(phaseLine(sim, state));
   lines.push(
     `cash ${money(state.cash)} | income ${money(dailyIncome(sim, state))}/day | costs ${money(dailyCosts(sim, state))}/day | runway ${lasts}`,
   );
-  lines.push(`${renderPrice(sim, state)} | ${lock > 0 ? `locked ${lock} more days` : "can change"}`);
+  const priceOpen = sim.phase(state).open.price;
+  lines.push(`${renderPrice(sim, state)} | ${!priceOpen ? "set from Launch" : lock > 0 ? `locked ${lock} more days` : "can change"}`);
   const payments = renderPayments(sim, state);
   if (payments) lines.push(payments);
   const wave = sim.priceWave(state);
@@ -474,7 +484,10 @@ export function renderStatus(sim: Sim, state: GameState): string {
 
   const api = sim.api(state);
   if (api && !api.owned) {
-    lines.push(`api: ${api.name} not bought (${money(api.price)} once; about ${Math.round(api.pricePerCall * 100)}p a call)`);
+    // The paid API opens in Grow (#236).
+    if (sim.phase(state).open.api) {
+      lines.push(`api: ${api.name} not bought (${money(api.price)} once; about ${Math.round(api.pricePerCall * 100)}p a call)`);
+    }
   } else if (api) {
     const n = (x: number) => Math.round(x).toLocaleString("en-GB");
     const capacity = api.apiu
@@ -1121,15 +1134,19 @@ export function renderCommands(sim: Sim, state: GameState): string {
     }
     if (review.canAcceptCounter) lines.push(`  accept pay   (agree staff's counter of ${rise(review.staffFigure)})`);
   }
-  // Moderators only on a product with user content.
+  // Moderators only on a product with user content. Only pools whose phase has opened can be hired into (#236).
+  const jobs = sim.phase(state).open;
+  const hirable = sim.staff(state).filter((p) => p.open).map((p) => p.pool).join("|");
   const pools = sim.staff(state).map((p) => p.pool).join("|");
   const grades = STAFF_GRADES.join("|");
   lines.push(
-    `  hire <${pools}> [agency] [${grades}] [n] | letgo <${pools}> [agency] [${grades}] [n] | move <to> [from] [${grades}]   ` +
+    `  hire <${hirable}> [agency] [${grades}] [n] | letgo <${pools}> [agency] [${grades}] [n] | move <to> [from] [${grades}]   ` +
       `(grade defaults to mid; permanent staff unless "agency"; move is permanent staff only)`,
   );
   const pay = sim.payments(state);
-  if (pay) {
+  if (!jobs.price) {
+    // Hidden until Launch: the price is the fair price till then.
+  } else if (pay) {
     const both = `<fee 0–${sim.config.pricing.maxPrice}> [transaction fee 0–${percent(pay.maxRate)}, e.g. 2.5%]`;
     if (sim.priceLockDaysLeft(state) === 0) lines.push(`  price ${both}   (one change sets both; the fee alone keeps today's rate)`);
     lines.push(`  preview ${both}   (what they would do; changes nothing)`);
@@ -1138,7 +1155,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
     lines.push(`  preview <price>   (what a price would do; changes nothing)`);
   }
   const notStarted = sim.features(state).filter((f) => f.status === "notStarted" && f.unlocked);
-  if (notStarted.length) {
+  if (jobs.features && notStarted.length) {
     const verb = state.model === "saas" ? "addon" : "build";
     lines.push(
       `  ${verb} <${notStarted.map((f) => f.id).join("|")}>   ${notStarted
@@ -1170,7 +1187,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
   const stoppable = campaigns.campaigns.filter((c) => c.status === "starting" || c.status === "running");
   if (stoppable.length) lines.push(`  stopcampaign <${stoppable.map((c) => c.id).join("|")}>   (stops it after today: the rest of its budget isn't spent)`);
   const buyable = sim.benefits(state).filter((b) => b.onModel && b.unlocked && !b.active);
-  if (buyable.length) {
+  if (jobs.features && buyable.length) {
     lines.push(
       `  benefit <${buyable.map((b) => b.id).join("|")}>   ${buyable.map((b) => `${b.id} ${money(b.setupFee)} + ${money(b.monthlyFee)}/month: ${b.blurb}`).join("; ")}`,
     );
@@ -1229,7 +1246,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
     }
   }
   const api = sim.api(state);
-  if (api && !api.owned) {
+  if (jobs.api && api && !api.owned) {
     lines.push(`  buyapi   (${api.name}: ${money(api.price)} once; ${api.blurb})`);
   }
   if (!sim.migration(state)) lines.push(`  quote <${MODEL_IDS.filter((m) => m !== state.model).join("|")}> | migrate <model>`);
@@ -1289,8 +1306,8 @@ export function renderCommands(sim: Sim, state: GameState): string {
     lines.push(`  buyback   (buy all the vulture VC's shares back from company cash: ${money(rescue.buyBackPrice)}${rescue.canBuyBack ? "" : ", more than your cash"})`);
   }
   const ipo = sim.ipo(state);
-  lines.push(`  ipo   (the IPO readiness checklist in full, and once approved the offer; changes nothing)`);
-  if (ipo.canApply) lines.push(`  apply   (apply to float: a small hidden chance of a cold market, less the more comfortably ready you are)`);
+  if (jobs.ipo) lines.push(`  ipo   (the IPO readiness checklist in full, and once approved the offer; changes nothing)`);
+  if (jobs.ipo && ipo.canApply) lines.push(`  apply   (apply to float: a small hidden chance of a cold market, less the more comfortably ready you are)`);
   if (ipo.offer) {
     const range = `${Math.round(ipo.offer.minFloat * 100)}-${Math.round(ipo.offer.maxFloat * 100)}`;
     lines.push(`  ring <${range}>   (float that % of the company in new shares and ring the opening bell: ENDS THE GAME)`);

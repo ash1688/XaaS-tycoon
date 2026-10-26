@@ -49,6 +49,14 @@ npm run -s play -- summary <game>
   the next day, cost 1.25× and do half the work of permanent staff of the same grade, and go with no severance. They're
   listed apart from permanent staff. Letting go **permanent staff** pays their severance at once (shown per grade under
   staff, and on the `letgo` line); it's refused if you haven't the cash. `move` only moves permanent staff.
+- The game opens its jobs a **phase** at a time, and the status's `phase:` line says which phase you're in, what's
+  open and what opens the next. **Build** (day 1): your deployment model, funding (the loan, friends and family, the
+  grant), developers and servers or racks. **Launch** (when you type `launch`): your price, ops and support. **Grow**
+  (when your first angel investor approaches, whatever you do with the offer): moderators, researchers, marketers,
+  features and tiers, model benefits, the paid API, campaigns, and the CFO, CTO and head of people. **Scale** (when
+  Series A VCs approach): the rest of the C-suite and the IPO. A job that isn't open yet isn't listed under commands,
+  and doing it anyway is refused with when it opens. Until Launch your price is the fair price. You start with one ops
+  and one support person, but can't hire more until you press Launch.
 - Every game opens with an **MVP**: no users arrive, and nothing earns, until your developers have built it, while
   everyone is paid from day 1. The status shows its progress in developer-days and the day it'll be done. More
   developers finish it sooner (agency developers count at half), and on SaaS it's much shorter. Once it's done the
@@ -65,8 +73,8 @@ npm run -s play -- summary <game>
   model benefit in an available tier then needs **research points (RP)** to unlock, in any order: `unlock <id>`
   (the status lists what you can unlock and its price), then you build or buy it as usual. Unlocks are kept for good,
   through migrations.
-- **Researchers** and **marketers** are two more staff pools that open when your first angel investor approaches,
-  whatever you do with the offer. Both are permanent hires only (no agency). Researchers earn RP every day, banked with
+- **Researchers** and **marketers** are two more staff pools that open in Grow, when your first angel investor
+  approaches, whatever you do with the offer. Both are permanent hires only (no agency). Researchers earn RP every day, banked with
   no cap: `hire researchers [grade] [n]`. They're flagged idle once there's nothing left to unlock.
 - **Campaigns** bring new users of one customer type directly, on top of normal growth:
   `campaign <type> <budget> <days>` (the `look` line shows what a user of each type costs today), and
@@ -133,9 +141,10 @@ npm run -s play -- summary <game>
   not four: Series A (the size of A and B together) and Series B (C and D together). Each pays its cash in two
   tranches, the first on signing and the second once the company hits the VC's growth target (`vc` shows what's still
   to come).
-- **Pay reviews**: a game counts as one year of four quarters, and before quarters 2, 3 and 4 your staff come to you
-  about pay. Until IPO and a career have years of 365 days: reviews before quarters 2, 3 and 4 of the first year, then
-  before every quarter after (`Y2Q1` is quarter 1 of year 2). Time stops, and `next` is refused until the review is settled. `pay` shows it: this review's inflation
+- **Pay reviews**: none until you're about 30 days into Grow; then your staff come to you about pay, and again every
+  quarter after (a quarter of the game: 45 days in a 180-day game; until IPO and a career have years of 365 days, so
+  about 91). Each is named by the quarter it falls in (`Y2Q1` is quarter 1 of year 2). A game that never reaches Grow
+  has none. Time stops, and `next` is refused until the review is settled. `pay` shows it: this review's inflation
   (2–6%), the least you may offer (inflation less a point) and the most staff ask (inflation plus four points), where
   they open. `offer 3.5` offers a 3.5% rise: staff accept an offer that reaches a hidden figure near a fair rise for
   how the company is doing, or counter, and a dice roll decides how far they come down (a low roll makes them ask for
@@ -178,9 +187,9 @@ npm run -s play -- summary <game>
 - `csuite` lists the C-suite: every role, when it opens, who's hired, and each open role's shortlist of three
   candidates (id, strength, salary a day, equity ask now and what they'd do). `appoint <id>` (such as `appoint cfo-2`)
   hires one, for good: no letting go, and pay reviews leave their pay alone. Equity asks are new shares, and shrink as
-  the C-suite's 10% cap fills. The heads open on day 1, the CFO on outside money or the first angel approach, the CTO
-  and head of people at the first angel approach, and the COO, CIO, CMO, CISO and legal counsel at the Series A
-  approach. Every role is needed to IPO: all 11 beyond you, the CEO. If cash falls below 7 days of running costs, the
+  the C-suite's 10% cap fills. The CFO opens on outside money or in Grow (the first angel approach), the CTO and head
+  of people in Grow, and the rest (the heads of development, ops and support, the COO, CIO, CMO, CISO and legal
+  counsel) in Scale, at the Series A approach. Every role is needed to IPO: all 11 beyond you, the CEO. If cash falls below 7 days of running costs, the
   C-suite takes a **pay holiday**: none of them is paid (and it isn't owed later) until cash is back above 21 days.
 - `ipo` shows the IPO readiness checklist: six conditions (a trading history; users and revenue, with a minimum
   paying customer base; an uptime record; predictable costs; a security audit; and the full C-suite, all 11 roles

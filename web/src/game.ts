@@ -1,7 +1,7 @@
 // The game being played: loaded once by the game shell and shared with its pages, cards and modals through
 // provide/inject, so switching page never re-fetches the company. Reactive, so templates read its refs unwrapped.
 import { computed, inject, onUnmounted, provide, reactive, ref, watch, type InjectionKey } from "vue";
-import type { DayLog, EventView, FeatureGapView, LayerId, ModelId, PauseReason, StaffGrade, StaffPool, UnitTier } from "@xaas/sim";
+import type { DayLog, EventView, FeatureGapView, Job, LayerId, ModelId, PauseReason, StaffGrade, StaffPool, UnitTier } from "@xaas/sim";
 import type { ActionBody, CompanyView, MetaView, SummaryView, TimedFlowSpeedView } from "@xaas/server/api-types";
 import { api, formatCount, RequestError } from "./api";
 import { createUiLog } from "./playLog";
@@ -189,6 +189,8 @@ export function createGame(code: string, id: string) {
   // Over 100% is an outage; close to it is a warning that one is coming.
   const loadLevel = computed(() => levelOf(loadPercent.value));
   const onSaas = computed(() => company.value?.model === "saas");
+  // Jobs open a phase at a time (#236): one that isn't open yet is hidden, its nav link, page, tab or panel.
+  const isOpen = (job: Job) => !!company.value?.phase.open[job];
   const building = computed(() => company.value?.features.find((f) => f.status === "building"));
   // SaaS still needs a few developers to configure add-ons; without them, add-ons can't be bought.
   const configTeamNeeded = computed(() => meta.value?.minConfigDevelopers ?? 0);
@@ -473,6 +475,7 @@ export function createGame(code: string, id: string) {
     loadPercent,
     loadLevel,
     onSaas,
+    isOpen,
     building,
     configTeamNeeded,
     configTeamShort,

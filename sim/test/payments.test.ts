@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { settlingPay } from "./settlingPay.ts";
 import { createSim, defaultConfig, type Action, type DayLog, type GameConfig, type GameState } from "../src/index.ts";
+import { inPhase } from "./phases.ts";
 
 // Pay reviews settled as they open, as a bot would: they have their own tests (payReview.test.ts).
 // Launch presses itself once servers can serve users: Launch has its own tests (mvp.test.ts).
@@ -47,7 +48,8 @@ describe("payments app: two prices", () => {
     expect(shop.transactionRate).toBeNull();
     expect(sim.payments(shop)).toBeNull();
     expect(sim.customerMix(shop).includesRate).toBe(false);
-    expect(() => sim.applyAction(shop, setPrice(5, 0.02))).toThrow(expect.objectContaining({ code: "no_transaction_rate" }));
+    // Launched, as prices are set from then.
+    expect(() => sim.applyAction(inPhase(shop, "launch"), setPrice(5, 0.02))).toThrow(expect.objectContaining({ code: "no_transaction_rate" }));
   });
 
   it("sets both in one change, with one lock", () => {

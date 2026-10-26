@@ -1543,10 +1543,10 @@ export interface NegotiationConfig {
 }
 
 /**
- * Pay reviews: a game counts as one year of four equal quarters (the game's days ÷ 4). At the start of quarters 2, 3
- * and 4 the staff come to the student about pay, and the clock stops until it's settled. A long game (until IPO or a
- * career) has years of openEndedYearDays days instead: reviews at the start of quarters 2, 3 and 4 in its first year,
- * then at the start of every quarter after (#95). Every figure here is a share of pay: 0.01 is one point.
+ * Pay reviews: a game counts as one year of four equal quarters (the game's days ÷ 4); a long game (until IPO or a
+ * career) has years of openEndedYearDays days instead. Staff first come to the student about pay growDays into the
+ * Grow phase, so not before the company has launched and grown, then once a quarter after that, and the clock stops
+ * until each is settled (#236). Every figure here is a share of pay: 0.01 is one point.
  *
  * - Inflation: rolled for each review from inflation.min to inflation.max, on the review's own RNG.
  * - Caps: the student can offer no less than inflation − minOfferBelow (never below 0), and staff never ask for more
@@ -1563,8 +1563,10 @@ export interface NegotiationConfig {
 export interface PayReviewConfig {
   /** 1 if staff come about pay each quarter; 0 turns pay reviews off, and pay stays at the day rates all game. */
   on: number;
-  /** A year in a long game (until IPO or a career), whose quarters the reviews follow. */
+  /** A year in a long game (until IPO or a career): its quarter (÷ 4) is the time between reviews. */
   openEndedYearDays: number;
+  /** Days into the Grow phase the first review's rise starts: none before. Each later one is a quarter after the last. */
+  growDays: number;
   inflation: { min: number; max: number };
   /** The least offer is inflation less this (0.01 = one point), never below 0. */
   minOfferBelow: number;
@@ -2921,6 +2923,8 @@ export const defaultConfig: GameConfig = {
   payReview: {
     on: 1,
     openEndedYearDays: 365,
+    // About a month into Grow (#236), so a student isn't settling pay before they've launched and grown.
+    growDays: 30,
     inflation: { min: 0.02, max: 0.06 },
     minOfferBelow: 0.01,
     maxAskAbove: 0.04,

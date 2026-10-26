@@ -15,18 +15,22 @@ game.load();
 
 const route = useRoute();
 // The pages, in nav order. A page added later goes here and in the routes in main.ts. The C-suite has its own page, after
-// People. Research and Marketing appear once the first angel investor approaches, as the company grows up.
+// People. Pages open with their phase (#236), hidden until then: the C-suite with its first role, Customers at Launch,
+// and Research and Marketing at Grow, as the company grows up.
 const PAGES = computed(() => [
   { path: "", name: "Home" },
   { path: "/product", name: "Product" },
   { path: "/infrastructure", name: "Infrastructure" },
   { path: "/people", name: "People" },
-  { path: "/csuite", name: "C-suite" },
+  ...(game.company?.csuite.roles.some((r) => r.open) ? [{ path: "/csuite", name: "C-suite" }] : []),
   ...(game.company?.research.unlocked ? [{ path: "/research", name: "Research" }] : []),
   ...(game.company?.campaigns.unlocked ? [{ path: "/marketing", name: "Marketing" }] : []),
-  { path: "/customers", name: "Customers" },
+  ...(game.isOpen("price") ? [{ path: "/customers", name: "Customers" }] : []),
   { path: "/finance", name: "Finance" },
 ]);
+const phase = computed(() => game.company?.phase ?? null);
+// Every phase and what it opens, one a line, on hovering the phase.
+const phaseTitle = computed(() => phase.value?.phases.map((p) => `${p.name}: ${p.opens.join(", ")}`).join("\n"));
 const onHome = computed(() => route.name === "game-home");
 // On Finance's Funding tab, where the loan and investors' offers are: the notes about them say "below" there.
 const onFunding = computed(() => route.name === "game-finance" && route.query.tab === "funding");
@@ -163,6 +167,12 @@ async function closeMenu() {
         <p class="back"><RouterLink :to="`/play/${code}`">← Your companies</RouterLink></p>
         <h1>{{ game.company.name }}</h1>
         <p class="muted">{{ game.productName(game.company.productType) }} · {{ game.modelName(game.company.model) }}</p>
+        <p v-if="phase" class="phase-line" data-testid="phase" :title="phaseTitle">
+          <span class="badge">{{ phase.name }} phase</span>
+          <template v-if="phase.next && !game.over">
+            Next: {{ phase.next.name }}, {{ phase.next.opensWith.charAt(0).toLowerCase() + phase.next.opensWith.slice(1) }}.
+          </template>
+        </p>
         <p class="teaching-line">
           Whatever you pick, your customers get your product as SaaS. You're the customer of the layer below.
         </p>
@@ -212,7 +222,7 @@ async function closeMenu() {
       </p>
       <p v-if="game.payReviewOpen && !payModal" class="ipo-note" role="status" data-testid="pay-review-note">
         <span class="badge">Pay review</span>
-        Your staff want to talk about pay before {{ quarterName(game.company.payReview!) }}: the game waits until you've
+        Your staff want to talk about pay ({{ quarterName(game.company.payReview!) }}): the game waits until you've
         agreed a rise.
         <button class="ghost" data-testid="pay-review-open" @click="payModal = true">Open the pay review</button>
       </p>

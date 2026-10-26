@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createSim, CSUITE_ROLES, defaultConfig, SimError, type CsuiteRole, type GameConfig, type GameState, type Sim } from "../src/index.ts";
 import { withFullCsuite } from "./executives.ts";
+import { allOpen } from "./phases.ts";
 
 // The IPO through the sim's public interface: the readiness checklist, the cold market, the float, the first day of
 // trading, and the until-IPO game length. Anything random is tested on fixed RNG states, so results repeat.
@@ -40,12 +41,12 @@ const refusal = (fn: () => unknown) => {
 };
 
 /**
- * The company made comfortably over every condition: 2,000 users (1,000 paying £60 a month), 90% satisfaction, and on
+ * The company made comfortably over every condition, in Scale so the IPO is open: 2,000 users (1,000 paying £60 a month), 90% satisfaction, and on
  * every day played no downtime, steady costs and £1,000 of income.
  */
 const makeReady = (played: GameState): GameState => ({
   // The full C-suite is hired.
-  ...withFullCsuite(played),
+  ...withFullCsuite(allOpen(played)),
   users: 2_000,
   paidUsers: 1_000,
   price: 60,
@@ -93,7 +94,9 @@ const coldAt = (chance: number) => createSim({ ...quiet, ipo: { ...quiet.ipo, co
 
 describe("the readiness checklist", () => {
   it("lists the six conditions, none met by a new company, and refuses to apply", () => {
-    const state = begin();
+    // The IPO opens in Scale (#236): before then applying is refused for that.
+    expect(refusal(() => sim.applyAction(begin(), { type: "applyForIpo" }))).toBe("not_yet");
+    const state = allOpen(begin());
     const ipo = sim.ipo(state);
     expect(ipo.conditions.map((c) => c.id)).toEqual(["trading", "usersAndRevenue", "uptime", "costs", "security", "csuite"]);
     expect(ipo).toMatchObject({ status: "not-ready", ready: false, canApply: false, offer: null, result: null });

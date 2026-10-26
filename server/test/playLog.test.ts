@@ -12,7 +12,7 @@ import type {
   TeacherGamesView,
   TimelineView,
 } from "../src/api-types.ts";
-import { setupTestDb } from "./testDb.ts";
+import { reachPhase, setupTestDb } from "./testDb.ts";
 
 // The playtest log: game events from each request, UI events from the browser, the teacher's timeline, export and
 // deletes, and that none of it can identify a student.
@@ -67,6 +67,8 @@ async function newGame(code?: string, headers: Record<string, string> = {}) {
   });
   expect(res.statusCode).toBe(201);
   const company = res.json<CompanyView>();
+  // In the Launch phase (#236), so a test can hire ops and set the price without pressing Launch.
+  await reachPhase(testDb.db, company.id, "launch");
   const url = `/api/codes/${code}/companies/${company.id}`;
   return {
     code,

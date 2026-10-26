@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { playGame, STRATEGIES } from "../scripts/harness.ts";
 import { renderCommands, renderStatus, runScript } from "../scripts/textPlay.ts";
 import { createSim, defaultConfig, SimError, STAFF_SCHEMES, type GameConfig, type GameState, type SchemeLevels, type Sim } from "../src/index.ts";
+import { inPhase } from "./phases.ts";
 
 // Staff schemes in pay reviews, through the sim's public interface: an offer mixing a cash rise with scheme levels,
 // worth the rise plus only the levels added (valued at the scheme valuation), levels that only go up, schemes paid
@@ -27,7 +28,9 @@ const withValuation = (schemeValuation: number) =>
       peopleLead: { ...plainConfig.payReview.peopleLead, none: { ...plainConfig.payReview.peopleLead.none, schemeValuation } },
     },
   });
-const begin = (s: Sim = plain, seed = 42) => s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed });
+/** A new game in Grow from day 16 (#236): reviews' rises start on days 46, 91 and 136. */
+const begin = (s: Sim = plain, seed = 42) =>
+  inPhase(s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed }), "grow", 16);
 const schemes = plainConfig.payReview.schemes;
 const round = (n: number) => Math.round(n * 1000) / 1000;
 

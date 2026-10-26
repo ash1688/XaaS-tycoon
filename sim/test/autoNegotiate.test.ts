@@ -3,6 +3,7 @@ import { playDay, STRATEGIES } from "../scripts/harness.ts";
 import { createSim, defaultConfig, SimError, type GameConfig, type GameState, type Sim, type Terms } from "../src/index.ts";
 import { createNegotiation } from "../src/negotiation.ts";
 import { seedRng } from "../src/rng.ts";
+import { inPhase } from "./phases.ts";
 
 // Auto-negotiate, through the sim's public interface: the student's opening counter (or pay offer) played on to the
 // final offer with the same rolls and rules as countering by hand, repeating it each time. It never accepts an
@@ -206,8 +207,9 @@ describe("auto-negotiating a VC's offer", () => {
 describe("auto-negotiating a pay review", () => {
   const rich: GameConfig = { ...quiet, startingCash: 10_000_000 };
   const paySim = createSim(rich);
+  // Pay reviews start once Grow is open (#236).
   const review = (() => {
-    let s = begin(paySim);
+    let s = inPhase(begin(paySim), "grow");
     while (s.status === "playing" && !s.payReview) s = paySim.advance(s).state;
     return s;
   })();

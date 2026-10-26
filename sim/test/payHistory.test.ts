@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderCommands, runScript } from "../scripts/textPlay.ts";
 import { createSim, defaultConfig, type GameConfig, type GameState, type SchemeLevels, type Sim } from "../src/index.ts";
+import { inPhase } from "./phases.ts";
 
 // The pay history, through the sim's public interface: a read-only view of every settled pay review, the pay multiplier
 // so far, the schemes held and their cost, the staff share scheme's stake and the next review.
@@ -17,7 +18,9 @@ const plainConfig: GameConfig = {
   },
 };
 const plain = createSim(plainConfig);
-const begin = (s: Sim = plain) => s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 42 });
+/** A new game in Grow from day 16 (#236): reviews' rises start on days 46, 91 and 136. */
+const begin = (s: Sim = plain) =>
+  inPhase(s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 42 }), "grow", 16);
 const who = { player: "test" };
 
 function untilReview(s: Sim, state: GameState): GameState {
@@ -47,6 +50,13 @@ describe("pay history", () => {
     expect(h.schemesCostPerDay).toBe(0);
     // While the first is open, it's the current review, not the next.
     expect(plain.payHistory(open).nextReview).toEqual({ quarter: 3, year: 1, startDay: days[1] });
+  });
+
+  it("has no review to come before the Grow phase (#236)", () => {
+    const build = plain.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 42 });
+    expect(plain.payHistory(build)).toMatchObject({ reviews: [], nextReview: null });
+    const text = runScript(plain, build, "payhistory", who).lines[1];
+    expect(text).toBe("pay history: no pay reviews yet");
   });
 
   it("is empty on a saved game with no reviews yet", () => {

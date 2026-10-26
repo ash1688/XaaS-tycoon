@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { playDay, playGame, STRATEGIES } from "../scripts/harness.ts";
 import { advanceUntil, renderCommands, renderStatus, runScript } from "../scripts/textPlay.ts";
+import { inPhase } from "./phases.ts";
 import { settlePay } from "./settlingPay.ts";
 import { nextRandom } from "../src/rng.ts";
 import {
@@ -14,7 +15,7 @@ import {
   type Sim,
 } from "../src/index.ts";
 
-// Pay reviews, through the sim's public interface: the schedule (quarters 2, 3 and 4 of any game length), the clock
+// Pay reviews, through the sim's public interface: the schedule (from growDays into the Grow phase, then quarterly), the clock
 // held until a review is settled, inflation on its own RNG, the caps, staff accepting or countering an offer with the
 // negotiation roll the other way round, the student accepting a counter, the tribunal after a final offer with no deal, and the agreed
 // rise lifting every pool's pay, new hires and agency staff included.
@@ -36,8 +37,14 @@ const plain = createSim({
     walkAwaySpread: 0,
   },
 });
-const begin = (s: Sim = sim, seed = 42, gameLength?: string) =>
+/** A new game with no review yet. */
+const fresh = (s: Sim = sim, seed = 42, gameLength?: string) =>
   s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed, gameLength });
+/**
+ * A new game in Grow from day 16 (#236), so its first review's rise starts on day 46 (growDays, 30, into Grow), and in
+ * a 180-day game the others a quarter apart, on days 91 and 136.
+ */
+const begin = (s: Sim = sim, seed = 42, gameLength?: string) => inPhase(fresh(s, seed, gameLength), "grow", 16);
 
 const refusal = (fn: () => unknown) => {
   try {
@@ -62,17 +69,40 @@ const acceptCounter = (s: Sim, state: GameState) => s.applyAction(state, { type:
 const settleAtAsk = (s: Sim, state: GameState) => offer(s, state, s.payReview(state)!.maxAsk);
 
 describe("the schedule", () => {
-  it("opens a review before the first day of quarters 2, 3 and 4 of each game length, and never in quarter 1", () => {
+  /** The first day of each review's rise by the rule: growDays into Grow, then a quarter of `year` days apart, to `last`. */
+  const byRule = (grow: number, year: number, last: number) => {
+    const starts: number[] = [];
+    for (let k = 0; grow + rich.payReview.growDays + Math.floor((k * year) / 4) <= last; k++) {
+      starts.push(grow + rich.payReview.growDays + Math.floor((k * year) / 4));
+    }
+    return starts;
+  };
+
+  it("has none before the Grow phase, and none all game in one that never reaches it (#236)", () => {
+    const start = fresh();
+    expect(start.phase).toBe("build");
+    expect(sim.payReviewDays(start)).toEqual([]);
+    // Played with no decisions, no angel approaches: the game stays short of Grow, and staff never come about pay.
+    const state = sim.advance(start, 179).state;
+    expect(state.status).toBe("finished");
+    expect(state.phaseDays.grow).toBeNull();
+    expect(state.pastPayReviews).toEqual([]);
+    expect(state.payMultiplier).toBe(1);
+  });
+
+  it("opens the first review growDays into Grow, then one a quarter, the day before each rise starts", () => {
+    expect(rich.payReview.growDays).toBe(30);
     const short = createSim({ ...rich, finalDay: 100 });
-    for (const [s, gameLength, finalDay] of [
-      [sim, "180-days", 180],
-      [short, "180-days", 100],
-      [sim, "1-year", 365],
+    for (const [s, gameLength, finalDay, grow] of [
+      [sim, "180-days", 180, 16],
+      [sim, "180-days", 180, 60],
+      [short, "180-days", 100, 16],
+      [sim, "1-year", 365, 16],
     ] as const) {
-      const quarter = finalDay / 4;
-      const starts = [1, 2, 3].map((q) => Math.floor(q * quarter) + 1);
-      expect(s.payReviewDays(begin(s, 42, gameLength))).toEqual(starts);
-      let state = begin(s, 42, gameLength);
+      const starts = byRule(grow, finalDay, finalDay);
+      expect(starts[0]).toBe(grow + 30);
+      expect(s.payReviewDays(inPhase(fresh(s, 42, gameLength), "grow", grow))).toEqual(starts);
+      let state = inPhase(fresh(s, 42, gameLength), "grow", grow);
       const opened: { day: number; quarter: number; startDay: number }[] = [];
       while (state.status === "playing") {
         state = s.advance(state).state;
@@ -82,22 +112,40 @@ describe("the schedule", () => {
           state = settleAtAsk(s, state);
         }
       }
-      // The day before each quarter starts, so the quarter is played at the agreed rise; none in the first quarter.
-      expect(opened).toEqual(starts.map((startDay, i) => ({ day: startDay - 1, quarter: i + 2, startDay })));
-      expect(opened.every((o) => o.startDay > quarter)).toBe(true);
-      expect(state.pastPayReviews).toHaveLength(3);
+      // The day before each rise starts, so the quarter is played at the agreed rise; each named for the quarter of the
+      // game's year (its days ÷ 4) it starts in.
+      expect(opened).toEqual(starts.map((startDay) => ({ day: startDay - 1, quarter: Math.floor(((startDay - 1) * 4) / finalDay) + 1, startDay })));
+      expect(state.pastPayReviews).toHaveLength(starts.length);
     }
+    // Grow on day 16 of a 180-day game keeps the days quarters 2, 3 and 4 used to start.
+    expect(sim.payReviewDays(begin())).toEqual([46, 91, 136]);
+    // Later into Grow, they move later, up to one whose rise starts on the final day; too late, and none fit.
+    expect(sim.payReviewDays(inPhase(fresh(), "grow", 60))).toEqual([90, 135, 180]);
+    expect(sim.payReviewDays(inPhase(fresh(), "grow", 160))).toEqual([]);
   });
 
-  it("gives a career and a game until IPO quarters 2–4 in year 1, then a review every quarter (#95)", () => {
+  it("counts from the day Grow opened in play, with the first angel's approach", () => {
+    // A game played to its first angel approach: Grow opens that day, and the first review is growDays after.
+    const bot = STRATEGIES.find((s) => s.id === "sensible")!;
+    let state = fresh();
+    while (state.status === "playing" && state.phaseDays.grow === null) state = sim.advance(playDay(sim, state, bot)).state;
+    const grow = state.phaseDays.grow!;
+    expect(grow).toBe(state.investors.firstApproachDay);
+    expect(sim.payReviewDays(state)).toEqual(byRule(grow, 180, 180));
+  });
+
+  it("gives a career and a game until IPO a review every quarter of a 365-day year from growDays into Grow (#95)", () => {
     const career = sim.payReviewDays(begin(sim, 42, "career"));
     // Quarters of a 365-day year: 91.25 days.
-    expect(career.slice(0, 8)).toEqual([92, 183, 274, 366, 457, 548, 639, 731]);
-    // 47 years: three reviews in the first, four in each of the other 46, the last on the first day of the last quarter.
-    expect(career).toHaveLength(3 + 46 * 4);
-    expect(career.at(-1)).toBe(46 * 365 + Math.floor((3 * 365) / 4) + 1);
+    expect(career.slice(0, 8)).toEqual([46, 137, 228, 319, 411, 502, 593, 684]);
+    // 47 years, the last review on or before the final day.
+    const careerEnd = begin(sim, 42, "career").finalDay!;
+    expect(career).toEqual(byRule(16, 365, careerEnd));
+    expect(career.at(-1)).toBeLessThanOrEqual(careerEnd);
+    expect(career.at(-1)! + 91).toBeGreaterThan(careerEnd);
     // With no last day, listed up to the end of next year.
-    expect(sim.payReviewDays(begin(sim, 42, "until-ipo"))).toEqual([92, 183, 274, 366, 457, 548, 639]);
+    expect(sim.payReviewDays(begin(sim, 42, "until-ipo"))).toEqual([46, 137, 228, 319, 411, 502, 593, 684]);
+    expect(sim.payReviewDays(fresh(sim, 42, "until-ipo"))).toEqual([]);
   });
 
   it("opens none with pay reviews turned off", () => {
@@ -114,7 +162,7 @@ describe("holding the clock", () => {
     const { state, log } = sim.advance(begin(), 100);
     expect(state.day).toBe(45);
     expect(log).toHaveLength(44);
-    expect(log.at(-1)!.entries.at(-1)!.text).toMatch(/^Pay review: quarter 2 starts on day 46, and your staff want to talk about pay\./);
+    expect(log.at(-1)!.entries.at(-1)!.text).toMatch(/^Pay review for quarter 2: your staff want to talk about pay, with the rise from day 46\./);
     expect(refusal(() => sim.advance(state))).toBe("pay_review");
     expect(refusal(() => sim.tick(state))).toBe("pay_review");
     // Other decisions can still be made while it's open.
@@ -128,7 +176,7 @@ describe("holding the clock", () => {
     expect(state.day).toBe(44);
     const tick = sim.tick(state);
     expect(tick.days).toBe(1);
-    expect(tick.pauses).toContainEqual({ kind: "payReview", id: "pay-review", text: expect.stringMatching(/^Pay review: your staff want to talk about pay/) });
+    expect(tick.pauses).toContainEqual({ kind: "payReview", id: "pay-review", text: expect.stringMatching(/^Pay review for quarter 2: your staff want to talk about pay/) });
     state = tick.state;
     expect(refusal(() => sim.tick(state))).toBe("pay_review");
   });
@@ -141,7 +189,8 @@ describe("holding the clock", () => {
       state = tick.state;
       tick = careers.tick(state);
     }
-    expect(tick.state.day).toBe(91);
+    // Grow from day 16: the first review's rise starts on day 46.
+    expect(tick.state.day).toBe(45);
     expect(tick.days).toBeLessThanOrEqual(7);
   });
 });
@@ -179,7 +228,7 @@ describe("inflation", () => {
     // The playtest's kind of game (social on IaaS), settled as the harness bots do: staff's counters move the RNG too.
     const { min, max } = rich.payReview.inflation;
     const roll = (rng: number) => Math.round((min + nextRandom(rng)[0] * (max - min)) * 1000) / 1000;
-    let state = sim.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 7 });
+    let state = inPhase(sim.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 7 }), "grow", 16);
     const inflations: number[] = [];
     while (state.status === "playing") {
       const before = state.payReviewRng;
@@ -578,7 +627,7 @@ describe("the bots and text play", () => {
     let turn = advanceUntil(plain, begin(plain), 60, who);
     while (!turn.state.payReview) turn = advanceUntil(plain, turn.state, 60, who);
     expect(turn.state.day).toBe(45);
-    expect(turn.lines.at(-1)).toMatch(/^stopped on day 45: Pay review: your staff want to talk about pay before quarter 2 starts/);
+    expect(turn.lines.at(-1)).toMatch(/^stopped on day 45: Pay review for quarter 2: your staff want to talk about pay/);
     const review = plain.payReview(turn.state)!;
     expect(renderStatus(plain, turn.state)).toMatch(/pay: PAY REVIEW OPEN for quarter 2 \(from day 46\): inflation [\d.]+%, offer [\d.]+%–[\d.]+%, staff asking [\d.]+%; 3 offers left/);
     expect(renderCommands(plain, turn.state)).toMatch(/offer <[\d.]+%–[\d.]+%>/);

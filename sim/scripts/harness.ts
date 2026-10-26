@@ -411,6 +411,8 @@ function addServer(sim: Sim, state: GameState, action: Action): GameState {
  * first, then mids, then seniors, while there's the cash for their severance.
  */
 function staffTo(sim: Sim, state: GameState, pool: "ops" | "support" | "moderators", now: number, nextWeek = now, surge = 0): GameState {
+  // A pool whose phase hasn't opened can't be hired into yet (#236).
+  if (!sim.phase(state).open[pool]) return state;
   let s = state;
   const view = () => sim.staff(s).find((p) => p.pool === pool)!;
   const output = (g: StaffGrade, agency = false) => sim.config.staffGrades[g].output * (agency ? sim.config.agency.output : 1);
@@ -807,7 +809,8 @@ function bargain(sim: Sim, state: GameState, policy: PayPolicy): GameState {
  */
 export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameState {
   let s = settlePay(sim, state, strategy);
-  if (s.day === 1 && strategy.priceFactor !== 1) {
+  // The price opens with the Launch phase (#236): set once, as soon as it's open.
+  if (strategy.priceFactor !== 1 && s.priceChanges.length === 0 && sim.phase(s).open.price) {
     // On the payments app the transaction fee moves with the monthly fee.
     const fairRate = sim.payments(s)?.fairRate;
     const rate = fairRate === undefined ? {} : { rate: Math.round(fairRate * strategy.priceFactor * 10_000) / 10_000 };
@@ -828,6 +831,8 @@ export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameSta
   if (strategy.loan === "late" && !s.loan && s.cash < 7 * (sim.dailyStaffCost(s) + sim.monthlyInfrastructureCost(s) / 30)) {
     s = tryAction(sim, s, { type: "takeLoan" });
   }
+  // Launch first, so ops and support, which open with it (#236), are hired the same day.
+  s = launchWhenSetUp(sim, s);
   const units = sim.units(s);
   const full = !!units && (units.cu.demand >= units.cu.capacity || units.dbu.demand >= units.dbu.capacity);
   // Before and over the launch ramp, every strategy sets up servers for the launch total: the first decision.
@@ -858,7 +863,6 @@ export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameSta
       s = staffTo(sim, s, "moderators", reportsNow, reportsNextWeek, moderation.backlog / 5 / perModerator);
     }
   }
-  s = launchWhenSetUp(sim, s);
   s = mvpTeam(sim, s, strategy);
   s = hireExecutives(sim, s, strategy);
   s = marketing(sim, research(sim, s, strategy), strategy);
