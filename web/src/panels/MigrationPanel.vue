@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, ref } from "vue";
 import { SERVER_SIZES, SERVER_TYPES, type ModelId, type ServerType, type SetupItem } from "@xaas/sim";
 import type { MigrationQuoteView } from "@xaas/server/api-types";
 import { api, formatCash, formatCount } from "../api";
-import { days, namesList, useGame } from "../game";
+import { days, devDays, namesList, useGame } from "../game";
 
 // Migration: pick a target, see the quote and confirm, then it runs in the background while you keep playing.
 const game = useGame();
@@ -272,12 +272,12 @@ async function startMigration() {
           <ul class="lockin-addons">
             <li v-for="a in lostAddons" :key="a.id" :data-addon="a.id">
               <strong>{{ a.name }}</strong>
-              <span class="muted">{{ a.devDays }} developer-days to rebuild</span>
+              <span class="muted">{{ devDays(a.devDays) }} to rebuild</span>
             </li>
           </ul>
           <p>
             Add-ons belong to the SaaS provider, not you, so they stay behind when you leave: your developers must
-            rebuild them, {{ rebuildDays }} developer-days in all. Until then, you lose their growth boost.
+            rebuild them, {{ devDays(rebuildDays) }} in all. Until then, you lose their growth boost.
           </p>
         </div>
         <table class="quote setup-table" data-testid="quote-setup">

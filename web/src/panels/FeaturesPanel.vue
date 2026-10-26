@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { formatCash, formatCount, formatPrice } from "../api";
-import { namesList, useGame } from "../game";
+import { devDays, namesList, useGame } from "../game";
 
 // Features to build, one at a time, or on SaaS the add-on shop.
 const game = useGame();
@@ -71,7 +71,7 @@ const activeCount = computed(
         <div class="meter-fill building" :style="{ width: `${(100 * mvp.progress) / mvp.total}%` }"></div>
       </div>
       <p class="muted" data-testid="mvp-progress">
-        {{ formatCount(mvp.progress) }} of {{ formatCount(mvp.total) }} developer-days.
+        {{ formatCount(mvp.progress) }} of {{ devDays(mvp.total) }}.
         <template v-if="mvp.daysLeft !== null">
           {{ mvp.daysLeft }} day{{ mvp.daysLeft === 1 ? "" : "s" }} left with {{ game.company.developers }}
           developer{{ game.company.developers === 1 ? "" : "s" }}: more developers finish it sooner.
@@ -124,7 +124,7 @@ const activeCount = computed(
       <p data-testid="optimisation-saving">
         Saving <strong>{{ percent(optimisation.saving) }}</strong> of resource need per user, out of a most of
         {{ percent(optimisation.cap) }} on {{ game.company.model === "onprem" ? "your own servers" : "this model" }}
-        ({{ formatCount(optimisation.days) }} developer-days so far{{
+        ({{ devDays(optimisation.days) }} so far{{
           optimisation.output > 0 ? `, ${formatCount(optimisation.output)} a day` : ""
         }}).
       </p>
@@ -180,7 +180,7 @@ const activeCount = computed(
               Tier {{ feature.tier }} · {{ formatPrice(feature.addonPricePerUser) }} per user a month · {{ growthBoost(feature.growthMultiplier) }}{{ pulls(feature.appeal) }}
             </span>
             <span v-else class="muted feature-cost">
-              Tier {{ feature.tier }} · {{ feature.devDays }} developer-days · {{ growthBoost(feature.growthMultiplier) }}{{ pulls(feature.appeal) }}
+              Tier {{ feature.tier }} · {{ devDays(feature.devDays) }} · {{ growthBoost(feature.growthMultiplier) }}{{ pulls(feature.appeal) }}
             </span>
           </div>
           <span v-if="feature.status === 'built'" class="badge built-badge">Built</span>
@@ -237,7 +237,7 @@ const activeCount = computed(
             <div class="meter-fill building" :style="{ width: `${(100 * feature.progress) / feature.devDays}%` }"></div>
           </div>
           <p class="muted" :data-testid="`feature-progress-${feature.id}`">
-            {{ formatCount(feature.progress) }} of {{ feature.devDays }} developer-days.
+            {{ formatCount(feature.progress) }} of {{ devDays(feature.devDays) }}.
             <template v-if="feature.daysLeft !== null">
               {{ feature.daysLeft }} day{{ feature.daysLeft === 1 ? "" : "s" }} left with {{ game.company.developers }}
               developer{{ game.company.developers === 1 ? "" : "s" }}.

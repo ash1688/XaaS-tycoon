@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import type { GameDate, HolidayView } from "@xaas/sim";
 import { formatCash, formatCount, formatPrice, formatUptime } from "../../api";
-import { dayOf, days, useGame } from "../../game";
+import { dayOf, days, devDays, useGame } from "../../game";
 import { formatShare } from "../../shares";
 import OverviewCard from "../../components/OverviewCard.vue";
 import SummaryPanel from "../../components/SummaryPanel.vue";
@@ -93,9 +93,9 @@ const launchSteps = computed(() => {
       id: "mvp",
       text: c.mvp.done
         ? "Build your MVP"
-        : `Build your MVP: ${formatCount(c.mvp.progress)} of ${formatCount(c.mvp.total)} developer-days done`,
+        : `Build your MVP: ${formatCount(c.mvp.progress)} of ${devDays(c.mvp.total)} done`,
       done: c.mvp.done,
-      page: "product",
+      page: "product?tab=features",
       pageName: "Product",
     });
   if (!l.needsServers) steps.push({ id: "servers", text: "Nothing to set up: the provider runs the servers", done: true });
@@ -477,7 +477,7 @@ const alerts = computed(() => {
             high price. See what's helping or hurting on Customers.
           </p>
           <p class="modal-link">
-            <RouterLink :to="page('product')">Change the price on Product</RouterLink> ·
+            <RouterLink :to="page('product?tab=price')">Change the price on Product</RouterLink> ·
             <RouterLink :to="page('customers')">Open Customers</RouterLink> ·
             <RouterLink :to="page('finance')">Open Finance</RouterLink>
           </p>
@@ -515,7 +515,7 @@ const alerts = computed(() => {
         <template #detail>
           <PriceWavePanel />
           <p class="modal-link">
-            <RouterLink :to="page('product')">Open Product</RouterLink> ·
+            <RouterLink :to="page('product?tab=price')">Open Product</RouterLink> ·
             <RouterLink :to="page('customers')">Open Customers</RouterLink>
           </p>
         </template>
@@ -549,7 +549,7 @@ const alerts = computed(() => {
           <FeaturesPanel />
           <p class="modal-link">
             <RouterLink :to="page('customers')">Open Customers</RouterLink> ·
-            <RouterLink :to="page('product')">Open Product</RouterLink>
+            <RouterLink :to="page('product?tab=features')">Open Product</RouterLink>
           </p>
         </template>
       </OverviewCard>
@@ -773,15 +773,14 @@ const alerts = computed(() => {
         </p>
         <p class="muted" data-testid="home-product">
           <template v-if="game.building && !game.onSaas">
-            Building {{ game.building.name }}: {{ game.building.progress }} of {{ game.building.devDays }}
-            developer-days.
+            Building {{ game.building.name }}: {{ game.building.progress }} of {{ devDays(game.building.devDays) }}.
           </template>
           <template v-else-if="game.onSaas">Add-ons {{ formatCash(game.company.monthlyAddonCost) }} a month.</template>
           <template v-else>Nothing being built.</template>
         </p>
         <template #detail>
           <FeaturesPanel />
-          <p class="modal-link"><RouterLink :to="page('product')">Open Product</RouterLink></p>
+          <p class="modal-link"><RouterLink :to="page('product?tab=features')">Open Product</RouterLink></p>
         </template>
       </OverviewCard>
 

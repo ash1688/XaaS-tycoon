@@ -33,14 +33,20 @@ test("tiers lock later features and model benefits, and the on-prem hardware sli
   await student.goto(`/play/${code}/${id}`);
   const nav = student.getByRole("navigation", { name: "Game" });
 
-  // Product: tier 1 is open, tier 2 waits on 7,000 users (35% of the shop's market), and its feature can't be built yet.
+  // Product: tier 1 is open, tier 2 waits on 7,000 users (35% of the shop's market) or a CTO, and its feature can't be
+  // built yet.
   await nav.getByRole("link", { name: "Product", exact: true }).click();
+  await student.getByRole("tab", { name: "Tiers" }).click();
   const tiers = student.getByTestId("tiers");
   await expect(tiers.locator('[data-tier="1"]')).toHaveAttribute("data-open", "true");
   await expect(tiers.locator('[data-tier="2"]')).toHaveAttribute("data-open", "false");
   await expect(tiers.getByTestId("tier-conditions-2")).toContainText("Users:");
   await expect(tiers.getByTestId("tier-conditions-2")).toContainText("of 7,000");
+  await expect(tiers.getByTestId("tier-conditions-2")).toContainText("or a CTO hired: not yet");
+  await expect(tiers.getByTestId("tier-conditions-3")).toContainText(/and uptime, last \d+ days:/);
+  await expect(tiers.getByTestId("tier-conditions-4")).toContainText("or every IPO condition met: not yet");
   await expect(tiers.locator('[data-tier="2"] [data-item="hardwareEfficiency1"]')).toContainText("Model benefit");
+  await student.getByRole("tab", { name: "Features" }).click();
   await expect(student.getByTestId("feature-locked-reviews")).toHaveText("Tier 2");
   await expect(student.getByRole("button", { name: "Build Wishlists" })).toBeVisible();
 
@@ -87,6 +93,7 @@ test("research points unlock items in an available tier, in any order, with one 
 
   // Product: the tier 2 feature's tier is available, but it still needs unlocking.
   await nav.getByRole("link", { name: "Product", exact: true }).click();
+  await student.getByRole("tab", { name: "Features" }).click();
   await expect(student.getByTestId("feature-locked-reviews")).toHaveText("15 RP to unlock");
 
   // Research: tiers top to bottom, with item cards to unlock. Tier 3's feature first, then tier 2's.
@@ -105,6 +112,7 @@ test("research points unlock items in an available tier, in any order, with one 
 
   // The unlocked feature can now be built, at its usual developer-days.
   await nav.getByRole("link", { name: "Product", exact: true }).click();
+  await student.getByRole("tab", { name: "Features" }).click();
   await expect(student.getByRole("button", { name: "Build One-click checkout" })).toBeVisible();
   await expect(student.getByTestId("feature-locked-reviews")).toHaveText("15 RP to unlock");
 });

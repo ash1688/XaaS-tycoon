@@ -20,6 +20,9 @@ const value = (c: TierConditionView, n: number) =>
 /** One part of a condition and how far the company has got: "Users: 3,200 of 5,000". */
 const progress = (c: TierConditionView) =>
   c.unit === "yes" ? (c.met ? "done" : "not yet") : `${value(c, c.value)} of ${value(c, c.target)}`;
+/** A condition's label after the first, joined on: "or a CTO hired", "and uptime, last 30 days". */
+const joined = (label: string, any: boolean) =>
+  `${any ? "or" : "and"} ${/^[A-Z](?![A-Z])/.test(label) ? label.charAt(0).toLowerCase() + label.slice(1) : label}`;
 const share = (c: TierConditionView) => (c.target > 0 ? Math.min(100, (100 * c.value) / c.target) : 100);
 const modelName = (id: string | null) => (id ? game.modelName(id) : "");
 const here = (i: TierItemView) => i.kind === "feature" || i.model === model.value;
@@ -58,8 +61,7 @@ function unlockBlocked(i: TierItemView): string | null {
         </div>
         <ul v-if="!t.available" class="tier-conditions" :data-testid="`tier-conditions-${t.tier}`">
           <li v-for="(c, i) in t.conditions" :key="c.label">
-            <span v-if="i > 0" class="muted">{{ t.any ? "or" : "and" }} </span>
-            <span>{{ c.label }}: <strong>{{ progress(c) }}</strong></span>
+            <span>{{ i > 0 ? joined(c.label, t.any) : c.label }}: <strong>{{ progress(c) }}</strong></span>
             <div
               v-if="c.unit !== 'yes'"
               class="meter"

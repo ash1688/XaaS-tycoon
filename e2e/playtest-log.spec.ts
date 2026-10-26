@@ -25,6 +25,7 @@ test("a student's play and UI use show in the teacher's timeline and export, und
 
   // Then opens the price modal on Product, previews a price, and closes it without setting one.
   await student.getByRole("link", { name: "Product", exact: true }).click();
+  await student.getByRole("tab", { name: "Price" }).click();
   await student.getByRole("button", { name: /Change price|Preview a price/ }).click();
   const dialog = student.getByRole("dialog", { name: "Set your price" });
   const previewed = student.waitForResponse((r) => r.url().includes("/price-preview?price=12"));

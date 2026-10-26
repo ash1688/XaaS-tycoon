@@ -2358,6 +2358,46 @@ button.danger-fill {
   grid-column: 1 / -1;
 }
 
+/* Sub-tabs within a page, such as Product's Price, Features and Tiers: a row of tabs over the panel they open. */
+.subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.subtab {
+  margin-bottom: -1px;
+  padding: 0.55rem 1rem;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 8px 8px 0 0;
+  background: none;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.subtab:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.subtab.on {
+  border-bottom-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.subtab-panel {
+  display: grid;
+  gap: 1.25rem;
+  min-width: 0;
+}
+
+.subtab-panel > .card {
+  margin: 0;
+}
+
 .teams {
   list-style: none;
   margin: 0 0 1rem;
