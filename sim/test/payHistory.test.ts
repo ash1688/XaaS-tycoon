@@ -104,11 +104,12 @@ describe("pay history", () => {
     expect(b!.schemeRaises).toEqual([expect.objectContaining({ id: "pension", from: 1, to: 2 })]);
   });
 
-  it("records a counter accepted, with no schemes", () => {
+  it("records a counter accepted, with the offer's schemes", () => {
     const countered = offer(open, open.payReview!.minOffer, { pension: 1 });
     const settled = plain.applyAction(countered, { type: "acceptPayCounter" });
     const r = plain.payHistory(settled).reviews[0]!;
-    expect(r).toMatchObject({ outcome: "counterAccepted", offers: 1, tribunalPick: null, tribunalFee: 0, schemeRaises: [] });
+    expect(r).toMatchObject({ outcome: "counterAccepted", offers: 1, tribunalPick: null, tribunalFee: 0 });
+    expect(r.schemeRaises).toEqual([expect.objectContaining({ id: "pension", from: 0, to: 1 })]);
     expect(r.staffFigures).toHaveLength(2);
   });
 

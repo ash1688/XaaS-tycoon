@@ -56,6 +56,13 @@ const clamp = (n: number, low: number, high: number) => Math.min(Math.max(n, low
 /** 0.034 as "3.4%". */
 export const risePercent = (n: number) => `${Math.round(n * 1000) / 10}%`;
 
+/**
+ * Staff's `figure`, a worth, as cash on top of an offer's schemes: the figure less what the schemes it raised are
+ * worth to staff (its worth `value` less its `cash`). With no schemes it's the figure itself. Never below 0.
+ */
+export const cashOnTop = (figure: number, offer: { value: number; cash: number }) =>
+  Math.max(0, roundRise(figure - (offer.value - offer.cash)));
+
 /** The open pay review as the student sees it: the hidden fair rise and walk-away figure left out. */
 export interface PayReviewView {
   quarter: number;
@@ -67,8 +74,16 @@ export interface PayReviewView {
   /** The least the student can offer, and the most staff ask. */
   minOffer: number;
   maxAsk: number;
-  /** What staff are asking now: their opening ask, then their latest counter. A counter is a cash rise. */
+  /**
+   * What staff are asking now, as a worth: their opening ask, then their latest counter. A counter keeps the schemes in
+   * the student's latest offer, and asks the rest in cash: see counter.
+   */
   staffFigure: number;
+  /**
+   * Staff's latest counter as it would settle: the cash rise, on top of the schemes in the student's latest offer, and
+   * those schemes raised in words ("" when it raised none). Null before the first offer.
+   */
+  counter: { cash: number; schemes: SchemeLevels; schemesText: string } | null;
   /** Each offer's worth to staff: its cash rise plus the schemes it raises, as staff value them. */
   studentOffers: number[];
   /** What made up each offer: its cash rise and the scheme levels it asked for. */
@@ -151,8 +166,7 @@ export interface TribunalOdds {
   /** Each pick's worth to staff: the student's final offer, midway, and staff's last counter. */
   rises: Record<TribunalPick, number>;
   /**
-   * The cash rise each pick sets. The student's offer and the middle keep the offer's schemes, so the middle's cash is
-   * its worth less theirs; staff's figure is cash only.
+   * The cash rise each pick sets. Every pick keeps the final offer's schemes, so its cash is its worth less theirs.
    */
   cash: Record<TribunalPick, number>;
   /** The chance of each pick, 0–1, adding up to 1. */
@@ -300,7 +314,10 @@ export function createPayReview(
     return state.payReview;
   }
 
-  /** The rise is negotiated as staff's figure, which the student wants lower, kept within the review's caps. */
+  /**
+   * The rise is negotiated as a worth (cash plus schemes, as staff value them): the student's offers are worths, and so
+   * are staff's figures. A counter keeps the latest offer's schemes, so its cash is only worked out to show or settle it
+   * (cashOnTop), and the rolls are the same with schemes or without. The rise is negotiated as staff's figure, which the student wants lower, kept within the review's caps. */
   const specsFor = (review: PayReview): TermSpec[] => [
     { key: "rise", label: "the rise", better: "lower", step: STEP, min: review.minOffer, max: review.maxAsk },
   ];
@@ -399,9 +416,9 @@ export function createPayReview(
   function tribunalOdds(state: GameState, review: PayReview, offered: number, cash: number): TribunalOdds {
     const staff = staffFigure(review);
     const rises: Record<TribunalPick, number> = { student: offered, middle: roundRise((offered + staff) / 2), staff };
-    // The schemes' share of the offer stays with the middle, which tops up the cash.
-    const schemes = offered - cash;
-    const cashRises: Record<TribunalPick, number> = { student: cash, middle: Math.max(0, roundRise(rises.middle - schemes)), staff };
+    // Every pick keeps the offer's schemes, and tops up the cash to its worth.
+    const onTop = (p: TribunalPick) => (p === "student" ? cash : cashOnTop(rises[p], { value: offered, cash }));
+    const cashRises = Object.fromEntries(TRIBUNAL_PICKS.map((p) => [p, onTop(p)])) as Record<TribunalPick, number>;
     const gap = Math.max(staff - offered, STEP);
     const fair = review.fairRise - peopleLead(config, state).tribunalLean * gap;
     const weights = TRIBUNAL_PICKS.map((p) => Math.exp((-c.tribunal.sharpness * Math.abs(rises[p] - fair)) / gap));
@@ -412,8 +429,8 @@ export function createPayReview(
 
   /**
    * The tribunal, after a final offer short of a deal: a roll on the reviews' RNG picks the student's offer, staff's
-   * figure or the middle at tribunalOdds, and its fee is charged at once. The pick is recorded: the offer's schemes
-   * apply on the student's figure or the middle, but not staff's, which is cash only.
+   * figure or the middle at tribunalOdds, and its fee is charged at once. The pick is recorded. Whichever it picks, the
+   * final offer's schemes apply, with the pick's cash on top.
    */
   function goToTribunal(
     state: GameState,
@@ -428,13 +445,13 @@ export function createPayReview(
     const charged = deps.chargeNow({ ...state, payReviewRng: rng }, [
       { text: `Tribunal fee for ${quarterName(review)}'s pay review`, cashDelta: -odds.fee, category: "staff" },
     ]);
-    const schemes = pick === "staff" ? state.staffSchemes : final.schemes;
-    return settle(charged, review, offers, "tribunal", odds.cash[pick], schemes, { pick, fee: odds.fee, chances: odds.chances });
+    return settle(charged, review, offers, "tribunal", odds.cash[pick], final.schemes, { pick, fee: odds.fee, chances: odds.chances });
   }
 
   /**
    * Offers staff a cash `rise` and any scheme levels raised. Staff weigh its worth: the rise plus the schemes raised,
-   * as they value them. At or above their walk-away figure they accept. Short of it, they counter with a cash figure,
+   * as they value them. At or above their walk-away figure they accept. Short of it, they counter: a worth that keeps the
+   * offer's schemes and asks the rest in cash,
    * with a roll on the reviews' RNG for how far they come down from their figure towards the offer, plus the
    * people-lead modifier's roll bonus (a penalty without a head of people); on the final
    * (third) offer there's no counter, and it goes to the tribunal.
@@ -480,11 +497,19 @@ export function createPayReview(
     }
   }
 
-  /** Accepts staff's counter: their figure is the cash rise, and no schemes are raised. */
+  /** Staff's latest counter as it settles: the schemes in the student's latest offer, and their figure's cash on top. */
+  function counterTerms(review: PayReview): PayOfferTerms | null {
+    const last = review.offerTerms.at(-1);
+    if (!last) return null;
+    return { rise: cashOnTop(staffFigure(review), { value: review.studentOffers.at(-1)!, cash: last.rise }), schemes: last.schemes };
+  }
+
+  /** Accepts staff's counter: the schemes in the student's latest offer, with the counter's cash rise on top. */
   function acceptCounter(state: GameState): GameState {
     const review = openOrRefuse(state);
-    if (!review.studentOffers.length) throw new SimError("no_counter", "Staff haven't countered yet: make them an offer first.");
-    return settle(state, review, review, "counterAccepted", staffFigure(review), state.staffSchemes);
+    const terms = counterTerms(review);
+    if (!terms) throw new SimError("no_counter", "Staff haven't countered yet: make them an offer first.");
+    return settle(state, review, review, "counterAccepted", terms.rise, terms.schemes);
   }
 
   /** What the team costs a day: everyone's pay and the staff schemes held. */
@@ -495,6 +520,7 @@ export function createPayReview(
     if (!review) return null;
     const offersLeft = MAX_OFFERS - review.studentOffers.length;
     const lead = peopleLead(config, state);
+    const counter = counterTerms(review);
     return {
       quarter: review.quarter,
       year: review.year,
@@ -503,6 +529,7 @@ export function createPayReview(
       minOffer: review.minOffer,
       maxAsk: review.maxAsk,
       staffFigure: staffFigure(review),
+      counter: counter && { cash: counter.rise, schemes: counter.schemes, schemesText: schemeRaisesText(config, state.staffSchemes, counter.schemes) },
       studentOffers: review.studentOffers,
       offerTerms: review.offerTerms,
       staffFigures: review.negotiation.offers.map((o) => o.rise!),

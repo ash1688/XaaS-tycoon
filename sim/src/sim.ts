@@ -104,7 +104,7 @@ export type { PayOfferPreview, PayReviewView, SchemeOfferPreview, TribunalOdds }
 export type { PayHistoryEntry, PayHistoryView, SchemeRaise, StaffShareSchemeView } from "./payHistory.ts";
 export type { SchemeLevels, ShareSaveIssue, StaffSchemeId, StaffSchemeView } from "./staffSchemes.ts";
 export { STAFF_SCHEMES } from "./staffSchemes.ts";
-export { inflationNow, quarterName, REVIEW_QUARTERS, TRIBUNAL_PICKS, type ReviewSlot } from "./payReview.ts";
+export { cashOnTop, inflationNow, quarterName, REVIEW_QUARTERS, TRIBUNAL_PICKS, type ReviewSlot } from "./payReview.ts";
 export type { DriftView } from "./drift.ts";
 export type { RescueView } from "./rescue.ts";
 export type { TicketOutlook } from "./support.ts";
