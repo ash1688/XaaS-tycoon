@@ -122,8 +122,8 @@ npm run -s play -- summary <game>
   (or the start of a name) negotiates with one alone, which closes the other two; then `counter vc ...`, `odds vc ...`,
   `accept vc` and `decline vc` work as for the angel. `decline vc` before picking turns all three down. Turned down,
   failed or left to lapse, three new VCs approach for the same round a few days later. Accepting sets your valuation
-  to the VC's figure, and they become your lead VC, back for the next round alongside two new VCs. The IPO needs all
-  four rounds to have approached, but you don't have to take any of their money.
+  to the VC's figure, and they become your lead VC, back for the next round alongside two new VCs. The IPO needs no
+  round's money, but Series A must have approached: it opens the last C-suite roles.
 - **Pay reviews**: a game counts as one year of four quarters, and before quarters 2, 3 and 4 your staff come to you
   about pay. Until IPO and a career have years of 365 days: reviews before quarters 2, 3 and 4 of the first year, then
   before every quarter after (`Y2Q1` is quarter 1 of year 2). Time stops, and `next` is refused until the review is settled. `pay` shows it: this review's inflation
@@ -168,10 +168,12 @@ npm run -s play -- summary <game>
   hires one, for good: no letting go, and pay reviews leave their pay alone. Equity asks are new shares, and shrink as
   the C-suite's 10% cap fills. The heads open on day 1, the CFO on outside money or the first angel approach, the CTO
   and head of people at the first angel approach, and the COO, CIO, CMO, CISO and legal counsel at the Series A
-  approach. A CFO, a CISO and legal counsel are needed to IPO.
-- `ipo` shows the IPO readiness checklist: fifteen conditions (a trading history, users and revenue, an uptime record,
-  predictable costs, a security audit, profitability, a satisfaction record, a paying customer base, all four Series
-  rounds approached, and a CFO, CISO and legal counsel hired), each with where you stand and what's needed. The records need 30 days of trading since launch. Once every condition is met, `apply` applies to
+  approach. Every role is needed to IPO: all 11 beyond you, the CEO. If cash falls below 7 days of running costs, the
+  C-suite takes a **pay holiday**: none of them is paid (and it isn't owed later) until cash is back above 21 days.
+- `ipo` shows the IPO readiness checklist: six conditions (a trading history; users and revenue, with a minimum
+  paying customer base; an uptime record; predictable costs; a security audit; and the full C-suite, all 11 roles
+  hired), each with where you stand and what's needed. Satisfaction and profit aren't conditions, but the market
+  still weighs them: in the valuation, the cold-market chance and the first day of trading. The records need 30 days of trading since launch. Once every condition is met, `apply` applies to
   float: there's a small hidden chance of a cold market (postponed 30 days, satisfaction lost), less the more
   comfortably you're over every condition. Once approved, time holds (no `next`) until you ring the bell: `ipo`
   shows the offer and `ring <15-40>` floats that % of

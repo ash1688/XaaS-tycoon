@@ -64,7 +64,7 @@ test("Series A's three VCs approach; picking one closes the others, accepting se
   await expect(student.getByTestId("day")).toHaveText(/^1 of/);
   await goTo(student, "Finance");
   const panel = student.getByTestId("investor-panel");
-  await expect(panel.getByTestId("vc")).toContainText("Every round must approach before you can float");
+  await expect(panel.getByTestId("vc")).toContainText("You don't need their money to float");
   await expect(panel.getByTestId("vc-round-seriesA")).toContainText("Series A not yet");
 
   // The approach: time stopped for it, and a notification on every page.
@@ -73,8 +73,6 @@ test("Series A's three VCs approach; picking one closes the others, accepting se
   await expect(student.getByTestId("finance-badge")).toBeVisible();
   await expect(student.getByTestId("vc-note")).toContainText("Three venture capitalists want to invest");
   await expect(panel.getByTestId("vc-round-seriesA")).toContainText(/Series A approached day \d+ ✓/);
-  await expect(student.getByTestId("ipo-seriesA")).toHaveAttribute("data-met", "true");
-  await expect(student.getByTestId("ipo-seriesB")).toHaveAttribute("data-met", "false");
 
   // Three offers, each with its lean; picking one closes the other two and opens its offer.
   const offers = panel.locator("[data-vc-offer]");
@@ -107,7 +105,6 @@ test("Series A's three VCs approach; picking one closes the others, accepting se
   await expect(student.getByTestId("vc-note")).toContainText("Series B");
   await expect(offers).toHaveCount(3);
   await expect(offers.filter({ hasText: "Your lead VC, back from the last round." })).toContainText(name);
-  await expect(student.getByTestId("ipo-seriesB")).toHaveAttribute("data-met", "true");
 
   // Declining all three: three new VCs will come for the same round.
   await panel.getByTestId("vc-decline-all").click();

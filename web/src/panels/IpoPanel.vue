@@ -3,8 +3,8 @@ import { computed } from "vue";
 import { useRouter } from "vue-router";
 import { useGame } from "../game";
 
-// The IPO readiness checklist on Finance: its conditions, each Series round approaching among them, turning green one
-// by one, and Apply once all are. Applying
+// The IPO readiness checklist on Finance: its six conditions, the full C-suite among them, turning green one by one,
+// and Apply once all are. Applying
 // rolls a hidden cold market (the IPO postponed); otherwise it's approved and the opening-bell page takes over.
 const game = useGame();
 const router = useRouter();
@@ -32,8 +32,8 @@ async function apply() {
       <span :class="['badge', `ipo-${ipo.status}`]" data-testid="ipo-status">{{ STATUS[ipo.status] }}</span>
     </div>
     <p class="muted">
-      Floating on the stock market ends the game, and no investor's money is needed to do it: each Series round must
-      approach, but you can decline every one. Meet every condition to apply:
+      Floating on the stock market ends the game, and no investor's money is needed to do it: Series A must approach,
+      as it opens the last C-suite roles, but you can decline it. Meet every condition to apply:
       {{ metCount }} of {{ ipo.conditions.length }} met.
     </p>
     <ul class="ipo-checklist">
@@ -74,7 +74,8 @@ async function apply() {
         </p>
         <p v-else-if="ipo.status === 'ready'">
           Applying carries a small chance of a cold market, which postpones the IPO by about a month. The more
-          comfortably you're over every condition, the less likely one is.
+          comfortably you're over every condition, and the happier your customers and the healthier your profits, the
+          less likely one is.
         </p>
         <p v-else class="muted">{{ ipo.refusal }}</p>
         <button :disabled="!ipo.canApply || game.busy || game.over" data-testid="ipo-apply" @click="apply">Apply to float</button>

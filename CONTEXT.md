@@ -30,6 +30,22 @@ _Avoid_: Mode, level
 The longest game length: the student founds the company at 18 and runs it until they retire at 65.
 _Avoid_: Lifetime mode, 65 years
 
+**Phase**:
+One of the four stages a game's jobs open in: Build (to the MVP), Launch (to the first angel approach), Grow (to the Series A approach) and Scale (to the end). Jobs not yet open are hidden.
+_Avoid_: Stage, era, act
+
+**Checklist**:
+The list on each phase of what the company needs: the shortfall below the phase's minimum, or, at or above it, the student's projection for the end of the phase beside the baseline.
+_Avoid_: To-do list, objectives
+
+**Get me ready**:
+The checklist's one click that buys or hires only the shortfall, hiring permanent juniors. It never sells or lets anyone go.
+_Avoid_: Auto-buy, quick setup
+
+**Baseline**:
+What careful play has at the end of each phase for one product on one model, made by the balance harness and stored in the config.
+_Avoid_: Benchmark, par
+
 **Tick**:
 One step of the timed flow: a day, or a week in a career. A week is seven days simulated one by one.
 _Avoid_: Turn, round
@@ -43,7 +59,7 @@ The last day of each 365-day year of a long game, after which drift raises price
 _Avoid_: New year, anniversary
 
 **MVP**:
-The first version of the product, which every game opens with the developers building, measured in developer-days. No users arrive until it's done: launch is the first day it's done and servers can serve them.
+The first version of the product, which every game opens with the developers building, measured in developer-days. No users arrive until it's done and the student presses Launch.
 _Avoid_: Prototype, beta
 
 **Developer slider**:
@@ -55,14 +71,18 @@ Developer work that makes the product cheaper to run: fewer CU and DBU per user 
 _Avoid_: Tuning, performance work, refactoring
 
 **Go-live**:
-The launch day: the first day users arrive. Hosting bills start from it.
+The launch day: the day the student presses Launch, once the MVP is done, and the first day users arrive. Hosting bills start from it.
 _Avoid_: Release, ship date
 
 ### People
 
 **C-suite**:
-The company's senior leaders. The student is the CEO; the others (CFO, CTO and so on) are each hired once from a shortlist and kept for the rest of the game. Roles open as the company grows (the heads from day 1, the CFO on outside money or the first angel approach, the CTO and head of people at the first angel approach, the rest at the Series A approach). Each candidate has a salary, fixed for good (pay reviews leave the C-suite out), and an equity ask in new shares that shrinks as the C-suite's cap (about 10%) fills. A CFO, a CISO and legal counsel are needed to IPO.
+The company's senior leaders. The student is the CEO; the others (CFO, CTO and so on) are each hired once from a shortlist and kept for the rest of the game. Roles open as the company grows (the heads from day 1, the CFO on outside money or the first angel approach, the CTO and head of people at the first angel approach, the rest at the Series A approach). Each candidate has a salary, fixed for good (pay reviews leave the C-suite out), and an equity ask in new shares that shrinks as the C-suite's cap (about 10%) fills. The full C-suite is needed to IPO.
 _Avoid_: Executives, leadership team, management
+
+**Pay holiday**:
+When cash falls below about 7 days of running costs, the whole C-suite forgoes its pay until cash is back above about 21 days. Pay missed isn't owed later. It keeps a small company that has hired the full C-suite from running out of cash.
+_Avoid_: Pay freeze, deferred pay (nothing is paid back)
 
 **Staff**:
 The developers, ops, support, moderators, researchers and marketers hired and let go in bulk, as permanent or agency staff (researchers and marketers permanent only). Not the C-suite.
@@ -243,7 +263,7 @@ _Avoid_: Share count, total shares
 Valuation divided by shares in issue.
 
 **Funding ladder**:
-The order of investment after friends and family: an angel, then Series A, B, C and D venture capital rounds.
+The order of investment after friends and family: an angel, then Series A, B, C and D venture capital rounds. A 180-day game merges them into two rounds, Series A (A and B) and Series B (C and D).
 _Avoid_: Stages, levels
 
 **Angel investor**:
@@ -295,6 +315,10 @@ _Avoid_: Bid, deal (a deal is a customer contract)
 **Counter**:
 The student's reply to an offer, asking for different terms. A dice roll decides how far the next offer moves towards it.
 _Avoid_: Counter-offer, haggle
+
+**Auto-negotiate**:
+Playing out the rest of an investor negotiation or pay review in one click from the student's opening figure, with the same rolls as by hand. It ends on Accept or Decline for an investor, and Accept or Tribunal for a pay review.
+_Avoid_: Auto-accept, quick deal
 
 ### Testing
 

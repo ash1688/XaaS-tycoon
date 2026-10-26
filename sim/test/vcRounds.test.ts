@@ -13,11 +13,11 @@ import {
   type SeriesId,
   type Sim,
 } from "../src/index.ts";
-import { withIpoExecutives } from "./executives.ts";
 
 // Venture capital, Series A–D, through the sim's public interface: each round approaching at its hidden target with
 // three offers, their leans, picking one (which closes the others), declining or failing (three new VCs), accepting
-// (the valuation follows the chosen VC), the lead VC returning, and the IPO needing all four rounds to have approached.
+// (the valuation follows the chosen VC), the lead VC returning, and the IPO needing
+// only Series A to have approached (when the last C-suite roles open).
 
 const vc = defaultConfig.investors.vc;
 /** Low targets, a short gap and an early angel, so every round comes within a game. */
@@ -102,7 +102,7 @@ function targetDay(config: GameConfig, state: GameState, round: SeriesId, from: 
 }
 
 /**
- * A sim where every IPO condition but the rounds is easy, otherwise playing as `fast`. The rounds' targets are shares of
+ * A sim where every IPO condition but the C-suite is easy, otherwise playing as `fast`. The rounds' targets are shares of
  * the IPO bar it zeroes, so each round comes as soon as the round before allows.
  */
 const easyIpo = createSim({
@@ -307,38 +307,30 @@ describe("picking, declining and accepting", () => {
 });
 
 describe("the IPO gate", () => {
-  it("refuses the IPO until Series A–D have all approached, even when every round was declined", () => {
+  it("waits for Series A to approach, as the last C-suite roles open then, but for no later round", () => {
     let state = begin(easyIpo);
-    // Profit is left to the record: making money on every day of it, and the CFO, CISO and legal counsel are hired, so
-    // only the rounds can hold the IPO back.
-    const profitable = (s: GameState): GameState => ({
-      ...withIpoExecutives(s),
-      spendByDay: s.spendByDay.map((d) => ({ ...d, income: 1_000_000 })),
-    });
+    // Profit is left to the record: making money on every day of it, so only the C-suite can hold the IPO back.
+    const profitable = (s: GameState): GameState => ({ ...s, spendByDay: s.spendByDay.map((d) => ({ ...d, income: 1_000_000 })) });
     const unmet = (s: GameState) => easyIpo.ipo(profitable(s)).conditions.filter((c) => !c.met).map((c) => c.id);
+    /** Hires the first candidate on every open, unfilled role's shortlist. */
+    const hireOpen = (s: GameState): GameState =>
+      easyIpo
+        .csuite(s)
+        .roles.filter((r) => r.open && !r.executive)
+        .reduce((next, r) => easyIpo.applyAction(next, { type: "hireExecutive", role: r.role, candidate: r.shortlist[0]!.id }), s);
     state = playUntil(easyIpo, state, (s) => s.launchDay !== null && s.day > s.launchDay + 3).state;
-    expect(unmet(state)).toEqual([...SERIES_IDS]);
-    for (const [at, round] of SERIES_IDS.entries()) {
-      state = until(round, easyIpo, state).state;
-      expect(unmet(state)).toEqual(SERIES_IDS.slice(at + 1));
-      if (at < 3) expect(refusal(() => easyIpo.applyAction(profitable(state), { type: "applyForIpo" }))).toBe("ipo_not_ready");
-      // Turned down: it still counts.
-      state = easyIpo.applyAction(state, { type: "declineInvestor" });
-    }
-    expect(easyIpo.investors(state).vc.rounds.every((r) => r.deal === null)).toBe(true);
-    expect(easyIpo.ipo(profitable(state))).toMatchObject({ ready: true, canApply: true });
+    // Before Series A, the CISO and the others it opens can't be hired.
+    expect(unmet(hireOpen(state))).toEqual(["csuite"]);
+    // Series A approaches and is turned down: every role can be filled, and the company floats without B, C or D.
+    state = easyIpo.applyAction(until("seriesA", easyIpo, state).state, { type: "declineInvestor" });
+    expect(unmet(state)).toEqual(["csuite"]);
+    const hired = hireOpen(state);
+    expect(SERIES_IDS.slice(1).map((r) => hired.investors.vc.firstApproachDay[r])).toEqual([null, null, null]);
+    expect(easyIpo.ipo(profitable(hired))).toMatchObject({ ready: true, canApply: true });
   });
 
-  it("shows each round on the checklist", () => {
+  it("puts no Series round on the checklist", () => {
     const state = until("seriesB").state;
-    const lines = sim.ipo(state).conditions.filter((c) => c.id.startsWith("series"));
-    const rounds = sim.investors(state).vc.rounds;
-    expect(lines.map((c) => [c.label, c.met, c.now])).toEqual([
-      ["Series A approached", true, `Approached on day ${rounds[0]!.firstApproachDay}`],
-      ["Series B approached", true, `Approached on day ${state.day}`],
-      ["Series C approached", false, "Not yet"],
-      ["Series D approached", false, "Not yet"],
-    ]);
-    expect(lines[0]!.needed).toMatch(/whether or not you took their money/);
+    expect(sim.ipo(state).conditions.filter((c) => c.id.startsWith("series"))).toEqual([]);
   });
 });

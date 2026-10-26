@@ -94,6 +94,7 @@ When starting a company, the student chooses how many shares it has, from **10,0
   2. The student counters (e.g. £50k for 10%). A dice roll sets offer 2: a high roll moves most of the way to the student, a middle roll meets halfway, and a low roll makes them dig in: offer 2 is a little worse than offer 1, so a counter is never a free try.
   3. The student can counter once more; a new roll sets offer 3.
   4. **Offer 3 is final:** take it or leave it.
+  - **Auto-negotiate.** Instead of countering round by round, the student enters their opening counter and presses Auto-negotiate. The game plays the remaining rounds with the same rolls and rules as by hand, repeating the student's counter each time, so on average it's no better and no worse than clicking through. It shows a short transcript of each round ("Offer 2: they met you halfway. Offer 3: they held."), then the final offer with **Accept** and **Decline**. It never accepts for the student.
   - The further a counter is from the investor's offer, the worse the odds on the roll.
   - A CFO adds a bonus to every negotiation roll.
   - Investors negotiate in good faith and never walk away: their latest offer always stands until the student accepts or declines.
@@ -110,6 +111,13 @@ When starting a company, the student chooses how many shares it has, from **10,0
   Each target counts only once the rung before has approached and at least 10 days have passed (#101). On sensible
   play Series A comes about two weeks after the angel and Series D by about day 95, before the IPO's trading history
   is met.
+
+  **A 180-day game has two VC rounds, not four.** Series A and B merge into one round, and C and D into another,
+  called Series A and Series B in that game. Each merged round approaches at the earlier round's target (A's, then
+  C's). Its second tranche is paid when the later round's target is hit (B's, then D's), and its cash and share
+  taken are the two rounds' added together, so a student who takes both ends up about where four rounds would leave
+  them. The game summary says it was a two-round game. C-suite roles still open at the first round's approach. Until
+  IPO, 1-year and career games keep all four rounds.
 
   - Each VC's offer leans one way: **most cash**, **fewest conditions** or **least ownership taken**. Each VC's lean is random, so a round can have two "most cash" offers and one "least ownership".
   - The student picks **one** VC and negotiates with them alone. Picking one closes the other two.
@@ -141,17 +149,15 @@ What the company is worth. It sets how many shares a funding round costs, the re
 To float, the company must pass a readiness check:
 
 - **Trading history:** about four months (120 days, configurable) of trading since the launch, so even strong play can't float before about day 120
-- **Users and revenue** above a threshold
+- **Users and revenue** above a threshold, including a **minimum paying customer base**, so a company with 300 payers at $1,000 each can't float
 - **Uptime record**, e.g. 99% over the last 30 days
 - **Predictable costs.** Big spending swings count against you (capex vs opex discussion). The record's single costliest day is set aside, so one fraud bill or severance payment doesn't fail it.
 - **Security and compliance audit.** On IaaS you must have patched everything yourself; PaaS/SaaS providers cover more.
-- **Profitability**, or a clear path to it
-- **Customer satisfaction record**, e.g. above 70% over the last 30 days. In the alpha, satisfaction at 0% had no consequence: one student sat there for 143 days and still finished.
-- **A minimum paying customer base**, so a company with 300 payers at $1,000 each can't float.
-- **All four Series rounds have approached.** Series A, B, C and D must each have approached the company. Accepting their money is optional, so it's growth that qualifies a company, not dilution.
-- **Required executives:** a CFO, a CISO and legal counsel are hired.
+- **The full C-suite:** every role is hired (all 11 beyond the CEO). Because the last roles open at the Series A approach, Series A must have approached, but no later round has to.
 
-- **No VC money needed.** The rounds must approach, but the student can decline every one. Growing without investors and floating is harder but keeps far more of the company.
+That's six checks. Profitability, the satisfaction record and "all four Series rounds have approached" were cut to make the gate simpler: profitability overlaps revenue and predictable costs, satisfaction still moves the valuation and the first day's trading, and the Series approaches repeated the revenue check. The full C-suite replaced the three named executives (CFO, CISO, legal counsel): one rule that's easy to explain, and picking and timing 11 hires gives the late game decisions.
+
+- **No VC money needed.** Series A must approach, but the student can decline it. Growing without investors and floating is harder but keeps far more of the company.
 - **Visible checklist.** The Finance page shows each condition turning green. The student can apply once all are green.
 - **Market mood.** Applying still carries a small hidden chance of a cold market: the IPO is postponed by about 30 days and some reputation is lost, but the student can try again. A company comfortably over every condition is less likely to hit one.
 - In a 180-day game a float will be rare. A game that reaches its last day without floating is scored by its valuation (see Scoring).
@@ -251,7 +257,7 @@ In the game, launches and releases use made-up names, not real ones.
 
 - The size comes from the product type (social bigger than e-commerce), then scales by how much of the stack the model owns: **on-prem 100%, IaaS 85%, PaaS 65%, SaaS 40%**. With the starting two developers that's at most about 10–15 days on-prem. On SaaS the MVP is setting up the storefront, linking payment gateways and so on.
 - Hiring more developers (or agency developers) finishes it sooner, so the first hiring decision matters.
-- Launch users ramp in when the MVP completes, as they do now. Hosting bills start at go-live; on-prem kit can be ordered during the MVP so its delivery overlaps the build.
+- **Launch is a button.** When the MVP is done the company waits as **Ready to launch** until the student presses **Launch**; launch users ramp in from then. Hosting bills still start at go-live, so kit rented while waiting is free until launch, but staff are paid every day, so waiting isn't free. On-prem kit can be ordered during the MVP so its delivery overlaps the build. See Phases and checklists.
 - The features panel shows MVP progress (dev-days done of the total) and an estimated launch day.
 
 **The developer slider.** After launch, a slider splits developer time between **features** and **optimisation**, on every model.
@@ -275,6 +281,7 @@ A 180-day game counts internally as one year, split into **four equal quarters**
   2. Staff **accept** if the offer reaches their hidden walk-away point. If not, they **counter**, and a roll decides how far they come down.
   3. The student can accept a counter at any time.
   4. If there's still no deal after the student's **third offer**, it goes to a **tribunal**.
+  - **Auto-negotiate:** the student sets their opening offer (cash rise and schemes) and presses Auto-negotiate. The game plays the remaining rounds with the same rolls, repeating the student's cash rise; schemes stay as set. It shows a transcript of each round. If staff accept, it's settled; if not, it ends on staff's last counter with **Accept** and **Tribunal** (showing the fee). It never goes to tribunal by itself.
 - **The tribunal** picks the student's figure, the staff's figure or the middle. The roll is weighted towards whichever is closer to a hidden **fair rise** (inflation, plus more if the company is doing well), and the student pays a fee. There's no declining a review; the tribunal always settles it.
 - **Staff schemes** cost money going forward but let the student offer a smaller cash rise:
 
@@ -317,19 +324,19 @@ A leadership team the student hires one role at a time. Each role gives a lastin
 | Role | Effect (each candidate's stats vary it) |
 |---|---|
 | CEO | **The student**, as founder-CEO. Not hired. |
-| CFO | Better rolls in investor and deal negotiations; cheaper loans. **Required to IPO.** No part in pay reviews. |
+| CFO | Better rolls in investor and deal negotiations; cheaper loans. No part in pay reviews. |
 | COO | About −8% everyday running costs (hosting, rent, provider fees; not staff pay) |
 | CTO | Opens tier 2 straight away (as well as the market-share route); about +25% research points |
 | CIO | Migrations about 30% cheaper and faster |
-| Legal counsel | No gameplay effect. **Required to IPO**, as a compliance box to tick. |
-| CISO | Faster patching and a lower breach chance. **Required to IPO**, which shows the market the company takes cybersecurity seriously. |
+| Legal counsel | No gameplay effect: a compliance box to tick before floating. |
+| CISO | Faster patching and a lower breach chance. |
 | CMO | About +10% campaign effectiveness |
 | Head of people | Pay reviews only: a better roll (in place of the penalty for dealing with staff directly), a softer walk-away point, schemes valued fully or more, and a slight tribunal lean |
 | Head of ops | Ops staff cover more servers; better uptime |
 | Head of support | Support staff clear more tickets; satisfaction recovers faster |
 | Head of development | About +20% developer output on all developer work: the MVP, features and optimisation |
 
-Some executives earn their keep and some are there because going public needs them: the CFO, CISO and legal counsel are all required to float. *Stats, pay and the exact figures are placeholders for balancing.*
+Some executives earn their keep and some are there because going public needs them: **the full C-suite is required to float**. *Stats, pay and the exact figures are placeholders for balancing.*
 
 ## More products
 
@@ -494,6 +501,41 @@ In the alpha, only about 6% of days needed any decision, most Continue clicks ca
 
 - **Turn on the timed flow** that's already built in, pausing automatically on events, alerts and low cash (see Game length).
 - **Show a day-progress bar.**
+
+## Phases and checklists
+
+From the playtest after the C-suite (2026-10-26): the opening was too many plates at once, and after a vulture rescue and Series A there was nothing left to do but add big infrastructure ahead of a spike. Students will do the same. So the game opens its jobs a phase at a time, and every phase has a checklist.
+
+**Four phases**, each opened by a milestone. Jobs that aren't open yet are **hidden**, not just greyed out: a new player in Build sees developers and the MVP and little else.
+
+| Phase | Opens | Ends | What opens |
+|---|---|---|---|
+| Build | Day 1 | The MVP is done | Deployment model, funding (loan, friends and family, grants), developers, servers or racks |
+| Launch | The MVP is done (the student presses Launch) | The first angel approach | Price, ops, support |
+| Grow | The first angel approach | The Series A approach | Moderators, researchers, marketers, features and tiers, deals, campaigns, the CFO, CTO and head of people |
+| Scale | The Series A approach | The float, or the end of the game | The rest of the C-suite, the IPO |
+
+The CFO keeps its early route (outside money opens it as soon as it's taken). Pay reviews start no sooner than about 30 days into Grow, rather than on a fixed quarter, so a student isn't settling pay before they've launched. *Exactly which jobs open where is a placeholder for the slice that builds it.*
+
+**A checklist for each phase**, in two modes:
+
+- **Below the phase's minimum:** it lists what's missing, each line saying why ("launch demand is about 9 CU; a small app server gives 6"), with **Get me ready**: one click buys or hires only the shortfall, showing the daily cost first. It never sells kit or lets anyone go. Hires are **permanent juniors**.
+- **At or above the minimum:** it shows where the student's **own projection** says they'll need to be by the end of the phase (from their users, growth and model), next to the **baseline** for their product and model ("you're heading for 2 app servers; a typical social network on IaaS has 3 by now").
+
+What each checklist covers:
+
+- **Build:** developers, then the launch kit, shown once the MVP is 75% built so permanent hires and servers are ready by launch day. The kit is the minimum for launch-day demand on the student's model: on-prem and IaaS need app servers, a database, a load balancer once there's more than one app server, and the ops to run them; PaaS and SaaS need less, which is the lesson. Plus enough support for the first users' tickets.
+- **Launch:** servers, ops and support for current demand.
+- **Grow:** adds researchers, marketers and moderators sized to the company, and the C-suite roles as they open.
+- **Scale:** the rest of the C-suite and the six float checks, so the late game always has a visible to-do list.
+
+**Launching short.** The student can press Launch without the minimum, with a plain warning such as "No database: no users can be served". It's a teaching game, so they can get it wrong, but never without being told.
+
+**Baselines.** One per product and model (6 × 4 = 24): what the balance harness's careful playstyle had at the end of each phase (users, servers by type, staff by pool, cash, the day the phase ended). They're stored in the config and rebuilt by a script whenever the balance changes, like the gameplay fingerprints. They're used:
+
+- in Build and early Launch, before there's enough history to project from
+- beside the projection, as the "typical company" column
+- for balancing, since each phase's end day shows where a product or model is too slow or too harsh.
 
 ## Game length
 
