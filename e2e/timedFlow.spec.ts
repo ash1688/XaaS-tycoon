@@ -316,7 +316,8 @@ test("staff's counter to an offer with schemes keeps them: agreeing it starts th
   await expect(modal.getByTestId("pay-schemes-held")).toContainText(/Pension top-up 1 .*Health cash plan 1 .*Share save 1 /);
   await expect(modal.getByTestId("pay-share-save-issued")).toBeVisible();
   const after = await (await request.get(`/api/codes/${code}/companies/${id}`)).json();
-  expect(after.lastPayReview).toMatchObject({ outcome: "counterAccepted", rise: Number(cash) / 100 });
+  expect(after.lastPayReview.outcome).toBe("counterAccepted");
+  expect(after.lastPayReview.rise).toBeCloseTo(Number(cash) / 100, 6);
   await modal.getByTestId("pay-done").click();
 
   const student = modal.page();
