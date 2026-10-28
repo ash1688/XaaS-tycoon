@@ -811,7 +811,7 @@ function payLines(sim: Sim, state: GameState): string[] {
   if (!review) return [`pay: ${payStatus(sim, state)}`];
   const lines = [
     `pay review, ${quarterName(review)} (the rise applies from day ${review.startDay}): inflation ${rise(review.inflation)}. ` +
-      `You can offer from ${rise(review.minOffer)} (inflation less a point); staff ask ${rise(review.maxAsk)} at most. A rise below inflation is a pay cut in real terms.`,
+      `You can offer from ${rise(review.minOffer)} in cash (inflation less a point), with any schemes on top; staff ask ${rise(review.maxAsk)} at most. A rise below inflation is a pay cut in real terms.`,
     `  the team costs ${money(review.dailyStaffCost)}/day now, pay and staff schemes`,
     ...schemeLines(review.schemes, review.schemeValuation),
   ];
@@ -1271,7 +1271,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
   if (review) {
     lines.push(
       `  pay   (the pay review in full; changes nothing)`,
-      `  offer <${rise(review.minOffer)}–${rise(review.maxAsk)}> [pension=0-3] [health=0-3] [death=on] [discount=on] [shares=0-3]   (offer staff a pay rise, e.g. offer 3.5, or cash with schemes, e.g. offer 2.5 pension=1 death=on: the offer's worth to staff is within the range; they accept or counter with a roll; the third offer is final, and short of a deal goes to a tribunal)`,
+      `  offer <${rise(review.minOffer)}–${rise(review.maxAsk)}> [pension=0-3] [health=0-3] [death=on] [discount=on] [shares=0-3]   (offer staff a pay rise, e.g. offer 3.5, or cash with schemes, e.g. offer 2.5 pension=1 death=on: the cash is at least the least, and the offer's worth to staff at most the most; they accept or counter with a roll; the third offer is final, and short of a deal goes to a tribunal)`,
       `  payodds <rise %> [schemes]   (what an offer would cost, its worth to staff, and the odds on staff's counter; changes nothing)`,
     );
     if (!review.final) {

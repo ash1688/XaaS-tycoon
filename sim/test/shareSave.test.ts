@@ -169,9 +169,9 @@ describe("when share save applies", () => {
 
   it("on a tribunal, whatever it picks", () => {
     const atFinal = offer(plain, offer(plain, open, minOffer), minOffer);
+    // The least in cash, with share save on top (#293), still short of a deal.
     const levels = { shareSave: 1 };
-    const worth = plain.payOfferPreview(atFinal, minOffer, levels).schemeValue;
-    const cash = Math.max(0, round(minOffer - worth));
+    const cash = minOffer;
     expect(plain.payOfferPreview(atFinal, cash, levels).dilution!.newShares).toBe(Math.round(inIssue(atFinal) * perLevel));
     const seen = new Set<string>();
     for (let seed = 0; seed < 300 && seen.size < 3; seed++) {
