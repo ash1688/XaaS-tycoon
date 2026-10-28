@@ -878,7 +878,9 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     if (job) checkJobOpen(state, job);
     // Ringing the opening bell ends the game: what's still owed on the loan comes off the cash.
     const played = playAction(state, action);
-    return endingDebt({ state: advancePhase(config, played, csuite.openDay(played, "cfo")).state, entries: [] }).state;
+    const ended = endingDebt({ state: advancePhase(config, played, csuite.openDay(played, "cfo")).state, entries: [] }).state;
+    // So does the back pay still owed to the C-suite.
+    return ended.status === "playing" ? ended : csuite.settleBackPay(ended, finance.chargeNow).state;
   }
 
   function playAction(state: GameState, action: Action): GameState {
@@ -1184,9 +1186,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const settled = endingDebt(finance.settle(migrated.state, day, entries, rescue.rescue, loan.coverShortfall));
     // A rescue's cuts may let go marketers who were running campaigns: those campaigns stop.
     const released = campaigns.release(settled.state);
-    // The board's pay holiday starts when cash runs low and ends once it has recovered: costs counted with their pay.
-    const paid = { ...released.state, csuite: { ...released.state.csuite, payHolidaySince: null } };
-    const holiday = csuite.payHolidayDay(released.state, runway(paid).dailyCosts);
+    // The board's pay holiday starts when cash runs low and ends once it has recovered, with what it skipped owed.
+    const holiday = csuite.payHolidayDay(released.state, payHolidayCosts(released.state), finance.chargeNow);
     // Last, the funding ladder: an angel's target, and an investor who approaches a company doing well.
     const funded = investors.investorDay(holiday.state, {
       joined: (ramping ? 0 : organic.arrived) + wave.joined + (users - wave.users),
@@ -1254,6 +1255,15 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       throw new SimError("bad_instances", `Set a maximum between your minimum of ${min} and the platform's most, ${platform.maxInstances}.`);
     }
     return { ...state, autoscale: { ...state.autoscale, max } };
+  }
+
+  /**
+   * The costs the board's pay holiday starts and ends on (#290): the daily costs with the executives' pay, holiday or
+   * not, and without Campaign spend, so starting a Campaign can't start one.
+   */
+  function payHolidayCosts(state: GameState): number {
+    const r = runway({ ...state, csuite: { ...state.csuite, payHolidaySince: null } });
+    return r.dailyCosts - (r.costs.find((h) => h.id === "campaigns")?.amount ?? 0);
   }
 
   function runway(state: GameState): RunwayView {
@@ -1405,7 +1415,9 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
 
   function endGame(saved: GameState): GameState {
     const state = load(saved);
-    return state.status === "playing" ? loan.settleAtEnd({ ...state, status: "finished", endedByTeacher: true }).state : state;
+    if (state.status !== "playing") return state;
+    const ended = loan.settleAtEnd({ ...state, status: "finished", endedByTeacher: true }).state;
+    return csuite.settleBackPay(ended, finance.chargeNow).state;
   }
 
   /** Once a game has ended, whatever is still owed on its loan comes off its cash, with the line saying so. */

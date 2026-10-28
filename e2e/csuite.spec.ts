@@ -53,7 +53,7 @@ test("hires a head of development from the shortlist, for good, and the IPO chec
   // The IPO needs every role.
   await expect(csuite.getByTestId("csuite-ipo")).toContainText("Every role must be filled to float: 0 of 11 hired");
   await expect(csuite.getByTestId("csuite-pay-holiday-rule")).toContainText(
-    "If cash falls below 7 days of running costs, the board forgoes its pay until there are 21 days' worth in the bank.",
+    "If cash falls below 7 days of running costs, the board forgoes its pay until there are 21 days' worth in the bank (running costs with C-suite pay, leaving out Campaigns). What it misses is owed, and paid back once cash recovers.",
   );
   await expect(csuite.getByTestId("csuite-legalCounsel")).toBeVisible();
 

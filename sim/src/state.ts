@@ -37,7 +37,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 65;
+export const GAME_STATE_VERSION = 66;
 
 /**
  * The four phases a game's jobs open in, in order, each opened by a milestone: Build from day 1, Launch when Launch is
@@ -79,6 +79,8 @@ export interface Csuite {
   hired: Executive[];
   /** The day the board's pay holiday began, while it lasts: no executive is paid. Left out or null, they're paid. */
   payHolidaySince?: number | null;
+  /** Pay skipped on the board's pay holiday and not yet paid back (#290). Left out, none. */
+  payOwed?: number;
 }
 
 /** Headcount in one pool, by grade. */

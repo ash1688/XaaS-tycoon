@@ -543,3 +543,21 @@ describe("marketers (#180)", () => {
     expect(paths).not.toContain("campaigns.maxRunning");
   });
 });
+
+describe("the board's pay holiday (#290)", () => {
+  it("leaves Campaign spend out of the costs it starts on, so a big Campaign can't start one", () => {
+    const executive = { role: "headOfOps" as const, name: "Pat", strength: 1, salary: 300, equity: 0, shares: 0, day: 1 };
+    const running = sim.applyAction(ready, start("casual", 100_000, 7));
+    const withBoard: GameState = { ...running, csuite: { ...running.csuite, hired: [executive] } };
+    const all = sim.runway(withBoard).dailyCosts;
+    const campaign = sim.runway(withBoard).costs.find((h) => h.id === "campaigns")!.amount;
+    expect(campaign).toBeGreaterThan(0);
+    // Cash at the day's end between 7 days of the costs without the Campaign and 7 days with it.
+    const target = Math.round(7 * (all - campaign / 2));
+    const delta = sim.advance(withBoard).state.cash - withBoard.cash;
+    const { state } = sim.advance({ ...withBoard, cash: target - delta });
+    expect(state.cash).toBeLessThan(7 * all);
+    expect(state.cash).toBeGreaterThanOrEqual(7 * (all - campaign));
+    expect(state.csuite.payHolidaySince ?? null).toBeNull();
+  });
+});

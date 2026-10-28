@@ -225,7 +225,7 @@ npm run -s play -- summary <game>
   the C-suite's 10% cap fills. The CFO opens on outside money or in Grow (the first angel approach), the CTO and head
   of people in Grow, and the rest (the heads of development, ops and support, the COO, CIO, CMO, CISO and legal
   counsel) in Scale, at the Series A approach. Every role is needed to IPO: all 11 beyond you, the CEO. If cash falls below 7 days of running costs, the
-  C-suite takes a **pay holiday**: none of them is paid (and it isn't owed later) until cash is back above 21 days.
+  C-suite takes a **pay holiday**: none of them is paid until cash is back above 21 days (the same running costs both ways, C-suite pay in, Campaigns out). What they miss is owed: back pay comes out of the cash above 21 days once it ends, and any left at the end comes off your final cash.
 - `ipo` shows the IPO readiness checklist: six conditions (a trading history; users and revenue, with a minimum
   paying customer base; an uptime record; predictable costs; a security audit; and the full C-suite, all 11 roles
   hired), each with where you stand and what's needed. Satisfaction and profit aren't conditions, but the market
