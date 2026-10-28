@@ -494,7 +494,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("pricing.maxSupport", "Customers", W, "Rise: most contacting support", "The most of the payers who stay through a rise who contact support.", SHARE);
   add("pricing.grumbleDivertStrength", "Customers", W, "Grumbling: new users to rivals", "While a rise's backlash lasts, this × grumblers ÷ users of new users go to rivals instead, before the cap.", range(0, 20, 0.1));
   add("pricing.maxGrumbleDivert", "Customers", W, "Grumbling: most new users to rivals", "The most of the new users grumbling can send to rivals.", SHARE);
-  add("pricing.expectedPriceDays", "Customers", W, "Expected price (days)", "Days a price must hold before customers expect it. A cut is measured from the price they expect.", range(1, 180, 1));
+  add("pricing.expectedPriceDays", "Customers", W, "Expected price (days)", "Every this many days, the price customers expect moves halfway to your price. A cut is measured from the price they expect.", range(1, 180, 1));
   add("pricing.cutGainStrength", "Customers", W, "Cut: new users", "A cut brings this × (cut ÷ the type's threshold)^curve new users, as a share of users, before the cap. Only the part below the price customers expect counts.", range(0, 5, 0.05));
   add("pricing.maxCutGain", "Customers", W, "Cut: most new users", "The most new users one cut can bring, as a share of users.", range(0, 5, 0.05));
   add("pricing.cutUpgradeStrength", "Customers", W, "Cut: upgrades", "A cut turns this × (cut ÷ fair price)^curve of free users into payers, before the cap.", range(0, 5, 0.05));

@@ -797,8 +797,9 @@ export interface PricingConfig {
   grumbleDivertStrength: number;
   maxGrumbleDivert: number;
   /**
-   * Days a price must hold before customers expect it. A cut is measured from the price they expect: the latest that
-   * held this long. So cutting back from a rise that hasn't held is no bargain.
+   * Every this many days from the launch, the price customers expect moves halfway to the price in effect (#291). A cut
+   * is measured from the price they expect, so cutting back from a rise they don't expect yet is less of a bargain,
+   * and an old high price fades instead of making every later cut look big.
    */
   expectedPriceDays: number;
   /** New users a cut brings at d = 1, as a share of today's users, before the cap: cutGainStrength × d^waveCurve. */
@@ -3218,7 +3219,7 @@ export const defaultConfig: GameConfig = {
     // 5% of users grumbling sends 15% of new users to rivals while the backlash lasts.
     grumbleDivertStrength: 3,
     maxGrumbleDivert: 0.5,
-    expectedPriceDays: 30,
+    expectedPriceDays: 14,
     // A 12.5% cut (£20 to £17.50) brings about 3% more users and turns about 2% of free users into payers.
     cutGainStrength: 0.6,
     maxCutGain: 0.5,

@@ -7233,23 +7233,50 @@ describe("alpha patch: pricing exploits and balance", () => {
       expect(gained(s, dear, 288)).toBeLessThan(fromFair / 5);
     });
 
-    it("counts a cut only below the price customers expect: one that has held for 30 days", () => {
-      // Up to £45 and back to £30 two weeks later: £45 hasn't held long enough to be expected, so undoing it brings no
-      // wave, and the preview says why.
-      const risen = s.advance(s.applyAction(begin(), setPrice(45)), 14).state;
-      expect(s.pricePreview(risen, 30)).toMatchObject({ expectedPrice: 30, total: { joined: 0, joinedPaid: 0, upgraded: 0 } });
-      expect(s.pricePreview(risen, 30).noWave).toMatch(/^No wave: customers expect £30, the price that held for 30 days, and this is no lower/);
-      // Below £30 it counts for the part below: a cut to £25 brings what £30 to £25 would (on the fewer users the rise
-      // left), not £45 to £25.
-      expect(gained(s, risen, 25)).toBeGreaterThan(0);
-      expect(gained(s, risen, 25)).toBeLessThanOrEqual(gained(s, begin(), 25));
-      expect(s.pricePreview(risen, 25).noWave).toBeNull();
-      // Held 30 days, £45 is what customers expect: a cut from it is a discount, and counts from it.
-      const settled = s.advance(s.applyAction(begin(), setPrice(45)), 31).state;
-      expect(s.pricePreview(settled, 40).expectedPrice).toBe(45);
-      expect(gained(s, settled, 40)).toBeGreaterThan(0);
-      // The rise is still measured from the lowest price remembered, £30, for the 60 days.
-      expect(s.pricePreview(settled, 50)).toMatchObject({ rememberedPrice: 30 });
+    it("moves the price customers expect halfway to the price every 14 days from the launch (#291)", () => {
+      // Launched on day 1 at £30, up to £45 from day 2: what they expect steps halfway on days 15, 29 and 43.
+      const risen = s.applyAction(begin(), setPrice(45));
+      const at = (days: number) => s.advance(risen, days).state;
+      expect(s.pricePreview(at(7), 20).expectedPrice).toBe(30);
+      expect(s.pricePreview(at(14), 20)).toMatchObject({ expectedPrice: 37.5, expectedPriceDays: 14 });
+      expect(s.pricePreview(at(28), 20).expectedPrice).toBe(41.25);
+      expect(s.pricePreview(at(42), 20).expectedPrice).toBe(43.13);
+      // Cutting back to £30 before the first step brings no wave, and the preview says why.
+      expect(s.pricePreview(at(7), 30)).toMatchObject({ total: { joined: 0, joinedPaid: 0, upgraded: 0 } });
+      expect(s.pricePreview(at(7), 30).noWave).toMatch(/^No wave: customers expect £30, and this is no lower\. What they expect moves halfway to your price every 14 days/);
+      // A step on, it counts from £37.50: some wave, but less than from a £45 they'd come to expect.
+      expect(gained(s, at(14), 30)).toBeGreaterThan(0);
+      expect(gained(s, at(14), 30)).toBeLessThan(gained(s, at(70), 30));
+      expect(s.pricePreview(at(14), 30).noWave).toBeNull();
+      // The rise is still measured from the lowest price of the last 60 days.
+      expect(s.pricePreview(at(30), 50)).toMatchObject({ rememberedPrice: 30, priceMemoryDays: 60 });
+    });
+
+    it("lets an old high price fade, so cut after cut doesn't count from it (#291)", () => {
+      // £45 for 10 weeks, then down to £20: four weeks on, customers expect much nearer £20 than £45.
+      const dear = s.advance(s.applyAction(begin(), setPrice(45)), 70).state;
+      expect(s.pricePreview(dear, 20).expectedPrice).toBeGreaterThan(44);
+      const cut = s.advance(s.applyAction(dear, setPrice(20)), 28).state;
+      expect(s.pricePreview(cut, 16).expectedPrice).toBeLessThan(27);
+      // So a further cut to £16 brings well under half what it would have counted for from £45.
+      const users = (st: GameState) => ({ ...st, users: 1_000, paidUsers: 600 });
+      expect(gained(s, users(cut), 16)).toBeLessThan(gained(s, users(dear), 16) / 2);
+    });
+
+    it("never has a cut's wave push users past the market's size (#291)", () => {
+      const market = s.config.productTypes.ecommerce.growth.marketSize;
+      const dear = s.advance(s.applyAction(begin(), setPrice(45)), 70).state;
+      const full = { ...dear, users: market - 10, paidUsers: Math.round((market - 10) * 0.6) };
+      const preview = s.pricePreview(full, 10);
+      expect(preview.total.joined).toBeLessThanOrEqual(10);
+      expect(preview.users).toBeLessThanOrEqual(market);
+      let state = s.applyAction(full, setPrice(10));
+      for (let i = 0; i < defaultConfig.pricing.waveDays + 1; i++) {
+        state = s.advance(state).state;
+        expect(state.users).toBeLessThanOrEqual(market);
+      }
+      // With room to spare, the same cut brings far more.
+      expect(s.pricePreview({ ...dear, users: 1_000, paidUsers: 600 }, 10).total.joined).toBeGreaterThan(10);
     });
 
     it("counts a cut back from a price that has held as a discount, the more so the further below it", () => {
@@ -7379,7 +7406,9 @@ describe("alpha patch: pricing exploits and balance", () => {
         earned += income(played.log);
       }
       const steady = s.advance(begin(), 56);
-      expect(state.paidUsers).toBeLessThan(100);
+      // A fortnight at £1,000 moves what customers expect halfway to it (#291), so each cut back brings a wave; it
+      // never wins back what the rise lost.
+      expect(state.paidUsers).toBeLessThan(steady.state.paidUsers * 0.7);
       expect(earned).toBeLessThan(income(steady.log) / 2);
     });
   });

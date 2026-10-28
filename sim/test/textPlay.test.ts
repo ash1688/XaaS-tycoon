@@ -1397,11 +1397,11 @@ describe("prices: the opening price and the bands", () => {
     expect(play(launched, "price 7").lines[0]).toMatch(/setPrice refused: Your opening price of £6 holds until go-live on day \d+, and for 14 days after\./);
   });
 
-  it("prints a preview's bands per customer type and in all, and what customers expect and remember", () => {
+  it("prints a preview's bands per customer type and in all, and what customers expect and what a rise counts from", () => {
     let state = sim.advance(launchPhase(), 15).state;
     state = { ...state, priceLockedUntil: 0 };
     const rise = run(state, `preview ${state.price * 1.4}`).lines.join("\n");
-    expect(rise).toMatch(/customers expect £[\d.]+ \(a cut counts from it\) and remember £[\d.]+ \(a rise counts from it\)/);
+    expect(rise).toMatch(/customers expect £[\d.]+, moving halfway to your price every 14 days \(a cut counts from it\); a rise counts from £[\d.]+, the lowest price of the last 60 days/);
     expect(rise).toMatch(/bands \(of paying users\):\n {2}casual \([\d.]+%\): accept [\d.]+%, grumble online [\d.]+%, contact support [\d.]+%, drop to free [\d.]+%, leave [\d.]+%/);
     expect(rise).toMatch(/\n {2}all: accept [\d.]+%/);
     const cut = run(state, `preview ${state.price * 0.6}`).lines.join("\n");

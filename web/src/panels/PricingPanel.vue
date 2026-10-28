@@ -445,8 +445,9 @@ async function save() {
           <WaveChart :days="preview.days" :direction="preview.direction === 'rise' ? 'rise' : 'cut'" />
           <BandChart :bands="preview.bands" />
           <p class="muted" data-testid="price-expected">
-            Customers expect {{ formatPrice(preview.expectedPrice) }}, the price that has held a month: a cut counts from
-            it. A rise counts from the lowest price they remember, {{ formatPrice(preview.rememberedPrice) }}.
+            Customers expect {{ formatPrice(preview.expectedPrice) }}: a cut counts from it, and it moves halfway to your
+            price every {{ preview.expectedPriceDays }} days. A rise counts from {{ formatPrice(preview.rememberedPrice) }},
+            the lowest price of the last {{ preview.priceMemoryDays }} days.
             <template v-if="preview.direction === 'rise'">Those who grumble online send new users to your rivals while the backlash lasts.</template>
           </p>
           <p v-if="preview.direction === 'rise'" class="muted" data-testid="preview-reaction">

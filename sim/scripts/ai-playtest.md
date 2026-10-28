@@ -113,9 +113,10 @@ npm run -s play -- summary <game>
   grumble online, contact support, drop to free and leave; a cut splits the new users it could bring into join
   paying, join free and don't join. The bands slide with the size of the change against each type's threshold. The
   reaction then plays out as a wave over several days, each day in the log.
-- **Expected price**: customers judge a cut from the price they expect, the latest that has held for 30 days, so cutting
-  back after a rise that hasn't held is no bargain. A rise is measured from the lowest price they remember over 60
-  days. The fair price, which the thresholds are multiples of, rises by a quarter of each pay review's inflation; your
+- **Expected price**: customers judge a cut from the price they expect. It starts at your opening price and every 14
+  days moves halfway to your price then, so cutting back soon after a rise is less of a bargain, and an old high price
+  fades. A rise is measured from the lowest price of the last 60 days. A cut's wave never brings more users than your
+  market has room for. The fair price, which the thresholds are multiples of, rises by a quarter of each pay review's inflation; your
   own price never moves by itself.
 - The mix shifts. `new users join as` shows the mix new users arrive in: the product's own, tilted by your features
   (each pulls a customer type, shown in `features` as `[pulls ...]`) and your price (above a type's threshold, fewer

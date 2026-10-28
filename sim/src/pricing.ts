@@ -1,6 +1,7 @@
 import type { Calendar } from "./calendar.ts";
 import { CUSTOMER_TYPE_IDS, type CustomerTypeId, type GameConfig, type PricingConfig, type ProductTypeId } from "./config.ts";
 import { count, pounds } from "./finance.ts";
+import { marketSize } from "./market.ts";
 import { SimError, type GameState, type LogEntry, type PriceChange, type PriceWave, type WaveEffect } from "./state.ts";
 import type { Support, TicketBurst, TicketOutlook } from "./support.ts";
 
@@ -45,10 +46,19 @@ export interface PricePreview {
   lockDays: number;
   /** How each customer type would split into bands, and all of them together: see PriceBandsView. */
   bands: PriceBandsView;
-  /** The price customers expect, a cut is measured from: what a usual month cost for the last expectedPriceDays. */
+  /**
+   * The price customers expect, a cut is measured from: the opening price, moved halfway to the price in effect every
+   * expectedPriceDays since launch.
+   */
   expectedPrice: number;
-  /** The lowest price customers remember, a rise is measured from. */
+  /** Days between each halfway step the expected price takes. */
+  expectedPriceDays: number;
+  /**
+   * The lowest price in effect over the last priceMemoryDays: a rise is measured from it, less what the rises since
+   * have already lost.
+   */
   rememberedPrice: number;
+  priceMemoryDays: number;
   /** Why a change starts no wave, in words, when it doesn't; null when it does or nothing changes. */
   noWave: string | null;
 }
@@ -485,20 +495,25 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
   }
 
   /**
-   * The price customers expect, a cut is measured from (#251): what a usual month cost over the latest stretch it held
-   * for expectedPriceDays or more, today's stretch included. Before any stretch has held that long, the first price.
-   * A rise that hasn't held that long isn't expected yet, so cutting back from it is no bargain.
+   * The price customers expect, a cut is measured from (#251, #291): the opening price at first, then every
+   * expectedPriceDays from the launch it moves halfway to the price in effect that day. So a rise is only partly
+   * expected a fortnight on, cutting back from it is less of a bargain than it looks, and an old high price fades
+   * rather than standing as the reference for a cut after cut.
    */
   function expectedPrice(state: GameState): number {
     const was = (price: number, rate?: number | null) => monthly(state.productType, price, rate ?? null);
     const changes = state.priceChanges;
     const first = state.launchDay ?? 1;
-    // Each stretch: the price in effect and the first and last days played at it, the latest last.
-    const stretches = changes.map((c, i) => ({ price: was(c.to, c.toRate), from: c.day, to: (changes[i + 1]?.day ?? state.day + 1) - 1 }));
     const opening = changes.length ? was(changes[0]!.from, changes[0]!.fromRate) : monthlyNow(state);
-    stretches.unshift({ price: opening, from: first, to: (changes[0]?.day ?? state.day + 1) - 1 });
-    const held = [...stretches].reverse().find((x) => x.to - x.from + 1 >= config.pricing.expectedPriceDays);
-    return held?.price ?? opening;
+    // The price in effect on a day: the latest change made on or before it.
+    const on = (day: number) => {
+      const c = changes.findLast((x) => x.day <= day);
+      return c ? was(c.to, c.toRate) : opening;
+    };
+    const step = Math.max(1, config.pricing.expectedPriceDays);
+    let expected = opening;
+    for (let day = first + step; day <= state.day; day += step) expected += (on(day) - expected) / 2;
+    return expected;
   }
 
   /**
@@ -587,8 +602,12 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
       total.tickets = Math.round(state.paidUsers * totalOf(bands, "support") * p.backlashTicketsPerUser);
       total.grumblers = Math.round(state.paidUsers * totalOf(bands, "grumble"));
     } else if (bands.kind === "cut") {
-      total.joined = Math.round(state.users * p.maxCutGain * (totalOf(bands, "joinPaid") + totalOf(bands, "joinFree")));
-      total.joinedPaid = Math.round(state.users * p.maxCutGain * totalOf(bands, "joinPaid"));
+      // Never more than the market has left to reach (#291), payers in proportion.
+      const joining = state.users * p.maxCutGain * (totalOf(bands, "joinPaid") + totalOf(bands, "joinFree"));
+      const room = Math.max(0, marketSize(config, state) - state.users);
+      const scale = joining > room ? room / joining : 1;
+      total.joined = Math.round(joining * scale);
+      total.joinedPaid = Math.min(total.joined, Math.round(state.users * p.maxCutGain * totalOf(bands, "joinPaid") * scale));
       total.upgraded = Math.round((state.users - state.paidUsers) * bands.upgrade);
     }
     return total;
@@ -601,7 +620,7 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
     const expected = expectedPrice(state);
     if (to < expected) return null;
     const days = config.pricing.expectedPriceDays;
-    return `No wave: customers expect ${pounds(Math.round(expected * 100) / 100)}, the price that held for ${days} days, and this is no lower. A price needs to hold for ${days} days before customers expect it.`;
+    return `No wave: customers expect ${pounds(Math.round(expected * 100) / 100)}, and this is no lower. What they expect moves halfway to your price every ${days} days, so a rise takes a while to become the price a cut counts from.`;
   }
 
   /** The wave planned day by day. Each number is spread over the shape on its own, so every total adds up exactly. */
@@ -680,7 +699,9 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
       lockDays: config.pricing.lockDays,
       bands: changeBands(state, toMonthly),
       expectedPrice: penny(expectedPrice(state)),
+      expectedPriceDays: config.pricing.expectedPriceDays,
       rememberedPrice: penny(rememberedPrice(state)),
+      priceMemoryDays: config.pricing.priceMemoryDays,
       noWave: same ? null : noWaveReason(state, toMonthly),
     };
   }
@@ -786,6 +807,9 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
     today.left = Math.min(plan.left, paidUsers);
     today.toFree = Math.min(plan.toFree, paidUsers - today.left);
     today.upgraded = Math.min(plan.upgraded, users - paidUsers);
+    // Nor does it bring more than the market has room for after the day's growth (#291).
+    today.joined = Math.min(plan.joined, Math.max(0, marketSize(config, state) - users));
+    today.joinedPaid = Math.min(plan.joinedPaid, today.joined);
     const done = addEffects(wave.done, today);
     const n = wave.days.length;
     const bursts: TicketBurst[] =

@@ -1832,7 +1832,7 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
             : "") +
           ticketsLine(p.tickets) +
           (p.locked ? `; price locked ${p.lockDaysLeft} more days` : ""),
-        `customers expect ${price(p.expectedPrice)} (a cut counts from it) and remember ${price(p.rememberedPrice)} (a rise counts from it)`,
+        `customers expect ${price(p.expectedPrice)}, moving halfway to your price every ${p.expectedPriceDays} days (a cut counts from it); a rise counts from ${price(p.rememberedPrice)}, the lowest price of the last ${p.priceMemoryDays} days`,
         ...(p.noWave ? [p.noWave] : []),
         ...bandLines(p.bands),
       ],
