@@ -10,9 +10,14 @@ import type { MigrationView } from "./migration.ts";
 import type { ServerView, UnitsView } from "./servers.ts";
 import type { FundingView } from "./shares.ts";
 import type { ShortfallView } from "./loan.ts";
+import type { OpsShortfallView } from "./infrastructure.ts";
 import { pounds } from "./finance.ts";
 import { quarterName } from "./payReview.ts";
 import type { DayLog, GameState } from "./state.ts";
+
+/** An ops shortfall in a few words: "1 of 2 needed, capacity cut to 70%". */
+export const opsShortText = (s: OpsShortfallView) =>
+  `${Math.round(s.have * 100) / 100} of ${s.needed} needed, capacity cut to ${Math.round(s.capacityShare * 100)}%`;
 
 /** With this many days of cash left or fewer, time pauses once: a loan or cost cuts can still help. */
 export const LOW_CASH_DAYS = 5;
@@ -59,6 +64,7 @@ export interface PauseViews {
   ipo(state: GameState): IpoView;
   danger(state: GameState): DangerView;
   shortfall(state: GameState): ShortfallView;
+  opsShortfall(state: GameState): OpsShortfallView | null;
 }
 
 export function createPauses(config: GameConfig, views: PauseViews) {
@@ -123,6 +129,11 @@ export function createPauses(config: GameConfig, views: PauseViews) {
     if (warned && views.danger(before).warning?.event !== warned.event) add("alert", `warning-${warned.event}`, `Warning: ${warned.name} may be coming`);
 
     // Alerts: things getting worse that a decision can fix.
+    // Too few ops for the servers running, on the day it starts to cut capacity (#259).
+    const opsShort = views.opsShortfall(after);
+    if (opsShort && !views.opsShortfall(before)) {
+      add("alert", "ops-shortfall", `Short of ops: ${opsShortText(opsShort)}`);
+    }
     const use = capacityUse(after);
     const useBefore = capacityUse(before);
     if (use !== null && use > 100 && (useBefore === null || useBefore <= 100)) add("alert", "capacity", `Over capacity: ${use}% in use`);

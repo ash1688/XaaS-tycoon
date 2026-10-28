@@ -252,6 +252,13 @@ const cancelWarning = computed(() => {
     : `${name} would ${over}: expect outages. ${buying.value ? "Buy" : "Rent"} more first, and ${buying.value ? "sell" : "cancel"} this one once they're ready.`;
 });
 
+// Servers on order need no ops until they're ready, but then they do (#259): said as soon as one is ordered.
+const opsForOrders = computed(() => {
+  const c = game.company;
+  if (!c || c.opsNeededOnceReady <= c.opsNeeded || c.opsNeededOnceReady <= game.opsWork) return "";
+  return `Once the servers on order are ready you'll need ${game.opsPeople(c.opsNeededOnceReady)}, and yours do the work of ${formatCount(game.opsWork)}. Hire ops (or retrain someone) before then, or capacity is cut.`;
+});
+
 async function cancel() {
   if (!cancelling.value) return;
   await game.act({ type: buying.value ? "sellServer" : "cancelServer", id: cancelling.value.id });
@@ -273,6 +280,10 @@ async function cancel() {
     <p :class="['lb-status', lbStatus.tone]" role="status" data-testid="lb-status">
       <span v-if="lbStatus.tone === 'warn'" class="badge">Load balancer</span>
       <span>{{ lbStatus.text }}</span>
+    </p>
+    <p v-if="opsForOrders" class="lb-status warn" role="status" data-testid="order-ops-warning">
+      <span class="badge">Ops</span>
+      <span>{{ opsForOrders }}</span>
     </p>
 
     <details class="how-it-works">

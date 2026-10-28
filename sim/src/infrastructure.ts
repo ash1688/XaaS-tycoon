@@ -34,6 +34,19 @@ export interface ProviderView {
 }
 
 /**
+ * Too few ops for the servers running (#259): "ops: 1 of 2 needed, capacity cut to 70%". The cut slides with the share
+ * of ops work missing.
+ */
+export interface OpsShortfallView {
+  /** The ops team's work a day, in mids. */
+  have: number;
+  /** Ops staff the running servers need, in people. */
+  needed: number;
+  /** The share of capacity left after the cut: 0.7 for a 30% cut. */
+  capacityShare: number;
+}
+
+/**
  * Infrastructure: what each model costs to run, the ops it needs, the load the company can serve, and the outages
  * when it can't. A model with servers serves CU and DBU demand with them (see Servers). A model without them has no
  * capacity limit (SaaS), unless a test config gives it a fixed capacity for load.
@@ -158,15 +171,33 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     return Math.round(list * runningCostShare(config, state));
   }
 
+  /** The share of the ops work the running servers need that the ops team covers: 1 when nothing's missing. */
+  function opsCovered(state: GameState): number {
+    const work = servers.opsWorkNeeded(state);
+    return work <= 0 ? 1 : Math.min(staffOutput(config, state, "ops"), work) / work;
+  }
+
   /**
-   * Each factor scales capacity. Models that need ops lose capacity in step with missing ops: on a model with servers,
-   * every tier does. Later mechanics add their own factors here.
+   * Each factor scales capacity. Models that need ops lose capacity in step with the share of ops work missing, so one
+   * short in a big team cuts less than one short in a small one (#259): on a model with servers, every tier does.
+   * Later mechanics add their own factors here.
    */
   function capacityFactors(state: GameState): number[] {
-    const needed = servers.opsNeeded(state);
-    const staffed = needed === 0 ? 1 : Math.min(staffOutput(config, state, "ops"), needed) / needed;
     const { unstaffedShare } = config.capacity;
-    return [unstaffedShare + (1 - unstaffedShare) * staffed];
+    return [unstaffedShare + (1 - unstaffedShare) * opsCovered(state)];
+  }
+
+  /**
+   * Too few ops for the servers running: the ops team's work, the people needed and the share of capacity left. Null
+   * when ops cover it.
+   */
+  function opsShortfall(state: GameState): OpsShortfallView | null {
+    if (opsCovered(state) >= 1) return null;
+    return {
+      have: Math.round(staffOutput(config, state, "ops") * 100) / 100,
+      needed: servers.opsNeeded(state),
+      capacityShare: Math.round(capacityFactor(state) * 100) / 100,
+    };
   }
 
   const capacityFactor = (state: GameState) => capacityFactors(state).reduce((c, f) => c * f, 1);
@@ -356,6 +387,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
   return {
     opsNeeded,
     opsNeededNow: servers.opsNeeded,
+    opsShortfall,
     upfrontEntries,
     upfrontCost,
     usualDemand,

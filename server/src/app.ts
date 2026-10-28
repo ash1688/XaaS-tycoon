@@ -384,6 +384,7 @@ export async function buildApp(opts: AppOptions) {
       staff,
       opsNeeded: sim.opsNeededNow(state),
       opsNeededOnceReady: sim.opsNeededOnceReady(state),
+      opsShortfall: sim.opsShortfall(state),
       dailyStaffCost: sim.dailyStaffCost(state),
       launch: sim.launch(state),
       phase: sim.phase(state),

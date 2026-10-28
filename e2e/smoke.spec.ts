@@ -117,8 +117,8 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await openTiers(game.split("/").at(-1)!);
   await reachPhase(game.split("/").at(-1)!, "grow");
   await student.reload();
-  // The VMs need 1 ops, and a new company starts with 1.
-  await expect(student.getByTestId("ops-needed")).toContainText("needs 1 ops staff");
+  // The VMs need 1 ops once they're ready (none while they're on order, #259), and a new company starts with 1.
+  await expect(student.getByTestId("ops-needed-soon")).toContainText("you'll need 1");
   await expect(student.getByTestId("ops-needed")).not.toContainText("Understaffed");
   await expect(student.getByTestId("support-count")).toHaveText("1");
 

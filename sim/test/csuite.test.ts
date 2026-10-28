@@ -486,7 +486,9 @@ describe("each role's effect, through its seam", () => {
     });
     // On IaaS with more servers than one ops person can patch alone.
     let state = withServers(s, seriesAApproached(begin(s, "iaas")));
-    while (s.opsNeededNow(state) <= 1) state = s.applyAction(state, { type: "rentServer", server: "app", size: "small" });
+    // Servers on order need no ops until they're ready (#259), so they're rented, then a day is played.
+    while (s.opsNeededOnceReady(state) <= 1) state = s.applyAction(state, { type: "rentServer", server: "app", size: "small" });
+    state = s.advance(state).state;
     const ops = s.staff(state).find((p) => p.pool === "ops")!.output;
     expect(ops).toBeLessThan(s.opsNeededNow(state));
     expect(ops).toBeGreaterThanOrEqual(s.opsNeededNow(state) * 0.5);

@@ -55,6 +55,7 @@ import type {
   PaymentsView,
   PriceWaveView,
   ModelId,
+  OpsShortfallView,
   ProductTypeId,
   ProviderView,
   RunwayView,
@@ -260,6 +261,11 @@ export interface CompanyView {
    * as opsNeeded where nothing is on order.
    */
   opsNeededOnceReady: number;
+  /**
+   * Too few ops for the servers running, cutting capacity: the ops team's work, the people needed and the capacity
+   * left. Null when ops cover it.
+   */
+  opsShortfall: OpsShortfallView | null;
   /** What the current headcount costs per day. */
   dailyStaffCost: number;
   /**

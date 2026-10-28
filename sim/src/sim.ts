@@ -26,7 +26,7 @@ import { createFeatures, type FeatureView } from "./features.ts";
 import { createFinance, noSpend, pounds } from "./finance.ts";
 import { hardwareDay, setPerformance } from "./hardware.ts";
 import { createDrift, type DriftView } from "./drift.ts";
-import { createInfrastructure, type ProviderView } from "./infrastructure.ts";
+import { createInfrastructure, type OpsShortfallView, type ProviderView } from "./infrastructure.ts";
 import { createInvestors, type InvestorsView } from "./investors.ts";
 import { createIpo, type IpoView } from "./ipo.ts";
 import { createLaunch, type LaunchView } from "./launch.ts";
@@ -86,7 +86,7 @@ export type { CandidateView, CsuiteRoleView, CsuiteView, ExecutiveEffectView, Ex
 export type { DangerRiskView, DangerView } from "./encounters.ts";
 export type { EventView, FeatureGapView } from "./events.ts";
 export type { FeatureStatus, FeatureView } from "./features.ts";
-export type { ProviderView } from "./infrastructure.ts";
+export type { OpsShortfallView, ProviderView } from "./infrastructure.ts";
 export type { AngelView, InvestorOffer, InvestorsView, VcApproachView, VcOfferView, VcRoundView, VcView } from "./investors.ts";
 export { seriesApproachDay, twoRoundGame, vcLadder, type VcRung } from "./investors.ts";
 export type { FloatPreview, IpoCondition, IpoConditionId, IpoOffer, IpoStatus, IpoView } from "./ipo.ts";
@@ -97,7 +97,7 @@ export type { ResearchView } from "./research.ts";
 export type { OptimisationView } from "./optimisation.ts";
 export type { LoanQuote, LoanView, ShortfallView } from "./loan.ts";
 export type { LostAddon, MigrationQuote, MigrationView, SetupRack } from "./migration.ts";
-export { LOW_CASH_DAYS, type PauseKind, type PauseReason, type TickResult } from "./pauses.ts";
+export { LOW_CASH_DAYS, opsShortText, type PauseKind, type PauseReason, type TickResult } from "./pauses.ts";
 export type { NewUserFactor } from "./mix.ts";
 export type { RackOption, RackView, RacksView } from "./racks.ts";
 export type { CounterOdds, NegotiationRound, RollResult, TermSpec, Terms } from "./negotiation.ts";
@@ -327,8 +327,10 @@ export interface Sim {
    * Managed services need none.
    */
   opsNeededNow(state: GameState): number;
-  /** Ops staff the company will need once every server it has is in service: on-prem, kit on order included. */
+  /** Ops staff the company will need once every server it has is in service, kit on order included. */
   opsNeededOnceReady(state: GameState): number;
+  /** Too few ops for the servers running: who's there, who's needed and the capacity left. Null when ops cover it. */
+  opsShortfall(state: GameState): OpsShortfallView | null;
   /** What the staff on the team cost per day. Hires still to start cost nothing. */
   dailyStaffCost(state: GameState): number;
   /**
@@ -682,6 +684,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     ipo: ipo.ipoView,
     danger: encounters.danger,
     shortfall: loan.shortfallView,
+    opsShortfall: infra.opsShortfall,
   });
   const rescue = createRescue(config, finance, shares, (s) => runway(s), (s) => infra.opsNeededNow(s));
   const investors = createInvestors(config, finance, shares);
@@ -1382,6 +1385,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     sizeSetupFor: infra.sizeSetupFor,
     opsNeededNow: (s) => infra.opsNeededNow(load(s)),
     opsNeededOnceReady: (s) => servers.opsNeededOnceReady(load(s)),
+    opsShortfall: (s) => infra.opsShortfall(load(s)),
     dailyStaffCost: (s) => staff.dailyStaffCost(load(s)),
     staff: (s) => staffWithIdle(load(s)),
     monthlyInfrastructureCost: (s) => infra.monthlyInfrastructureCost(load(s)),

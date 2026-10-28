@@ -102,7 +102,8 @@ export function createGame(code: string, id: string) {
   // Mids it takes to make up a shortfall in work: 0.35 short is one more.
   const midsShort = (needed: number, have: number) => Math.max(0, Math.ceil(Math.round((needed - have) * 100) / 100));
   const opsWork = computed(() => work("ops"));
-  const understaffed = computed(() => !!company.value && opsWork.value < company.value.opsNeeded);
+  // Short of the ops work the running servers need, which cuts capacity (#259).
+  const understaffed = computed(() => !!company.value?.opsShortfall);
   const opsShort = computed(() => (company.value ? midsShort(company.value.opsNeeded, opsWork.value) : 0));
   // Ops that kit on order will need once it arrives, beyond those on the team: a shortfall coming, not here yet.
   const opsShortSoon = computed(() =>

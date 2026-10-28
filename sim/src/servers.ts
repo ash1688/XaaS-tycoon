@@ -527,19 +527,33 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
    * them.
    */
   function opsFor(model: ModelId, servers: Pick<Server, "type">[]): number {
-    const fixed = config.models[model].opsNeeded ?? 0;
-    const perServer = modelServers(model)?.opsPerServer;
-    if (!perServer) return fixed;
-    // Shares like 0.1 don't add up exactly, so the total is rounded to a millionth before rounding up.
-    return fixed + Math.ceil(Math.round(servers.reduce((sum, s) => sum + (perServer[s.type] ?? 0), 0) * 1e6) / 1e6);
+    return Math.ceil(opsWorkFor(model, servers));
   }
 
   /**
-   * Ops the company needs now: the model's fixed number, plus on a model with servers their shares (rented ones ready
-   * or not, bought ones once they've arrived).
+   * The ops work some servers need on a model, in mids, before rounding up to people: the model's fixed number plus
+   * each server's share. What the capacity cut for missing ops is measured against, so being a little short cuts a
+   * little (#259).
    */
-  const opsNeeded = (state: GameState) =>
-    opsFor(state.model, state.servers.filter((s) => inService(state.model, s, state.day)));
+  function opsWorkFor(model: ModelId, servers: Pick<Server, "type">[]): number {
+    const fixed = config.models[model].opsNeeded ?? 0;
+    const perServer = modelServers(model)?.opsPerServer;
+    if (!perServer) return fixed;
+    // Shares like 0.1 don't add up exactly, so the total is rounded to a millionth.
+    return fixed + Math.round(servers.reduce((sum, s) => sum + (perServer[s.type] ?? 0), 0) * 1e6) / 1e6;
+  }
+
+  /** Servers running today: ready ones, rented or bought. Ones on order need no ops yet (#259). */
+  const running = (state: GameState) => state.servers.filter((s) => s.readyDay <= state.day);
+
+  /**
+   * Ops the company needs now: the model's fixed number, plus on a model with servers the shares of those running.
+   * Servers on order, rented or bought, don't count until they're ready.
+   */
+  const opsNeeded = (state: GameState) => opsFor(state.model, running(state));
+
+  /** As opsNeeded, but the ops work before rounding up to people. */
+  const opsWorkNeeded = (state: GameState) => opsWorkFor(state.model, running(state));
 
   /** Ops the company will need once every server it has is in service: on-prem, kit on order included. */
   const opsNeededOnceReady = (state: GameState) => opsFor(state.model, state.servers);
@@ -975,6 +989,7 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
     serverEntries,
     monthlyServerCost,
     opsNeeded,
+    opsWorkNeeded,
     opsNeededOnceReady,
     modelOpsNeeded,
     rentServer,

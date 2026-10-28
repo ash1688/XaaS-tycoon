@@ -92,6 +92,10 @@ _Avoid_: Pay freeze, deferred pay (nothing is paid back)
 The developers, ops, support, moderators, researchers and marketers hired and let go in bulk, as permanent or agency staff (researchers and marketers permanent only). Not the C-suite.
 _Avoid_: Employees, workers
 
+**Ops shortfall**:
+Too few ops staff for the servers running. Every tier's capacity is cut in step with the share of ops work missing, down to 40% with no ops at all, so one short in a big team cuts less than one short in a small one. Servers on order need no ops until they're ready. Shown as "ops: 1 of 2 needed, capacity cut to 70%", and time stops the day it starts.
+_Avoid_: Understaffed, unpatched (that's the danger meter's risk)
+
 **Grade**:
 Junior, mid or senior: sets a member of staff's pay, output and how long they take to arrive.
 _Avoid_: Level, skill level, seniority

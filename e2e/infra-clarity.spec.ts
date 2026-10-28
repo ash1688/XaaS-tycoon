@@ -65,17 +65,18 @@ test("missing ops show on every bar and come first in the advice; then a full lo
   await act({ type: "rentServer", server: "app", size: "medium" });
   await act({ type: "rentServer", server: "database", size: "medium" });
   while ((await play()).launch.status !== "launched");
-  // Four more databases need a second ops person, and the company has one: every tier is cut by 30%.
+  // Four more databases need a second ops person, and the company has one: 1 of the 1.2 ops of work missing cuts every
+  // tier by 10% (#259).
   for (let i = 0; i < 4; i++) await act({ type: "rentServer", server: "database", size: "small" });
   await play();
 
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}/infrastructure`);
-  await expect(student.getByTestId("tier-cu-cut")).toHaveText("7 of 10 CU: cut 30%, 1 ops short.");
-  await expect(student.getByTestId("tier-dbu-cut")).toContainText("of 34 DBU: cut 30%, 1 ops short.");
-  await expect(student.getByTestId("capacity-ops-short")).toContainText("You're 1 ops person short, so every tier is cut by 30%");
+  await expect(student.getByTestId("tier-cu-cut")).toHaveText("9 of 10 CU: cut 10%, 1 ops short.");
+  await expect(student.getByTestId("tier-dbu-cut")).toContainText("of 34 DBU: cut 10%, 1 ops short.");
+  await expect(student.getByTestId("capacity-ops-short")).toContainText("Ops: 1 of 2 needed, capacity cut to 90%. You're 1 ops person short, so every tier is cut.");
   // Hiring the ops person gets back more than another server would: the advice says so.
-  await expect(student.getByTestId("tier-cu-note")).toContainText(/hire 1 ops person (soon|now), to get back the 3 CU you're losing/i);
+  await expect(student.getByTestId("tier-cu-note")).toContainText(/hire 1 ops person (soon|now), to get back the 1 CU you're losing/i);
   const servers = student.getByTestId("servers-panel");
   await expect(servers.getByTestId("tier-warning-app")).toContainText("hire 1 ops person");
   await expect(servers.getByTestId("step-note-app")).toContainText("You'd need 2 ops staff in all");
