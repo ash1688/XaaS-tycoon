@@ -1373,6 +1373,11 @@ export interface LoanConfig {
   minTermDays: number;
   /** The bank won't lend with fewer days than this left in the game. */
   minDays: number;
+  /**
+   * The term of an emergency loan: what the bank lends when cash goes below £0 with no loan being repaid, at the rate
+   * a loan taken that day would have, repaid fast.
+   */
+  emergencyTermDays: number;
 }
 
 /**
@@ -1658,7 +1663,8 @@ export interface StaffSchemeConfig {
 
 /**
  * The rescue buyout: the first time cash runs out, a vulture VC rescues the company instead of the game ending. The
- * second time is liquidation, and the game ends.
+ * second time is liquidation, and the game ends. Cash running out means going past limitDays of daily costs below £0:
+ * short of that, each shortfall goes onto the bank loan, or an emergency loan with none (see LoanConfig).
  *
  * - Cost cuts first: hires still to start are cancelled, and staffCut of each team is let go (rounded up), the dearest
  *   grades first. Ops are only cut as far as the servers' ops needed allows.
@@ -1667,9 +1673,14 @@ export interface StaffSchemeConfig {
  * - Shares: enough new shares for the vulture VC to own `share` of the company.
  * - Buy-back: the student can buy all its shares back with the company's cash, at its price: its share of today's
  *   valuation less net cash (the business without the cash that pays for them) × buyBackPremium, but never less than
- *   minReturn × the cash it put in.
+ *   minReturn × the cash it put in, scaled down as later rounds dilute its stake.
  */
 export interface RescueConfig {
+  /**
+   * Days of daily costs that shortfalls can put on the loans before cash has run out: past it, the vulture VC steps in
+   * (or, after a rescue, liquidation).
+   */
+  limitDays: number;
   breathingDays: number;
   minCover: number;
   share: number;
@@ -2838,7 +2849,7 @@ export const defaultConfig: GameConfig = {
   billing: { daysPerMonth: 30 },
   // Enough for on-prem to buy kit ahead of demand from the start, or to see an IaaS, PaaS or SaaS company through a
   // tight start, for about £3,500 of interest. See LoanConfig for the interest formula.
-  loan: { amount: 35_000, baseRate: 0.1, ratePerDay: 0.002, termDays: 120, termPerDay: 0.5, minTermDays: 60, minDays: 14 },
+  loan: { amount: 35_000, baseRate: 0.1, ratePerDay: 0.002, termDays: 120, termPerDay: 0.5, minTermDays: 60, minDays: 14, emergencyTermDays: 30 },
   shares: { min: 10_000, max: 100_000, default: 10_000 },
   // A new company with no revenue is worth the £50k minimum, so friends and family's £15k on day 1 buys about 23% of
   // it; a steady company making £500 a day with 2,000 paying users and £20k in the bank is worth about £150k, and the
@@ -3000,7 +3011,7 @@ export const defaultConfig: GameConfig = {
   },
   // Placeholders from the design: about 30 days of breathing space for about 75% of the company. Buying it back costs
   // at least twice what the vulture VC put in.
-  rescue: { breathingDays: 30, minCover: 0.25, share: 0.75, staffCut: 0.25, buyBackPremium: 1.5, minReturn: 2 },
+  rescue: { limitDays: 7, breathingDays: 30, minCover: 0.25, share: 0.75, staffCut: 0.25, buyBackPremium: 1.5, minReturn: 2 },
   // The angel approaches about three weeks after launch on sensible play, once income has averaged £500 a day for a
   // fortnight: a company worth about £60-130k, so a fifth of it costs the angel about £15-35k. Sensible play makes its
   // short-term target in 70 of 72 harness games, with a median 14 days to spare: 1.75 times that income and, net of

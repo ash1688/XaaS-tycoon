@@ -83,12 +83,14 @@ watch(
         </div>
       </div>
       <p class="muted">
+        When cash goes below £0, the shortfall goes on your bank loan, or a short emergency loan if you have none, up to
+        {{ game.company.shortfall.limitDays }} days of costs ({{ formatCash(game.company.shortfall.limit) }}).
         <template v-if="game.company.rescue">
-          Below £0 again, the company goes into liquidation and the game ends: there's no second rescue.
+          Past that, the company goes into liquidation and the game ends: there's no second rescue.
         </template>
         <template v-else>
-          The first time cash goes below £0, a vulture VC rescues the company for most of its shares; the second time
-          is liquidation, and the game ends.
+          Past that, cash has run out: the first time, a vulture VC rescues the company for most of its shares; the
+          second time is liquidation, and the game ends.
         </template>
         Runway is how long your cash lasts at today's costs against your income averaged over the last 7 days.
         One-offs, such as kit bought or severance, aren't in the daily costs.

@@ -101,7 +101,7 @@ export function createRescue(
     ];
     const entries: LogEntry[] = [
       {
-        text: `Cash ran out, and a vulture VC rescued ${state.companyName}: it put in ${pounds(amount)} (${pounds(losses)} to cover the losses${cut.severance ? `, ${pounds(cut.severance)} for severance` : ""} and about ${r.breathingDays} days of breathing space) for ${count.format(newShares)} new shares, ${percent(share)} of the company. You now own ${percent(yours)}. Run out of cash again and it's liquidation.`,
+        text: `Cash ran out, past what the loan could take, and a vulture VC rescued ${state.companyName}: it put in ${pounds(amount)} (${pounds(losses)} to cover the losses${cut.severance ? `, ${pounds(cut.severance)} for severance` : ""} and about ${r.breathingDays} days of breathing space) for ${count.format(newShares)} new shares, ${percent(share)} of the company. You now own ${percent(yours)}. Run out of cash again and it's liquidation.`,
         cashDelta: amount,
         kind: "rescue",
       },
@@ -140,19 +140,24 @@ export function createRescue(
 
   /**
    * The vulture VC's price for all its shares: their part of the business's value today × the premium, but at least
-   * minReturn × the cash it put in. The business's value is the valuation's drivers but net cash and the minimum: the
-   * company buys them with its cash, so counting it would put the price out of reach whatever it had.
+   * minReturn × the cash it put in, scaled to its stake now against the stake it took: later rounds dilute it, and the
+   * price follows. The business's value is the valuation's drivers but net cash and the minimum: the company buys them
+   * with its cash, so counting it would put the price out of reach whatever it had.
    */
   function buyBackPrice(state: GameState, vultureShares: number): { price: number; detail: string } {
     const { sharesInIssue, drivers } = shares.valuation(state);
     const business = drivers.reduce((sum, d) => sum + (d.id === "netCash" || d.id === "minimum" ? 0 : d.amount), 0);
-    const worth = (Math.max(0, business) * vultureShares) / sharesInIssue;
-    const floor = r.minReturn * (state.rescue?.amount ?? 0);
+    const stake = vultureShares / sharesInIssue;
+    const worth = Math.max(0, business) * stake;
+    const took = state.rescue?.share ?? stake;
+    const diluted = took > 0 && stake < took ? stake / took : 1;
+    const floor = r.minReturn * (state.rescue?.amount ?? 0) * diluted;
     const price = Math.ceil(Math.max(worth * r.buyBackPremium, floor) / 100) * 100;
+    const scaled = diluted < 1 ? `, scaled to its ${percent(took)} stake now diluted to ${percent(stake)}` : "";
     const detail =
       worth * r.buyBackPremium >= floor
-        ? `${r.buyBackPremium}× its ${percent(vultureShares / sharesInIssue)} of the business, worth ${pounds(Math.round(worth))} at today's valuation leaving out the cash`
-        : `${r.minReturn}× the ${pounds(state.rescue?.amount ?? 0)} it put in: it never sells back for less`;
+        ? `${r.buyBackPremium}× its ${percent(stake)} of the business, worth ${pounds(Math.round(worth))} at today's valuation leaving out the cash`
+        : `${r.minReturn}× the ${pounds(state.rescue?.amount ?? 0)} it put in${scaled}: it never sells back for less`;
     return { price, detail };
   }
 

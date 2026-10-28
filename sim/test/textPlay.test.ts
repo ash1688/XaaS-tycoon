@@ -863,6 +863,24 @@ describe("rescue buyout and liquidation", () => {
     expect(parseCommand("buyback")).toEqual({ kind: "action", action: { type: "buyBack" }, times: 1 });
   });
 
+  it("stops time the first time cash goes below £0, with the shortfall on the loan and the room left", () => {
+    let turn = advanceUntil(sim, broke(), 40, who);
+    while (turn.state.firstShortfallDay === null) turn = advanceUntil(sim, turn.state, 40, who);
+    const day = turn.state.firstShortfallDay;
+    const short = sim.shortfall(turn.state);
+    expect(turn.state).toMatchObject({ day, cash: 0, rescue: null });
+    expect(turn.lines.at(-1)).toBe(
+      `stopped on day ${day}: Cash went below £0 and the shortfall went on your loan: £${short.room.toLocaleString("en-GB")} more and a vulture VC steps in`,
+    );
+    expect(turn.lines.join("\n")).toMatch(/the shortfall went on your bank loan, still £[\d,]+ a day, now until day \d+/);
+    expect(renderStatus(sim, turn.state)).toContain(
+      `below £0: £${short.owed.toLocaleString("en-GB")} of shortfalls on the loan; £${short.room.toLocaleString("en-GB")} more (of 7 days of costs, £${short.limit.toLocaleString("en-GB")}) and the vulture VC steps in`,
+    );
+    // An emergency loan says so.
+    const emergency = { ...turn.state, loan: { ...turn.state.loan!, emergency: true as const } };
+    expect(renderStatus(sim, emergency)).toMatch(/^loan \(emergency\): £[\d,]+ left/m);
+  });
+
   it("stops time on the rescue, shows the cash, share taken and cuts, and offers the buy-back at its price", () => {
     expect(run(start(), "rescue").lines[0]).toMatch(/no rescue yet/);
     let turn = advanceUntil(sim, broke(), 40, who);

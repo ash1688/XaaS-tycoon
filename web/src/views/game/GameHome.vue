@@ -154,7 +154,16 @@ const alerts = computed(() => {
     list.push({
       id: "low-cash",
       text: game.runway.days ? `Cash runs out in about ${days(game.runway.days)}` : "Cash runs out tomorrow",
-      detail: `You're losing ${formatCash(-game.runway.dailyNet)} a day. ${c.loanQuote ? "Take a bank loan or cut costs" : "Cut costs"} before you go below £0: ${c.rescue ? "there's no second rescue, so it's liquidation." : "a vulture VC would rescue you, but take most of the company."}`,
+      detail: `You're losing ${formatCash(-game.runway.dailyNet)} a day. ${c.loanQuote ? "Take a bank loan or cut costs" : "Cut costs"} before you go below £0: the shortfall goes on your loan, but past ${c.shortfall.limitDays} days of costs ${c.rescue ? "there's no second rescue, so it's liquidation." : "a vulture VC would rescue you, but take most of the company."}`,
+      page: "finance?tab=funding",
+      pageName: "Finance",
+    });
+  // Shortfalls on the loan: how much further cash can go below £0 before it has run out.
+  if (c.shortfall.owed > 0)
+    list.push({
+      id: "shortfall",
+      text: `${formatCash(c.shortfall.owed)} of shortfalls on your loan`,
+      detail: `Cash went below £0, so the shortfall went on your ${c.loan?.emergency ? "emergency " : ""}loan. ${formatCash(c.shortfall.room)} more and ${c.rescue ? "the company goes into liquidation" : "a vulture VC steps in, for most of the company"}: that's ${c.shortfall.limitDays} days of costs in all.`,
       page: "finance?tab=funding",
       pageName: "Finance",
     });
@@ -286,8 +295,8 @@ const alerts = computed(() => {
       <span class="badge">Liquidation</span>
       <h2>Game over: you ran out of cash again</h2>
       <p>
-        {{ game.company.name }} went below £0 on day {{ game.company.day }}, after the vulture VC's rescue on day
-        {{ game.company.rescue?.day }}. There's no second rescue, so the company has gone into liquidation and the game
+        {{ game.company.name }} ran out of cash on day {{ game.company.day }}, further below £0 than the loan could take,
+        after the vulture VC's rescue on day {{ game.company.rescue?.day }}. There's no second rescue, so the company has gone into liquidation and the game
         has ended. You can't continue or change anything. Look at where your money went below, then
         <RouterLink :to="`/play/${game.code}`">start a new company</RouterLink> and try a different plan.
       </p>
@@ -435,12 +444,12 @@ const alerts = computed(() => {
         </p>
         <p class="muted" data-testid="home-loan">
           <template v-if="game.company.loan?.remaining">
-            Includes a {{ formatCash(game.company.loan.amount) }} bank loan:
+            Includes a {{ formatCash(game.company.loan.amount) }} {{ game.company.loan.emergency ? "emergency" : "bank" }} loan:
             <strong>{{ formatCash(game.company.loan.dailyRepayment) }}</strong> a day to repay until day
             {{ game.company.loan.lastDay }}, {{ formatCash(game.company.loan.remaining) }} left.
           </template>
-          <template v-else-if="game.company.loan">Bank loan repaid in full.</template>
-          <template v-else-if="game.liquidated">No bank loan: banks don't lend to a company in liquidation.</template>
+          <template v-else-if="game.liquidated">No more loans: banks don't lend to a company in liquidation.</template>
+          <template v-else-if="game.company.loan">{{ game.company.loan.emergency ? "Emergency" : "Bank" }} loan repaid in full.</template>
           <template v-else-if="game.company.loanQuote && !game.over">
             No bank loan. You can borrow {{ formatCash(game.company.loanQuote.amount) }} on Finance.
           </template>
@@ -452,7 +461,8 @@ const alerts = computed(() => {
             costs {{ formatCash(game.company.runway.dailyCosts) }}<template v-if="game.company.runway.days === null">, so
               cash is growing.</template
             ><template v-else>: at that rate your {{ formatCash(game.company.cash) }} lasts about
-              {{ days(game.company.runway.days) }}. {{ game.company.rescue ? "Below £0 again is liquidation." : "Below £0 brings a vulture VC's rescue, for most of the company." }}</template
+              {{ days(game.company.runway.days) }}. Below £0 the shortfall goes on your loan, up to {{ game.company.shortfall.limitDays }} days of costs; past that,
+              {{ game.company.rescue ? "it's liquidation." : "a vulture VC's rescue, for most of the company." }}</template
             >
           </p>
           <SpendPanel />

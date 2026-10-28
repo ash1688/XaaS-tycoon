@@ -245,7 +245,7 @@ const config: GameConfig = {
   billing: { daysPerMonth: 30 },
   // Taken at the start: £17,900 at 10%, £19,690 over 179 days, £110 a day. The term is a day shorter for each day
   // later it's taken, so like the final day.
-  loan: { amount: 17_900, baseRate: 0.1, ratePerDay: 0.002, termDays: 179, termPerDay: 1, minTermDays: 1, minDays: 14 },
+  loan: { amount: 17_900, baseRate: 0.1, ratePerDay: 0.002, termDays: 179, termPerDay: 1, minTermDays: 1, minDays: 14, emergencyTermDays: 30 },
   shares: { min: 10_000, max: 100_000, default: 10_000 },
   valuation: defaultConfig.valuation,
   funding: defaultConfig.funding,
@@ -253,7 +253,9 @@ const config: GameConfig = {
   negotiation: defaultConfig.negotiation,
   // No pay reviews, so pay stays at the day rates: they have their own tests (payReview.test.ts).
   payReview: { ...defaultConfig.payReview, on: 0 },
-  rescue: defaultConfig.rescue,
+  // Cash runs out the moment it goes below £0, as the tests here were written for: shortfalls going on a loan first
+  // have their own tests, on the default limit.
+  rescue: { ...defaultConfig.rescue, limitDays: 0 },
   investors: defaultConfig.investors,
   // No price waves unless a test says otherwise, so a price change only has its ongoing effect on growth and payers.
   pricing: {
@@ -2804,8 +2806,122 @@ describe("rescue buyout and liquidation", () => {
   });
 });
 
+describe("shortfalls onto the loan, and the vulture VC past 7 days", () => {
+  // The default limit: shortfalls can go onto a loan up to 7 days of daily costs before cash has run out.
+  const lenient = createSim({ ...config, rescue: { ...config.rescue, limitDays: 7 } });
+  // 1000 cash at 20 a day on IaaS: day 51 leaves exactly 0, day 52 goes £20 below.
+  const atZero = () => lenient.advance(start(), 50).state;
+
+  it("opens an emergency loan on a short term for a small shortfall with no loan, not a rescue", () => {
+    const { state, log } = lenient.advance(atZero());
+    // The rate a loan taken on day 52 would have: 10% plus 0.2 points for each of the 51 days later.
+    expect(state).toMatchObject({ day: 52, cash: 0, status: "playing", rescue: null, firstShortfallDay: 52 });
+    expect(state.loan).toEqual({
+      amount: 20,
+      day: 52,
+      rate: 0.202,
+      term: 30,
+      lastDay: 82,
+      dailyRepayment: 1,
+      total: 30,
+      repaid: 0,
+      interestPaid: 0,
+      paidOffDay: null,
+      emergency: true,
+      shortfall: 20,
+    });
+    const note = log[0]!.entries.find((e) => e.text.startsWith("Cash went"))!;
+    expect(note).toMatchObject({ cashDelta: 20 });
+    expect(note.text).toMatch(/Cash went £20 below £0 with no bank loan, so the bank opened an emergency loan for it at 20.2%: £1 a day for 30 days/);
+    // The daily costs are £21 with the repayment: 7 days is £147, £127 more than the £20 on the loan.
+    expect(note.text).toMatch(/Shortfalls can go £127 further \(7 days of costs, £147 in all\) before a vulture VC steps in/);
+    expect(lenient.shortfall(state)).toEqual({ limitDays: 7, limit: 147, owed: 20, room: 127 });
+    // Borrowed, not income, so the cash chart adds up.
+    expect(state.spendByDay.at(-1)).toMatchObject({ borrowed: 20, income: 0 });
+    // Repaid from the next day like any loan.
+    expect(lenient.advance(state).state.loan).toMatchObject({ repaid: 1 });
+  });
+
+  it("adds a shortfall to the bank loan being repaid: the same repayment a day, for longer", () => {
+    const rich = createSim({ ...config, startingCash: 100_000, rescue: { ...config.rescue, limitDays: 7 } });
+    const borrowed = rich.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, takeLoan: true });
+    // £50 against £130 a day (£20 of IaaS, £110 of repayment): £80 short.
+    const { state, log } = rich.advance({ ...borrowed, cash: 50 });
+    expect(state).toMatchObject({ cash: 0, rescue: null, pastLoans: [] });
+    // £80 at the loan's 10% adds £88 to repay, at £110 a day: a day longer.
+    expect(state.loan).toMatchObject({ amount: 17_980, total: 19_690 + 88, dailyRepayment: 110, term: 180, lastDay: 181, shortfall: 80 });
+    expect(state.loan!.emergency).toBeUndefined();
+    expect(log[0]!.entries.find((e) => e.text.startsWith("Cash went"))!.text).toMatch(/Cash went £80 below £0: the shortfall went on your bank loan, still £110 a day, now until day 181/);
+  });
+
+  it("stops time the first time cash goes below £0, saying how far it can still go", () => {
+    const first = lenient.tick(atZero());
+    expect(first.pauses).toEqual([
+      { kind: "alert", id: "shortfall", text: "Cash went below £0 and the shortfall went on your loan: £127 more and a vulture VC steps in" },
+    ]);
+    // Only the first time.
+    expect(lenient.tick(first.state).pauses.map((p) => p.id)).not.toContain("shortfall");
+  });
+
+  it("rescues only once shortfalls would go past 7 days of daily costs", () => {
+    let state = atZero();
+    while (state.status === "playing" && !state.rescue) {
+      const before = state;
+      state = lenient.advance(state).state;
+      if (!state.rescue) {
+        // Short of the limit, cash is never below £0: the shortfall is on the loan, within its 7 days.
+        expect(state.cash).toBeGreaterThanOrEqual(0);
+        const view = lenient.shortfall(state);
+        expect(view.owed).toBeLessThanOrEqual(view.limit);
+      } else {
+        // The day it fires, that day's shortfall was more than the room left.
+        expect(state.rescue.losses).toBeGreaterThan(lenient.shortfall(before).room);
+      }
+    }
+    expect(state.rescue!.day).toBeGreaterThan(52);
+    // What shortfalls put on the loan is still owed: the vulture VC only covered the day that took it past the limit.
+    expect(state.loan).toMatchObject({ emergency: true });
+    expect(state.loan!.shortfall).toBeGreaterThan(100);
+  });
+
+  it("goes into liquidation the second time cash runs out, past the limit again", () => {
+    const strictEnd = sim.advance(start(), 200).state;
+    const { state, log } = lenient.advance(start(), 400);
+    expect(state.status).toBe("liquidated");
+    expect(state.day).toBeGreaterThan(strictEnd.day);
+    expect(log.at(-1)!.entries.find((e) => e.kind === "liquidation")!.text).toMatch(/Cash ran out again, after the rescue buyout on day \d+/);
+  });
+
+  it("prices the buy-back on the vulture VC's stake now, after later rounds dilute it", () => {
+    // Rescued on day 52 for £700 and 75%: the price is twice the £700.
+    const rescued = sim.advance(start(), 51).state;
+    expect(sim.rescue(rescued)).toMatchObject({ vultureShare: 0.75, buyBackPrice: 1_400 });
+    // New shares for an angel halve its stake to 37.5%: the least it takes halves too.
+    const diluted = { ...rescued, shareholders: [...rescued.shareholders, { id: "angel" as const, shares: 40_000, day: 52 }] };
+    const view = sim.rescue(diluted)!;
+    expect(view).toMatchObject({ vultureShare: 0.375, buyBackPrice: 700 });
+    expect(view.priceDetail).toMatch(/2× the £700 it put in, scaled to its 75% stake now diluted to 37.5%/);
+    const bought = sim.applyAction({ ...diluted, cash: 1_000 }, { type: "buyBack" });
+    expect(bought.cash).toBe(300);
+  });
+
+  it("takes an emergency loan still owed at the end off the final cash", () => {
+    const short = createSim({ ...config, finalDay: 55, rescue: { ...config.rescue, limitDays: 7 } });
+    const { state, log } = short.advance(short.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 }), 60);
+    expect(state).toMatchObject({ day: 55, status: "finished" });
+    // Days 52–55 went £20, £21, £21 and £21 below £0 onto the emergency loan, repaid £1, £1 and £1 a day: the rest is
+    // owed, and comes off the cash as the game ends.
+    const settled = log.at(-1)!.entries.find((e) => e.text.startsWith("The game is over"))!;
+    expect(settled.text).toMatch(/still owed on your emergency loan comes off your cash/);
+    expect(state.cash).toBe(settled.cashDelta);
+    expect(short.loan(state)).toMatchObject({ remaining: 0, repaidInFull: true, paidOffDay: 55 });
+    expect(short.summarise(state)).toMatchObject({ cash: state.cash, loan: { remaining: 0 } });
+    expect(short.valuation(state).drivers.find((d) => d.id === "netCash")!.amount).toBe(state.cash);
+  });
+});
+
 describe("runway", () => {
-  const apply = (state: GameState, ...actions: Action[]) => actions.reduce((st, a) => sim.applyAction(st, a), state);
+  const apply =(state: GameState, ...actions: Action[]) => actions.reduce((st, a) => sim.applyAction(st, a), state);
 
   /** The daily costs by heading, leaving out the headings at £0. */
   const headings = (state: GameState) =>
@@ -3155,19 +3271,33 @@ describe("bank loan", () => {
       expect(state.interestPaid).toBe(1_900);
     });
 
-    it("runs past the final day of a short game, ending with some still to repay", () => {
+    it("runs past the final day of a short game, so what's still owed comes off the cash as it ends", () => {
       const short = termed(30);
-      const { state } = short.advance(
-        short.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, takeLoan: true }),
-        29,
-      );
+      const begun = short.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, takeLoan: true });
+      const before = short.advance(begun, 28).state;
+      const { state, log } = short.advance(before);
       expect(state.status).toBe("finished");
-      expect(short.summarise(state).loan).toMatchObject({
-        loans: 1,
-        repaid: 29 * 165,
-        remaining: 19_800 - 29 * 165,
-        fullyRepaid: false,
-      });
+      const settled = log.at(-1)!.entries.find((e) => e.text.startsWith("The game is over"))!;
+      expect(settled).toMatchObject({ category: "debt", interest: 0 });
+      expect(settled.text).toMatch(/still owed on your bank loan comes off your cash/);
+      const payoff = -settled.cashDelta;
+      expect(payoff).toBeGreaterThan(0);
+      // The money borrowed not yet paid back: less than the repayments left, as the interest still to come is waived.
+      expect(payoff).toBeLessThan(19_800 - 29 * 165);
+      // Nothing is left owing, so the valuation's net cash is just the cash.
+      expect(short.summarise(state).loan).toMatchObject({ loans: 1, repaid: 29 * 165 + payoff, remaining: 0, fullyRepaid: true });
+      expect(short.valuation(state).drivers.find((d) => d.id === "netCash")!.amount).toBe(Math.round(state.cash));
+      expect(state.cash).toBe(before.cash - 20 - 165 - payoff);
+    });
+
+    it("settles what's still owed when the teacher ends the game", () => {
+      const short = termed(30);
+      const begun = short.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, takeLoan: true });
+      const state = short.advance(begun, 10).state;
+      const { payoff } = short.loan(state)!;
+      const ended = short.endGame(state);
+      expect(ended).toMatchObject({ status: "finished", cash: state.cash - payoff });
+      expect(short.loan(ended)).toMatchObject({ remaining: 0, repaidInFull: true, paidOffDay: state.day });
     });
 
     it("is lent until the last days of the game's own length", () => {
@@ -3672,6 +3802,7 @@ describe("game end and summary", () => {
         principalRepaid: 17_900,
         interestSaved: 0,
         remaining: 0,
+        settledAtEnd: 0,
         fullyRepaid: true,
       });
       expect(summary.spend.debt).toBe(state.loan!.total);
@@ -5800,16 +5931,23 @@ describe("the beta's new events", () => {
     }
   });
 
-  it("lead into the rescue buyout when one empties the cash, not straight to the end", () => {
+  it("lead onto an emergency loan when one empties the cash, or past the limit into the rescue buyout, not straight to the end", () => {
     const fraud = { ...event("fraud"), encounter: undefined, schedule: { type: "fixed" as const, days: [6] } };
-    const s = settlingPay(createSim({ ...roomyDefaults, events: [fraud] }));
-    const start = setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 7 }));
-    // Just less cash than the fraud takes, the day before it.
-    const before = s.advance(start, 4).state;
-    const { state, log } = s.advance({ ...before, cash: 1_000 }, 1);
-    expect(log.at(-1)!.entries.some((e) => e.text.startsWith("Theft or fraud: Money clawed back"))).toBe(true);
-    expect(state.status).toBe("playing");
-    expect(state.rescue).toMatchObject({ day: 6 });
+    for (const limitDays of [7, 0]) {
+      const s = settlingPay(createSim({ ...roomyDefaults, events: [fraud], rescue: { ...roomyDefaults.rescue, limitDays } }));
+      const start = setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 7 }));
+      // Just less cash than the fraud takes, the day before it.
+      const before = s.advance(start, 4).state;
+      const { state, log } = s.advance({ ...before, cash: 1_000 }, 1);
+      expect(log.at(-1)!.entries.some((e) => e.text.startsWith("Theft or fraud: Money clawed back"))).toBe(true);
+      expect(state.status).toBe("playing");
+      if (limitDays) {
+        // Within 7 days of costs, the shortfall goes on an emergency loan, and cash is back at £0.
+        expect(state).toMatchObject({ cash: 0, rescue: null, loan: { emergency: true, day: 6 } });
+      } else {
+        expect(state.rescue).toMatchObject({ day: 6 });
+      }
+    }
   });
 
   it("each fire in some games, with a lawsuit only ever soon after a breach", () => {

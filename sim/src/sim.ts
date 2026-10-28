@@ -30,7 +30,7 @@ import { createInfrastructure, type ProviderView } from "./infrastructure.ts";
 import { createInvestors, type InvestorsView } from "./investors.ts";
 import { createIpo, type IpoView } from "./ipo.ts";
 import { createLaunch, type LaunchView } from "./launch.ts";
-import { createLoan, type LoanQuote, type LoanView } from "./loan.ts";
+import { createLoan, type LoanQuote, type LoanView, type ShortfallView } from "./loan.ts";
 import { mvpDay, mvpStatus, startingMvp, type MvpView } from "./mvp.ts";
 import { researchDay, researchView, type ResearchView } from "./research.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
@@ -95,7 +95,7 @@ export type { MvpView } from "./mvp.ts";
 export { JOB_PHASES, JOBS, PHASE_NAMES, phaseReached, type Job, type PhaseStepView, type PhaseView } from "./phases.ts";
 export type { ResearchView } from "./research.ts";
 export type { OptimisationView } from "./optimisation.ts";
-export type { LoanQuote, LoanView } from "./loan.ts";
+export type { LoanQuote, LoanView, ShortfallView } from "./loan.ts";
 export type { LostAddon, MigrationQuote, MigrationView, SetupRack } from "./migration.ts";
 export { LOW_CASH_DAYS, type PauseKind, type PauseReason, type TickResult } from "./pauses.ts";
 export type { NewUserFactor } from "./mix.ts";
@@ -417,6 +417,11 @@ export interface Sim {
    */
   loan(state: GameState): LoanView | null;
   /**
+   * How far cash can go below £0 before it has run out: shortfalls go onto a loan up to limitDays of the daily costs,
+   * and past that the vulture VC steps in (or, after a rescue, liquidation). With what they owe now, and the room left.
+   */
+  shortfall(state: GameState): ShortfallView;
+  /**
    * What taking a bank loan now would cost: amount, rate, interest, total repaid, the daily repayment and the days
    * of its fixed term. Null when one can't be taken: one is being repaid, or the game is in its last days.
    */
@@ -626,7 +631,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const benefits = createBenefits(config, finance);
   const migration = createMigration(config, infra, features, events, servers, benefits);
   const summary = createSummary(config, infra);
-  const loan = createLoan(config, finance);
+  const loan = createLoan(config, finance, (s) => runway(s).dailyCosts);
   const launch = createLaunch(config, servers, pricing, infra.units);
   const shares = createShares(config, finance, conversion);
   const api = createApi(config, features, finance, infra.apiuOn);
@@ -650,6 +655,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     calendar: calendar.calendar,
     ipo: ipo.ipoView,
     danger: encounters.danger,
+    shortfall: loan.shortfallView,
   });
   const rescue = createRescue(config, finance, shares, (s) => runway(s), (s) => infra.opsNeededNow(s));
   const investors = createInvestors(config, finance, shares);
@@ -741,6 +747,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       investors: investors.startingInvestors(),
       ...ipo.startingIpo(),
       rescue: null,
+      firstShortfallDay: null,
       pastLoans: [],
       interestPaid: 0,
       schedule,
@@ -830,7 +837,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const state = loadPlaying(saved);
     const job = actionJob(action);
     if (job) checkJobOpen(state, job);
-    return advancePhase(playAction(state, action)).state;
+    // Ringing the opening bell ends the game: what's still owed on the loan comes off the cash.
+    return endingDebt({ state: advancePhase(playAction(state, action)).state, entries: [] }).state;
   }
 
   function playAction(state: GameState, action: Action): GameState {
@@ -1114,8 +1122,9 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     // The migration moves on after the day is played and billed, so a model switch takes effect from tomorrow.
     const migrated = migration.migrationDay(risen);
     entries.push(...migrated.entries);
-    // The first time cash runs out a vulture VC rescues the company; the second time is liquidation.
-    const settled = finance.settle(migrated.state, day, entries, rescue.rescue);
+    // Cash below £0 goes onto a loan, as far as the limit. Past it cash has run out: the first time a vulture VC rescues
+    // the company, the second time is liquidation. A game that ends today settles what's still owed on its loan.
+    const settled = endingDebt(finance.settle(migrated.state, day, entries, rescue.rescue, loan.coverShortfall));
     // A rescue's cuts may let go marketers who were running campaigns: those campaigns stop.
     const released = campaigns.release(settled.state);
     // The board's pay holiday starts when cash runs low and ends once it has recovered: costs counted with their pay.
@@ -1303,7 +1312,14 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
 
   function endGame(saved: GameState): GameState {
     const state = load(saved);
-    return state.status === "playing" ? { ...state, status: "finished", endedByTeacher: true } : state;
+    return state.status === "playing" ? loan.settleAtEnd({ ...state, status: "finished", endedByTeacher: true }).state : state;
+  }
+
+  /** Once a game has ended, whatever is still owed on its loan comes off its cash, with the line saying so. */
+  function endingDebt(result: { state: GameState; entries: LogEntry[] }): { state: GameState; entries: LogEntry[] } {
+    if (result.state.status === "playing") return result;
+    const settled = loan.settleAtEnd(result.state);
+    return { state: settled.state, entries: [...result.entries, ...settled.entries] };
   }
 
   return {
@@ -1388,6 +1404,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     events: (s) => events.events(load(s)),
     calendar: (s) => calendar.calendar(load(s)),
     danger: (s) => encounters.danger(load(s)),
+    shortfall: (s) => loan.shortfallView(load(s)),
     featureGaps: (s) => events.featureGaps(load(s)),
     csuite: (s) => csuite.csuiteView(load(s)),
     summarise: (s) => summary.summarise(load(s)),

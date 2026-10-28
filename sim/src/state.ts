@@ -37,7 +37,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 55;
+export const GAME_STATE_VERSION = 56;
 
 /**
  * The four phases a game's jobs open in, in order, each opened by a milestone: Build from day 1, Launch when Launch is
@@ -159,6 +159,12 @@ export interface Loan {
   interestPaid: number;
   /** The day it was paid off early, or null: the interest it would still have charged was saved. */
   paidOffDay: number | null;
+  /** An emergency loan, opened by the bank when cash went below £0 with no loan being repaid. */
+  emergency?: true;
+  /** Of the amount, the shortfalls added to it when cash went below £0. None for a loan the student took. */
+  shortfall?: number;
+  /** What was still owed when the game ended, paid off from cash then (paidOffDay is that day). */
+  settledAtEnd?: number;
 }
 
 /**
@@ -974,6 +980,8 @@ export interface GameState {
   investors: Investors;
   /** The rescue buyout, once cash has run out once; null before. */
   rescue: Rescue | null;
+  /** The first day cash went below £0 and the shortfall went on a loan, which stops the clock; null before. */
+  firstShortfallDay: number | null;
   /** Applications to float, and the IPO once the bell has been rung. */
   ipo: IpoState;
   /** Loans repaid before the latest was taken, oldest first, for the summary. */

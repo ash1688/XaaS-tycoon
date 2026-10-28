@@ -430,6 +430,7 @@ export async function buildApp(opts: AppOptions) {
       interestPaid: state.interestPaid,
       loan: sim.loan(state),
       loanQuote: sim.loanQuote(state),
+      shortfall: sim.shortfall(state),
       runway: sim.runway(state),
       valuation: sim.valuation(state),
       capTable: sim.capTable(state),

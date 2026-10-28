@@ -131,7 +131,10 @@ const biggest = computed(() =>
           <span class="value" data-testid="summary-loan">{{ formatCash(loan.amount) }}</span>
           <small data-testid="summary-loan-status">
             {{ loan.day === 1 ? "first taken at the start" : `first taken on day ${loan.day}` }} ·
-            {{ loan.fullyRepaid ? "repaid in full" : `${formatCash(loan.remaining)} still owed` }} ·
+            <template v-if="loan.settledAtEnd">
+              <span data-testid="summary-loan-settled">{{ formatCash(loan.settledAtEnd) }} still owed at the end, taken off the cash</span> ·
+            </template>
+            <template v-else>{{ loan.fullyRepaid ? "repaid in full" : `${formatCash(loan.remaining)} still owed` }} ·</template>
             <span data-testid="summary-loan-interest">{{ formatCash(loan.interestPaid) }} interest</span>
             <template v-if="loan.interestSaved">
               · <span data-testid="summary-loan-saved">{{ formatCash(loan.interestSaved) }} saved by paying early</span>

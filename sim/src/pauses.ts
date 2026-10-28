@@ -9,6 +9,8 @@ import type { MvpView } from "./mvp.ts";
 import type { MigrationView } from "./migration.ts";
 import type { ServerView, UnitsView } from "./servers.ts";
 import type { FundingView } from "./shares.ts";
+import type { ShortfallView } from "./loan.ts";
+import { pounds } from "./finance.ts";
 import { quarterName } from "./payReview.ts";
 import type { DayLog, GameState } from "./state.ts";
 
@@ -56,6 +58,7 @@ export interface PauseViews {
   calendar(state: GameState): CalendarView;
   ipo(state: GameState): IpoView;
   danger(state: GameState): DangerView;
+  shortfall(state: GameState): ShortfallView;
 }
 
 export function createPauses(config: GameConfig, views: PauseViews) {
@@ -83,6 +86,12 @@ export function createPauses(config: GameConfig, views: PauseViews) {
       add("payReview", "pay-review", `Pay review for ${quarterName(after.payReview)}: your staff want to talk about pay`);
     }
 
+    // The first time cash went below £0: the shortfall went on a loan, with how much further it can go.
+    if (after.firstShortfallDay !== null && before.firstShortfallDay === null) {
+      const { room } = views.shortfall(after);
+      const next = after.rescue ? "the company goes into liquidation" : "a vulture VC steps in";
+      add("alert", "shortfall", `Cash went below £0 and the shortfall went on your loan: ${pounds(room)} more and ${next}`);
+    }
     // Cash ran out and a vulture VC rescued the company: it now owns most of it, and the next cash-out is liquidation.
     if (after.rescue && !before.rescue) {
       add("alert", "rescue", `Cash ran out: a vulture VC rescued the company for ${Math.round(after.rescue.share * 100)}% of it`);
