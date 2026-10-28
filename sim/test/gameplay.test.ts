@@ -31,11 +31,11 @@ function withoutLookahead(units: ReturnType<Sim["units"]>) {
 }
 
 /**
- * The price preview without its ticket outlook, added for the price modal after these hashes were taken (#163): it
- * plays no part in the game, so the hashes stay those of the games themselves.
+ * The price preview without its ticket outlook, added for the price modal after these hashes were taken (#163), or the
+ * days its wording quotes (#291): they play no part in the game, so the hashes stay those of the games themselves.
  */
 function withoutTicketOutlook(preview: ReturnType<Sim["pricePreview"]>) {
-  const { tickets: _, ...rest } = preview;
+  const { tickets: _, expectedPriceDays: _days, priceMemoryDays: _memory, ...rest } = preview;
   return rest;
 }
 
