@@ -635,9 +635,11 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const migration = sim.migration(state);
   if (migration) lines.push(`migration: ${migration.from}→${migration.to}, ${migration.phase}, ${migration.daysLeft} days left`);
   const danger = sim.danger(state);
-  const risks = danger.risks.map((r) => `${r.label.toLowerCase()} +${r.rise}`).join(", ");
+  // Rises on Hard and Easy are multiplied, so round to 2 places: "23.94", not "23.94000000000001".
+  const r2 = (n: number) => +n.toFixed(2);
+  const risks = danger.risks.map((r) => `${r.label.toLowerCase()} +${r2(r.rise)}`).join(", ");
   lines.push(
-    `danger meter: ${danger.meter} (no event waits past ${danger.max}) | rose ${danger.rise} today (well-run day +${danger.dailyRise}${risks ? `, ${risks}` : ""})`,
+    `danger meter: ${r2(danger.meter)} (no event waits past ${danger.max}) | rose ${r2(danger.rise)} today (well-run day +${r2(danger.dailyRise)}${risks ? `, ${risks}` : ""})`,
   );
   for (const r of danger.risks) lines.push(`  ${r.label}: ${r.detail}`);
   if (danger.warning) lines.push(`  WARNING: ${danger.warning.text}`);

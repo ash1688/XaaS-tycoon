@@ -129,7 +129,7 @@ What researchers earn each day, more for higher grades. They bank with no cap, t
 _Avoid_: Science, research credits, XP
 
 **Pay review**:
-Staff coming to the student about pay before quarters 2, 3 and 4 of a game (a game counts as one year of four equal quarters). Until IPO and a career have 365-day years instead: quarters 2, 3 and 4 in the first, then every quarter. The clock holds until it's settled. Each review rolls its own inflation, from 2% to 6%; the student offers a rise from inflation less a point, and staff, who open at inflation plus four points, accept an offer near a fair rise for how the company is doing or counter with a roll. The agreed rise lifts every staff pool's day rate, new hires and agency staff included, and compounds with each review. The C-suite is left out.
+Staff coming to the student about pay: the first 30 days into the Grow phase, then every quarter after (a game counts as one year of four equal quarters, so 45 days apart in a 180-day game; until IPO and a career have 365-day years instead). With Grow from day 30, a 180-day game's reviews fall on days 60, 105 and 150; a game that never reaches Grow has none. The clock holds until it's settled. Each review rolls its own inflation, from 2% to 6%; the student offers a rise from inflation less a point, and staff, who open at inflation plus four points, accept an offer near a fair rise for how the company is doing or counter with a roll. The agreed rise lifts every staff pool's day rate, new hires and agency staff included, and compounds with each review. The C-suite is left out.
 _Avoid_: Pay rise round, wage negotiation, salary review
 
 **People-lead modifier**:
