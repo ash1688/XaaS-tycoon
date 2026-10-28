@@ -37,7 +37,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 58;
+export const GAME_STATE_VERSION = 59;
 
 /**
  * The four phases a game's jobs open in, in order, each opened by a milestone: Build from day 1, Launch when Launch is
