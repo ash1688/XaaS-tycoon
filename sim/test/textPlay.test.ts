@@ -993,8 +993,10 @@ describe("moderators", () => {
     while (!/reports unhandled/.test(turn.lines.at(-1)!) && turn.state.day < 30) turn = run(turn.state, "next 30");
     expect(turn.lines.at(-1)).toMatch(/^stopped on day \d+: .*reports unhandled \(\d+\)/);
     expect(turn.lines.some((l) => /reports on user content are waiting for a moderator/.test(l))).toBe(true);
+    // A move retrains: they join the moderators after a mid's lead time, shown under staff with their start day.
     const staffed = run(turn.state, "move moderators developers");
-    expect(staffed.rows[0]).toMatchObject({ ok: true, moderators: 1 });
+    expect(staffed.rows[0]).toMatchObject({ ok: true, moderators: 0 });
+    expect(renderStatus(sim, staffed.state)).toMatch(/moderators 0 .*\| retraining, paid already: 1 mid start day \d+ \(7d\)/);
   });
 });
 

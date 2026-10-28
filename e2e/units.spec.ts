@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { createCode, launch } from "./staff.ts";
+import { createCode, movedNow, launch } from "./staff.ts";
 
 test("on IaaS, renting an app server and a load balancer grows the CU capacity bar after Continue", async ({
   browser,
@@ -16,8 +16,8 @@ test("on IaaS, renting an app server and a load balancer grows the CU capacity b
     data: { name: "Racks Ltd", productType: "social", model: "iaas" },
   });
   const { id } = await created.json();
-  // A second ops person for the extra servers, so no tier is cut for missing ops: a developer moved in, at once.
-  await request.post(`/api/codes/${code}/companies/${id}/actions`, { data: { type: "moveStaff", to: "ops" } });
+  // A second ops person for the extra servers, so no tier is cut for missing ops: a developer put in, at once.
+  await movedNow(id);
   // A first setup rented on day 1: the social network's 4,000 users arrive over days 2 to 4.
   await launch(request, code, id, "iaas");
 

@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { pinLaunchUsers } from "./staff.ts";
+import { movedNow, pinLaunchUsers } from "./staff.ts";
 
 // Infrastructure clarity (playtest 1): the bar with no capacity sets it and says why, what has to be ready before
 // launch, the ops cut on every bar, advice that puts ops and load balancers first, and a warning before a cancel that
@@ -80,8 +80,8 @@ test("missing ops show on every bar and come first in the advice; then a full lo
   await expect(servers.getByTestId("tier-warning-app")).toContainText("hire 1 ops person");
   await expect(servers.getByTestId("step-note-app")).toContainText("You'd need 2 ops staff in all");
 
-  // A developer moved to ops, at once: no cut. Another app server alone would get no traffic without a load balancer.
-  await request.post(`/api/codes/${code}/companies/${id}/actions`, { data: { type: "moveStaff", to: "ops" } });
+  // A developer put into ops, at once: no cut. Another app server alone would get no traffic without a load balancer.
+  await movedNow(id);
   await student.reload();
   await expect(student.getByTestId("tier-cu-cut")).toHaveCount(0);
   await expect(student.getByTestId("tier-cu-note")).toContainText(/rent an app server and a load balancer/i);
