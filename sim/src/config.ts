@@ -1195,7 +1195,11 @@ export interface CsuiteConfig {
    * The board's pay holiday: when cash falls below startDays of running costs (C-suite pay included), every executive
    * forgoes their pay, for good, until cash is back above endDays of them. startDays 0 turns it off.
    */
-  payHoliday: { startDays: number; endDays: number };
+  /**
+   * The board's pay holiday: it starts below startDays of running costs and ends above endDays. Once it's over, the back
+   * pay owed is paid a little each day: the cash above startDays of running costs spread over backPayDays.
+   */
+  payHoliday: { startDays: number; endDays: number; backPayDays: number };
   roles: Record<CsuiteRole, CsuiteRoleConfig>;
 }
 
@@ -2032,7 +2036,7 @@ export const defaultConfig: GameConfig = {
     // A safety net for the full C-suite the IPO needs (#232): without it a small market (payments on SaaS) can't carry
     // all 11 salaries and careful play is rescued or liquidated. At 7 and 21 days, none is, and executives miss about
     // 7% of their pay days across careful play.
-    payHoliday: { startDays: 7, endDays: 21 },
+    payHoliday: { startDays: 7, endDays: 21, backPayDays: 14 },
     roles: {
       headOfDevelopment: {
         name: "Head of development",

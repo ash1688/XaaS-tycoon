@@ -272,7 +272,7 @@ describe("the board's pay holiday", () => {
     expect(first.log[0]!.entries.map((e) => e.text)).toContain(
       `Cash is low: your C-suite will forgo their £${pay(low).toLocaleString("en-GB")} a day of pay from tomorrow until the company has 21 days of running costs in the bank. What they forgo is owed, and paid back once cash recovers.`,
     );
-    expect(sim.csuite(first.state).payHoliday).toEqual({ since: first.state.day, startDays: 7, endDays: 21, owed: 0 });
+    expect(sim.csuite(first.state).payHoliday).toEqual({ since: first.state.day, startDays: 7, endDays: 21, backPayDays: 14, owed: 0 });
     expect(sim.runway(first.state).dailyCosts).toBe(sim.runway(low).dailyCosts - pay(low));
     const next = sim.advance(first.state);
     expect(payLines(next.log)).toEqual([]);
@@ -281,31 +281,45 @@ describe("the board's pay holiday", () => {
     expect(sim.csuite(next.state).payHoliday.owed).toBe(pay(low));
   });
 
-  it("ends once cash is back above 21 days, then pays the back pay owed from the cash above that line (#290)", () => {
+  it("ends once cash is back above 21 days, then pays back pay in instalments as cash recovers, never under the 7-day line", () => {
     const on = sim.advance(withCash(5)).state;
     const costs = sim.runway(withCash(0)).dailyCosts;
-    // Between the two thresholds the holiday goes on, and the pay skipped is owed.
+    // Between the two thresholds the holiday goes on, the pay skipped is owed, and no back pay is paid.
     const between = sim.advance({ ...on, cash: Math.round(14 * costs) });
     expect(between.state.csuite.payHolidaySince).toBe(on.csuite.payHolidaySince);
     expect(between.state.csuite.payOwed).toBe(pay(on));
-    // Back above 21 days by less than the back pay: it ends, and pays what it can without going below the line.
-    const twoDays = sim.advance(between.state).state;
-    expect(twoDays.csuite.payOwed).toBe(2 * pay(on));
-    const above = Math.round(21 * costs) + pay(on);
-    const recovered = sim.advance({ ...twoDays, cash: above + costs - sim.runway(twoDays).dailyCosts + Math.round(sim.runway(twoDays).dailyIncome) });
+    expect(between.log[0]!.entries.some((e) => e.text.startsWith("Back pay"))).toBe(false);
+    // A long holiday's worth owed, and cash back above 21 days: it ends, and pays a fourteenth of the cash above 7 days.
+    const owedBefore = 60 * pay(on);
+    const recovered = sim.advance({ ...between.state, cash: Math.round(25 * costs), csuite: { ...between.state.csuite, payOwed: owedBefore } });
     expect(recovered.state.csuite.payHolidaySince).toBeNull();
     const texts = recovered.log[0]!.entries.map((e) => e.text);
     expect(texts).toContain(`Cash has recovered: your C-suite's £${pay(on).toLocaleString("en-GB")} a day of pay starts again tomorrow.`);
-    const backPay = recovered.log[0]!.entries.find((e) => e.text.startsWith("Back pay to your C-suite"))!;
-    expect(backPay).toMatchObject({ category: "staff" });
-    expect(-backPay.cashDelta).toBeGreaterThan(0);
-    expect(recovered.state.cash).toBeGreaterThanOrEqual(21 * costs - 1);
-    const owed = recovered.state.csuite.payOwed!;
-    expect(owed + -backPay.cashDelta).toBe(3 * pay(on));
-    // Paid again from the next day, and the rest of the back pay once there's the cash.
-    const rich = sim.advance({ ...recovered.state, cash: 100 * costs });
-    expect(payLines(rich.log).map((e) => e.cashDelta)).toEqual(recovered.state.csuite.hired.map((e) => -e.salary));
-    expect(rich.log[0]!.entries.find((e) => e.text.startsWith("Back pay"))!.cashDelta).toBe(-owed);
+    const instalment = (log: typeof recovered.log) => -(log[0]!.entries.find((e) => e.text.startsWith("Back pay: paid "))?.cashDelta ?? 0);
+    const first = instalment(recovered.log);
+    const line = 7 * sim.runway(recovered.state).dailyCosts;
+    expect(first).toBeGreaterThan(0);
+    expect(first).toBe(Math.floor((recovered.state.cash + first - line) / 14));
+    expect(recovered.log[0]!.entries.find((e) => e.text.startsWith("Back pay: paid "))).toMatchObject({
+      text: `Back pay: paid £${first.toLocaleString("en-GB")} to the C-suite, £${(owedBefore + pay(on) - first).toLocaleString("en-GB")} still owed`,
+      category: "staff",
+    });
+    expect(sim.csuite(recovered.state).payHoliday.owed).toBe(owedBefore + pay(on) - first);
+    // Day after day it pays down what's owed, never taking cash under the 7-day line or starting another holiday. The
+    // company makes what a day costs, so only the back pay moves cash.
+    let state = recovered.state;
+    for (let i = 0; i < 20; i++) {
+      const day = sim.advance({ ...state, cash: state.cash + sim.runway(state).dailyCosts });
+      const paid = instalment(day.log);
+      expect(day.state.cash).toBeGreaterThanOrEqual(7 * sim.runway(day.state).dailyCosts - 1);
+      expect(day.state.csuite.payHolidaySince ?? null).toBeNull();
+      expect(day.state.csuite.payOwed).toBe(state.csuite.payOwed! - paid);
+      state = day.state;
+    }
+    expect(state.csuite.payOwed).toBeLessThan(recovered.state.csuite.payOwed!);
+    // With plenty of cash it's all paid, and the line says so.
+    const rich = sim.advance({ ...state, cash: 10_000 * costs });
+    expect(rich.log[0]!.entries.map((e) => e.text)).toContain(`Back pay: paid £${state.csuite.payOwed!.toLocaleString("en-GB")} to the C-suite, all of it now`);
     expect(rich.state.csuite.payOwed).toBe(0);
   });
 
@@ -323,9 +337,9 @@ describe("the board's pay holiday", () => {
     expect(sim.advance(withCash(14)).state.csuite.payHolidaySince ?? null).toBeNull();
     const nobody = { ...begin(), cash: 100 };
     expect(sim.advance(nobody).state.csuite.payHolidaySince ?? null).toBeNull();
-    const off = createSim({ ...quiet, csuite: { ...quiet.csuite, payHoliday: { startDays: 0, endDays: 0 } } });
+    const off = createSim({ ...quiet, csuite: { ...quiet.csuite, payHoliday: { startDays: 0, endDays: 0, backPayDays: 14 } } });
     expect(off.advance(withCash(5, off)).state.csuite.payHolidaySince ?? null).toBeNull();
-    expect(off.csuite(begin(off)).payHoliday).toEqual({ since: null, startDays: 0, endDays: 0, owed: 0 });
+    expect(off.csuite(begin(off)).payHoliday).toEqual({ since: null, startDays: 0, endDays: 0, backPayDays: 14, owed: 0 });
   });
 
   it("shows in text play", () => {

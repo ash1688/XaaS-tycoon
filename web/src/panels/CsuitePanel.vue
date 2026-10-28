@@ -34,8 +34,9 @@ async function hire(role: CsuiteRole, candidate: string) {
       costs in the bank. It's owed: {{ formatCash(csuite.payHoliday.owed) }} of back pay so far.
     </p>
     <p v-else-if="csuite.payHoliday.owed > 0" class="pay-holiday" data-testid="csuite-back-pay">
-      {{ formatCash(csuite.payHoliday.owed) }} of back pay still owed from the pay holiday: paid from the cash above
-      {{ csuite.payHoliday.endDays }} days of running costs, and anything left when the game ends comes off your cash.
+      {{ formatCash(csuite.payHoliday.owed) }} of back pay still owed from the pay holiday: paid a little each day as cash
+      recovers, from the cash above {{ csuite.payHoliday.startDays }} days of running costs spread over
+      {{ csuite.payHoliday.backPayDays }} days. Anything left when the game ends comes off your cash.
     </p>
     <p v-else-if="csuite.dailyPay" data-testid="csuite-pay">C-suite pay: {{ formatCash(csuite.dailyPay) }} a day.</p>
     <p v-if="csuite.payHoliday.startDays > 0 && csuite.payHoliday.since === null" class="muted" data-testid="csuite-pay-holiday-rule">
