@@ -293,6 +293,14 @@ export interface ManagedServersConfig {
   /** The most app instances a company can run. */
   maxInstances: number;
   /**
+   * Basic autoscaling, on for every company on the platform. Each night the app instances are set to a baseline: the
+   * day's CU demand plus `headroom` (0.25 = 1.25×), never fewer than the instances the student set by hand, their
+   * minimum. During a day, burst instances cover CU demand over the baseline, each billed at `burstPremium` × an
+   * instance's day rate, up to a maximum the student sets (`maxFactor` × today's instances until they do). Demand over
+   * the maximum is an outage. The Managed autoscaling benefit raises the headroom. Left out, nothing autoscales.
+   */
+  autoscaling?: { headroom: number; burstPremium: number; maxFactor: number };
+  /**
    * Units each size of managed database and cache gives, in place of a server's. A managed service scales up further
    * than one server of the same size, since you only ever run one.
    */
@@ -1260,12 +1268,10 @@ export interface ModelBenefitEffects {
    */
   autoscaling?: { pricePerUnit: number; most: number };
   /**
-   * PaaS autoscaling (#261). Each night the platform sets the app instances to a baseline: the day's CU demand plus
-   * `headroom` (0.5 = 1.5×), and never fewer than the instances the student set by hand, their minimum. During a day,
-   * burst instances cover CU demand over the baseline, each billed at `burstPremium` × an instance's day rate, up to a
-   * maximum the student sets (`maxFactor` × today's instances until they do). Demand over the maximum is an outage.
+   * Managed autoscaling on PaaS (#261): the nightly baseline is the day's CU demand plus this `headroom` (0.5 = 1.5×),
+   * in place of basic autoscaling's (ManagedServersConfig.autoscaling). Bursts and the maximum work the same.
    */
-  managedAutoscaling?: { headroom: number; burstPremium: number; maxFactor: number };
+  managedAutoscaling?: { headroom: number };
   /** Hours down in any outage are multiplied by this, rounded up (0.5 = half as long). */
   outageHours?: number;
   /** CU demand is multiplied by this (0.75 = a quarter less): a CDN serving content in front of the app. */
@@ -2175,11 +2181,11 @@ export const defaultConfig: GameConfig = {
         rpPrice: 50,
         name: "Managed autoscaling",
         blurb:
-          "The platform keeps your instances at 1.5× yesterday's demand (never below the number you set) and adds burst instances at twice the price for spikes, up to a maximum you set.",
+          "Raises autoscaling's baseline from 1.25× to 1.5× yesterday's demand, so fewer spikes need burst instances at twice the price.",
         setupFee: 1_000,
         monthlyFee: 300,
-        // Placeholders: about twice an instance's price for a burst one, and room for three times the instances.
-        effects: { managedAutoscaling: { headroom: 0.5, burstPremium: 2, maxFactor: 3 } },
+        // A placeholder: 1.5× yesterday's demand, over basic autoscaling's 1.25×.
+        effects: { managedAutoscaling: { headroom: 0.5 } },
       },
       {
         id: "cdn",
@@ -2327,6 +2333,9 @@ export const defaultConfig: GameConfig = {
         managed: {
           instanceSize: "medium",
           maxInstances: 20,
+          // Placeholders: basic autoscaling keeps 1.25× yesterday's demand, a burst instance costs about twice a
+          // normal one, and the maximum is three times the instances until it's set.
+          autoscaling: { headroom: 0.25, burstPremium: 2, maxFactor: 3 },
           units: {
             database: { small: 10, medium: 25, large: 50, massive: 100 },
             cache: { small: 10, medium: 25, large: 50, massive: 100 },

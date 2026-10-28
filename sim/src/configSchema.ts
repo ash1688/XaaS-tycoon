@@ -388,9 +388,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
       add(`${at}.effects.autoscaling.most`, "Infrastructure", T, `${name}: most extra`, "The most extra VMs can add, as a share of the servers' own units (0.5 = half as much again).", range(0, 10, 0.05));
     }
     if (e.managedAutoscaling) {
-      add(`${at}.effects.managedAutoscaling.headroom`, "Infrastructure", T, `${name}: baseline headroom`, "Each night the instances are set to the day's CU demand plus this share (0.5 = 1.5×), and never below the number set by hand.", range(0, 5, 0.05));
-      add(`${at}.effects.managedAutoscaling.burstPremium`, "Infrastructure", T, `${name}: burst premium`, "Each burst instance added during a day costs this many times an instance's day rate (2 = double).", range(1, 10, 0.1));
-      add(`${at}.effects.managedAutoscaling.maxFactor`, "Infrastructure", T, `${name}: default maximum`, "Until the student sets a maximum, it's this many times today's instances.", range(1, 10, 0.5));
+      add(`${at}.effects.managedAutoscaling.headroom`, "Infrastructure", T, `${name}: baseline headroom`, "With it, each night the instances are set to the day's CU demand plus this share (0.5 = 1.5×), in place of basic autoscaling's.", range(0, 5, 0.05));
     }
     if (e.outageHours !== undefined) add(`${at}.effects.outageHours`, "Infrastructure", T, `${name}: outage hours`, "Hours down in any outage are multiplied by this, rounded up (0.5 = half as long).", SHARE);
     if (e.cuDemand !== undefined) add(`${at}.effects.cuDemand`, "Infrastructure", T, `${name}: CU demand`, "CU demand is multiplied by this (0.75 = a quarter less).", SHARE);
@@ -641,6 +639,9 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     }
     if (servers.managed) {
       add(`models.${m}.servers.managed.maxInstances`, "Infrastructure", MODEL_LABELS[m], "Most app instances", "The most app instances a company can run on the platform.", range(1, 100, 1));
+      add(`models.${m}.servers.managed.autoscaling.headroom`, "Infrastructure", MODEL_LABELS[m], "Basic autoscaling headroom", "Each night the instances are set to the day's CU demand plus this share (0.25 = 1.25×), never below the number set by hand. Managed autoscaling raises it.", range(0, 5, 0.05));
+      add(`models.${m}.servers.managed.autoscaling.burstPremium`, "Infrastructure", MODEL_LABELS[m], "Burst premium", "Each burst instance added during a day costs this many times an instance's day rate (2 = double).", range(1, 10, 0.1));
+      add(`models.${m}.servers.managed.autoscaling.maxFactor`, "Infrastructure", MODEL_LABELS[m], "Default autoscaling maximum", "Until the student sets a maximum, it's this many times today's instances.", range(1, 10, 0.5));
       for (const t of ["database", "cache"] as const) {
         for (const size of SERVER_SIZES) {
           const unit = t === "database" ? "DBU" : "CH";

@@ -4853,7 +4853,8 @@ describe("migration with servers", () => {
             database: sizes(1_000, 1_800, 3_400, 6_400),
             cache: sizes(300, 550, 1_000, 1_900),
           },
-          managed: { ...paas.servers!.managed!, units: { database: sizes(15, 30, 60, 120), cache: sizes(15, 30, 60, 120) } },
+          // No autoscaling: these sums predate it, and it would change the instances during a move.
+          managed: { ...paas.servers!.managed!, units: { database: sizes(15, 30, 60, 120), cache: sizes(15, 30, 60, 120) }, autoscaling: undefined },
           starter: [
             { type: "app", size: "medium", count: 1 },
             { type: "database", size: "small", count: 1 },

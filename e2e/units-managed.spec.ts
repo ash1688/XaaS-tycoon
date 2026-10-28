@@ -89,7 +89,7 @@ test("on SaaS, the Infrastructure page says capacity is the provider's job and s
   await expect(student.getByTestId("platform-panel")).toHaveCount(0);
 });
 
-test("on PaaS with managed autoscaling, the platform shows the instances, the minimum and a maximum to set (#261)", async ({
+test("on PaaS, the platform autoscales, shows the instances, the minimum and a maximum to set, and Managed autoscaling raises the baseline (#261)", async ({
   browser,
   request,
 }) => {
@@ -103,11 +103,17 @@ test("on PaaS with managed autoscaling, the platform shows the instances, the mi
   const act = (data: object) => request.post(`/api/codes/${code}/companies/${id}/actions`, { data });
   // Set by hand to 4: with autoscaling, that's the minimum.
   expect((await act({ type: "setInstances", count: 4 })).ok()).toBe(true);
-  await withBenefit(id, "paasAutoscaling");
 
+  // Every PaaS company has basic autoscaling.
   const student = await (await browser.newContext()).newPage();
   await student.goto(`/play/${code}/${id}/infrastructure`);
   const scaling = student.getByTestId("platform-autoscale");
+  await expect(scaling).toContainText("Basic autoscaling");
+  await expect(scaling.getByTestId("autoscale-summary")).toContainText("1.25× yesterday's demand, never below the 4 you set");
+
+  await withBenefit(id, "paasAutoscaling");
+  await student.reload();
+  await expect(scaling).toContainText("Managed autoscaling");
   await expect(scaling.getByTestId("autoscale-summary")).toContainText("Instances 4 (min 4, max 12).");
   await expect(scaling.getByTestId("autoscale-summary")).toContainText("1.5× yesterday's demand, never below the 4 you set");
   // The maximum can't go below the minimum; raising it is saved.
