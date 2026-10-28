@@ -428,7 +428,9 @@ export function renderStatus(sim: Sim, state: GameState): string {
   if (oneOffsThisWeek > 0) lines.push(`one-offs this week ${money(oneOffsThisWeek)} (not in costs: see \`costs\`)`);
   const priceOpen = sim.phase(state).open.price;
   const launching = state.launchDay !== null && state.day < state.launchDay;
-  const priceState = state.ipo.approvedDay !== null
+  const priceState = state.status !== "playing"
+    ? "final: the game is over"
+    : state.ipo.approvedDay !== null
     ? "locked from IPO approval until the bell"
     : launching
       ? `opening price, holds until go-live and ${lock - (state.launchDay! - state.day)} days after`
@@ -2105,8 +2107,12 @@ function valuationLines(sim: Sim, state: GameState): string[] {
   const v = sim.valuation(state);
   const table = sim.capTable(state);
   const signed = (n: number) => `${n < 0 ? "−" : "+"}${money(Math.abs(n))}`;
+  // After the IPO the market prices the company, as the cap table does: the formula's figure is only for reference.
+  const floated = state.ipo.result;
   return [
-    `valuation ${money(v.valuation)}: annual revenue ${money(v.annualRevenue)} × ${v.multiple}, plus paying users; share price ${perShare(v.sharePrice)}`,
+    floated
+      ? `market value ${money(floated.marketValue)} at the first day's close; share price ${perShare(floated.closePrice)} (the cap table's). The formula would say ${money(v.valuation)}:`
+      : `valuation ${money(v.valuation)}: annual revenue ${money(v.annualRevenue)} × ${v.multiple}, plus paying users; share price ${perShare(v.sharePrice)}`,
     ...v.drivers.map((d) => `  ${d.label}: ${signed(d.amount)} (${d.detail})`),
     `cap table (${table.sharesInIssue.toLocaleString("en-GB")} shares):`,
     ...table.rows.map((r) => `  ${r.name}: ${r.shares.toLocaleString("en-GB")} shares, ${stake(r.share)}, worth ${money(r.value)}`),
@@ -2250,7 +2256,7 @@ export function renderSummary(sim: Sim, state: GameState): string {
   const headline = `The company raised ${money(capTable.raised)} and is now worth ${money(capTable.worth)}${less}.`;
   const shareholders = capTable.shareholders.map(
     (r) =>
-      `${r.name}: put in ${money(r.putIn)}, ${stake(r.stake)}, worth ${money(r.worth)}${r.multiple !== null ? `, ${r.multiple}× their money` : ""}`,
+      `${r.id === "student" ? `${r.name} (seed money: your starting cash)` : r.name}: put in ${money(r.putIn)}, ${stake(r.stake)}, worth ${money(r.worth)}${r.multiple !== null ? `, ${r.multiple}× their money` : ""}`,
   );
   // A bootstrapped float is an achievement, said in words (#265).
   const flag = summary.bootstrapped ? { achievement: "Floated without outside investors" } : {};

@@ -292,8 +292,8 @@ What the company is worth: the formula's figure until the first investor after f
 _Avoid_: Company value, worth, market value (market value is only after the IPO)
 
 **Seed money**:
-The bank loan the student can take at the start. It's debt, not outside investment, so it doesn't unlock the CFO.
-_Avoid_: Starting loan, startup loan
+The founder's own cash: the starting cash on the game's difficulty, before any bank loan. The shareholder breakdown shows it as what the founder put in. A bank loan taken at the start is debt, not seed money or outside investment, so it doesn't unlock the CFO.
+_Avoid_: Starting loan, startup loan (for the loan, say the bank loan)
 
 **Funding round**:
 A sale of new shares to an investor or funder in exchange for cash.
@@ -361,7 +361,7 @@ _Avoid_: Market cap, valuation (valuation is before the IPO)
 What the student's own shares are worth at the end: their share of the company × its valuation, or × its market value at the close of the first day if the game ended in an IPO, less any debt still owed. There's no bonus for floating, and a liquidated company scores £0. The end screen shows it under the headline "raised £X, now worth £Y" and the shareholder breakdown.
 
 **Shareholder breakdown**:
-The end screen's table of everyone who owns the company: the founder (with their seed money, the starting cash), friends and family, the angel, each VC, the vulture, the C-suite, the staff share scheme and the public float. Each row gives what they put in, their stake, its worth and their multiple; the stakes add up to 100%, and the founder row's worth is the score.
+The end screen's table of everyone who owns the company: the founder (with their seed money, the starting cash), friends and family, the angel, each VC, the vulture (still listed, holding nothing, once bought back, with the buy-back price as its worth), the C-suite, the staff share scheme and the public float. A VC's put in counts both tranches of a merged round, the second once paid. Each row gives what they put in, their stake, its worth and their multiple; the stakes add up to 100%, and the founder row's worth is the score.
 _Avoid_: Cap table (in the student's words)
 
 **Ownership floor**:
