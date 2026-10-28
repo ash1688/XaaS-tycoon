@@ -1105,7 +1105,7 @@ describe("servers on IaaS", () => {
     const balanced = (await act({ type: "rentServer", server: "loadBalancer", size: "small" })).json<CompanyView>();
     // Pending: nothing changes until they're ready, and they need no ops until then (#259), though the order says so.
     expect(balanced.units!.cu.capacity).toBe(15 * defaultConfig.capacity.unstaffedShare);
-    expect(balanced).toMatchObject({ opsNeeded: 1, opsNeededOnceReady: 2 });
+    expect(balanced).toMatchObject({ opsNeeded: 1, opsNeededOnceReady: 1.75 });
     expect((await app.inject({ method: "GET", url })).json<CompanyView>().servers).toHaveLength(4);
 
     const next = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
@@ -1115,7 +1115,7 @@ describe("servers on IaaS", () => {
       loadBalancer: { appServers: 2, loadBalancers: 1, needed: true, coverage: 2, counted: 2, uncovered: 0 },
     });
     // With no ops at all, the shortfall cuts every tier to 40%.
-    expect(next.company.opsShortfall).toEqual({ have: 0, needed: 2, capacityShare: defaultConfig.capacity.unstaffedShare });
+    expect(next.company.opsShortfall).toEqual({ have: 0, needed: 1.75, capacityShare: defaultConfig.capacity.unstaffedShare });
     // Billed from the day after renting: a large app server is £800 a month and a small load balancer £200.
     expect(next.log[0]!.entries).toContainEqual({
       text: "App server (large) rent: 1 × £800 a month",
@@ -3593,7 +3593,7 @@ describe("meta", () => {
       ["marketers", 6],
     ]);
     // On-prem's and IaaS's from their starter servers; PaaS's and SaaS's a small fixed number.
-    expect(meta.models.map((m) => m.opsNeeded)).toEqual([2, 1, 1, 1]);
+    expect(meta.models.map((m) => m.opsNeeded)).toEqual([1.2, 1, 1, 1]);
   });
 
   it("includes each model's upfront and monthly costs", async () => {

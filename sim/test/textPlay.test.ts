@@ -438,13 +438,13 @@ describe("the paid API", () => {
     // An IaaS shop with no servers yet, and no ops: its first server will need one.
     const noOps = shop("iaas");
     const ordered = run({ ...noOps, staff: { ...noOps.staff, ops: { junior: 0, mid: 0, senior: 0 } } }, "rent app large");
-    expect(ordered.lines[0]).toBe("rentServer: done. OPS: once it's ready you'll need 1 ops staff, and yours do the work of 0: hire ops (or retrain someone) before then, or capacity is cut.");
+    expect(ordered.lines[0]).toBe("rentServer: done. OPS: once it's ready you'll need 0.2 ops staff, and yours do the work of 0: hire ops (or retrain someone) before then, or capacity is cut.");
     // Not short today: the server isn't running yet.
     expect(renderStatus(sim, ordered.state)).not.toMatch(/^ops: /m);
     const turn = run(ordered.state, "next 7");
-    expect(turn.lines.at(-1)).toMatch(/Short of ops: \d+ of \d+ needed, capacity cut to \d+%/);
+    expect(turn.lines.at(-1)).toMatch(/Short of ops: [\d.]+ of [\d.]+ needed, capacity cut to \d+%/);
     const status = renderStatus(sim, turn.state);
-    expect(status).toMatch(/^ops: \d+ of \d+ needed, capacity cut to \d+% \(hire ops, or retrain someone into ops\)$/m);
+    expect(status).toMatch(/^ops: [\d.]+ of [\d.]+ needed, capacity cut to \d+% \(hire ops, or retrain someone into ops\)$/m);
     expect(status).toMatch(/^capacity: .* \| every tier CUT to \d+% for missing ops$/m);
   });
 

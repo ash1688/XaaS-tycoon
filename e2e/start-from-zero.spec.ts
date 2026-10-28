@@ -56,7 +56,7 @@ test("on IaaS, VMs rented on day 1 bring the first users on day 2, building up o
   await expect(servers).toContainText("(done)");
   // Hiring ops opens with the Launch phase (#236), so the step has no link to People yet.
   const ops = student.getByTestId("launch-step-ops");
-  await expect(ops).toContainText("Ops: 1 needed to run your servers, and you have 1.");
+  await expect(ops).toContainText("Ops: 0.4 needed to run your servers, and you have 1.");
   await expect(ops).toContainText("Hiring more opens when you press Launch");
   await expect(ops).toContainText("(done)");
   await expect(ops.getByRole("link")).toHaveCount(0);

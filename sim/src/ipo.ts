@@ -1,5 +1,5 @@
 import { CSUITE_ROLES, type GameConfig } from "./config.ts";
-import { executiveIn, patchingNeed } from "./executives.ts";
+import { executiveIn } from "./executives.ts";
 import { count, pounds, type Finance } from "./finance.ts";
 import { marketSize } from "./market.ts";
 import { layerOwner } from "./responsibility.ts";
@@ -179,8 +179,8 @@ export function createIpo(
     const yours = layerOwner(state.model, "os") === "you";
     const opsNeeded = servers.opsNeeded(state);
     const ops = staffOutput(config, state, "ops");
-    // A CISO keeps patches up to date with fewer ops.
-    const patched = !yours || ops >= opsNeeded * patchingNeed(config, state);
+    // The ops needed count a CISO, who keeps patches up to date with fewer.
+    const patched = !yours || ops >= opsNeeded;
 
     const income = sum(days, (d) => d.income);
     const profit = income - sum(days, runningCosts);

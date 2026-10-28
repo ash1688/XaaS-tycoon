@@ -74,7 +74,7 @@ test("missing ops show on every bar and come first in the advice; then a full lo
   await student.goto(`/play/${code}/${id}/infrastructure`);
   await expect(student.getByTestId("tier-cu-cut")).toHaveText("9 of 10 CU: cut 10%, 1 ops short.");
   await expect(student.getByTestId("tier-dbu-cut")).toContainText("of 34 DBU: cut 10%, 1 ops short.");
-  await expect(student.getByTestId("capacity-ops-short")).toContainText("Ops: 1 of 2 needed, capacity cut to 90%. You're 1 ops person short, so every tier is cut.");
+  await expect(student.getByTestId("capacity-ops-short")).toContainText("Ops: 1 of 1.2 needed, capacity cut to 90%. You're 1 ops person short, so every tier is cut.");
   // Hiring the ops person gets back more than another server would: the advice says so.
   await expect(student.getByTestId("tier-cu-note")).toContainText(/hire 1 ops person (soon|now), to get back the 1 CU you're losing/i);
   const servers = student.getByTestId("servers-panel");

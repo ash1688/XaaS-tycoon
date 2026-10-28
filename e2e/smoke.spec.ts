@@ -118,7 +118,7 @@ test("teacher creates a code, student starts a game and presses Continue", async
   await reachPhase(game.split("/").at(-1)!, "grow");
   await student.reload();
   // The VMs need 1 ops once they're ready (none while they're on order, #259), and a new company starts with 1.
-  await expect(student.getByTestId("ops-needed-soon")).toContainText("you'll need 1");
+  await expect(student.getByTestId("ops-needed-soon")).toContainText("you'll need 0.4");
   await expect(student.getByTestId("ops-needed")).not.toContainText("Understaffed");
   await expect(student.getByTestId("support-count")).toHaveText("1");
 
@@ -481,7 +481,7 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
   };
   for (let day = 5; day <= 9; day++) await continueTo(day);
   // Still on IaaS, and billed for it, until the move completes; PaaS is billed in full on top.
-  await expect(student.getByTestId("ops-needed")).toContainText("needs 1 ops staff");
+  await expect(student.getByTestId("ops-needed")).toContainText("needs 0.4 ops staff");
   await goTo(student, "Infrastructure");
   await expect(student.getByTestId("migration-phase")).toHaveText("Testing");
   await expect(student.getByTestId("migration-phase-days")).toHaveText("2 days left");
