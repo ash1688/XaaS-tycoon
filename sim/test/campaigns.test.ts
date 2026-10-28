@@ -204,11 +204,83 @@ describe("a running campaign", () => {
     const done = sim.campaigns(state).campaigns[0]!;
     expect(done).toMatchObject({ status: "finished", daysRun: 7, spent: 1_000 });
     expect(done.users).toBeGreaterThan(100);
-    expect(line).toBe(`Your campaign for professionals has finished: £1,000 spent, ${done.users} users brought in, £${done.costPerUser!.toFixed(2)} a user.`);
+    const q = done.quote!;
+    const verdict = done.costPerUser! < q.low ? "cheaper than" : done.costPerUser! > q.high ? "dearer than" : "within";
+    expect(line).toBe(
+      `Your campaign for professionals has finished: £1,000 spent, ${done.users} users brought in, £${done.costPerUser!.toFixed(2)} a user, ${verdict} its quote of £${q.low.toFixed(2)}–£${q.high.toFixed(2)}.`,
+    );
     expect(sim.summarise(state).spend.campaigns).toBe(1_000);
     expect(sim.campaigns(state)).toMatchObject({ running: 0, canStart: true });
     // Finished, it spends nothing more.
     expect(sim.campaigns(sim.advance(state, 2).state).campaigns[0]!.spent).toBe(1_000);
+  });
+});
+
+describe("the quote (#262)", () => {
+  // The real game, events and all (pay reviews aside), so the quote has to cover chance.
+  const real = createSim({ ...defaultConfig, launch: { ...defaultConfig.launch, auto: 1 }, payReview: { ...defaultConfig.payReview, on: 0 } });
+  /** A company 20 days past its launch ramp, grown up, with two mid marketers. */
+  function settled(productType: "social" | "ecommerce" | "video", seed: number): GameState {
+    let state = real.newGame({ companyName: "Reach Co", productType, model: "saas", seed });
+    while (real.launch(state).status !== "launched") state = real.advance(state).state;
+    return grownUp(real.advance(state, 20).state);
+  }
+
+  it("covers the whole run: a typical campaign's real cost per user falls within it across seeds", () => {
+    for (const productType of ["social", "ecommerce", "video"] as const) {
+      for (const seed of [1, 2, 3, 4, 5]) {
+        const state = settled(productType, seed);
+        for (const [type, budget, days] of [["casual", 2_000, 14], ["professionals", 5_000, 30]] as const) {
+          const quote = real.campaignQuote(state, type, budget, days);
+          expect(quote).toMatchObject({ customerType: type, budget, days, almostFull: false });
+          const played = real.advance(real.applyAction(state, start(type, budget, days)), days).state;
+          const done = real.campaigns(played).campaigns[0]!;
+          expect(done).toMatchObject({ status: "finished", quote: quote.costPerUser });
+          expect(done.users).toBeGreaterThanOrEqual(quote.users.low);
+          expect(done.users).toBeLessThanOrEqual(quote.users.high);
+          expect(done.costPerUser).toBeGreaterThanOrEqual(quote.costPerUser!.low);
+          expect(done.costPerUser).toBeLessThanOrEqual(quote.costPerUser!.high);
+        }
+      }
+    }
+  });
+
+  it("is dearer the faster the market is filling over the run", () => {
+    const state = settled("social", 1);
+    const quote = real.campaignQuote(state, "businesses", 20_000, 60);
+    // Twice as far into the market, the same campaign is dearer at both ends.
+    const fuller = real.campaignQuote({ ...state, users: 2 * state.users }, "businesses", 20_000, 60);
+    expect(fuller.costPerUser!.low).toBeGreaterThan(quote.costPerUser!.low);
+    expect(fuller.costPerUser!.high).toBeGreaterThan(quote.costPerUser!.high);
+  });
+
+  it("allows for the type's other campaigns running alongside it", () => {
+    const alone = sim.campaignQuote(ready, "casual", 1_000, 10);
+    const crowded = sim.campaignQuote(sim.applyAction(ready, start("casual", 1_000, 10)), "casual", 1_000, 10);
+    expect(crowded.costPerUser!.low).toBeGreaterThan(alone.costPerUser!.high);
+  });
+
+  it("says the market is almost full instead of a price per user once it nearly is", () => {
+    const full = { ...ready, users: Math.round(0.95 * marketSize) };
+    const quote = sim.campaignQuote(full, "casual", 1_000, 14);
+    expect(quote.almostFull).toBe(true);
+    expect(quote.users.low).toBeGreaterThanOrEqual(0);
+    expect(sim.campaignQuote(ready, "casual", 1_000, 14).almostFull).toBe(false);
+  });
+
+  it("refuses an unknown type, or a budget or length out of range, and changes nothing", () => {
+    expect(refusal(() => sim.campaignQuote(ready, "pensioners", 1_000, 7))).toBe("unknown_customer_type");
+    expect(refusal(() => sim.campaignQuote(ready, "casual", 1, 7))).toBe("bad_budget");
+    expect(refusal(() => sim.campaignQuote(ready, "casual", 1_000, 1))).toBe("bad_length");
+    expect(sim.campaigns(ready).campaigns).toEqual([]);
+  });
+
+  it("is kept on the campaign when it starts, and its end message compares the result with it", () => {
+    const quote = sim.campaignQuote(ready, "enthusiasts", 1_400, 7);
+    const state = sim.applyAction(ready, start("enthusiasts", 1_400, 7));
+    expect(sim.campaigns(state).campaigns[0]!.quote).toEqual(quote.costPerUser);
+    const log = sim.advance(state, 7).log.flatMap((d) => d.entries).find((e) => e.kind === "campaign")!;
+    expect(log.text).toMatch(/^Your campaign for enthusiasts has finished: £1,400 spent, [\d,]+ users brought in, £\d+\.\d\d a user, within its quote of £\d+\.\d\d–£\d+\.\d\d\.$/);
   });
 });
 

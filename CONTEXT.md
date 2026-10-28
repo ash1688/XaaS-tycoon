@@ -187,6 +187,10 @@ _Avoid_: Competitor, AI company, opponent
 Marketing aimed at one customer type, with a budget and a length, that brings in extra new users of that type. Its budget is spent evenly over its days, and each pound brings fewer users as the market fills up and when another campaign targets the same type at once; one started just before a holiday brings more. Each user it brings in also grows the product's market for good (brand awareness), up to a cap, so its users are extra rather than ones who'd have joined anyway. Each needs a free marketer to run it, so headcount decides how many run at once and the marketer's grade how well each does. Campaigns open once the first angel investor approaches, and never before launch.
 _Avoid_: Advert, marketing spend, ad
 
+**Campaign quote**:
+What a campaign would bring over its whole run, shown before it starts: a range of users and of cost per user ("£5.20–£7.10 a user"). It plays the run forward day by day, as the market fills with the campaign's users, everyone else's growth and the type's other campaigns; the low end assumes slow growth and the high end fast. With the market almost full it says so, with an estimate of the users, instead of a price. The quote stays with the campaign, and its end message compares the result with it.
+_Avoid_: Estimate, forecast, £ a user now
+
 **Transaction fee**:
 The payments app's percentage of every transaction its business customers process, charged on top of their monthly fee.
 _Avoid_: Commission, cut, take rate

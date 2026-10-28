@@ -49,6 +49,7 @@ import type {
   PayReviewView,
   StaffSchemeView,
   PricePreview,
+  CampaignQuote,
   PriceBandsView,
   FairPriceView,
   PaymentsView,
@@ -554,6 +555,12 @@ export type MigrationQuoteView = MigrationQuote;
  */
 export type PricePreviewView = PricePreview;
 export type { PriceBandsView, FairPriceView };
+
+/**
+ * GET .../campaign-quote?type=&budget=&days=: what a campaign started now would bring over its whole run, as a range of
+ * users and of cost per user, or that the market is almost full. Changes nothing.
+ */
+export type CampaignQuoteView = CampaignQuote;
 
 /**
  * GET .../counter-odds?funder=&amount=&share=&days=: what countering a funder's open offer with those terms would do,

@@ -91,6 +91,7 @@ import type {
   PlayEventView,
   PlaySnapshot,
   PricePreviewView,
+  CampaignQuoteView,
   PriceBandsView,
   SummaryView,
   TeacherCodeView,
@@ -728,6 +729,26 @@ export async function buildApp(opts: AppOptions) {
       const row = await findCompany(req.params.code, req.params.id);
       if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
       return simOf(row).launchBands(row.state, req.query.price, req.query.rate) satisfies PriceBandsView;
+    },
+  );
+
+  // What a campaign would bring over its whole run, for the Marketing page's quote. Changes nothing.
+  app.get<{ Params: { code: string; id: string }; Querystring: { type: string; budget: number; days: number } }>(
+    "/api/codes/:code/companies/:id/campaign-quote",
+    {
+      schema: {
+        querystring: {
+          type: "object",
+          required: ["type", "budget", "days"],
+          // The sim checks the budget and length against the game's limits.
+          properties: { type: { enum: [...CUSTOMER_TYPE_IDS] }, budget: { type: "number" }, days: { type: "number" } },
+        },
+      },
+    },
+    async (req, reply) => {
+      const row = await findCompany(req.params.code, req.params.id);
+      if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      return simOf(row).campaignQuote(row.state, req.query.type, req.query.budget, req.query.days) satisfies CampaignQuoteView;
     },
   );
 

@@ -1,7 +1,7 @@
 import { createApi, type ApiView } from "./api.ts";
 import { createBenefits, managedAutoscaling, type BenefitView } from "./benefits.ts";
 import { createCalendar, isIsoDate, type CalendarView } from "./calendar.ts";
-import { createCampaigns, type CampaignsView } from "./campaigns.ts";
+import { createCampaigns, type CampaignQuote, type CampaignsView } from "./campaigns.ts";
 import {
   allowedDifficulties,
   allowedGameLengths,
@@ -79,7 +79,7 @@ export type { BenefitView } from "./benefits.ts";
 export type { HardwareRisk } from "./hardware.ts";
 export type { TierConditionView, TierItemKind, TierItemView, TierStatusView } from "./tiers.ts";
 export type { CalendarView, GameDate, HolidayView } from "./calendar.ts";
-export type { CampaignTypeView, CampaignView, CampaignsView } from "./campaigns.ts";
+export type { CampaignQuote, CampaignTypeView, CampaignView, CampaignsView } from "./campaigns.ts";
 export { dayOfDate, gameDate } from "./calendar.ts";
 export type { ConversionDriver, ConversionDriverId, ConversionView } from "./conversion.ts";
 export type { CandidateView, CsuiteRoleView, CsuiteView, ExecutiveEffectView, ExecutiveView } from "./csuite.ts";
@@ -557,6 +557,12 @@ export interface Sim {
    */
   campaigns(state: GameState): CampaignsView;
   /**
+   * What a campaign started now would bring over its whole run, as a range of users and of cost per user, played
+   * forward as the market fills: or that the market is almost full. Changes nothing. Refuses an unknown type, or a
+   * budget or length out of range.
+   */
+  campaignQuote(state: GameState, customerType: string, budget: number, days: number): CampaignQuote;
+  /**
    * Every model's benefits, in config order: each one's tier, fees and whether it's unlocked, on the company's model
    * and on.
    */
@@ -679,7 +685,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   });
   const rescue = createRescue(config, finance, shares, (s) => runway(s), (s) => infra.opsNeededNow(s));
   const investors = createInvestors(config, finance, shares);
-  const campaigns = createCampaigns(config, calendar);
+  const campaigns = createCampaigns(config, calendar, customers.outlook);
   const payReview = createPayReview(config, { runwayDays: (s) => runway(s).days, chargeNow: finance.chargeNow });
   const drift = createDrift(config);
   const csuite = createCsuite(config);
@@ -1424,6 +1430,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     },
     tiers: (s) => tiers.tiersView(load(s)),
     campaigns: (s) => campaigns.campaignsView(load(s)),
+    campaignQuote: (s, customerType, budget, days) => campaigns.quote(load(s), customerType, budget, days),
     benefits: (s) => benefits.benefits(load(s)),
     monthlyBenefitCost: (s) => benefits.monthlyBenefitCost(load(s)),
     migration: (s) => migration.migration(load(s)),

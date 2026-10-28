@@ -1192,14 +1192,39 @@ describe("campaigns (#115) and marketers (#180)", () => {
     const state = { ...unstaffed, staff: { ...unstaffed.staff, marketers: { junior: 0, mid: 1, senior: 1 } } };
     expect(renderStatus(sim, state)).toMatch(/^marketers: 2, 2 free \(1 mid, 1 senior; a new campaign gets the senior\)/m);
     expect(renderStatus(sim, state)).toMatch(/^campaigns: 0\/2 running, market \d+% full$/m);
-    expect(renderCommands(sim, state)).toMatch(/^ {2}campaign <casual\|enthusiasts\|professionals\|businesses> <budget £100–1000000> <days 7–90> {3}\(spent evenly from tomorrow; brings users of that type: casual £\d\.\d\d a user now, /m);
+    expect(renderCommands(sim, state)).toMatch(/^ {2}campaign <casual\|enthusiasts\|professionals\|businesses> <budget £100–1000000> <days 7–90> {3}\(spent evenly from tomorrow; brings users of that type\. £1,000 over 14 days: casual £\d\.\d\d–£\d\.\d\d a user \([\d,]+–[\d,]+ users\), /m);
+    expect(renderCommands(sim, state)).not.toMatch(/∞/);
     const started = run(state, "campaign businesses 1600 10");
     expect(started.rows[0]).toMatchObject({ type: "startCampaign", ok: true });
     expect(renderCommands(sim, started.state)).toMatch(/^ {2}stopcampaign <1> /m);
     const played = run(started.state, "next 2").state;
     const users = sim.campaigns(played).campaigns[0]!.users;
     expect(users).toBeGreaterThan(0);
-    expect(renderStatus(sim, played)).toMatch(new RegExp(String.raw`^ {2}#1 businesses \(senior marketer\) £\d+/£1600, day \d+/10, ${users} users at £\d+\.\d\d running$`, "m"));
+    expect(renderStatus(sim, played)).toMatch(new RegExp(String.raw`^ {2}#1 businesses \(senior marketer\) £\d+/£1600, day \d+/10, ${users} users at £\d+\.\d\d, quoted £\d+\.\d\d–£\d+\.\d\d running$`, "m"));
+    expect(run(played, "campaigns").lines).toEqual(["campaigns: 1 started", expect.stringMatching(/^ {2}#1 businesses .* quoted £[\d.]+–£[\d.]+ running$/)]);
+  });
+
+  it("quotes a campaign over its whole run, and lists every campaign past and present", () => {
+    const base = grownUp();
+    const state = { ...base, staff: { ...base.staff, marketers: { junior: 0, mid: 4, senior: 0 } } };
+    expect(parseCommand("campaignquote casual £2,000 14")).toEqual({ kind: "campaignQuote", customerType: "casual", budget: 2_000, days: 14 });
+    expect(run(state, "campaignquote casual 2000 14").lines).toEqual([
+      expect.stringMatching(/^campaign quote: casual, £2,000 over 14 days: £\d\.\d\d–£\d\.\d\d a user \([\d,]+–[\d,]+ users\)$/),
+    ]);
+    expect(run(state, "campaigns").lines).toEqual(["campaigns: none started yet."]);
+    let played = state;
+    for (const t of ["casual", "enthusiasts", "professionals", "businesses"]) played = run(played, `campaign ${t} 500 7`).state;
+    played = sim.advance(played, 8).state;
+    played = run(played, "campaign casual 500 7").state;
+    // Look shows the last three finished; "campaigns" lists all five, first to last.
+    expect(renderStatus(sim, played)).toMatch(/^ {2}\(1 older: "campaigns" lists them all\)$/m);
+    const lines = run(played, "campaigns").lines;
+    expect(lines[0]).toBe("campaigns: 5 started");
+    expect(lines.slice(1).map((l) => l.match(/#(\d) (\w+)/)!.slice(1).join(" "))).toEqual(["1 casual", "2 enthusiasts", "3 professionals", "4 businesses", "5 casual"]);
+    expect(lines[1]).toMatch(/finished$/);
+    // A market almost full says so, with an estimate, not a cost per user.
+    const full = { ...played, users: Math.round(sim.campaigns(played).market.size * 0.95) };
+    expect(run(full, "campaignquote casual 1000 14").lines[0]).toMatch(/^campaign quote: casual, £1,000 over 14 days: market almost full: about [\d,]+ users? for £1,000$/);
   });
 });
 

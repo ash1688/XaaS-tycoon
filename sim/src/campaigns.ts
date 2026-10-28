@@ -30,6 +30,8 @@ export interface CampaignView {
   marketAdded: number;
   /** The holiday it was timed for, which boosts it, or null. */
   holiday: string | null;
+  /** The cost per user it was quoted when started, low to high, to the penny: null if it might bring no-one. */
+  quote: { low: number; high: number } | null;
   /** The grade of the marketer running it: "senior", and "Senior". */
   grade: StaffGrade;
   gradeName: string;
@@ -69,6 +71,23 @@ export interface CampaignTypeView {
    * Budget × this is about what it brings in all.
    */
   usersPerPound: number;
+}
+
+/**
+ * What a campaign would bring over its whole run, quoted before it starts: day by day, as the market fills with its
+ * users, everyone else's growth and the type's other campaigns. Growth can't be known, so it's a range: the most users
+ * if growth runs slow, the fewest if it runs fast.
+ */
+export interface CampaignQuote {
+  customerType: CustomerTypeId;
+  budget: number;
+  days: number;
+  /** Users it would bring in all: fewest and most. */
+  users: { low: number; high: number };
+  /** Budget ÷ users, to the penny: cheapest and dearest. Null if it might bring no-one. */
+  costPerUser: { low: number; high: number } | null;
+  /** The market is almost full (campaigns.almostFull of it taken): each pound brings few users, whatever the type. */
+  almostFull: boolean;
 }
 
 /** Campaigns, for the Marketing page. */
@@ -113,6 +132,9 @@ export interface CampaignsDay {
 const oneType = (type: CustomerTypeId) =>
   Object.fromEntries(CUSTOMER_TYPE_IDS.map((t) => [t, t === type ? 1 : 0])) as Record<CustomerTypeId, number>;
 
+/** "£1.25": pounds and pence, for a cost per user. */
+const penceText = (n: number) => `£${n.toFixed(2)}`;
+
 /** Earned users kept to the millionth, so state stays tidy. */
 const tidy = (n: number) => Math.round(n * 1e6) / 1e6;
 
@@ -138,7 +160,11 @@ const active = (state: Pick<GameState, "campaigns" | "day">) => state.campaigns.
  * with it until it ends. So headcount says how many can run at once, and the marketer's grade output how well each is
  * run. A busy marketer can't be let go or moved by the student; one lost in a rescue's cuts stops their campaign.
  */
-export function createCampaigns(config: GameConfig, calendar: Calendar) {
+export function createCampaigns(
+  config: GameConfig,
+  calendar: Calendar,
+  outlook: (state: GameState, day: number) => { growth: number; churn: number },
+) {
   const { campaigns: settings } = config;
   const typeName = (t: CustomerTypeId) => config.customerTypes[t].name;
 
@@ -240,9 +266,8 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
     return { state: { ...state, campaigns }, entries };
   }
 
-  function startCampaign(state: GameState, customerType: string, budget: number, days: number): GameState {
-    if (!campaignsUnlocked(state)) throw new SimError("not_yet", whyNot(state)!);
-    if (state.launchDay === null) throw new SimError("mvp_first", whyNot(state)!);
+  /** Refuses a campaign aimed at no known type, or with a budget or length out of range. */
+  function checkPlan(customerType: string, budget: number, days: number): asserts customerType is CustomerTypeId {
     if (!(CUSTOMER_TYPE_IDS as readonly string[]).includes(customerType)) {
       throw new SimError("unknown_customer_type", "Pick a customer type for the campaign to aim at.");
     }
@@ -253,27 +278,94 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
     if (!Number.isInteger(days) || days < minDays || days > maxDays) {
       throw new SimError("bad_length", `A campaign runs for ${minDays} to ${maxDays} days.`);
     }
-    const grade = nextMarketer(state);
-    if (grade === null) throw new SimError("no_marketer", whyNot(state)!);
-    if (budget > state.cash) {
-      throw new SimError("cant_afford", `The campaign's budget is ${pounds(budget)} and you have ${pounds(state.cash)}.`, { cost: budget, cash: state.cash });
-    }
+  }
+
+  /** A campaign started now, from the next day played, run by the marketer it would get (a mid's, with none free). */
+  function planned(state: GameState, customerType: CustomerTypeId, budget: number, days: number): Campaign {
     const startDay = state.day + 1;
-    const campaign: Campaign = {
+    return {
       id: state.nextCampaignId,
-      customerType: customerType as CustomerTypeId,
+      customerType,
       budget,
       days,
       startDay,
       endDay: startDay + days - 1,
       stopped: false,
       holiday: holidayAhead(state)?.name ?? null,
-      grade,
+      grade: nextMarketer(state) ?? "mid",
       spent: 0,
       earned: 0,
       users: 0,
       marketAdded: 0,
+      quote: null,
     };
+  }
+
+  /**
+   * The users a campaign would bring over its whole run, played forward from today without chance: each day as
+   * campaignsDay plays it, the campaigns running (the type's others included) bringing users and growing the market,
+   * and the company's other users growing at today's outlook × `pace`, as the market fills, less churn.
+   */
+  function project(state: GameState, campaign: Campaign, pace: number): number {
+    const { growth, churn } = outlook(state, state.day + 1);
+    const all = [...active(state), campaign].map((c) => ({ ...c }));
+    const cap = marketGrowthCap(config, state);
+    const base = config.productTypes[state.productType].growth.marketSize;
+    let users = state.users;
+    let added = marketGrowth(state);
+    for (let day = state.day + 1; day <= campaign.endDay; day++) {
+      const full = Math.max(0, 1 - users / (base + added));
+      const running = all.filter((c) => runsOn(c, day));
+      const sameType = (t: CustomerTypeId) => running.filter((c) => c.customerType === t).length;
+      let joined = 0;
+      for (const c of running) {
+        const spend = spendOn(c, day);
+        const perPound =
+          (full * overlap(sameType(c.customerType)) * (c.holiday ? settings.holidayBonus : 1) * effectiveness(state, c)) /
+          settings.costPerUser[c.customerType];
+        c.spent += spend;
+        c.earned = tidy(c.earned + spend * perPound);
+        const arrived = Math.floor(c.earned) - c.users;
+        c.users += arrived;
+        joined += arrived;
+      }
+      added = Math.min(cap, added + joined * settings.marketPerUser);
+      users = Math.max(0, users + users * (pace * growth * full - churn) + joined);
+    }
+    return all.at(-1)!.users;
+  }
+
+  /**
+   * What a campaign started now would bring over its whole run, as a range: the most users if everyone else's growth
+   * runs at campaigns.quotePace.low × today's outlook, the fewest at quotePace.high × it, each widened by quoteMargin.
+   */
+  function quote(state: GameState, customerType: string, budget: number, days: number): CampaignQuote {
+    checkPlan(customerType, budget, days);
+    const campaign = planned(state, customerType, budget, days);
+    // Chance (events, noise) moves a run either way: each end is widened by quoteMargin.
+    const most = Math.ceil(project(state, campaign, settings.quotePace.low) * (1 + settings.quoteMargin));
+    const fewest = Math.min(most, Math.floor(project(state, campaign, settings.quotePace.high) * (1 - settings.quoteMargin)));
+    const each = (users: number, round: (x: number) => number) => round((100 * budget) / users) / 100;
+    return {
+      customerType,
+      budget,
+      days,
+      users: { low: fewest, high: most },
+      costPerUser: fewest > 0 ? { low: each(most, Math.floor), high: each(fewest, Math.ceil) } : null,
+      almostFull: saturation(state) <= 1 - settings.almostFull,
+    };
+  }
+
+  function startCampaign(state: GameState, customerType: string, budget: number, days: number): GameState {
+    if (!campaignsUnlocked(state)) throw new SimError("not_yet", whyNot(state)!);
+    if (state.launchDay === null) throw new SimError("mvp_first", whyNot(state)!);
+    checkPlan(customerType, budget, days);
+    const grade = nextMarketer(state);
+    if (grade === null) throw new SimError("no_marketer", whyNot(state)!);
+    if (budget > state.cash) {
+      throw new SimError("cant_afford", `The campaign's budget is ${pounds(budget)} and you have ${pounds(state.cash)}.`, { cost: budget, cash: state.cash });
+    }
+    const campaign: Campaign = { ...planned(state, customerType, budget, days), quote: quote(state, customerType, budget, days).costPerUser };
     return { ...state, campaigns: [...state.campaigns, campaign], nextCampaignId: state.nextCampaignId + 1 };
   }
 
@@ -321,14 +413,25 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
         const text = `Campaign for ${name} (day ${day - c.startDay + 1} of ${c.days}): ${count.format(arrived)} new ${arrived === 1 ? "user" : "users"}`;
         entries.push({ text, cashDelta: -spend, category: "campaigns" });
       }
-      if (lastDay) {
-        const each = after.users > 0 ? `, ${pounds(Math.round((100 * after.spent) / after.users) / 100)} a user` : "";
-        const text = `Your campaign for ${name} has finished: ${pounds(after.spent)} spent, ${count.format(after.users)} users brought in${each}.`;
-        entries.push({ text, cashDelta: 0, kind: "campaign" });
-      }
+      if (lastDay) entries.push({ text: finishedText(after), cashDelta: 0, kind: "campaign" });
       return after;
     });
     return { campaigns, users, joined, entries };
+  }
+
+  /**
+   * A campaign's final figures against its quote: "Your campaign for casual users has finished: £1,000 spent, 800
+   * users brought in, £1.25 a user, within its quote of £1.10–£1.40."
+   */
+  function finishedText(c: Campaign): string {
+    const name = typeName(c.customerType).toLowerCase();
+    const each = c.users > 0 ? Math.round((100 * c.spent) / c.users) / 100 : null;
+    const figures = `${pounds(c.spent)} spent, ${count.format(c.users)} ${c.users === 1 ? "user" : "users"} brought in${each !== null ? `, ${penceText(each)} a user` : ""}`;
+    if (!c.quote) return `Your campaign for ${name} has finished: ${figures}.`;
+    const range = `${penceText(c.quote.low)}–${penceText(c.quote.high)}`;
+    const against =
+      each === null ? `against a quote of ${range} a user` : each < c.quote.low ? `cheaper than its quote of ${range}` : each > c.quote.high ? `dearer than its quote of ${range}` : `within its quote of ${range}`;
+    return `Your campaign for ${name} has finished: ${figures}, ${against}.`;
   }
 
   function campaignView(state: GameState, c: Campaign): CampaignView {
@@ -348,6 +451,7 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
       costPerUser: c.users > 0 ? Math.round((100 * c.spent) / c.users) / 100 : null,
       marketAdded: Math.round(c.marketAdded),
       holiday: c.holiday,
+      quote: c.quote,
       grade: c.grade,
       gradeName: gradeName(c.grade),
     };
@@ -407,7 +511,7 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
     };
   }
 
-  return { startCampaign, stopCampaign, campaignsDay, dailySpend, campaignsView, marketersIdle, checkBusyMarketers, release };
+  return { startCampaign, stopCampaign, campaignsDay, dailySpend, campaignsView, quote, marketersIdle, checkBusyMarketers, release };
 }
 
 export type Campaigns = ReturnType<typeof createCampaigns>;

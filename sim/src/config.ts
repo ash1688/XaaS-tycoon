@@ -1185,6 +1185,15 @@ export interface CampaignsConfig {
   marketPerUser: number;
   /** The most campaigns can add to the market, all told, as a share of the product's base market size (0.5: +50%). */
   marketGrowthCap: number;
+  /**
+   * A campaign's quote plays its run forward with the company's other users growing at today's pace × low (its
+   * cheapest end: growth runs slow, the market fills slowly) and × high (its dearest).
+   */
+  quotePace: { low: number; high: number };
+  /** Each end of a quote is widened by this share of its users, for chance: events and noise (0.05 = 5%). */
+  quoteMargin: number;
+  /** The share of the market taken at which a quote says the market is almost full (0.9 = 90%). */
+  almostFull: number;
 }
 
 export interface OptimisationConfig {
@@ -2043,6 +2052,9 @@ export const defaultConfig: GameConfig = {
     holidayBonus: 1.5,
     marketPerUser: 5,
     marketGrowthCap: 0.3,
+    quotePace: { low: 0, high: 1.5 },
+    quoteMargin: 0.05,
+    almostFull: 0.9,
   },
   // Conditions and benefits signed off for #123. In the balance pass (#181) tier 2 became a share of the product's market,
   // so the payments app (a 4,000-user market) can reach it and social and video don't open it at launch. RP prices
