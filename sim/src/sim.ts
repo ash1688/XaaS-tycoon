@@ -265,6 +265,13 @@ export interface RunwayView {
   payHoliday: boolean;
   /** The one-offs charged over the last 7 days, today's included: not in dailyCosts. */
   oneOffsThisWeek: number;
+  /**
+   * Staff hired but not started yet, a day's pay once they are (#289): not in dailyCosts or days, as they aren't paid
+   * yet, but shown so the costs ahead aren't a surprise. Staff retraining are paid already, so not here.
+   */
+  startingSoon: number;
+  /** Days cash lasts once they've started, at that higher cost: null when income covers it. */
+  daysOnceStarted: number | null;
 }
 
 /** The days runway averages income over, and one-offs are added up over. */
@@ -1295,7 +1302,20 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const dailyIncome = played > 0 ? Math.round((100 * income) / played) / 100 : 0;
     const dailyNet = dailyIncome - dailyCosts;
     const days = dailyNet < 0 ? Math.max(0, Math.floor(state.cash / -dailyNet)) : null;
-    return { dailyIncome, dailyCosts, dailyNet, days, costs, payHoliday: (state.csuite.payHolidaySince ?? null) !== null, oneOffsThisWeek };
+    const startingSoon = charged(staff.staffEntries(staff.arrive(state, Infinity).state)) - amounts.staff;
+    const netOnceStarted = dailyNet - startingSoon;
+    const daysOnceStarted = netOnceStarted < 0 ? Math.max(0, Math.floor(state.cash / -netOnceStarted)) : null;
+    return {
+      dailyIncome,
+      dailyCosts,
+      dailyNet,
+      days,
+      costs,
+      payHoliday: (state.csuite.payHolidaySince ?? null) !== null,
+      oneOffsThisWeek,
+      startingSoon,
+      daysOnceStarted,
+    };
   }
 
   /**
@@ -1374,7 +1394,15 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     }
     if (state.model === "saas") {
       const needed = config.addons.minConfigDevelopers;
-      const setUp = needed > 0 ? ` Setting up an add-on needs the work of ${needed} developer${needed === 1 ? "" : "s"}.` : "";
+      // Short of it, no add-on can be bought at all (#289): say so, rather than only that they're idle.
+      const output = staffOutput(config, state, "developers");
+      const devs = (n: number) => `${n} developer${n === 1 ? "" : "s"}`;
+      const setUp =
+        needed <= 0
+          ? ""
+          : output < needed && !allOn
+            ? ` Setting up an add-on needs the work of ${devs(needed)}, and yours do the work of ${Math.round(output * 100) / 100}: no add-on can be bought until you hire more, counted in mids.`
+            : ` Setting up an add-on needs the work of ${devs(needed)}.`;
       return allOn
         ? `On SaaS the provider builds the features, and every add-on ${sofar}is on: ${spare}.${slider}${later}`
         : optimising

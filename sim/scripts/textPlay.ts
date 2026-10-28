@@ -424,8 +424,13 @@ export function renderStatus(sim: Sim, state: GameState): string {
   lines.push(
     `cash ${money(state.cash)} | income ${money(dailyIncome(sim, state))}/day (last 7 days) | costs ${money(dailyCosts(sim, state))}/day | runway ${lasts}`,
   );
-  const { oneOffsThisWeek } = sim.runway(state);
+  const { oneOffsThisWeek, startingSoon, daysOnceStarted } = sim.runway(state);
   if (oneOffsThisWeek > 0) lines.push(`one-offs this week ${money(oneOffsThisWeek)} (not in costs: see \`costs\`)`);
+  // Hires not started yet aren't paid yet, so they're not in costs: said apart, so they're no surprise (#289).
+  if (startingSoon > 0) {
+    const then = daysOnceStarted === null ? "income still covers costs" : `runway ${daysOnceStarted} days`;
+    lines.push(`starting soon: hires add ${money(startingSoon)}/day once they start (not in costs yet; then ${then})`);
+  }
   const priceOpen = sim.phase(state).open.price;
   const launching = state.launchDay !== null && state.day < state.launchDay;
   const priceState = state.status !== "playing"
@@ -525,14 +530,17 @@ export function renderStatus(sim: Sim, state: GameState): string {
       units.ch.capacity > 0
         ? tier("CH", units.ch)
         : `CH no cache${units.ch.demand >= 1 ? ` (one could take ${Math.round(units.ch.demand)} DBU off the database)` : ""}`;
-    lines.push(`capacity: ${tier("CU", units.cu)} | ${tier("DBU", units.dbu)} | ${cache} | runs out first: ${units.binding.toUpperCase()}${cut}`);
+    // App servers the load balancers don't reach sit idle (#289): said on the CU figure itself, not only below it.
     const lb = units.loadBalancer;
+    const apps = (n: number) => `${n} app server${n === 1 ? "" : "s"}`;
+    const idleApps = lb.needed && lb.uncovered > 0 ? `, ${apps(lb.uncovered)} idle: ${lb.loadBalancers === 0 ? "no load balancer" : "too few load balancers"}` : "";
+    lines.push(`capacity: ${tier("CU", units.cu)}${idleApps} | ${tier("DBU", units.dbu)} | ${cache} | runs out first: ${units.binding.toUpperCase()}${cut}`);
     if (lb.needed && lb.uncovered > 0) {
-      const apps = (n: number) => `${n} app server${n === 1 ? "" : "s"}`;
+      const add = lb.uncovered === 1 ? "adds" : "add";
       lines.push(
         lb.loadBalancers === 0
           ? `  no load balancer: traffic reaches only 1 of your ${apps(lb.appServers)}, so ${lb.uncovered === 1 ? "the other adds" : `the other ${lb.uncovered} add`} no capacity (buy a load balancer)`
-          : `  your load balancers cover ${apps(lb.counted)} of ${lb.appServers}: ${apps(lb.uncovered)} add no capacity`,
+          : `  your load balancers cover ${apps(lb.counted)} of ${lb.appServers}: ${apps(lb.uncovered)} ${add} no capacity (buy another load balancer)`,
       );
     }
   }
@@ -1291,6 +1299,9 @@ export function renderCommands(sim: Sim, state: GameState): string {
       `(grade defaults to mid; permanent staff unless "agency"; move retrains permanent staff: they leave at once and ` +
       `join after their grade's lead time, paid the new team's rate meanwhile, no severance)`,
   );
+  if (state.hiring.some((h) => !h.retraining)) {
+    lines.push(`  cancelhire <${pools}> [agency] [${grades}] [n]   (cancel hires still to start, the latest first: they aren't paid yet, so it costs nothing)`);
+  }
   const pay = sim.payments(state);
   if (!jobs.price) {
     // Hidden until Launch: the price is the fair price till then.
@@ -1611,6 +1622,8 @@ export function parseCommand(text: string): Command {
       return one({ type: "hire", pool: pool(args[0]), ...staffArgs(args.slice(1)) });
     case "letgo":
       return one({ type: "letGo", pool: pool(args[0]), ...staffArgs(args.slice(1)) });
+    case "cancelhire":
+      return one({ type: "cancelHire", pool: pool(args[0]), ...staffArgs(args.slice(1)) });
     case "move": {
       // "move ops", "move ops developers", "move ops developers senior".
       const grade = args[2] ? { grade: oneOf<StaffGrade>(args[2], STAFF_GRADES, "a grade") } : {};
@@ -2205,6 +2218,8 @@ export function advanceUntil(sim: Sim, state: GameState, days: number, who: Play
   const lines: string[] = [];
   const rows: LogRow[] = [];
   let stop: string | null = null;
+  // Each tick's log, kept to say all at once, so a run of days can be said as one line.
+  const ticks: { log: DayLog[]; stopping: boolean }[] = [];
   for (let played = 0; played < days && current.status === "playing" && !stop; ) {
     const before = current;
     const result = sim.tick(current);
@@ -2212,9 +2227,10 @@ export function advanceUntil(sim: Sim, state: GameState, days: number, who: Play
     played += result.days;
     rows.push(logRow(sim, current, who, "continue", { events: sim.events(current).map((e) => e.id) }));
     const reasons = current.status === "playing" ? [...result.pauses.map((p) => p.text), ...extraStops(sim, before, current, result.pauses)] : [];
-    lines.push(...dayLines(result.log, reasons.length > 0));
+    ticks.push({ log: result.log, stopping: reasons.length > 0 });
     if (reasons.length) stop = `stopped on day ${current.day}: ${reasons.join("; ")}`;
   }
+  lines.push(...dayLines(ticks));
   if (current.status !== "playing") {
     rows.push(logRow(sim, current, who, "end", { status: current.status }));
     lines.push(`GAME OVER: ${current.status} on day ${current.day}`);
@@ -2238,12 +2254,29 @@ function usersChange(before: GameState, after: GameState): string | null {
 const shown = (e: DayLog["entries"][number], stopping: boolean) =>
   e.kind ? SHOWN_KINDS.has(e.kind) || (stopping && STOPPING_KINDS.has(e.kind)) : e.text.startsWith("Paying users lost");
 
-/** The day's log, keeping the lines worth reading. On a day that stops time, feature and migration lines too. */
-function dayLines(log: DayLog[], stopping: boolean): string[] {
-  return log.flatMap(({ day, entries }) =>
-    entries
-      .filter((e) => shown(e, stopping))
-      .map((e) => `  day ${day}: ${e.text}${e.cashDelta ? ` (${e.cashDelta > 0 ? "+" : ""}${money(e.cashDelta)})` : ""}`),
+/**
+ * The days' logs, tick by tick, keeping the lines worth reading. On a day that stops time, feature and migration lines too. The same
+ * payers-lost line day after day is said once for the run of days (#289), where it first came, so it isn't noise.
+ */
+function dayLines(ticks: { log: DayLog[]; stopping: boolean }[]): string[] {
+  const lines: { day: number; last: number; text: string; lost: boolean }[] = [];
+  const runs = new Map<string, (typeof lines)[number]>();
+  for (const { day, entries, stopping } of ticks.flatMap((t) => t.log.map((d) => ({ ...d, stopping: t.stopping })))) {
+    for (const e of entries.filter((x) => shown(x, stopping))) {
+      const text = `${e.text}${e.cashDelta ? ` (${e.cashDelta > 0 ? "+" : ""}${money(e.cashDelta)})` : ""}`;
+      const lost = !e.kind && e.text.startsWith("Paying users lost");
+      const run = lost ? runs.get(text) : undefined;
+      if (run && run.last === day - 1) {
+        run.last = day;
+        continue;
+      }
+      const line = { day, last: day, text, lost };
+      lines.push(line);
+      if (lost) runs.set(text, line);
+    }
+  }
+  return lines.map((l) =>
+    l.last > l.day ? `  days ${l.day}–${l.last}: ${l.text.replace(/^Paying users lost: /, "Paying users lost each day: ")}` : `  day ${l.day}: ${l.text}`,
   );
 }
 
