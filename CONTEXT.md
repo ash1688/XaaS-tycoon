@@ -331,8 +331,12 @@ Outgoings that aren't daily costs: kit bought, severance, a tribunal fee, an eve
 _Avoid_: Capital costs, extras
 
 **Shortfall**:
-How far cash went below £0 on a day. It goes onto the bank loan being repaid (same repayment a day, a longer term), or onto an emergency loan with none, until what shortfalls owe would pass 7 days of daily costs: then the company has run out of cash.
+How far cash went below £0 on a day. It goes onto the bank loan being repaid (same repayment a day, a longer term), or onto the emergency loan being repaid (a higher repayment, the same short term), or onto a new emergency loan with neither, until what shortfalls owe would pass the shortfall limit: then the company has run out of cash.
 _Avoid_: Overdraft, deficit
+
+**Shortfall limit**:
+How far shortfalls can take cash below £0: 7 days of the daily costs on the day cash first went there, fixed from then so hiring doesn't raise it. A rescue buyout pays off what shortfalls owe and the limit is fixed afresh the next time.
+_Avoid_: Overdraft limit, credit limit
 
 **Emergency loan**:
 The loan the bank opens for a shortfall when no loan is being repaid: at the rate a loan taken that day would have, over a short term (30 days). Shown as "loan (emergency)".
@@ -343,7 +347,7 @@ Going further below £0 than the shortfall limit allows. The first time is a res
 _Avoid_: Going bust, bankrupt
 
 **Rescue buyout**:
-What happens the first time the company runs out of cash: a vulture VC puts in cash for a large share of the company and forces cost cuts.
+What happens the first time the company runs out of cash: a vulture VC puts in cash for a large share of the company and forces cost cuts. Its cash covers the losses and pays off the shortfalls on the loan, so the full shortfall limit is back.
 _Avoid_: Bailout, rescue
 
 **Vulture VC**:

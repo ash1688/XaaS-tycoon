@@ -37,7 +37,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 64;
+export const GAME_STATE_VERSION = 65;
 
 /**
  * The four phases a game's jobs open in, in order, each opened by a milestone: Build from day 1, Launch when Launch is
@@ -465,6 +465,8 @@ export interface Rescue {
   amount: number;
   /** Of it, what took cash below £0. */
   losses: number;
+  /** Of it, the shortfalls it paid off on the loan (#288). */
+  shortfalls: number;
   /** The new shares it got for it, and its share of the company then, 0–1. */
   shares: number;
   share: number;
@@ -996,6 +998,8 @@ export interface GameState {
   rescue: Rescue | null;
   /** The first day cash went below £0 and the shortfall went on a loan, which stops the clock; null before. */
   firstShortfallDay: number | null;
+  /** How far shortfalls can take cash below £0, fixed the first time it went there (#288); null before. */
+  shortfallLimit: number | null;
   /** Applications to float, and the IPO once the bell has been rung. */
   ipo: IpoState;
   /** Loans repaid before the latest was taken, oldest first, for the summary. */

@@ -154,7 +154,7 @@ const alerts = computed(() => {
     list.push({
       id: "low-cash",
       text: game.runway.days ? `Cash runs out in about ${days(game.runway.days)}` : "Cash runs out tomorrow",
-      detail: `You're losing ${formatCash(-game.runway.dailyNet)} a day. ${c.loanQuote ? "Take a bank loan or cut costs" : "Cut costs"} before you go below £0: the shortfall goes on your loan, but past ${c.shortfall.limitDays} days of costs ${c.rescue ? "there's no second rescue, so it's liquidation." : "a vulture VC would rescue you, but take most of the company."}`,
+      detail: `You're losing ${formatCash(-game.runway.dailyNet)} a day. ${c.loanQuote ? "Take a bank loan or cut costs" : "Cut costs"} before you go below £0: the shortfall goes on ${c.shortfall.onto ? `your ${c.shortfall.onto}` : "an emergency loan"}, but past ${c.shortfall.limitDays} days of costs ${c.rescue ? "there's no second rescue, so it's liquidation." : "a vulture VC would rescue you, but take most of the company."}`,
       page: "finance?tab=funding",
       pageName: "Finance",
     });
@@ -471,7 +471,7 @@ const alerts = computed(() => {
             costs {{ formatCash(game.company.runway.dailyCosts) }}<template v-if="game.company.runway.days === null">, so
               cash is growing.</template
             ><template v-else>: at that rate your {{ formatCash(game.company.cash) }} lasts about
-              {{ days(game.company.runway.days) }}. Below £0 the shortfall goes on your loan, up to {{ game.company.shortfall.limitDays }} days of costs; past that,
+              {{ days(game.company.runway.days) }}. Below £0 the shortfall goes on {{ game.company.shortfall.onto ? `your ${game.company.shortfall.onto}` : "an emergency loan" }}, up to {{ game.company.shortfall.limitDays }} days of costs; past that,
               {{ game.company.rescue ? "it's liquidation." : "a vulture VC's rescue, for most of the company." }}</template
             >
           </p>

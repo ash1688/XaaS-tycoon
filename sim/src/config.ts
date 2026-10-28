@@ -1461,7 +1461,8 @@ export interface LoanConfig {
   minDays: number;
   /**
    * The term of an emergency loan: what the bank lends when cash goes below £0 with no loan being repaid, at the rate
-   * a loan taken that day would have, repaid fast.
+   * a loan taken that day would have, repaid fast. A later shortfall onto it is repaid over this many days too, on top
+   * of the daily repayment, so the term never stretches.
    */
   emergencyTermDays: number;
 }
@@ -1756,7 +1757,7 @@ export interface StaffSchemeConfig {
  *
  * - Cost cuts first: hires still to start are cancelled, and staffCut of each team is let go (rounded up), the dearest
  *   grades first. Ops are only cut as far as the servers' ops needed allows.
- * - Cash: the losses (what took cash below £0), plus breathingDays of what the company is losing a day after the
+ * - Cash: the losses (what took cash below £0) and the shortfalls still owed on the loan, which it pays off, plus breathingDays of what the company is losing a day after the
  *   cuts, counting at least minCover of its running costs a day.
  * - Shares: enough new shares for the vulture VC to own `share` of the company.
  * - Buy-back: the student can buy all its shares back with the company's cash, at its price: its share of today's
@@ -1766,7 +1767,8 @@ export interface StaffSchemeConfig {
 export interface RescueConfig {
   /**
    * Days of daily costs that shortfalls can put on the loans before cash has run out: past it, the vulture VC steps in
-   * (or, after a rescue, liquidation).
+   * (or, after a rescue, liquidation). Fixed at the daily costs on the day cash first goes below £0, and again after
+   * a rescue.
    */
   limitDays: number;
   breathingDays: number;

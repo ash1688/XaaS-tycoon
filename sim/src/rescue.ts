@@ -38,6 +38,7 @@ export function createRescue(
   shares: Shares,
   usualDay: (state: GameState) => UsualDay,
   opsNeeded: (state: GameState) => number,
+  clearShortfall: (state: GameState) => { state: GameState; entries: LogEntry[] },
 ) {
   const r = config.rescue;
   /** "2 senior developers", "1 agency mid ops person". */
@@ -83,15 +84,20 @@ export function createRescue(
     return { state: { ...state, ...counts, hiring: state.hiring.filter((h) => h.retraining) }, cuts, hiresCancelled, severance };
   }
 
-  /** The rescue buyout, on the day cash first went below £0: cuts, then cash for new shares. */
+  /**
+   * The rescue buyout, on the day cash ran out: cuts, then cash for new shares. Its cash also pays off the shortfalls
+   * on the loan, so the company has the full room below £0 again (#288).
+   */
   const rescue: RescueHook = (state) => {
     const cut = cutCosts(state);
     const savedPerDay = dailyStaffCost(config, state) - dailyStaffCost(config, cut.state);
-    const day = usualDay(cut.state);
+    const cleared = clearShortfall(cut.state);
+    const shortfalls = cut.state.cash - cleared.state.cash;
+    const day = usualDay(cleared.state);
     const losses = -state.cash;
     const cover = Math.max(-day.dailyNet, r.minCover * day.dailyCosts);
-    // It pays the severance of the permanent staff it lets go, on top of the losses.
-    const amount = Math.ceil((losses + cut.severance + r.breathingDays * cover) / 100) * 100;
+    // It pays the shortfalls and the severance of the permanent staff it lets go, on top of the losses.
+    const amount = Math.ceil((losses + shortfalls + cut.severance + r.breathingDays * cover) / 100) * 100;
     const inIssue = state.shareholders.reduce((sum, h) => sum + h.shares, 0);
     const newShares = Math.round((inIssue * r.share) / (1 - r.share));
     const share = newShares / (inIssue + newShares);
@@ -102,7 +108,7 @@ export function createRescue(
     ];
     const entries: LogEntry[] = [
       {
-        text: `Cash ran out, past what the loan could take, and a vulture VC rescued ${state.companyName}: it put in ${pounds(amount)} (${pounds(losses)} to cover the losses${cut.severance ? `, ${pounds(cut.severance)} for severance` : ""} and about ${r.breathingDays} days of breathing space) for ${count.format(newShares)} new shares, ${percent(share)} of the company. You now own ${percent(yours)}. Run out of cash again and it's liquidation.`,
+        text: `Cash ran out, past what the loan could take, and a vulture VC rescued ${state.companyName}: it put in ${pounds(amount)} (${pounds(losses)} to cover the losses${shortfalls ? `, ${pounds(shortfalls)} to pay off the shortfalls on the loan` : ""}${cut.severance ? `, ${pounds(cut.severance)} for severance` : ""} and about ${r.breathingDays} days of breathing space) for ${count.format(newShares)} new shares, ${percent(share)} of the company. You now own ${percent(yours)}. Run out of cash again and it's liquidation.`,
         cashDelta: amount,
         kind: "rescue",
       },
@@ -121,6 +127,7 @@ export function createRescue(
       day: state.day,
       amount,
       losses,
+      shortfalls,
       shares: newShares,
       share,
       cuts: cut.cuts,
@@ -131,11 +138,13 @@ export function createRescue(
     };
     return {
       state: {
-        ...finance.chargeNow(cut.state, entries),
+        ...finance.chargeNow(cleared.state, entries),
         shareholders: [...state.shareholders, { id: "vulture", shares: newShares, day: state.day }],
         rescue: record,
+        // The room below £0 is fixed afresh the next time cash goes there, at the costs after the cuts.
+        shortfallLimit: null,
       },
-      entries,
+      entries: [...entries, ...cleared.entries],
     };
   };
 

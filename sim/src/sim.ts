@@ -695,7 +695,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     shortfall: loan.shortfallView,
     opsShortfall: infra.opsShortfall,
   });
-  const rescue = createRescue(config, finance, shares, (s) => runway(s), (s) => infra.opsNeededNow(s));
+  const rescue = createRescue(config, finance, shares, (s) => runway(s), (s) => infra.opsNeededNow(s), loan.clearShortfall);
   const investors = createInvestors(config, finance, shares);
   const campaigns = createCampaigns(config, calendar, customers.outlook);
   const payReview = createPayReview(config, { runwayDays: (s) => runway(s).days, chargeNow: finance.chargeNow });
@@ -786,6 +786,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       ...ipo.startingIpo(),
       rescue: null,
       firstShortfallDay: null,
+      shortfallLimit: null,
       pastLoans: [],
       interestPaid: 0,
       schedule,

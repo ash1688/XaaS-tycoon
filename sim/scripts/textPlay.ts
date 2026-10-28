@@ -616,7 +616,10 @@ export function renderStatus(sim: Sim, state: GameState): string {
   if (state.firstShortfallDay !== null && state.status === "playing") {
     const short = sim.shortfall(state);
     const next = state.rescue ? "liquidation" : "the vulture VC steps in";
-    lines.push(`below £0: ${money(short.owed)} of shortfalls on the loan; ${money(short.room)} more (of ${short.limitDays} days of costs, ${money(short.limit)}) and ${next}`);
+    // With no loan being repaid, the next shortfall opens an emergency loan (#288).
+    const owed = short.owed > 0 ? `${money(short.owed)} of shortfalls on your ${short.onto}` : "no shortfalls owed";
+    const onto = short.onto ? `your ${short.onto}` : "a new emergency loan";
+    lines.push(`below £0: ${owed}; the next goes on ${onto}, ${money(short.room)} more (of ${short.limitDays} days of costs, ${money(short.limit)}) and ${next}`);
   }
   const valuation = sim.valuation(state);
   const table = sim.capTable(state);

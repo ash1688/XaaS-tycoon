@@ -942,8 +942,11 @@ describe("rescue buyout and liquidation", () => {
     );
     expect(turn.lines.join("\n")).toMatch(/the shortfall went on your bank loan, still £[\d,]+ a day, now until day \d+/);
     expect(renderStatus(sim, turn.state)).toContain(
-      `below £0: £${short.owed.toLocaleString("en-GB")} of shortfalls on the loan; £${short.room.toLocaleString("en-GB")} more (of 7 days of costs, £${short.limit.toLocaleString("en-GB")}) and the vulture VC steps in`,
+      `below £0: £${short.owed.toLocaleString("en-GB")} of shortfalls on your bank loan; the next goes on your bank loan, £${short.room.toLocaleString("en-GB")} more (of 7 days of costs, £${short.limit.toLocaleString("en-GB")}) and the vulture VC steps in`,
     );
+    // Once the loan's repaid, the next shortfall opens an emergency loan (#288).
+    const repaid = { ...turn.state, loan: { ...turn.state.loan!, paidOffDay: day } };
+    expect(renderStatus(sim, repaid)).toMatch(/^below £0: no shortfalls owed; the next goes on a new emergency loan, £[\d,]+ more \(of 7 days of costs, £[\d,]+\) and the vulture VC steps in$/m);
     // An emergency loan says so.
     const emergency = { ...turn.state, loan: { ...turn.state.loan!, emergency: true as const } };
     expect(renderStatus(sim, emergency)).toMatch(/^loan \(emergency\): £[\d,]+ left/m);
