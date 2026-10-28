@@ -223,8 +223,9 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
   const capacityFactor = (state: GameState) => capacityFactors(state).reduce((c, f) => c * f, 1);
 
   /**
-   * What losing servers would do to today's load from tomorrow, for a cancel or sale (#260): "leave compute (CU) at
-   * 130% of today's load", "drop 400 of today's 2,000 API calls", or null if what's left still carries it. Measured
+   * What losing servers would do to today's load from tomorrow, for a cancel or sale (#260), to follow "without it, ":
+   * "today's load would be 130% of the compute (CU) left", "400 of today's 2,000 API calls would be dropped", or null if
+   * what's left still carries it. Measured
    * against the servers kept now, so taking away one that wasn't helping a tier already over isn't blamed for it.
    */
   function shortBy(before: GameState, without: GameState): string | null {
@@ -234,12 +235,12 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     const will = ratio(without);
     if (will.ratio > 1 && will.ratio > was.ratio + 1e-9) {
       const tier = will.binding === "cu" ? "compute (CU)" : "database capacity (DBU)";
-      return Number.isFinite(will.ratio) ? `leave ${tier} at ${Math.round(100 * will.ratio)}% of today's load` : `leave no ${tier} for today's load`;
+      return Number.isFinite(will.ratio) ? `today's load would be ${Math.round(100 * will.ratio)}% of the ${tier} left` : `there'd be no ${tier} left for today's load`;
     }
     const calls = before.api?.calls ?? 0;
     const served = (s: GameState) => Math.floor((apiuOn(s, s.day + 1) ?? Infinity) * config.api.callsPerApiu);
     const lost = Math.min(calls, served(before)) - Math.min(calls, served(without));
-    if (lost > 0) return `drop ${count.format(lost)} of today's ${count.format(calls)} API calls`;
+    if (lost > 0) return `${count.format(lost)} of today's ${count.format(calls)} API calls would be dropped`;
     return null;
   }
 

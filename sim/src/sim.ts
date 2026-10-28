@@ -920,11 +920,11 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       case "rentServer":
         return servers.rentServer(state, action.server, action.size);
       case "cancelServer":
-        return servers.cancelServer(state, action.id, action.now === true, retireRules(state));
+        return servers.cancelServer(state, action.id, action.now === true, retireRules);
       case "buyServer":
         return servers.buyServer(state, action.server, action.size, action.rack);
       case "sellServer":
-        return servers.sellServer(state, action.id, action.now === true, retireRules(state));
+        return servers.sellServer(state, action.id, action.now === true, retireRules);
       case "buyRack":
         return racks.buyRack(state, action.size);
       case "sellRack":
@@ -1167,7 +1167,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       rivalJoins: market.rivalJoins,
     };
     // Servers cancelled or sold while waiting for a replacement go once it's ready, after today's bills (#260).
-    const left = servers.leaveDay(played, day);
+    const left = servers.leaveDay(played, day, retireRules);
     entries.push(...left.entries);
     // The first day demand went over the autoscaling maximum, when time stops (#261).
     const maxHit = served.maxHit && left.state.autoscale?.maxHitDay === undefined;
@@ -1221,12 +1221,12 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
 
   /**
    * How this game's cancels and sales are checked (#260): against today's load, refused when it'd leave the company
-   * short, or on Hard, allowed once confirmed.
+   * short, or on Hard, allowed once confirmed; and again as one waiting for a replacement goes (#287).
    */
-  const retireRules = (state: GameState) => ({
-    shortBy: (without: GameState) => infra.shortBy(state, without),
+  const retireRules = {
+    shortBy: (before: GameState, without: GameState) => infra.shortBy(before, without),
     confirm: DIFFICULTIES[difficulty].confirmRiskyCancels,
-  });
+  };
 
   /**
    * PaaS autoscaling (#261): after the day, the platform sets the app instances to the baseline, 1.25× the day's CU
