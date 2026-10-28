@@ -129,6 +129,15 @@ export function createIpo(
   const overPercent = (value: number, need: number) =>
     need >= 100 ? 1 : clamp01((value - need) / (c.comfortMargin * (100 - need)));
 
+  /**
+   * Uptime over the record: the last recordDays days played since launch (fewer before then). The status shows this
+   * figure too, so the uptime the student sees is the one the IPO judges.
+   */
+  function recordUptime(state: GameState): number {
+    const days = record(state);
+    return 100 * (1 - sum(days, (d) => d.hoursDown) / (Math.max(1, days.length) * HOURS_PER_DAY));
+  }
+
   function readiness(state: GameState): { conditions: IpoCondition[]; signals: MarketSignal[] } {
     const product = c.products[state.productType];
     const market = Math.round(marketSize(config, state));
@@ -147,7 +156,7 @@ export function createIpo(
     const payersMet = payers >= product.payingUsers;
 
     const down = sum(days, (d) => d.hoursDown);
-    const uptime = 100 * (1 - down / (n * HOURS_PER_DAY));
+    const uptime = recordUptime(state);
 
     // The daily costs each day ended on: the costs line's figure, so one-offs don't count. The costliest days are set
     // aside, so one campaign doesn't spoil a steady record.
@@ -503,7 +512,7 @@ export function createIpo(
     };
   }
 
-  return { startingIpo, ipoView, applyForIpo, ringBell };
+  return { startingIpo, ipoView, applyForIpo, ringBell, recordUptime };
 }
 
 export type Ipo = ReturnType<typeof createIpo>;

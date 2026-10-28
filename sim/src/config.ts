@@ -1108,7 +1108,8 @@ export interface EventConfig {
    * the student hears `text` that day, with time to get ready. Risky days fill the meter faster, so it can come sooner.
    * Left out, the event is a surprise.
    */
-  warning?: { days: number; text: string };
+  /** text, or the model's own wording where `byModel` has one (a provider's platform has no servers of yours). */
+  warning?: { days: number; text: string; byModel?: Partial<Record<ModelId, string>> };
   /** Fixed days it fires on as well, outside the encounter system. */
   schedule?: EventSchedule;
   /** Days it lasts, from the day it fires. */
@@ -3421,6 +3422,10 @@ export const defaultConfig: GameConfig = {
       warning: {
         days: 7,
         text: "A big news site has been asking about your product. If they feature it, expect a flood of visitors within about a week: more than your servers can carry unless you add capacity first.",
+        byModel: {
+          paas: "A big news site has been asking about your product. If they feature it, expect a flood of visitors within about a week: the platform will scale up for it, and bill you for every unit over your setup unless you add instances first.",
+          saas: "A big news site has been asking about your product. If they feature it, expect a flood of visitors within about a week. Your SaaS provider carries the load, so there's nothing to add.",
+        },
       },
       days: 2,
       // Triple the CU and DBU demand: more than a sensible setup carries, so only a model that scales stays up.

@@ -244,9 +244,14 @@ export function createRivals(config: GameConfig, features: Features, pricing: Pr
       const target = undercut ? Math.min(seen * r.priceStance, seen * (1 - config.rivals.undercutShare)) : seen * r.priceStance;
       const price = stancePrice(state, target);
       if (price !== rival.price) {
-        const text = undercut
-          ? `${r.name} undercut you: it now charges ${pounds(price)} a month, against your ${pounds(seen)}.`
-          : `${r.name} answered your ${pounds(seen)} price: it now charges ${pounds(price)} a month.`;
+        // Rivals answer the price of reactionDays ago: say so when it has changed since, so the figure isn't a puzzle.
+        const now = pricing.monthlyNow(state);
+        const same = Math.round(now) === Math.round(seen);
+        const was = `the ${pounds(seen)} you charged on day ${seenDay} (${pounds(now)} now)`;
+        const text =
+          undercut && price < seen
+            ? `${r.name} undercut you: it now charges ${pounds(price)} a month, against ${same ? `your ${pounds(seen)}` : was}.`
+            : `${r.name} answered ${same ? `your ${pounds(seen)} price` : was}: it now charges ${pounds(price)} a month.`;
         entries.push({ text, cashDelta: 0, kind: "rival" });
       }
       return { ...rival, price, reactedTo: seen };

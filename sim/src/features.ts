@@ -70,7 +70,7 @@ export function createFeatures(config: GameConfig, finance: Finance) {
       );
     }
     const feature = featureList(state).find((f) => f.id === id);
-    if (!feature) throw new SimError("unknown_feature", "Pick a feature from your product's list.");
+    if (!feature) unknownFeature(id);
     refuseLocked(state, feature);
     if (state.mvp.doneDay === null) {
       throw new SimError("mvp_first", `Your developers are building the MVP. ${feature.name} can be started once it's done.`);
@@ -85,12 +85,22 @@ export function createFeatures(config: GameConfig, finance: Finance) {
     return { ...state, features: { ...state.features, [id]: { status: "building", progress: 0 } } };
   }
 
+  /** Refuses an id that isn't one of the product's features, pointing a model benefit's id at `benefit`. */
+  function unknownFeature(id: string): never {
+    const benefit = config.tiers.benefits.find((b) => b.id.toLowerCase() === id.toLowerCase());
+    if (benefit) {
+      const model = { onprem: "on-prem", iaas: "IaaS", paas: "PaaS", saas: "SaaS" }[benefit.model];
+      throw new SimError("unknown_feature", `${benefit.name} is a ${model} model benefit, not a feature: buy it as a benefit.`);
+    }
+    throw new SimError("unknown_feature", "Pick a feature from your product's list.");
+  }
+
   function buyAddon(state: GameState, id: string): GameState {
     if (state.model !== "saas") {
       throw new SimError("not_saas", "Add-ons are only sold on SaaS. On your model, your developers build features.");
     }
     const feature = featureList(state).find((f) => f.id === id);
-    if (!feature) throw new SimError("unknown_feature", "Pick a feature from your product's list.");
+    if (!feature) unknownFeature(id);
     if (isActive(state, id)) throw new SimError("addon_active", `${feature.name} is already active.`);
     refuseLocked(state, feature);
     const needed = config.addons.minConfigDevelopers;
