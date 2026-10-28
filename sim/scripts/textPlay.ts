@@ -2149,10 +2149,17 @@ function dayLines(log: DayLog[], stopping: boolean): string[] {
 /** The end-of-game summary as text: how it ended, final figures and where the money went. */
 export function renderSummary(sim: Sim, state: GameState): string {
   // The day-by-day series are for charts; the player only needs the totals.
-  const { days: _days, incomeVsCosts: _incomeVsCosts, ...summary } = sim.summarise(state);
-  const yours = sim.capTable(state).rows.find((r) => r.id === "student")!;
+  const { days: _days, incomeVsCosts: _incomeVsCosts, capTable, score, ...summary } = sim.summarise(state);
+  const yours = capTable.shareholders.find((r) => r.id === "student")!;
   // After an IPO the company is worth its market value at the first day's close, not the formula's valuation.
   const worth = state.ipo.result ? { marketValue: state.ipo.result.marketValue } : { valuation: sim.valuation(state).valuation };
-  const valuation = { ...worth, yourShare: stake(yours.share), yourSharesWorth: yours.value };
-  return JSON.stringify({ ...summary, ...valuation }, null, 1);
+  const valuation = { ...worth, yourShare: stake(yours.stake), yourSharesWorth: yours.worth };
+  // The headline and who owns the company (#264): the score is what your own shares are worth.
+  const less = capTable.debt ? `, after ${money(capTable.debt)} of debt` : "";
+  const headline = `The company raised ${money(capTable.raised)} and is now worth ${money(capTable.worth)}${less}.`;
+  const shareholders = capTable.shareholders.map(
+    (r) =>
+      `${r.name}: put in ${money(r.putIn)}, ${stake(r.stake)}, worth ${money(r.worth)}${r.multiple !== null ? `, ${r.multiple}× their money` : ""}`,
+  );
+  return JSON.stringify({ headline, shareholders, score, ...summary, ...valuation }, null, 1);
 }

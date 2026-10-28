@@ -52,6 +52,14 @@ test("play to the end, then see profit or loss and income against costs, and the
   expect(api.loan.repaid).toBe(29 * 321 + api.loan.settledAtEnd);
   expect(api.income).toBeGreaterThan(0);
 
+  // The score (#264): what the company raised and is worth, who owns it, and what the founder's own shares are worth.
+  expect(api.score).toBe(api.capTable.shareholders[0].worth);
+  await expect(student.getByTestId("summary-worth")).toContainText(`The company raised ${money(api.capTable.raised)} and is now worth ${money(api.capTable.worth)}`);
+  await expect(student.getByTestId("summary-score")).toHaveText(money(api.score));
+  const founder = student.getByTestId("summary-shareholders").locator("[data-shareholder='student']");
+  await expect(founder).toContainText("You · seed money");
+  await expect(founder).toContainText(money(api.capTable.shareholders[0].putIn));
+
   // The headline: profit or loss, said in words and by its sign as well as its colour, from income less costs.
   const headline = student.getByTestId("summary-headline");
   const loss = api.profit < 0;
