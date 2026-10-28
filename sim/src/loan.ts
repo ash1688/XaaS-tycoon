@@ -253,33 +253,37 @@ export function createLoan(config: GameConfig, finance: Finance, dailyCosts: (st
    * the rate a loan taken today would have over emergencyTermDays. Either way cash is back to £0. Null when it would
    * take what shortfalls owe past the limit: cash has run out, and it's the vulture VC's rescue (or liquidation).
    */
-  function coverShortfall(state: GameState): { state: GameState; entries: LogEntry[] } | null {
-    const shortfall = -state.cash;
-    const view = shortfallView(state);
-    if (shortfall <= 0 || shortfall > view.room) return null;
+  /**
+   * An amount the company owes put onto a loan: onto the bank loan being repaid, at its rate and the same repayment a
+   * day for longer; onto the emergency loan being repaid, which keeps its short term, the repayment rising; or with
+   * neither, onto a new emergency loan at the rate a loan taken today would have, over emergencyTermDays. `shortfall`
+   * says whether it counts against the room below £0. What it went on, for the caller's words.
+   */
+  function addToLoan(state: GameState, amount: number, shortfall: boolean) {
     const open = state.loan && isOpen(state.loan) ? state.loan : null;
     const days = Math.max(1, Math.round(emergencyTermDays));
+    const short = shortfall ? amount : 0;
     let loan: Loan;
-    let text: string;
+    let onto: "emergency" | "bank" | "new";
     if (open?.emergency) {
       // The bank wants it back fast: the repayment rises, and the last day is no more than the term from today.
-      const added = Math.ceil(shortfall * (1 + open.rate) - 1e-9);
+      const added = Math.ceil(amount * (1 + open.rate) - 1e-9);
       const total = open.total + added;
       const dailyRepayment = open.dailyRepayment + Math.ceil(added / days - 1e-9);
       const lastDay = state.day + Math.ceil((total - open.repaid) / dailyRepayment - 1e-9);
-      loan = { ...open, amount: open.amount + shortfall, total, dailyRepayment, lastDay, term: lastDay - open.day, shortfall: (open.shortfall ?? 0) + shortfall };
-      text = `Cash went ${pounds(shortfall)} below £0: the shortfall went on your emergency loan, and the bank still wants it back fast: now ${pounds(dailyRepayment)} a day, until day ${lastDay}.`;
+      loan = { ...open, amount: open.amount + amount, total, dailyRepayment, lastDay, term: lastDay - open.day, shortfall: (open.shortfall ?? 0) + short };
+      onto = "emergency";
     } else if (open) {
-      // The shortfall is borrowed at the loan's own rate, repaid at the same amount a day for longer.
-      const total = open.total + Math.ceil(shortfall * (1 + open.rate) - 1e-9);
+      // Borrowed at the loan's own rate, repaid at the same amount a day for longer.
+      const total = open.total + Math.ceil(amount * (1 + open.rate) - 1e-9);
       const lastDay = open.day + Math.ceil(total / open.dailyRepayment - 1e-9);
-      loan = { ...open, amount: open.amount + shortfall, total, lastDay, term: lastDay - open.day, shortfall: (open.shortfall ?? 0) + shortfall };
-      text = `Cash went ${pounds(shortfall)} below £0: the shortfall went on your ${loanName(open)}, still ${pounds(loan.dailyRepayment)} a day, now until day ${lastDay}.`;
+      loan = { ...open, amount: open.amount + amount, total, lastDay, term: lastDay - open.day, shortfall: (open.shortfall ?? 0) + short };
+      onto = "bank";
     } else {
       const { rate } = termsOn(state.day, loanRateShare(config, state));
-      const dailyRepayment = Math.ceil((shortfall * (1 + rate)) / days - 1e-9);
+      const dailyRepayment = Math.ceil((amount * (1 + rate)) / days - 1e-9);
       loan = {
-        amount: shortfall,
+        amount,
         day: state.day,
         rate,
         term: days,
@@ -290,11 +294,47 @@ export function createLoan(config: GameConfig, finance: Finance, dailyCosts: (st
         interestPaid: 0,
         paidOffDay: null,
         emergency: true,
-        shortfall,
+        ...(short > 0 && { shortfall: short }),
       };
-      text = `Cash went ${pounds(shortfall)} below £0 with no bank loan, so the bank opened an emergency loan for it at ${percent(rate)}: ${pounds(dailyRepayment)} a day for ${days} days, until day ${loan.lastDay}.`;
+      onto = "new";
     }
     const pastLoans = state.loan && !open ? [...state.pastLoans, state.loan] : state.pastLoans;
+    return { loan, pastLoans, onto, days };
+  }
+
+  /** Where an amount put on a loan went, in words: "went on your bank loan, still £110 a day, now until day 181". */
+  function ontoText({ loan, onto, days }: ReturnType<typeof addToLoan>): string {
+    if (onto === "emergency") return `went on your emergency loan, and the bank still wants it back fast: now ${pounds(loan.dailyRepayment)} a day, until day ${loan.lastDay}`;
+    if (onto === "bank") return `went on your bank loan, still ${pounds(loan.dailyRepayment)} a day, now until day ${loan.lastDay}`;
+    return `went on a new emergency loan at ${percent(loan.rate)}: ${pounds(loan.dailyRepayment)} a day for ${days} days, until day ${loan.lastDay}`;
+  }
+
+  /**
+   * Something the company owes that the bank pays for it, put on a loan as a shortfall is but not counted as one (an
+   * executive's back pay when they resign): cash doesn't change, as the bank pays it. `charge` is the line for what it
+   * paid. Never refused, and never a rescue by itself.
+   */
+  function borrowFor(state: GameState, charge: LogEntry): { state: GameState; entries: LogEntry[] } {
+    const amount = -charge.cashDelta;
+    if (amount <= 0) return { state, entries: [] };
+    const added = addToLoan(state, amount, false);
+    const entries: LogEntry[] = [
+      charge,
+      { text: `The bank paid it: ${pounds(amount)} ${ontoText(added)}.`, cashDelta: amount, kind: "loan" },
+    ];
+    return { state: finance.chargeNow({ ...state, loan: added.loan, pastLoans: added.pastLoans }, entries), entries };
+  }
+
+  function coverShortfall(state: GameState): { state: GameState; entries: LogEntry[] } | null {
+    const shortfall = -state.cash;
+    const view = shortfallView(state);
+    if (shortfall <= 0 || shortfall > view.room) return null;
+    const added = addToLoan(state, shortfall, true);
+    const { loan, pastLoans, onto, days } = added;
+    const text =
+      onto === "new"
+        ? `Cash went ${pounds(shortfall)} below £0 with no bank loan, so the bank opened an emergency loan for it at ${percent(loan.rate)}: ${pounds(loan.dailyRepayment)} a day for ${days} days, until day ${loan.lastDay}.`
+        : `Cash went ${pounds(shortfall)} below £0: the shortfall ${ontoText(added)}.`;
     // The limit is fixed the first time: how far it can go now.
     const shortfallLimit = state.shortfallLimit ?? view.limit;
     const after = shortfallView({ ...state, loan, pastLoans, shortfallLimit });
@@ -358,6 +398,7 @@ export function createLoan(config: GameConfig, finance: Finance, dailyCosts: (st
     shortfallView,
     coverShortfall,
     clearShortfall,
+    borrowFor,
     settleAtEnd,
   };
 }

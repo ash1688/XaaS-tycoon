@@ -14,6 +14,7 @@ import {
   withDifficulty,
   type DifficultyId,
   type GameConfig,
+  type CsuiteRole,
   type ModelId,
   type ServerCount,
 } from "./config.ts";
@@ -1195,8 +1196,11 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const released = campaigns.release(settled.state);
     // The board's pay holiday starts when cash runs low and ends once it has recovered, with what it skipped owed.
     const holiday = csuite.payHolidayDay(released.state, payHolidayCosts(released.state), finance.chargeNow);
+    // Too long unpaid and an executive walks out, the bank paying their back pay onto the loan.
+    const walked = csuite.walkoutDay(holiday.state);
+    const owedToBank = walked.backPay ? loan.borrowFor(walked.state, walked.backPay) : { state: walked.state, entries: [] };
     // Last, the funding ladder: an angel's target, and an investor who approaches a company doing well.
-    const funded = investors.investorDay(holiday.state, {
+    const funded = investors.investorDay(owedToBank.state, {
       joined: (ramping ? 0 : organic.arrived) + wave.joined + (users - wave.users),
       left: (ramping ? 0 : organic.lost.reduce((sum, l) => sum + l.users, 0)) + (wave.left?.users ?? 0),
     });
@@ -1215,7 +1219,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       // First, what a tribunal settled before today.
       ...payReview.tribunalEntries(yesterday, day),
       ...payReview.schemeStartEntries(yesterday, day),
-      ...settled.entries, ...released.entries, ...holiday.entries, ...funded.entries, ...phased.entries, ...opened.entries, ...drifted.entries, ...reviewed.entries,
+      ...settled.entries, ...released.entries, ...holiday.entries, ...walked.entries, ...owedToBank.entries, ...funded.entries, ...phased.entries, ...opened.entries, ...drifted.entries, ...reviewed.entries,
       // C-suite roles that opened today, with their shortlists.
       ...csuite.openedEntries(yesterday, reviewed.state)];
     // Kit added today (managed autoscaling, a migration's new setup) gives what new kit gives now.
@@ -1262,6 +1266,26 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       throw new SimError("bad_instances", `Set a maximum between your minimum of ${min} and the platform's most, ${platform.maxInstances}.`);
     }
     return { ...state, autoscale: { ...state.autoscale, max } };
+  }
+
+  /**
+   * What hiring a candidate would do to the runway, in words, on the costs line's figure: advisory only. Says the pay
+   * holiday will start when the new costs put cash under its line.
+   */
+  function hireRunwayNote(state: GameState, role: CsuiteRole, candidateId: string): string {
+    let hired: GameState;
+    try {
+      hired = csuite.hire(state, role, candidateId);
+    } catch {
+      return "";
+    }
+    const salary = hired.csuite.hired.at(-1)!.salary;
+    const { days } = runway(hired);
+    const { startDays } = config.csuite.payHoliday;
+    const onHoliday = (state.csuite.payHolidaySince ?? null) !== null;
+    const holiday = !onHoliday && startDays > 0 && state.cash < startDays * payHolidayCosts(hired);
+    const runwayText = days === null ? "cash still grows" : `runway falls to ${days} day${days === 1 ? "" : "s"}`;
+    return `With their pay (${pounds(salary)} a day), ${runwayText}${holiday ? `, and the pay holiday will start: cash is under ${startDays} days of running costs` : ""}.`;
   }
 
   /**
@@ -1548,7 +1572,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     danger: (s) => encounters.danger(load(s)),
     shortfall: (s) => loan.shortfallView(load(s)),
     featureGaps: (s) => events.featureGaps(load(s)),
-    csuite: (s) => csuite.csuiteView(load(s)),
+    csuite: (s) => {
+      const state = load(s);
+      return csuite.csuiteView(state, (role, id) => hireRunwayNote(state, role, id));
+    },
     summarise: (s) => summary.summarise(load(s)),
     api: (s) => api.apiView(load(s)),
   };

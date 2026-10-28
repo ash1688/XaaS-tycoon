@@ -101,6 +101,12 @@ export function createPauses(config: GameConfig, views: PauseViews) {
       const next = after.rescue ? "the company goes into liquidation" : "a vulture VC steps in";
       add("alert", "shortfall", `Cash went below £0 and the shortfall went on your loan: ${pounds(room)} more and ${next}`);
     }
+    // An executive walked out after too long unpaid on the pay holiday.
+    const resigned = after.csuite.resigned ?? [];
+    if (resigned.length > (before.csuite.resigned ?? []).length) {
+      const e = resigned.at(-1)!;
+      add("alert", `resigned-${e.role}`, `${e.name} resigned after too long without pay: ${pounds(e.backPay)} back pay went onto the loan`);
+    }
     // Cash ran out and a vulture VC rescued the company: it now owns most of it, and the next cash-out is liquidation.
     if (after.rescue && !before.rescue) {
       add("alert", "rescue", `Cash ran out: a vulture VC rescued the company for ${Math.round(after.rescue.share * 100)}% of it`);

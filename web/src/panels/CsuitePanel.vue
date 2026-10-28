@@ -42,7 +42,9 @@ async function hire(role: CsuiteRole, candidate: string) {
     <p v-if="csuite.payHoliday.startDays > 0 && csuite.payHoliday.since === null" class="muted" data-testid="csuite-pay-holiday-rule">
       If cash falls below {{ csuite.payHoliday.startDays }} days of running costs, the board forgoes its pay until
       there are {{ csuite.payHoliday.endDays }} days' worth in the bank (running costs with C-suite pay, leaving out
-      Campaigns). What it misses is owed, and paid back once cash recovers.
+      Campaigns). What it misses is owed, and paid back once cash recovers. After
+      {{ csuite.payHoliday.walkoutDays }} days unpaid in a row, one executive resigns every
+      {{ csuite.payHoliday.walkoutEvery }} days until they're paid, and the bank pays their back pay onto your loan.
     </p>
     <div v-for="r in open" :key="r.role" class="role" :data-testid="`csuite-${r.role}`">
       <h3>{{ r.name }}</h3>
@@ -73,7 +75,10 @@ async function hire(role: CsuiteRole, candidate: string) {
             <tr v-for="c in r.shortlist" :key="c.id" :data-testid="`candidate-${c.id}`">
               <th scope="row">{{ c.name }}</th>
               <td>{{ Math.round(c.strength * 100) }}%</td>
-              <td>{{ formatCash(c.salary) }} a day</td>
+              <td>
+                {{ formatCash(c.salary) }} a day
+                <small v-if="c.runway" class="muted runway-note" data-testid="candidate-runway">{{ c.runway }}</small>
+              </td>
               <td>
                 {{ c.equity ? formatShare(c.equity) : "None" }}
                 <span v-if="c.newShares" class="muted">({{ c.newShares.toLocaleString("en-GB") }} new shares)</span>
@@ -114,6 +119,9 @@ async function hire(role: CsuiteRole, candidate: string) {
 .effects {
   margin: 0;
   padding-left: 1.1rem;
+}
+.runway-note {
+  display: block;
 }
 .shortlist td.hire {
   white-space: nowrap;
