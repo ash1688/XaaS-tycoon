@@ -182,6 +182,56 @@ describe("the opening price", () => {
   });
 });
 
+describe("the launch bands by customer type (#286)", () => {
+  const band = (view: PriceBandsView, type: string, id: string) =>
+    view.types.find((t) => t.id === type)!.bands.find((b) => b.id === id)!.share;
+
+  it("has each type join paying by its threshold: businesses readiest, casual users least, at any price", () => {
+    const state = ready();
+    const fair = sim.fairPrice(state);
+    for (const price of [1, fair, fair * 1.5]) {
+      const bands = sim.launchBands(state, price);
+      const paying = CUSTOMER_TYPE_IDS.map((id) => band(bands, id, "joinPaid"));
+      // In threshold order: casual, enthusiasts, professionals, businesses.
+      for (let i = 1; i < paying.length; i++) expect(paying[i], `£${price}`).toBeGreaterThan(paying[i - 1]!);
+      for (const t of bands.types) expect(sum(t.bands)).toBeCloseTo(1, 10);
+    }
+    // At the fair price the product's paid share holds across the mix, as before.
+    expect(total(sim.launchBands(state, fair), "joinPaid")).toBeCloseTo(1 - defaultConfig.productTypes.ecommerce.pricing.freeShare, 6);
+  });
+
+  it("never has a whole type pay, however cheap: some still take the free tier", () => {
+    const bands = sim.launchBands(ready(), 0.5);
+    for (const t of bands.types) {
+      expect(band(bands, t.id, "joinPaid")).toBeLessThan(0.99);
+      expect(band(bands, t.id, "joinFree")).toBeGreaterThan(0.01);
+    }
+    expect(band(bands, "casual", "joinPaid")).toBeLessThan(band(bands, "businesses", "joinPaid"));
+  });
+
+  it("brings exactly the preview's paying and free split at launch, the payments app's fee plus rate included", () => {
+    const pay = (productType: "ecommerce" | "payments", price: number, rate?: number) => {
+      const start = inPhase(sim.advance(sim.newGame({ companyName: "Band Co", productType, model: "saas", seed: 5 })).state, "launch");
+      const bands = sim.launchBands(start, price, rate);
+      const launched = sim.applyAction(start, { type: "launch", price, ...(rate === undefined ? {} : { rate }) });
+      const { state, log } = sim.advance(launched, defaultConfig.launch.rampShares.length);
+      // The users who came, from the ramp's own log lines: free users converting on the way don't count.
+      const arrivals = log.flatMap((d) => d.entries).filter((e) => e.kind === "launch").map((e) => e.text.match(/([\d,]+) new users arrived, ([\d,]+) of them paying/)!);
+      const users = arrivals.reduce((n, m) => n + Number(m[1]!.replace(/,/g, "")), 0);
+      const paid = arrivals.reduce((n, m) => n + Number(m[2]!.replace(/,/g, "")), 0);
+      expect(state.price).toBe(price);
+      return { bands, users, paid };
+    };
+    for (const [productType, price, rate] of [["payments", 10, 0.02], ["payments", 15, 0.03], ["payments", 6, 0.01], ["ecommerce", 9, undefined]] as const) {
+      const { bands, users, paid } = pay(productType, price, rate);
+      const coming = users / (1 - total(bands, "notJoin"));
+      // Each ramp day rounds on its own: a few users either way over three days.
+      expect(Math.abs(paid - coming * total(bands, "joinPaid")), `${productType} £${price}`).toBeLessThanOrEqual(3);
+      expect(Math.abs(users - paid - coming * total(bands, "joinFree")), `${productType} £${price}`).toBeLessThanOrEqual(3);
+    }
+  });
+});
+
 describe("the IPO price lock", () => {
   it("locks the price from approval until the bell, and not while a cold market has postponed it", () => {
     const state = running();
