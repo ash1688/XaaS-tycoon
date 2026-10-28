@@ -9,6 +9,7 @@ import {
   type ServerType,
 } from "./config.ts";
 import { powerSaving, rentSaving } from "./benefits.ts";
+import { patchingNeed } from "./executives.ts";
 import { count, pounds, priceRiseOn, risen, type Finance } from "./finance.ts";
 import { crashedOn, hardwareRisk, hasSlider, overheatedOn, performanceOf, unitFactor, wearDaysLeft, wearShare } from "./hardware.ts";
 import { demandPerUser } from "./optimisation.ts";
@@ -527,12 +528,12 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
       .reduce((sum, s) => sum + serverMonthlyCost(state, state.model, s), 0);
 
   /**
-   * Ops staff some servers need on a model: the model's fixed number (the few PaaS and SaaS need to keep the service
-   * running), plus the total of each server's share, rounded up. Managed services have no share: the provider runs
-   * them.
+   * Ops staff some servers need on a model, in mids of work to a hundredth: the model's fixed number (the few PaaS and
+   * SaaS need to keep the service running), plus the total of each server's share. Managed services have no share: the
+   * provider runs them. Not rounded up to people (#284), so it's the figure the capacity cut is measured against.
    */
   function opsFor(model: ModelId, servers: Pick<Server, "type">[]): number {
-    return Math.ceil(opsWorkFor(model, servers));
+    return Math.round(opsWorkFor(model, servers) * 100) / 100;
   }
 
   /**
@@ -551,17 +552,22 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
   /** Servers running today: ready ones, rented or bought. Ones on order need no ops yet (#259). */
   const running = (state: GameState) => state.servers.filter((s) => s.readyDay <= state.day);
 
+  /** Some servers' ops work on the company's model, less a CISO's patching cut, to a hundredth. */
+  const opsWithCiso = (state: GameState, servers: Pick<Server, "type">[]) =>
+    Math.round(opsWorkFor(state.model, servers) * patchingNeed(config, state) * 100) / 100;
+
   /**
-   * Ops the company needs now: the model's fixed number, plus on a model with servers the shares of those running.
-   * Servers on order, rented or bought, don't count until they're ready.
+   * Ops the company needs now, in mids of work: the model's fixed number, plus on a model with servers the shares of
+   * those running, less a CISO's patching cut. Servers on order, rented or bought, don't count until they're ready. The
+   * one figure (#284) for the capacity cut, the shortfall line, the danger meter's patching and the IPO's audit.
    */
-  const opsNeeded = (state: GameState) => opsFor(state.model, running(state));
+  const opsNeeded = (state: GameState) => opsWithCiso(state, running(state));
 
-  /** As opsNeeded, but the ops work before rounding up to people. */
-  const opsWorkNeeded = (state: GameState) => opsWorkFor(state.model, running(state));
-
-  /** Ops the company will need once every server it has is in service: on-prem, kit on order included. */
-  const opsNeededOnceReady = (state: GameState) => opsFor(state.model, state.servers);
+  /**
+   * Ops the company will need once every server it has is in service: kit on order included, and servers waiting to
+   * be cancelled or sold left out, as they'll be gone (#284).
+   */
+  const opsNeededOnceReady = (state: GameState) => opsWithCiso(state, state.servers.filter((s) => s.leavesOn === undefined));
 
   /** Ops a model needs to start with: its fixed number, plus its starter setup's. */
   const modelOpsNeeded = (model: ModelId) => opsFor(model, starter(model, 0).servers);
@@ -1101,7 +1107,6 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
     serverEntries,
     monthlyServerCost,
     opsNeeded,
-    opsWorkNeeded,
     opsNeededOnceReady,
     modelOpsNeeded,
     rentServer,

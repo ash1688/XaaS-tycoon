@@ -191,9 +191,9 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     return Math.round(list * runningCostShare(config, state));
   }
 
-  /** The share of the ops work the running servers need that the ops team covers: 1 when nothing's missing. */
+  /** The share of the ops the company needs that the ops team covers: 1 when nothing's missing. */
   function opsCovered(state: GameState): number {
-    const work = servers.opsWorkNeeded(state);
+    const work = servers.opsNeeded(state);
     return work <= 0 ? 1 : Math.min(staffOutput(config, state, "ops"), work) / work;
   }
 
@@ -208,15 +208,16 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
   }
 
   /**
-   * Too few ops for the servers running: the ops team's work, the people needed and the share of capacity left. Null
-   * when ops cover it.
+   * Too few ops for the servers running: the ops team's work, the ops needed and the share of capacity left, rounded
+   * down so any cut shows (#284). Null when ops cover it, and on a model without servers, where the provider carries
+   * the load whatever the ops: there's no capacity to cut.
    */
   function opsShortfall(state: GameState): OpsShortfallView | null {
-    if (opsCovered(state) >= 1) return null;
+    if (!servers.hasServers(state.model) || opsCovered(state) >= 1) return null;
     return {
       have: Math.round(staffOutput(config, state, "ops") * 100) / 100,
       needed: servers.opsNeeded(state),
-      capacityShare: Math.round(capacityFactor(state) * 100) / 100,
+      capacityShare: Math.floor(capacityFactor(state) * 100) / 100,
     };
   }
 

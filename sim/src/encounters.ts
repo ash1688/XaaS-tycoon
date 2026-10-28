@@ -1,6 +1,6 @@
 import { DANGER_RISKS, type DangerRisk, type EventConfig, type GameConfig } from "./config.ts";
 import { paasAutoscaling } from "./benefits.ts";
-import { breachShare, patchingNeed } from "./executives.ts";
+import { breachShare } from "./executives.ts";
 import { layerOwner } from "./responsibility.ts";
 import { nextRandom } from "./rng.ts";
 import type { Servers } from "./servers.ts";
@@ -139,7 +139,7 @@ export function createEncounters(config: GameConfig, servers: Servers, spikeDay:
       // Ops still to start after hiring aren't patching yet. A CISO keeps patches up to date with fewer.
       unpatched:
         layerOwner(state.model, "os") === "you" &&
-        staffOutput(config, state, "ops") < servers.opsNeeded(state) * patchingNeed(config, state),
+        staffOutput(config, state, "ops") < servers.opsNeeded(state),
       overloaded,
       lowSatisfaction: state.satisfaction < config.support.poorSatisfaction,
     };

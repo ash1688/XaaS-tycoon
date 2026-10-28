@@ -96,8 +96,11 @@ _Avoid_: Pay freeze, deferred pay
 The developers, ops, support, moderators, researchers and marketers hired and let go in bulk, as permanent or agency staff (researchers and marketers permanent only). Not the C-suite.
 _Avoid_: Employees, workers
 
+**Ops needed**:
+The one figure for the ops a company needs, in mids of work to a hundredth, not rounded up to people: the model's fixed number plus each running server's share, less a CISO's patching cut. The capacity cut, the shortfall line, the danger meter's patching risk, the IPO's security audit and the staff and order lines all use it. Looking ahead to kit on order, servers waiting to be cancelled or sold are left out.
+
 **Ops shortfall**:
-Too few ops staff for the servers running. Every tier's capacity is cut in step with the share of ops work missing, down to 40% with no ops at all, so one short in a big team cuts less than one short in a small one. Servers on order need no ops until they're ready. Shown as "ops: 1 of 2 needed, capacity cut to 70%", and time stops the day it starts.
+Too few ops staff for the ops needed, on a model with servers. Every tier's capacity is cut in step with the share of ops work missing, down to 40% with no ops at all, so one short in a big team cuts less than one short in a small one; less cover never gives more capacity. Servers on order need no ops until they're ready. Shown as "ops: 1 of 1.2 needed, capacity cut to 90%" (rounded down, so any cut shows), and time stops the day it starts. SaaS has no shortfall line: the provider carries the load whatever the ops.
 _Avoid_: Understaffed, unpatched (that's the danger meter's risk)
 
 **Grade**:

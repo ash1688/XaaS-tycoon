@@ -505,7 +505,7 @@ describe("launch", () => {
   it("starts on-prem's users trickling in on the day its first kit arrives, with the normal delivery time", () => {
     const state = setUp(defaults, fresh(defaults, "onprem", "video", true));
     // The kit on order needs an ops person once it arrives, though none yet.
-    expect(defaults.launch(state)).toMatchObject({ status: "upcoming", day: null, opsNeeded: 1 });
+    expect(defaults.launch(state)).toMatchObject({ status: "upcoming", day: null, opsNeeded: 0.5 });
     expect(defaults.opsNeededNow(state)).toBe(0);
     const waiting = playTo(defaults, state, 4);
     expect(waiting).toMatchObject({ users: 0, launchDay: null });
@@ -822,7 +822,8 @@ describe("staff", () => {
   it("needs no more ops on IaaS's first VMs than on-prem, and a few on PaaS and SaaS, by default", () => {
     const s = createSim(smallestLaunch(withoutMvp));
     const first = (m: ModelId) => launched(s, s.newGame({ companyName: "Acme", productType: "social", model: m, seed: 1 }));
-    const needed = MODEL_IDS.map((m) => s.opsNeededNow(first(m)));
+    // In people: the ops work rounded up (#284).
+    const needed = MODEL_IDS.map((m) => Math.ceil(s.opsNeededNow(first(m))));
     expect(needed[1]).toBeLessThanOrEqual(needed[0]!);
     // Kit you rack yourself needs a bigger share of an ops person than a VM, and patching it takes more people.
     const { onprem, iaas } = defaultConfig.models;
@@ -1745,14 +1746,14 @@ describe("servers on IaaS", () => {
   });
 
   it("derives ops needed from the servers running, not those on order, and cuts every tier when short", () => {
-    // 1 ops for each app server and database, 0.5 for each cache and load balancer, rounded up.
+    // 1 ops for each app server and database, 0.5 for each cache and load balancer, not rounded up (#284).
     const state = begin();
     expect(flat.opsNeededNow(state)).toBe(2);
     expect(flat.opsNeeded("iaas")).toBe(2);
     // Servers on order need no ops until they're ready (#259), but are counted for once they are.
     const cached = rent(state, "cache", "small");
     expect(flat.opsNeededNow(cached)).toBe(2);
-    expect(flat.opsNeededOnceReady(cached)).toBe(3);
+    expect(flat.opsNeededOnceReady(cached)).toBe(2.5);
     const more = rent(rent(cached, "loadBalancer", "small"), "app", "small");
     expect(flat.opsNeededOnceReady(more)).toBe(4);
     expect(flat.opsNeededNow(flat.advance(more).state)).toBe(4);
@@ -1763,12 +1764,12 @@ describe("servers on IaaS", () => {
   });
 
   it("slides the ops cut with the share of ops work missing, shows it and stops time when it starts (#259)", () => {
-    // Two app servers, a database and a cache: 3.5 ops of work, so 4 people.
+    // Two app servers, a database and a cache: 3.5 ops of work, the one figure shown and cut against (#284).
     const kit = fleet(begin(), ["app", "massive"], ["app", "massive"], ["database", "massive"], ["cache", "small"]);
-    expect(flat.opsNeededNow(kit)).toBe(4);
+    expect(flat.opsNeededNow(kit)).toBe(3.5);
     expect(flat.opsShortfall(withStaff(kit, { ops: 4 }))).toBeNull();
-    // 3 of the 3.5 ops of work: 40% + 60% × 3/3.5, about 91%, not the 85% that 3 of 4 people would give.
-    expect(flat.opsShortfall(withStaff(kit, { ops: 3 }))).toEqual({ have: 3, needed: 4, capacityShare: 0.91 });
+    // 3 of the 3.5 ops of work: 40% + 60% × 3/3.5, 91.4%, rounded down so any cut shows.
+    expect(flat.opsShortfall(withStaff(kit, { ops: 3 }))).toEqual({ have: 3, needed: 3.5, capacityShare: 0.91 });
     // Each person short cuts more.
     const shares = [3, 2, 1, 0].map((ops) => flat.opsShortfall(withStaff(kit, { ops }))!.capacityShare);
     expect(shares).toEqual([...shares].sort((a, b) => b - a));
@@ -1992,7 +1993,7 @@ describe("servers on IaaS", () => {
       expect(s.newGame({ companyName: "Acme", productType: p, model: "iaas", seed: 1 }).servers).toEqual([]);
       const state = launched(s, s.newGame({ companyName: "Acme", productType: p, model: "iaas", seed: 1 }));
       expect(state.launchDay, p).toBe(2);
-      expect(s.opsNeededNow(state), p).toBe(1);
+      expect(s.opsNeededNow(state), p).toBe(0.4);
       expect(s.units(state)!.usersSupported, p).toBeGreaterThan(state.users * 1.5);
     }
     // One CU serves the same users whatever the size, and bigger VMs cost less per unit.
@@ -2171,16 +2172,16 @@ describe("servers on-prem", () => {
   });
 
   it("derives ops needed from the kit that has arrived, and cuts every tier when short", () => {
-    // 1 ops for each app server and database, 0.5 for each cache and load balancer, rounded up.
+    // 1 ops for each app server and database, 0.5 for each cache and load balancer, not rounded up (#284).
     const state = begin();
     expect(own.opsNeededNow(state)).toBe(2);
     expect(own.opsNeeded("onprem")).toBe(2);
     const ordered = buy(buy(state, "cache", "small"), "app", "small");
     expect(own.opsNeededNow(ordered)).toBe(2);
     // Kit on order needs its ops once it arrives: shown ahead.
-    expect(own.opsNeededOnceReady(ordered)).toBe(4);
-    expect(own.opsNeededNow(own.advance(ordered, 10).state)).toBe(4);
-    expect(own.opsNeededNow(sell(own.advance(ordered, 10).state, 4))).toBe(3);
+    expect(own.opsNeededOnceReady(ordered)).toBe(3.5);
+    expect(own.opsNeededNow(own.advance(ordered, 10).state)).toBe(3.5);
+    expect(own.opsNeededNow(sell(own.advance(ordered, 10).state, 4))).toBe(2.5);
     // With 1 of the 2 ops needed, each tier keeps 40% + 60% × ½ = 70%.
     expect(own.units(withStaff(state, { ops: 1 }))).toMatchObject({ cu: { capacity: 7_000 }, dbu: { capacity: 7_000 } });
   });
@@ -2677,7 +2678,8 @@ describe("default PaaS and SaaS", () => {
 
   it("needs a few fixed ops on PaaS and SaaS, no more than IaaS's first VMs", () => {
     // The first VMs need their ops once they're ready (#259).
-    const iaasOps = s.opsNeededOnceReady(setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 1 })));
+    // In people: the ops work rounded up (#284).
+    const iaasOps = Math.ceil(s.opsNeededOnceReady(setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 1 }))));
     for (const model of ["paas", "saas"] as const) {
       expect(s.opsNeeded(model)).toBeGreaterThan(0);
       expect(s.opsNeeded(model)).toBeLessThanOrEqual(iaasOps);
@@ -5064,8 +5066,8 @@ describe("migration with servers", () => {
       ["Database", "massive", 4, 4 * 3_300, 4 * 110, 4],
       ["Load balancer", "medium", 1, 900, 30, 4],
     ]);
-    // 3 app servers and 4 databases at 0.6 ops each, and a load balancer at 0.3: 4.5, so 5.
-    expect(onprem).toMatchObject({ setupUpfront: 21_750, setupMonthly: 725, deliveryDays: 4, opsNeeded: 5 });
+    // 3 app servers and 4 databases at 0.6 ops each, and a load balancer at 0.3: 4.5.
+    expect(onprem).toMatchObject({ setupUpfront: 21_750, setupMonthly: 725, deliveryDays: 4, opsNeeded: 4.5 });
     // 58U of kit: the server room's medium rack takes the 3 app servers (24U), and a large one (42U) the rest. Cabling
     // for 8 servers and 2 racks at £50.
     expect(onprem.racks).toEqual([
@@ -7818,5 +7820,68 @@ describe("ticks and pauses", () => {
   it("refuses a game that has ended", () => {
     const ended = s.endGame(begin("career"));
     expect(() => s.tick(ended)).toThrow(expect.objectContaining({ code: "finished" }));
+  });
+});
+
+describe("one ops-needed figure (#284)", () => {
+  const s = createSim(smallestLaunch(withoutMvp));
+  const game = (model: ModelId) => launched(s, s.newGame({ companyName: "Acme", productType: "social", model, seed: 1 }));
+  const withOps = (state: GameState, junior: number, mid: number): GameState => ({
+    ...state,
+    staff: { ...state.staff, ops: { junior, mid, senior: 0 } },
+    agency: { ...state.agency, ops: { junior: 0, mid: 0, senior: 0 } },
+  });
+  const opsOutput = (state: GameState) => s.staff(state).find((p) => p.pool === "ops")!.output;
+
+  for (const model of ["onprem", "iaas", "paas"] as const) {
+    it(`never gives more capacity for less ops cover on ${model}, and shows the line whenever there's a cut`, () => {
+      const base = game(model);
+      const teams = [];
+      for (let mid = 0; mid <= 4; mid++) for (let junior = 0; junior <= 4; junior++) teams.push(withOps(base, junior, mid));
+      const rows = teams
+        .map((t) => ({ output: opsOutput(t), cu: s.units(t)!.cu.capacity, short: s.opsShortfall(t) }))
+        .sort((a, b) => a.output - b.output);
+      for (let i = 1; i < rows.length; i++) expect(rows[i]!.cu, model).toBeGreaterThanOrEqual(rows[i - 1]!.cu);
+      const full = rows.at(-1)!.cu;
+      for (const r of rows) {
+        // Short of the one figure exactly when capacity is cut, and the line says the cut.
+        expect(r.short !== null, `${model} at ${r.output}`).toBe(r.output < s.opsNeededNow(base));
+        expect(r.cu < full, `${model} at ${r.output}`).toBe(r.short !== null);
+        if (r.short) expect(r.short.capacityShare).toBeLessThan(1);
+      }
+    });
+  }
+
+  it("shows no capacity cut line on SaaS, where the provider carries the load", () => {
+    const saas = withOps(game("saas"), 0, 0);
+    expect(s.opsNeededNow(saas)).toBeGreaterThan(0);
+    expect(s.opsShortfall(saas)).toBeNull();
+  });
+
+  it("counts a CISO in the ops needed, the same for the cut, the danger meter and the IPO's audit", () => {
+    const base = game("onprem");
+    const ciso = { role: "ciso" as const, name: "Sam", strength: 1, salary: 200, equity: 0, shares: 0, day: 1 };
+    const withCiso: GameState = { ...base, csuite: { ...base.csuite, hired: [ciso] } };
+    const needed = s.opsNeededNow(withCiso);
+    expect(needed).toBeLessThan(s.opsNeededNow(base));
+    // Ops just covering the figure the CISO brings down: no cut, the audit passes and the meter isn't raised for it.
+    const between = withOps(withCiso, 0, Math.ceil(needed));
+    if (opsOutput(between) < s.opsNeededNow(base)) {
+      expect(s.opsShortfall(between)).toBeNull();
+      expect(s.ipo(between).conditions.find((c) => c.id === "security")!.met).toBe(true);
+    }
+    const audit = s.ipo(withOps(withCiso, 0, 0)).conditions.find((c) => c.id === "security")!;
+    expect(audit.now).toBe(`Ops staff doing 0 of the ${Math.round(needed * 10) / 10} needed`);
+    expect(s.opsShortfall(withOps(withCiso, 0, 0))!.needed).toBe(needed);
+  });
+
+  it("leaves servers waiting to be sold out of the ops needed once kit on order arrives", () => {
+    const base = game("onprem");
+    const ordered = s.applyAction(base, { type: "buyServer", server: "app", size: "small" } as Action);
+    const before = s.opsNeededOnceReady(ordered);
+    const selling = s.applyAction(ordered, { type: "sellServer", id: ordered.servers.find((x) => x.type === "app" && x.readyDay <= ordered.day)!.id });
+    expect(s.opsNeededOnceReady(selling)).toBeLessThan(before);
+    // Still serving until its replacement arrives, so still needing its ops today.
+    expect(s.opsNeededNow(selling)).toBe(s.opsNeededNow(ordered));
   });
 });
