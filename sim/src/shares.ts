@@ -846,6 +846,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
             text: `Grant withdrawn: ${down} hours down since its condition started on day ${window.fromDay}, over the ${grant.maxHoursDown} its ${grant.minUptime}% uptime condition allows. All ${pounds(grant.amount)} is paid back.`,
             cashDelta: -grant.amount,
             kind: "funding",
+            oneOff: true,
           },
         ],
       };

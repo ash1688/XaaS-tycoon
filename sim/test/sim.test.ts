@@ -2807,23 +2807,130 @@ describe("rescue buyout and liquidation", () => {
 describe("runway", () => {
   const apply = (state: GameState, ...actions: Action[]) => actions.reduce((st, a) => sim.applyAction(st, a), state);
 
-  it("is a usual day's costs against income, and the days of cash that leaves", () => {
+  /** The daily costs by heading, leaving out the headings at £0. */
+  const headings = (state: GameState) =>
+    Object.fromEntries(sim.runway(state).costs.filter((h) => h.amount !== 0).map((h) => [h.id, h.amount]));
+  /** The state with these incomes recorded on its last days, the latest last. */
+  const withIncomes = (state: GameState, incomes: number[]): GameState => ({
+    ...state,
+    spendByDay: state.spendByDay.map((d) => {
+      const i = incomes.length - 1 - (state.day - d.day);
+      return i >= 0 && i < incomes.length ? { ...d, income: incomes[i]! } : d;
+    }),
+  });
+
+  it("is today's costs against income, and the days of cash that leaves", () => {
     // £20 a day on IaaS and nothing coming in: £1,000 lasts 50 days.
-    expect(sim.runway(start())).toEqual({ dailyIncome: 0, dailyCosts: 20, dailyNet: -20, days: 50 });
+    expect(sim.runway(start())).toMatchObject({ dailyIncome: 0, dailyCosts: 20, dailyNet: -20, days: 50, oneOffsThisWeek: 0 });
+    expect(headings(start())).toEqual({ hosting: 20 });
     const staffed = apply(start(), { type: "hire", pool: "developers", count: 2 }, { type: "hire", pool: "ops" });
     const runway = sim.runway(staffed);
     expect(runway).toMatchObject({ dailyCosts: 20 + 14 + 3, dailyNet: -37, days: 27 });
-    // The same as the day actually played costs.
-    expect(sim.advance(staffed).state.cash - staffed.cash).toBe(runway.dailyNet);
+    expect(headings(staffed)).toEqual({ hosting: 20, staff: 17 });
+    // The headings add up to the costs, and a day played costs the same.
+    expect(runway.costs.reduce((sum, h) => sum + h.amount, 0)).toBe(runway.dailyCosts);
+    expect(sim.advance(staffed).state.cash - staffed.cash).toBe(-runway.dailyCosts);
   });
 
-  it("counts loan repayments, and is null days when not losing money", () => {
+  it("lists every heading in order", () => {
+    expect(sim.runway(start()).costs.map((h) => h.label)).toEqual([
+      "Staff pay",
+      "Executive pay",
+      "Staff schemes",
+      "Hosting, rent and power",
+      "Add-ons and platform fees",
+      "Campaigns",
+      "Loan repayments",
+    ]);
+  });
+
+  it("counts loan repayments", () => {
     const rich = createSim({ ...config, startingCash: 100_000 });
     const borrowed = rich.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, takeLoan: true });
     expect(rich.runway(borrowed)).toMatchObject({ dailyCosts: 20 + 110, dailyNet: -130 });
-    const paying = { ...start(), users: 10_000, paidUsers: 10_000 };
-    expect(sim.runway(paying).dailyIncome).toBeGreaterThan(20);
-    expect(sim.runway(paying).days).toBeNull();
+    expect(rich.runway(borrowed).costs.find((h) => h.id === "loan")!.amount).toBe(110);
+  });
+
+  it("counts executive pay, but none during the board's pay holiday", () => {
+    const shortlisted = start();
+    const c = shortlisted.csuite.shortlists.cto[0]!;
+    const hired = (n: number): GameState => ({
+      ...shortlisted,
+      csuite: {
+        ...shortlisted.csuite,
+        hired: (["cto", "cfo", "legalCounsel"] as const)
+          .slice(0, n)
+          .map((role) => ({ role, name: c.name, strength: c.strength, salary: 50, equity: 0, shares: 0, day: 1 })),
+      },
+    });
+    // Appointing executives puts the costs up, never down.
+    expect([0, 1, 2, 3].map((n) => sim.runway(hired(n)).dailyCosts)).toEqual([20, 70, 120, 170]);
+    expect(headings(hired(3))).toEqual({ hosting: 20, executives: 150 });
+    const holiday = { ...hired(3), csuite: { ...hired(3).csuite, payHolidaySince: 1 } };
+    expect(sim.runway(holiday)).toMatchObject({ dailyCosts: 20, payHoliday: true });
+    expect(sim.advance(hired(3)).state.cash - hired(3).cash).toBe(-170);
+  });
+
+  it("counts staff schemes and campaigns", () => {
+    const staffed = apply(start(), { type: "hire", pool: "developers", count: 2 });
+    const schemes = { ...staffed, staffSchemes: { ...staffed.staffSchemes, pension: 3, health: 3 } };
+    expect(headings(schemes).schemes).toBeGreaterThan(0);
+    expect(sim.advance(schemes).state.cash - schemes.cash).toBe(-sim.runway(schemes).dailyCosts);
+    const campaign = {
+      ...{ id: 1, customerType: "casual" as const, budget: 700, days: 7, startDay: 2, endDay: 8, stopped: false },
+      ...{ holiday: null, grade: "mid" as const, spent: 0, earned: 0, users: 0, marketAdded: 0 },
+    };
+    const marketing = { ...staffed, campaigns: [campaign] };
+    expect(headings(marketing)).toMatchObject({ campaigns: 100 });
+    expect(sim.advance(marketing).state.spendByDay.at(-1)!.campaigns).toBe(100);
+    // Once it has run its days, it costs nothing.
+    expect(headings({ ...marketing, day: 8 }).campaigns).toBeUndefined();
+  });
+
+  it("uses income averaged over the last 7 days, and is null days only when that covers the costs", () => {
+    const week = sim.advance(start(), 8).state;
+    const cash = week.cash;
+    expect(sim.runway(week).dailyCosts).toBe(20);
+    // £70 over the week is £10 a day: losing £10 a day.
+    expect(sim.runway(withIncomes(week, [0, 0, 0, 0, 0, 0, 70]))).toMatchObject({
+      dailyIncome: 10,
+      dailyNet: -10,
+      days: Math.floor(cash / 10),
+    });
+    // A payday of £140 a week covers £20 a day exactly: not losing money, whichever day it fell on.
+    for (const incomes of [[140, 0, 0, 0, 0, 0, 0], [0, 0, 0, 140, 0, 0, 0]]) {
+      expect(sim.runway(withIncomes(week, incomes))).toMatchObject({ dailyIncome: 20, dailyNet: 0, days: null });
+    }
+    // Income from before the last 7 days doesn't count.
+    expect(sim.runway(withIncomes(week, [1_000, 0, 0, 0, 0, 0, 0, 0]))).toMatchObject({ dailyIncome: 0, days: Math.floor(cash / 20) });
+    // Never "not losing money" while the net is negative.
+    for (let income = 0; income <= 200; income += 7) {
+      const r = sim.runway(withIncomes(week, Array(7).fill(income)));
+      expect(r.days === null, `£${income} a day`).toBe(r.dailyNet >= 0);
+    }
+  });
+
+  it("averages over the days played so far in the first week", () => {
+    const day2 = withIncomes(sim.advance(start(), 1).state, [0, 30]);
+    expect(day2.day).toBe(2);
+    expect(sim.runway(day2).dailyIncome).toBe(15);
+  });
+
+  it("keeps one-offs apart, as this week's", () => {
+    // Severance of 10 days' pay.
+    const s = createSim({ ...config, severance: { days: 10 } });
+    const begin = s.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 });
+    const staffed = s.advance(s.applyAction(begin, { type: "hire", pool: "developers", count: 2 }), 10).state;
+    const before = s.runway(staffed);
+    const letGo = s.applyAction(staffed, { type: "letGo", pool: "developers", count: 1 });
+    const severance = staffed.cash - letGo.cash;
+    expect(severance).toBeGreaterThan(0);
+    // The severance is a one-off: the costs fall by the pay, and the severance shows apart.
+    expect(s.runway(letGo)).toMatchObject({ dailyCosts: before.dailyCosts - 7, oneOffsThisWeek: severance });
+    expect(letGo.spendByDay.at(-1)!.oneOffs).toBe(severance);
+    // Still this week's six days on, gone after seven.
+    expect(s.runway(s.advance(letGo, 6).state).oneOffsThisWeek).toBe(severance);
+    expect(s.runway(s.advance(letGo, 7).state).oneOffsThisWeek).toBe(0);
   });
 });
 
@@ -2875,6 +2982,9 @@ describe("bank loan", () => {
         paidUsers: 0,
         satisfaction: 100,
         hoursDown: 0,
+        // No one-offs, and the daily costs it ended on: £20 of IaaS and £110 of loan repayment.
+        oneOffs: 0,
+        costs: 130,
       },
     ]);
     expect(state.income).toBe(0);
@@ -3420,6 +3530,9 @@ describe("game end and summary", () => {
       paidUsers: 0,
       satisfaction: 100,
       hoursDown: 0,
+      // The upfront bill is a one-off, apart from the £20 a day of daily costs.
+      oneOffs: 100,
+      costs: 20,
       cash: 99_900,
     });
     expect(days.at(-1)!.cash).toBe(cash);

@@ -49,6 +49,9 @@ const borrowedIn = (entries: LogEntry[]) =>
  */
 const raisedIn = (entries: LogEntry[]) =>
   entries.reduce((sum, e) => sum + ((e.kind === "funding" || e.kind === "rescue") && !e.category ? e.cashDelta : 0), 0);
+/** The one-off outgoings in some entries: those marked so, and with `between` (charged between days) every charge. */
+const oneOffsIn = (entries: LogEntry[], between = false) =>
+  entries.reduce((sum, e) => sum + (e.cashDelta < 0 && (e.oneOff || (between && e.category)) ? -e.cashDelta : 0), 0);
 /** The interest in some entries' loan repayments. */
 const interestOf = (entries: LogEntry[]) => entries.reduce((sum, e) => sum + (e.interest ?? 0), 0);
 
@@ -117,6 +120,8 @@ export function createFinance(config: GameConfig) {
           borrowed: borrowedIn(entries),
           raised: raisedIn(entries),
           interest: interestOf(entries),
+          oneOffs: oneOffsIn(entries),
+          costs: 0,
           ...customersAt(state),
         },
       ],
@@ -142,8 +147,8 @@ export function createFinance(config: GameConfig) {
   }
 
   /**
-   * Charges (or refunds) made between days, such as buying a server, and money borrowed or raised then: applied to cash and
-   * spend at once, and counted in the day just played, so the cost and cash charts still add up. Never ends the game:
+   * Charges (or refunds) made between days, such as buying a server, all of them one-offs, and money borrowed or raised
+   * then: applied to cash and spend at once, and counted in the day just played, so the cost and cash charts still add up. Never ends the game:
    * an action that would leave cash below zero is refused before it gets here.
    */
   function chargeNow(state: GameState, entries: LogEntry[]): GameState {
@@ -154,6 +159,7 @@ export function createFinance(config: GameConfig) {
     const borrowed = borrowedIn(entries);
     const raised = raisedIn(entries);
     const interest = interestOf(entries);
+    const oneOffs = oneOffsIn(entries, true);
     const last = state.spendByDay.at(-1);
     const spendByDay =
       last?.day === state.day
@@ -165,9 +171,10 @@ export function createFinance(config: GameConfig) {
               borrowed: last.borrowed + borrowed,
               raised: last.raised + raised,
               interest: last.interest + interest,
+              oneOffs: last.oneOffs + oneOffs,
             },
           ]
-        : [...state.spendByDay, { day: state.day, ...daySpend, income: 0, feeIncome: 0, transactionIncome: 0, borrowed, raised, interest, ...customersAt(state) }];
+        : [...state.spendByDay, { day: state.day, ...daySpend, income: 0, feeIncome: 0, transactionIncome: 0, borrowed, raised, interest, oneOffs, costs: 0, ...customersAt(state) }];
     const cash = state.cash + entries.reduce((sum, e) => sum + e.cashDelta, 0);
     return { ...state, cash, spend, spendByDay, interestPaid: state.interestPaid + interest };
   }

@@ -422,9 +422,8 @@ export interface CompanyView {
    */
   loanQuote: LoanQuote | null;
   /**
-   * What a usual day does to cash at today's figures: income, running costs (staff, infrastructure, add-ons, a
-   * migration's second bill and loan repayments) and the difference, with the days of cash left at that rate, or null
-   * when the company isn't losing money.
+   * The daily costs (every daily outgoing, by heading) against income averaged over the last 7 days, the difference,
+   * the days of cash left at that rate (null when that income covers the costs), and this week's one-offs, kept apart.
    */
   runway: RunwayView;
   /**

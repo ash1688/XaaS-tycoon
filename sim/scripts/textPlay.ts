@@ -132,31 +132,14 @@ function tierUse(sim: Sim, state: GameState): { tier: string | null; use: number
   return { tier: null, use: capacity ? Math.round((100 * state.load) / capacity) : null };
 }
 
-/**
- * What the company spends a day at today's numbers: staff, the model's bill, add-ons, the loan repayment and, on SaaS,
- * the provider's fee for the paid API's calls.
- */
-export function dailyCosts(sim: Sim, state: GameState): number {
-  const perMonth = sim.config.billing.daysPerMonth;
-  const loan = sim.loan(state);
-  const repayment = loan && loan.remaining > 0 ? loan.dailyRepayment : 0;
-  const apiFee = sim.api(state)?.dailyFee ?? 0;
-  const paymentsFee = sim.payments(state)?.usualDaySaasFee ?? 0;
-  return (
-    sim.dailyStaffCost(state) + (sim.monthlyInfrastructureCost(state) + sim.monthlyAddonCost(state)) / perMonth + repayment + apiFee + paymentsFee
-  );
-}
+/** Every daily outgoing at today's numbers: the sim's one costs figure (see RunwayView). */
+export const dailyCosts = (sim: Sim, state: GameState): number => sim.runway(state).dailyCosts;
 
-/** What comes in a day at today's numbers: paying users, and the paid API's calls the APIU can serve. */
-export function dailyIncome(sim: Sim, state: GameState): number {
-  return sim.dailyIncome(state) + (sim.api(state)?.dailyIncome ?? 0);
-}
+/** Income averaged over the last 7 days played. */
+export const dailyIncome = (sim: Sim, state: GameState): number => sim.runway(state).dailyIncome;
 
-/** Days of cash left at today's income and costs, or null while the company isn't losing money. */
-export function runway(sim: Sim, state: GameState): number | null {
-  const burn = dailyCosts(sim, state) - dailyIncome(sim, state);
-  return burn > 0 ? Math.floor(Math.max(0, state.cash) / burn) : null;
-}
+/** Days of cash left at today's costs against the last 7 days' income, or null while that income covers them. */
+export const runway = (sim: Sim, state: GameState): number | null => sim.runway(state).days;
 
 export function logRow(sim: Sim, state: GameState, who: Player, type: string, params: Record<string, unknown>, error: string | null = null): LogRow {
   const { tier, use } = tierUse(sim, state);
@@ -369,8 +352,10 @@ export function renderStatus(sim: Sim, state: GameState): string {
   );
   lines.push(phaseLine(sim, state));
   lines.push(
-    `cash ${money(state.cash)} | income ${money(dailyIncome(sim, state))}/day | costs ${money(dailyCosts(sim, state))}/day | runway ${lasts}`,
+    `cash ${money(state.cash)} | income ${money(dailyIncome(sim, state))}/day (last 7 days) | costs ${money(dailyCosts(sim, state))}/day | runway ${lasts}`,
   );
+  const { oneOffsThisWeek } = sim.runway(state);
+  if (oneOffsThisWeek > 0) lines.push(`one-offs this week ${money(oneOffsThisWeek)} (not in costs: see \`costs\`)`);
   const priceOpen = sim.phase(state).open.price;
   lines.push(`${renderPrice(sim, state)} | ${!priceOpen ? "set from Launch" : lock > 0 ? `locked ${lock} more days` : "can change"}`);
   const payments = renderPayments(sim, state);
@@ -604,6 +589,24 @@ function csuiteLines(sim: Sim, state: GameState): string[] {
       }
     }
   }
+  return lines;
+}
+
+/** The costs line broken down by heading, then the one-offs kept apart from it. */
+function costsLines(sim: Sim, state: GameState): string[] {
+  const r = sim.runway(state);
+  const lines = [`== Daily costs: ${money(r.dailyCosts)} a day`];
+  for (const h of r.costs) {
+    const holiday = h.id === "executives" && r.payHoliday ? " (the board's pay holiday: none while it lasts)" : "";
+    lines.push(`  ${h.label}: ${money(h.amount)}${holiday}`);
+  }
+  lines.push(`Income averaged over the last 7 days: ${money(r.dailyIncome)} a day.`);
+  lines.push(
+    r.days === null
+      ? `Not losing money: ${money(r.dailyNet)} a day to spare.`
+      : `Losing ${money(-r.dailyNet)} a day: cash lasts about ${r.days} day${r.days === 1 ? "" : "s"}.`,
+  );
+  lines.push(`One-offs this week (kit bought, severance, fees, events; not in daily costs): ${money(r.oneOffsThisWeek)}.`);
   return lines;
 }
 
@@ -1314,6 +1317,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
   }
   const loan = sim.loan(state);
   if (loan?.remaining) lines.push(`  repayloan   (pay off the loan now: ${money(loan.payoff)}, saving ${money(loan.interestSaved)} interest)`);
+  lines.push(`  costs   (the daily costs by heading, income over the last 7 days, and this week's one-offs; changes nothing)`);
   lines.push(`  calendar   (the holidays to come, their dates and what each does to your product)`);
   lines.push(`  payhistory   (every pay review settled: inflation, how it ended, the rise and schemes; changes nothing)`);
   lines.push(`  drift   (each year's end in a long game: running prices' rise and new kit's units; changes nothing)`);
@@ -1348,6 +1352,7 @@ export type Command =
   | { kind: "pay" }
   | { kind: "payHistory" }
   | { kind: "drift" }
+  | { kind: "costs" }
   | { kind: "csuite" }
   | { kind: "payOdds"; rise: number; schemes: Partial<SchemeLevels> }
   | { kind: "next"; days: number }
@@ -1515,6 +1520,8 @@ export function parseCommand(text: string): Command {
       return { kind: "payHistory" };
     case "drift":
       return { kind: "drift" };
+    case "costs":
+      return { kind: "costs" };
     case "csuite":
       return { kind: "csuite" };
     case "appoint": {
@@ -1671,6 +1678,7 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
   if (command.kind === "pay") return { state, rows: [], lines: payLines(sim, state) };
   if (command.kind === "payHistory") return { state, rows: [], lines: payHistoryLines(sim, state) };
   if (command.kind === "drift") return { state, rows: [], lines: driftLines(sim, state) };
+  if (command.kind === "costs") return { state, rows: [], lines: costsLines(sim, state) };
   if (command.kind === "csuite") return { state, rows: [], lines: csuiteLines(sim, state) };
   if (command.kind === "payOdds") return { state, rows: [], lines: payOddsLines(sim.payOfferPreview(state, command.rise, command.schemes)) };
   if (command.kind === "end") {
@@ -1868,7 +1876,7 @@ export function runScript(sim: Sim, state: GameState, script: string, who: Playe
       const command = parseCommand(text);
       // Once the game is over, only what changes nothing still works: the valuation, who owns the company, the IPO, the
       // market.
-      if (current.status !== "playing" && !["valuation", "funding", "rescue", "ipo", "market"].includes(command.kind)) {
+      if (current.status !== "playing" && !["valuation", "funding", "rescue", "ipo", "market", "costs"].includes(command.kind)) {
         skipped = "the game is over";
         lines.push(`> ${text}`, `not run: ${skipped}`);
         continue;

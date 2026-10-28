@@ -234,7 +234,7 @@ export function createEvents(config: GameConfig) {
   function costEntries(today: EventToday[]): LogEntry[] {
     return today.flatMap(({ event, outcome }): LogEntry[] =>
       outcome.cost
-        ? [{ text: `${event.name}: ${outcome.cost.text}`, cashDelta: -outcome.cost.amount, category: "infrastructure" }]
+        ? [{ text: `${event.name}: ${outcome.cost.text}`, cashDelta: -outcome.cost.amount, category: "infrastructure", oneOff: true }]
         : [],
     );
   }

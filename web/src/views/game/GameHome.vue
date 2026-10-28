@@ -4,6 +4,7 @@ import type { GameDate, HolidayView } from "@xaas/sim";
 import { formatCash, formatCount, formatPrice, formatUptime } from "../../api";
 import { dayOf, days, devDays, useGame } from "../../game";
 import { formatShare } from "../../shares";
+import CostsFigure from "../../components/CostsFigure.vue";
 import OverviewCard from "../../components/OverviewCard.vue";
 import SummaryPanel from "../../components/SummaryPanel.vue";
 import CapacityPanel from "../../panels/CapacityPanel.vue";
@@ -419,8 +420,9 @@ const alerts = computed(() => {
             <strong :class="lastDayTotal < 0 ? 'neg' : 'pos'">{{ formatCash(lastDayTotal) }}</strong> on day
             {{ game.lastDay.day }}.
           </template>
-          Infrastructure {{ formatCash(game.company.monthlyInfrastructureCost) }} a month, staff
-          {{ formatCash(game.company.dailyStaffCost) }} a day.
+          Costs <CostsFigure /> a day<template v-if="game.company.runway.oneOffsThisWeek > 0"
+            >, and <span data-testid="home-one-offs">{{ formatCash(game.company.runway.oneOffsThisWeek) }} of one-offs this week</span></template
+          >.
         </p>
         <p v-if="!game.over" :class="['runway', { 'warn-text': game.lowCash }]" data-testid="home-runway">
           <template v-if="game.company.runway.days === null">
@@ -446,8 +448,8 @@ const alerts = computed(() => {
         </p>
         <template #detail>
           <p v-if="!game.over" data-testid="runway-detail">
-            A usual day brings in {{ formatCash(game.company.runway.dailyIncome) }} and costs
-            {{ formatCash(game.company.runway.dailyCosts) }}<template v-if="game.company.runway.days === null">, so
+            Over the last 7 days you've brought in {{ formatCash(game.company.runway.dailyIncome) }} a day, and a day
+            costs {{ formatCash(game.company.runway.dailyCosts) }}<template v-if="game.company.runway.days === null">, so
               cash is growing.</template
             ><template v-else>: at that rate your {{ formatCash(game.company.cash) }} lasts about
               {{ days(game.company.runway.days) }}. {{ game.company.rescue ? "Below £0 again is liquidation." : "Below £0 brings a vulture VC's rescue, for most of the company." }}</template

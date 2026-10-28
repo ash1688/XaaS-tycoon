@@ -121,6 +121,9 @@ export const campaignsUnlocked = (state: Pick<GameState, "phase">) => phaseReach
 
 /** Whether a campaign runs on a day. */
 const runsOn = (c: Campaign, day: number) => day >= c.startDay && day <= c.endDay;
+/** What a campaign spends on a day it runs: its budget spread over its days, the last day taking what's left. */
+const spendOn = (c: Campaign, day: number) =>
+  day === c.startDay + c.days - 1 ? c.budget - c.spent : Math.min(c.budget - c.spent, Math.round(c.budget / c.days));
 
 /** Campaigns still to run or running after the day just played: what counts against how many can run at once. */
 const active = (state: Pick<GameState, "campaigns" | "day">) => state.campaigns.filter((c) => c.endDay > state.day);
@@ -302,7 +305,7 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
     const campaigns = state.campaigns.map((c) => {
       if (!runsOn(c, day)) return c;
       const lastDay = day === c.startDay + c.days - 1;
-      const spend = lastDay ? c.budget - c.spent : Math.min(c.budget - c.spent, Math.round(c.budget / c.days));
+      const spend = spendOn(c, day);
       const perPound =
         (full * overlap(sameType(c.customerType)) * (c.holiday ? settings.holidayBonus : 1) * effectiveness(state, c)) /
         settings.costPerUser[c.customerType];
@@ -349,6 +352,10 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
       gradeName: gradeName(c.grade),
     };
   }
+
+  /** What the campaigns running on a day will spend on it, for the daily costs. */
+  const dailySpend = (state: GameState, day: number) =>
+    state.campaigns.reduce((sum, c) => sum + (runsOn(c, day) ? spendOn(c, day) : 0), 0);
 
   function campaignsView(state: GameState): CampaignsView {
     const why = whyNot(state);
@@ -400,7 +407,7 @@ export function createCampaigns(config: GameConfig, calendar: Calendar) {
     };
   }
 
-  return { startCampaign, stopCampaign, campaignsDay, campaignsView, marketersIdle, checkBusyMarketers, release };
+  return { startCampaign, stopCampaign, campaignsDay, dailySpend, campaignsView, marketersIdle, checkBusyMarketers, release };
 }
 
 export type Campaigns = ReturnType<typeof createCampaigns>;
