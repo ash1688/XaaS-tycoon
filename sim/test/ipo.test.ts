@@ -205,6 +205,23 @@ describe("the readiness checklist", () => {
     expect(state.spendByDay.at(-1)!.costs).toBe(sim.runway(state).dailyCosts);
   });
 
+  it("holds predictable costs back 14 days after the last C-suite hire, and says so (#292)", () => {
+    const state = ready();
+    expect(met(sim, state).costs).toBe(true);
+    // An executive hired today: their pay starts tomorrow, so costs haven't settled at the new level.
+    const hired = { ...state, csuite: { ...state.csuite, hired: state.csuite.hired.map((e, i) => (i === 0 ? { ...e, day: state.day } : e)) } };
+    const ipo = sim.ipo(hired);
+    const costs = ipo.conditions.find((c) => c.id === "costs")!;
+    expect(costs.met).toBe(false);
+    expect(costs.needed).toMatch(/holding 14 days at their new level after your last C-suite hire/);
+    expect(costs.now).toMatch(new RegExp(`your last C-suite hire was on day ${state.day}, so costs must hold at the new level until day ${state.day + 14} before you can apply`));
+    expect(ipo.refusal).toMatch(/predictable costs/);
+    expect(refusal(() => sim.applyAction(hired, { type: "applyForIpo" }))).toBe("ipo_not_ready");
+    // 14 days on, it's met again.
+    const later = { ...hired, csuite: { ...hired.csuite, hired: hired.csuite.hired.map((e, i) => (i === 0 ? { ...e, day: state.day - 14 } : e)) } };
+    expect(met(sim, later).costs).toBe(true);
+  });
+
   it("audits security: on IaaS the OS is yours to patch, on SaaS the provider's", () => {
     const iaas = ready(sim, "iaas");
     const ops = iaas.staff.ops;
@@ -363,6 +380,18 @@ describe("the float and the opening bell", () => {
     expect(r.closePrice).toBeGreaterThanOrEqual(r.offerPrice * quiet.ipo.lowestClose - 0.01);
     expect(r.reasons.some((x) => /small float/.test(x))).toBe(true);
     expect(ring(state, 0.2)).toEqual(ring(state, 0.2));
+  });
+
+  it("freezes what it's scored on at approval: cutting costs or shedding users before the bell changes nothing (#292)", () => {
+    const state = approved();
+    const offer = s.ipo(state).offer!;
+    expect(state.ipo.scored).toMatchObject({ valuation: offer.valuation, offerPrice: offer.offerPrice });
+    // Between approval and the bell: costs cut and users gone. The offer and the first day are as they were.
+    const changed: GameState = { ...lastDays(state, RECORD, { staff: 0, satisfaction: 40 }), users: 1_010, paidUsers: 505 };
+    expect(s.ipo(changed).offer).toMatchObject({ valuation: offer.valuation, offerPrice: offer.offerPrice });
+    const r = ring(changed, 0.25).ipo.result!;
+    const same = ring(state, 0.25).ipo.result!;
+    expect(r).toMatchObject({ valuation: same.valuation, offerPrice: same.offerPrice, comfort: same.comfort, prices: same.prices, reasons: same.reasons });
   });
 
   it("swings further on a small float than a large one, and rises more for a comfortably ready company", () => {

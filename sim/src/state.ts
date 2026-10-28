@@ -37,7 +37,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 66;
+export const GAME_STATE_VERSION = 67;
 
 /**
  * The four phases a game's jobs open in, in order, each opened by a milestone: Build from day 1, Launch when Launch is
@@ -734,6 +734,20 @@ export interface IpoState {
   /** After a cold market, the first day the company can apply again. 0 before any. */
   retryDay: number;
   result: IpoResult | null;
+  /** What the IPO scored at approval, frozen for the float and the first day (#292); null until approved. */
+  scored: IpoScored | null;
+}
+
+/** The IPO's scored figures, taken as it's approved: what the offer and the first day of trading use (#292). */
+export interface IpoScored {
+  /** The conditions' and signals' comfort averaged, 0–1. */
+  comfort: number;
+  valuation: number;
+  offerPrice: number;
+  /** Paying-user growth, as the valuation measured it. */
+  growth: number;
+  /** Each graded condition and signal, for the first day's reasons. */
+  graded: { label: string; now: string; comfort: number }[];
 }
 
 /**
