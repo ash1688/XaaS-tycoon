@@ -475,6 +475,12 @@ const alerts = computed(() => {
               {{ game.company.rescue ? "it's liquidation." : "a vulture VC's rescue, for most of the company." }}</template
             >
           </p>
+          <p v-if="!game.over && game.company.runway.startingSoon > 0" data-testid="runway-starting-soon">
+            Starting soon: staff you've hired add {{ formatCash(game.company.runway.startingSoon) }} a day once they
+            start, not in the costs yet<template v-if="game.company.runway.daysOnceStarted !== null">. Then your cash
+              lasts about {{ days(game.company.runway.daysOnceStarted) }}</template
+            >.
+          </p>
           <SpendPanel />
           <p class="modal-link"><RouterLink :to="page('finance')">Open Finance</RouterLink></p>
         </template>

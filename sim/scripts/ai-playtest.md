@@ -48,7 +48,9 @@ npm run -s play -- summary <game>
 - Add `agency` before the grade for **agency staff** (`hire support agency 2`, `letgo support agency 2`): they start
   the next day, cost 1.25× and do half the work of permanent staff of the same grade, and go with no severance. They're
   listed apart from permanent staff. Letting go **permanent staff** pays their severance at once (shown per grade under
-  staff, and on the `letgo` line); it's refused if you haven't the cash.
+  staff, and on the `letgo` line); it's refused if you haven't the cash. A hire still to start isn't paid yet: it's
+  left out of `costs` and runway, and the status's `starting soon:` line shows what it will add a day. `cancelhire <team>
+  [agency] [grade] [n]` cancels hires still to start, for nothing.
 - **Retraining**: `move <to> [from] [grade]` (`move ops developers junior`) moves one permanent member of staff into
   another team. They leave their old team at once and join the new one after their grade's lead time, keeping their
   grade, and are paid the new team's rate meanwhile (shown under staff as "retraining"). No severance and no

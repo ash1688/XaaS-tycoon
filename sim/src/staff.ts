@@ -238,7 +238,12 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
     }
     const have = (isAgency ? state.agency : state.staff)[pool][grade];
     const name = `${isAgency ? "agency " : ""}${config.staffGrades[grade].name.toLowerCase()} ${poolName(pool)}`;
-    if (have < 1) throw new SimError("no_staff", `You have no ${name} to let go.`);
+    // Ones hired but not started yet are cancelled, not let go (#289): say so.
+    const waiting = state.hiring
+      .filter((h) => h.pool === pool && h.grade === grade && h.agency === isAgency && !h.retraining)
+      .reduce((sum, h) => sum + h.count, 0);
+    const cancel = waiting > 0 ? ` You have ${waiting} still to start: cancel the hire instead, which costs nothing.` : "";
+    if (have < 1) throw new SimError("no_staff", `You have no ${name} to let go.${cancel}`);
     if (have < count) throw new SimError("no_staff", `You only have ${have} ${name} to let go.`);
     const gone = adjusted(state, pool, grade, isAgency, -count);
     const severance = isAgency ? 0 : count * severanceFor(config, pool, grade, state.payMultiplier);

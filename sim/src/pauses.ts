@@ -67,6 +67,9 @@ export interface PauseViews {
   opsShortfall(state: GameState): OpsShortfallView | null;
 }
 
+/** A wave of new users stops time only if it brings at least this share of the users there were: 1%. */
+const WAVE_PAUSE_SHARE = 0.01;
+
 export function createPauses(config: GameConfig, views: PauseViews) {
   /** % of capacity in use on the tier that runs out first, or null with no limit (SaaS). */
   function capacityUse(state: GameState): number | null {
@@ -104,10 +107,12 @@ export function createPauses(config: GameConfig, views: PauseViews) {
     }
 
     // An event that hurt, found the company short of ops or brought a wave of users to carry, on its first day only.
-    // One with nothing to do is just shown.
+    // One with nothing to do is just shown, as is a wave too small to matter: a nearly full market's last few users
+    // (#289), under WAVE_PAUSE_SHARE of the users there were.
     const yesterday = new Set(views.events(before).map((e) => e.id));
     for (const e of views.events(after)) {
-      if ((e.hit || e.shortOfOps || e.newUsers > 0) && !yesterday.has(e.id)) add("event", `event-${e.id}`, e.name);
+      const wave = e.newUsers > 0 && e.newUsers >= WAVE_PAUSE_SHARE * before.users;
+      if ((e.hit || e.shortOfOps || wave) && !yesterday.has(e.id)) add("event", `event-${e.id}`, e.name);
     }
     if (after.outageDays > before.outageDays && !reasons.some((r) => r.kind === "event")) {
       add("event", "outage", "Outage: the service went down");

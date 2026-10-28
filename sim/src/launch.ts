@@ -105,6 +105,22 @@ export function createLaunch(
       if (u.cu.capacity <= 0) list.push("No app server: no users can be served");
       if (u.dbu.capacity <= 0) list.push("No database: no users can be served");
     } else if (!setUp(state)) list.push("No capacity: no users can be served");
+    // The grant's uptime clock starts when the ramp ends: kit too small for the launch then breaks it before more can
+    // arrive (#289). On a model whose servers the student sizes (not a managed platform, which autoscales).
+    const kit = config.models[state.model].servers;
+    const grant = state.funding.grant;
+    if (kit && !kit.managed && grant?.status === "accepted" && list.length === 0) {
+      const supported = Math.floor(servers.usersSupported(servers.capacityOn(state, state.day + 1 + rampDays, 1), state));
+      if (supported < launchUsers(state)) {
+        const ready = kit.readyDays ?? 0;
+        const wait = ready <= 0 ? "arrives at once" : `takes ${ready} day${ready === 1 ? "" : "s"} to arrive`;
+        list.push(
+          `Capacity looks short for your launch: your servers serve about ${count.format(supported)} users. Your grant's uptime ` +
+            `clock starts when the ${rampDays}-day ramp ends, allowing ${count.format(grant.maxHoursDown)} hours down, and new kit ` +
+            `${wait}: add servers before you launch, or risk paying the grant back`,
+        );
+      }
+    }
     const needed = servers.opsNeeded(state);
     const ops = staffOutput(config, state, "ops");
     if (needed > 0 && ops < needed) {
