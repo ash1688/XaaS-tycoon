@@ -365,15 +365,95 @@ describe("model benefits", () => {
     expect(sim.advance(watched).state.downtimeHours - busy.downtimeHours).toBe(Math.ceil(hours / 2));
   });
 
-  it("managed autoscaling sets tomorrow's PaaS instances to the day's demand plus a quarter", () => {
+  describe("PaaS autoscaling (#261)", () => {
     const { instanceUnits } = sim.managed(paasWith(0))!;
-    const busy = paasWith(Math.round((instanceUnits * 3) / defaultConfig.productTypes.ecommerce.demand.cuPerUser));
-    const day = sim.advance(act(busy, { type: "buyBenefit", benefit: "paasAutoscaling" }));
-    const wanted = Math.ceil((day.state.demand.cu * 1.25) / instanceUnits);
-    expect(sim.managed(day.state)!.instances).toBe(wanted);
-    expect(texts(day.log)).toContain(`Managed autoscaling: 1 → ${wanted} app instances for tomorrow.`);
-    // Without it, the count stays where the student set it.
-    expect(sim.managed(sim.advance(busy).state)!.instances).toBe(1);
+    /** A PaaS shop whose users need about `n` instances' CU. */
+    const needing = (n: number) => paasWith(Math.round((instanceUnits * n) / defaultConfig.productTypes.ecommerce.demand.cuPerUser));
+    const autoscaled = (state: GameState, ...actions: Action[]) => act(state, { type: "buyBenefit", benefit: "paasAutoscaling" }, ...actions);
+    const instances = (state: GameState) => sim.managed(state)!.instances;
+    const outages = (log: DayLog[]) => log.flatMap((d) => d.entries.filter((e) => e.kind === "outage"));
+    const bursts = (log: DayLog[]) => log.flatMap((d) => d.entries.filter((e) => e.text.startsWith("Autoscaling: ")));
+
+    it("keeps a baseline of 1.5× yesterday's demand, never below the instances set by hand", () => {
+      // Set by hand to 8, more than the baseline of about 1.5 × 3: kept as the minimum overnight, not reset.
+      const high = sim.advance(autoscaled(needing(3), { type: "setInstances", count: 8 }));
+      expect(instances(high.state)).toBe(8);
+      expect(sim.autoscale(high.state)).toMatchObject({ instances: 8, min: 8 });
+      // Set to 2, under it: the platform raises it to the baseline for tomorrow.
+      const low = sim.advance(act(high.state, { type: "setInstances", count: 2 }));
+      const wanted = Math.ceil((low.state.demand.cu * 1.5) / instanceUnits);
+      expect(wanted).toBeGreaterThan(2);
+      expect(instances(low.state)).toBe(wanted);
+      expect(texts(low.log)).toContain(`Managed autoscaling: 2 → ${wanted} app instances for tomorrow.`);
+      expect(sim.autoscale(low.state)).toMatchObject({ min: 2 });
+      // Without the benefit, the count stays where the student set it.
+      expect(instances(sim.advance(needing(3)).state)).toBe(1);
+      expect(sim.autoscale(needing(3))).toBeNull();
+    });
+
+    it("adds burst instances for a spike at the premium, up to the maximum; over it is an outage that stops time once", () => {
+      const view = sim.autoscale(autoscaled(needing(0)))!;
+      // An instance's day rate × 2.
+      expect(view.burstDayCost).toBeCloseTo((sim.managed(needing(0))!.instanceMonthlyCost / 30) * 2, 2);
+      // The maximum follows today's instances (3×) until it's set.
+      expect(view).toMatchObject({ instances: 1, min: 1, max: 3, maxSet: false });
+      expect(sim.autoscale(autoscaled(needing(0), { type: "setAutoscaleMax", max: 10 }))).toMatchObject({ max: 10, maxSet: true });
+
+      // 1 instance for about 3 instances' demand, with room for 9 more: bursts cover it, at a price, with no outage.
+      const roomy = sim.advance(autoscaled(needing(3), { type: "setAutoscaleMax", max: 10 }));
+      expect(bursts(roomy.log)).toHaveLength(1);
+      expect(bursts(roomy.log)[0]!.text).toMatch(/^Autoscaling: [23] burst instances for a spike over your 1, at £[\d.]+ each for the day$/);
+      expect(bursts(roomy.log)[0]!.cashDelta).toBeLessThan(0);
+      expect(outages(roomy.log)).toEqual([]);
+
+      // A maximum of 2: one burst instance, the rest is an outage, and time stops the first time.
+      const capped = autoscaled(needing(3), { type: "setAutoscaleMax", max: 2 });
+      const tick = sim.tick(capped);
+      expect(bursts(tick.log)[0]!.text).toMatch(/^Autoscaling: 1 burst instance for a spike/);
+      expect(outages(tick.log)[0]!.text).toMatch(/over your autoscaling maximum of 2 instances/);
+      expect(tick.pauses.map((p) => p.id)).toContain("autoscale-max");
+      expect(tick.state.autoscale?.maxHitDay).toBe(tick.state.day);
+      // Hit again later, it doesn't stop again.
+      const again = sim.tick(act(tick.state, { type: "setInstances", count: 1 }, { type: "setAutoscaleMax", max: 2 }));
+      expect(again.pauses.map((p) => p.id)).not.toContain("autoscale-max");
+    });
+
+    it("refuses a maximum below the minimum or over the platform's most, or without the benefit", () => {
+      const state = autoscaled(needing(0), { type: "setInstances", count: 4 });
+      expect(refusal(() => act(state, { type: "setAutoscaleMax", max: 3 }))).toBe("bad_instances");
+      expect(refusal(() => act(state, { type: "setAutoscaleMax", max: 999 }))).toBe("bad_instances");
+      expect(refusal(() => act(needing(0), { type: "setAutoscaleMax", max: 5 }))).toBe("no_autoscaling");
+      // A minimum set over the maximum lifts the maximum with it.
+      expect(sim.autoscale(act(state, { type: "setAutoscaleMax", max: 6 }, { type: "setInstances", count: 9 }))).toMatchObject({ min: 9, max: 9 });
+    });
+
+    it("can fail for a day, adding no burst instances, and waits for a spike day to do it", () => {
+      const failure = defaultConfig.events.find((e) => e.id === "autoscalerFailure")!;
+      expect(failure.encounter).toMatchObject({ spikeWaitDays: 7 });
+      // Firing on the next day played: no bursts, so the spike goes down.
+      const withFailure = createSim({ ...quiet, events: [failure] });
+      const state = autoscaled(needing(3), { type: "setAutoscaleMax", max: 10 });
+      const failing = withFailure.advance({ ...state, schedule: [...state.schedule, { event: "autoscalerFailure", day: state.day + 1 }] });
+      expect(bursts(failing.log)).toEqual([]);
+      expect(outages(failing.log).length).toBeGreaterThan(0);
+
+      // As an encounter: due on a quiet day it waits; with a traffic spike on, or once the wait is up, it fires.
+      const spike = defaultConfig.events.find((e) => e.id === "trafficSpike")!;
+      const encounterSim = createSim({ ...quiet, events: [failure, { ...spike, encounter: undefined, warning: undefined }] });
+      /** Due: the meter at `meter` against a threshold of 10, with a traffic spike on the next day if `spiky`. */
+      const due = (meter: number, spiky = false) => {
+        const state = autoscaled(needing(1));
+        const schedule = spiky ? [...state.schedule, { event: "trafficSpike", day: state.day + 1 }] : state.schedule;
+        return { ...state, schedule, encounterList: [{ event: "autoscalerFailure", threshold: 10 }], dangerMeter: meter };
+      };
+      const fired = (state: GameState) => encounterSim.advance(state).state.schedule.some((e) => e.event === "autoscalerFailure");
+      expect(fired(due(10))).toBe(false);
+      expect(fired(due(10 + 7 * quiet.encounters.dailyRise))).toBe(true);
+      expect(fired(due(10, true))).toBe(true);
+      // Without managed autoscaling there's no autoscaler to fail.
+      const plain = { ...needing(1), encounterList: [{ event: "autoscalerFailure", threshold: 10 }], dangerMeter: 100 };
+      expect(fired(plain)).toBe(false);
+    });
   });
 
   it("a CDN takes a quarter off PaaS CU demand", () => {

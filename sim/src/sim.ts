@@ -26,7 +26,7 @@ import { createFeatures, type FeatureView } from "./features.ts";
 import { createFinance, noSpend, pounds } from "./finance.ts";
 import { hardwareDay, setPerformance } from "./hardware.ts";
 import { createDrift, type DriftView } from "./drift.ts";
-import { createInfrastructure, type OpsShortfallView, type ProviderView } from "./infrastructure.ts";
+import { createInfrastructure, type AutoscaleView, type OpsShortfallView, type ProviderView } from "./infrastructure.ts";
 import { createInvestors, type InvestorsView } from "./investors.ts";
 import { createIpo, type IpoView } from "./ipo.ts";
 import { createLaunch, type LaunchView } from "./launch.ts";
@@ -86,7 +86,7 @@ export type { CandidateView, CsuiteRoleView, CsuiteView, ExecutiveEffectView, Ex
 export type { DangerRiskView, DangerView } from "./encounters.ts";
 export type { EventView, FeatureGapView } from "./events.ts";
 export type { FeatureStatus, FeatureView } from "./features.ts";
-export type { OpsShortfallView, ProviderView } from "./infrastructure.ts";
+export type { AutoscaleView, OpsShortfallView, ProviderView } from "./infrastructure.ts";
 export type { AngelView, InvestorOffer, InvestorsView, VcApproachView, VcOfferView, VcRoundView, VcView } from "./investors.ts";
 export { seriesApproachDay, twoRoundGame, vcLadder, type VcRung } from "./investors.ts";
 export type { FloatPreview, IpoCondition, IpoConditionId, IpoOffer, IpoStatus, IpoView } from "./ipo.ts";
@@ -415,6 +415,8 @@ export interface Sim {
   powerAndCooling(model: ModelId): number;
   /** On SaaS: capacity is the provider's, so what you pay for it is the per-user bill. Null on any other model. */
   provider(state: GameState): ProviderView | null;
+  /** PaaS autoscaling's instances, minimum and maximum, with managed autoscaling on; null otherwise (#261). */
+  autoscale(state: GameState): AutoscaleView | null;
   /** Tickets the support staff can clear in a day: their output in mids × tickets each. */
   dailyClearance(state: GameState): number;
   /** Tickets today's users would raise in a day before any burst: paid and free users × their rates. */
@@ -663,7 +665,12 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const shares = createShares(config, finance, conversion);
   const summary = createSummary(config, infra, shares);
   const api = createApi(config, features, finance, infra.apiuOn);
-  const encounters = createEncounters(config, servers);
+  // A spike day, which an autoscaler failure waits for (#261): a payday, a holiday that brings load, or an event's.
+  const spikeDay = (state: GameState, day: number) =>
+    calendar.loadMultiplier(state, day) > 1 ||
+    pricing.isPayday(state.productType, day) ||
+    events.eventsToday(state, day).some((t) => !!t.event.load);
+  const encounters = createEncounters(config, servers, spikeDay);
   const ipo = createIpo(config, finance, shares, servers, (s) => runway(s));
   const tiers = createTiers(config, { ipoReady: (s) => ipo.ipoView(s).ready });
   /** The MVP at today's developers. */
@@ -917,8 +924,14 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
         return racks.buyRack(state, action.size);
       case "sellRack":
         return racks.sellRack(state, action.id);
-      case "setInstances":
-        return servers.setInstances(state, action.count);
+      case "setInstances": {
+        // Instances set by hand are autoscaling's minimum, kept until set again (#261). A maximum below it rises to it.
+        const set = servers.setInstances(state, action.count);
+        const max = state.autoscale?.max;
+        return { ...set, autoscale: { ...state.autoscale, min: action.count, ...(max !== undefined ? { max: Math.max(max, action.count) } : {}) } };
+      }
+      case "setAutoscaleMax":
+        return setAutoscaleMax(state, action.max);
       case "setManagedService":
         return servers.setManagedService(state, action.service, action.size);
       case "takeLoan":
@@ -1151,8 +1164,11 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     // Servers cancelled or sold while waiting for a replacement go once it's ready, after today's bills (#260).
     const left = servers.leaveDay(played, day);
     entries.push(...left.entries);
-    // Managed autoscaling sets tomorrow's instances to today's demand.
-    const scaled = autoscaleInstances(left.state);
+    // The first day demand went over the autoscaling maximum, when time stops (#261).
+    const maxHit = served.maxHit && left.state.autoscale?.maxHitDay === undefined;
+    const scaledFrom: GameState = maxHit ? { ...left.state, autoscale: { ...left.state.autoscale, maxHitDay: day } } : left.state;
+    // Managed autoscaling sets tomorrow's instances to the baseline.
+    const scaled = autoscaleInstances(scaledFrom);
     entries.push(...scaled.entries);
     // The danger meter rises with the day's risks, on the model the day was played on.
     const risen: GameState = { ...scaled.state, ...encounters.riseDay(scaled.state, live, served.overloaded) };
@@ -1200,10 +1216,6 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   }
 
   /**
-   * Managed autoscaling (a PaaS model benefit): after the day, the platform sets the app instance count to the day's
-   * CU demand plus its headroom, within the platform's limits, serving from tomorrow.
-   */
-  /**
    * How this game's cancels and sales are checked (#260): against today's load, refused when it'd leave the company
    * short, or on Hard, allowed once confirmed.
    */
@@ -1212,15 +1224,35 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     confirm: DIFFICULTIES[difficulty].confirmRiskyCancels,
   });
 
+  /**
+   * Managed autoscaling (a PaaS model benefit, #261): after the day, the platform sets the app instances to the
+   * baseline, 1.5× the day's CU demand, never below the minimum set by hand nor over the maximum, serving from
+   * tomorrow. Burst instances during the day are in infra.serveLoad.
+   */
   function autoscaleInstances(state: GameState): { state: GameState; entries: LogEntry[] } {
-    const scaling = managedAutoscaling(config, state, state.model);
+    const target = infra.autoscaleBaseline(state);
     const platform = servers.managed(state);
-    if (!scaling || !platform || platform.instanceUnits <= 0) return { state, entries: [] };
-    const wanted = Math.ceil((state.demand.cu * (1 + scaling.headroom)) / platform.instanceUnits);
-    const target = Math.min(platform.maxInstances, Math.max(1, wanted));
-    if (target === platform.instances) return { state, entries: [] };
-    const text = `Managed autoscaling: ${platform.instances} → ${target} app instances for tomorrow.`;
+    if (target === null || !platform || target === platform.instances) return { state, entries: [] };
+    const floor = target === (state.autoscale?.min ?? 1) && target > 1 ? " (your minimum)" : "";
+    const text = `Managed autoscaling: ${platform.instances} → ${target} app instances for tomorrow${floor}.`;
     return { state: servers.setInstances(state, target), entries: [{ text, cashDelta: 0 }] };
+  }
+
+  /**
+   * Sets PaaS autoscaling's maximum (#261): the most instances bursts can reach, from the minimum set by hand up to the
+   * platform's most.
+   */
+  function setAutoscaleMax(state: GameState, max: number): GameState {
+    const platform = servers.managed(state);
+    if (!platform) throw new SimError("not_managed", `${config.models[state.model].name} doesn't autoscale instances for you.`);
+    if (!managedAutoscaling(config, state, state.model)) {
+      throw new SimError("no_autoscaling", "Buy the Managed autoscaling benefit first: then you can set its maximum.");
+    }
+    const min = state.autoscale?.min ?? 1;
+    if (!Number.isInteger(max) || max < min || max > platform.maxInstances) {
+      throw new SimError("bad_instances", `Set a maximum between your minimum of ${min} and the platform's most, ${platform.maxInstances}.`);
+    }
+    return { ...state, autoscale: { ...state.autoscale, max } };
   }
 
   function runway(state: GameState): RunwayView {
@@ -1420,6 +1452,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     racks: (s) => racks.racks(load(s)),
     powerAndCooling: (model) => config.models[model].powerAndCooling,
     provider: (s) => infra.provider(load(s)),
+    autoscale: (s) => infra.autoscaleView(load(s)),
     dailyClearance: (s) => support.dailyClearance(load(s)),
     usualTickets: (s) => support.usualTickets(load(s)),
     moderation: (s) => moderation.moderationView(load(s)),

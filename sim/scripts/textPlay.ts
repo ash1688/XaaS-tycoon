@@ -528,6 +528,14 @@ export function renderStatus(sim: Sim, state: GameState): string {
     lines.push(
       `paas: ${managed.instances}/${managed.maxInstances} instances (${managed.instanceUnits} CU each)${apiInstances} | ${svc("database", managed.database)} | ${svc("cache", managed.cache)} | ${money(managed.monthlyCost)}/month`,
     );
+    // PaaS autoscaling (#261): today's instances, the minimum set by hand and the most bursts reach.
+    const scale = sim.autoscale(state);
+    if (scale) {
+      lines.push(
+        `autoscaling: instances ${scale.instances} (min ${scale.min}, max ${scale.max}${scale.maxSet ? "" : ", following today's instances until you set it"}) | ` +
+          `baseline 1.5× yesterday's demand | burst instances ${money(scale.burstDayCost)} each a day`,
+      );
+    }
   }
   const servers = sim.servers(state).filter(() => state.model !== "paas");
   if (servers.length) {
@@ -1344,7 +1352,10 @@ export function renderCommands(sim: Sim, state: GameState): string {
   }
   const managed = sim.managed(state);
   if (managed) {
-    lines.push(`  instances <1–${managed.maxInstances}>   (${money(managed.instanceMonthlyCost)}/month each)`);
+    lines.push(
+      `  instances <1–${managed.maxInstances}>   (${money(managed.instanceMonthlyCost)}/month each${sim.autoscale(state) ? "; with autoscaling, your minimum" : ""})`,
+    );
+    if (sim.autoscale(state)) lines.push(`  autoscale max <n>   (the most instances bursts can reach; demand over it is an outage)`);
     lines.push(`  managed <${MANAGED_SERVICES.join("|")}> <${SERVER_SIZES.join("|")}|off>   (the cache can be off; the database can't)`);
     lines.push(
       `    database: ${managed.databaseOptions.map((o) => `${o.size} ${o.units} DBU ${money(o.monthlyCost)}/month`).join(", ")}`,
@@ -1621,6 +1632,11 @@ export function parseCommand(text: string): Command {
       if (args[1] !== undefined && args[1] !== "now") throw new SimError("bad_command", `Expected "${verb} <server id>" or "${verb} <server id> now".`);
       const now = args[1] === "now" ? { now: true } : {};
       return one(verb === "sell" ? { type: "sellServer", id, ...now } : { type: "cancelServer", id, ...now });
+    }
+    case "autoscale": {
+      // "autoscale max 30".
+      if (args[0] !== "max") throw new SimError("bad_command", 'Expected "autoscale max <n>".');
+      return one({ type: "setAutoscaleMax", max: number(args[1], "a maximum") });
     }
     case "instances":
       return one({ type: "setInstances", count: number(args[0], "an instance count") });

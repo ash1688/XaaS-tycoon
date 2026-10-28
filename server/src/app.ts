@@ -426,6 +426,7 @@ export async function buildApp(opts: AppOptions) {
       racks: sim.racks(state),
       powerAndCooling: sim.powerAndCooling(state.model),
       provider: sim.provider(state),
+      autoscale: sim.autoscale(state),
       uptime: sim.uptime(state),
       outageDays: state.outageDays,
       monthlyInfrastructureCost: sim.monthlyInfrastructureCost(state),
@@ -861,6 +862,7 @@ export async function buildApp(opts: AppOptions) {
                 "buyRack",
                 "sellRack",
                 "setInstances",
+                "setAutoscaleMax",
                 "setManagedService",
                 "takeLoan",
                 "acceptFunding",
@@ -941,6 +943,9 @@ export async function buildApp(opts: AppOptions) {
             // can be none). The sim checks it against the platform's most.
             // hire, letGo and cancelHire: how many people at once, one if left out. Capped so a typo can't hire thousands.
             count: { type: "integer", minimum: 0, maximum: 999 },
+            // setAutoscaleMax: the most PaaS instances bursts can reach (#261). The sim checks it's within the minimum
+            // and the platform's most.
+            max: { type: "integer", minimum: 1, maximum: 999 },
             // setManagedService: a managed service on PaaS and its size, or null to turn the cache off.
             service: { enum: [...MANAGED_SERVICES] },
             // acceptFunding, declineFunding, counterFunding and autoNegotiateFunding: friends and family or the grant.
@@ -972,6 +977,7 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { enum: ["cancelServer", "sellServer", "sellRack"] } } }, then: { required: ["id"] } },
             { if: { properties: { type: { const: "buyRack" } } }, then: { required: ["size"] } },
             { if: { properties: { type: { const: "setInstances" } } }, then: { required: ["count"] } },
+            { if: { properties: { type: { const: "setAutoscaleMax" } } }, then: { required: ["max"] } },
             { if: { properties: { type: { enum: ["acceptFunding", "declineFunding"] } } }, then: { required: ["funder"] } },
             { if: { properties: { type: { enum: ["counterFunding", "autoNegotiateFunding"] } } }, then: { required: ["funder", "terms"] } },
             { if: { properties: { type: { enum: ["counterInvestor", "autoNegotiateInvestor"] } } }, then: { required: ["terms"] } },

@@ -174,6 +174,7 @@ export function actionJob(action: Action): Job | null {
     case "buyRack":
     case "sellRack":
     case "setInstances":
+    case "setAutoscaleMax":
     case "setManagedService":
     case "setPerformance":
       return "servers";

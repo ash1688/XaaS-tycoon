@@ -993,6 +993,11 @@ export interface EventOutcome {
    * that day, and at least `min`. Capacity faces them from the next day.
    */
   freeUsers?: { share: number; min: number };
+  /**
+   * The platform's autoscaler fails (#261): no burst instances while it's on, so the instances running carry the day
+   * alone. Only hits a company with managed autoscaling on.
+   */
+  autoscalerFails?: boolean;
 }
 
 /** How an event hits one model. */
@@ -1040,6 +1045,12 @@ export interface EncounterOdds {
   follows?: string[];
   /** With `follows`: only within this many days of the last time one of them fired. Left out, any time after. */
   followsWithinDays?: number;
+  /**
+   * Weighted towards spike days (paydays, holidays that bring load, an event's extra load): once the meter reaches its
+   * threshold it waits for one, for up to about this many days' rise of the meter, then fires anyway. Left out, it
+   * fires as soon as the meter reaches it.
+   */
+  spikeWaitDays?: number;
 }
 
 /**
@@ -1249,10 +1260,12 @@ export interface ModelBenefitEffects {
    */
   autoscaling?: { pricePerUnit: number; most: number };
   /**
-   * The platform sets the app instance count each night to the day's CU demand plus `headroom` (0.25 = a quarter
-   * more), within the platform's limits: the student no longer has to.
+   * PaaS autoscaling (#261). Each night the platform sets the app instances to a baseline: the day's CU demand plus
+   * `headroom` (0.5 = 1.5×), and never fewer than the instances the student set by hand, their minimum. During a day,
+   * burst instances cover CU demand over the baseline, each billed at `burstPremium` × an instance's day rate, up to a
+   * maximum the student sets (`maxFactor` × today's instances until they do). Demand over the maximum is an outage.
    */
-  managedAutoscaling?: { headroom: number };
+  managedAutoscaling?: { headroom: number; burstPremium: number; maxFactor: number };
   /** Hours down in any outage are multiplied by this, rounded up (0.5 = half as long). */
   outageHours?: number;
   /** CU demand is multiplied by this (0.75 = a quarter less): a CDN serving content in front of the app. */
@@ -2161,10 +2174,12 @@ export const defaultConfig: GameConfig = {
         tier: 3,
         rpPrice: 50,
         name: "Managed autoscaling",
-        blurb: "The platform sets your instance count each night to the day's demand plus a quarter.",
+        blurb:
+          "The platform keeps your instances at 1.5× yesterday's demand (never below the number you set) and adds burst instances at twice the price for spikes, up to a maximum you set.",
         setupFee: 1_000,
         monthlyFee: 300,
-        effects: { managedAutoscaling: { headroom: 0.25 } },
+        // Placeholders: about twice an instance's price for a burst one, and room for three times the instances.
+        effects: { managedAutoscaling: { headroom: 0.5, burstPremium: 2, maxFactor: 3 } },
       },
       {
         id: "cdn",
@@ -3478,6 +3493,22 @@ export const defaultConfig: GameConfig = {
           priceRise: { percent: 25, addons: true },
           detail:
             "You can't control what the provider charges, add-ons included. Leaving means a migration, and your add-ons stay behind.",
+        },
+      },
+    },
+    {
+      id: "autoscalerFailure",
+      name: "Autoscaler failure",
+      description: "The platform's autoscaler stopped adding instances for a day.",
+      layer: "runtime",
+      // Weighted towards spike days, when it hurts: it waits up to a week's rise of the meter for one. A placeholder.
+      encounter: { chance: 0.3, spikeWaitDays: 7 },
+      days: 1,
+      effects: {
+        paas: {
+          autoscalerFails: true,
+          detail:
+            "The platform runs the autoscaler, and it failed: no burst instances were added today, so the instances you had carried the load alone. The minimum you set by hand is your insurance against this.",
         },
       },
     },

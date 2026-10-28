@@ -387,7 +387,11 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
       add(`${at}.effects.autoscaling.pricePerUnit`, "Infrastructure", T, `${name}: price per unit`, "What each CU or DBU over capacity costs for the day when extra VMs cover it.", range(0, 1_000, 0.5));
       add(`${at}.effects.autoscaling.most`, "Infrastructure", T, `${name}: most extra`, "The most extra VMs can add, as a share of the servers' own units (0.5 = half as much again).", range(0, 10, 0.05));
     }
-    if (e.managedAutoscaling) add(`${at}.effects.managedAutoscaling.headroom`, "Infrastructure", T, `${name}: headroom`, "Each night the instance count is set to the day's CU demand plus this share (0.25 = a quarter more).", range(0, 5, 0.05));
+    if (e.managedAutoscaling) {
+      add(`${at}.effects.managedAutoscaling.headroom`, "Infrastructure", T, `${name}: baseline headroom`, "Each night the instances are set to the day's CU demand plus this share (0.5 = 1.5×), and never below the number set by hand.", range(0, 5, 0.05));
+      add(`${at}.effects.managedAutoscaling.burstPremium`, "Infrastructure", T, `${name}: burst premium`, "Each burst instance added during a day costs this many times an instance's day rate (2 = double).", range(1, 10, 0.1));
+      add(`${at}.effects.managedAutoscaling.maxFactor`, "Infrastructure", T, `${name}: default maximum`, "Until the student sets a maximum, it's this many times today's instances.", range(1, 10, 0.5));
+    }
     if (e.outageHours !== undefined) add(`${at}.effects.outageHours`, "Infrastructure", T, `${name}: outage hours`, "Hours down in any outage are multiplied by this, rounded up (0.5 = half as long).", SHARE);
     if (e.cuDemand !== undefined) add(`${at}.effects.cuDemand`, "Infrastructure", T, `${name}: CU demand`, "CU demand is multiplied by this (0.75 = a quarter less).", SHARE);
     if (e.eventHours) add(`${at}.effects.eventHours.multiplier`, "Infrastructure", T, `${name}: provider outage hours`, "Hours down from the provider's outages are multiplied by this, rounded up (0.5 = half as long).", SHARE);
@@ -769,6 +773,9 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
       }
       add(`${at}.encounter.maxTimes`, "Events", s, "Most times per game", "After firing this many times it no longer goes on the encounter list.", range(0, 20, 1));
       add(`${at}.encounter.fromDay`, "Events", s, "Earliest day", "It can't go on an encounter list rolled before this day.", GAME_DAY);
+      if (event.encounter.spikeWaitDays !== undefined) {
+        add(`${at}.encounter.spikeWaitDays`, "Events", s, "Waits for a spike day", "Once due, it waits for a payday, a busy holiday or a traffic spike, for up to about this many days.", range(0, 60, 1));
+      }
       add(`${at}.warning.days`, "Events", s, "Warning days", "The student gets a warning when it's next and this many well-run days would bring it. 0 for no warning.", range(0, 30, 1));
       add(`${at}.encounter.followsWithinDays`, "Events", s, "Only within days of what it follows", `It can only fire within this many days of the event it follows (${event.encounter.follows?.join(", ")}).`, GAME_DAY);
     }

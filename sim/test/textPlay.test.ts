@@ -476,6 +476,20 @@ describe("the paid API", () => {
     expect(turn.lines.some((l) => /Shop API: [\d,]+ calls dropped/.test(l))).toBe(true);
   });
 
+  it("shows PaaS autoscaling's instances, minimum and maximum, and sets the maximum (#261)", () => {
+    expect(parseCommand("autoscale max 30")).toMatchObject({ action: { type: "setAutoscaleMax", max: 30 } });
+    expect(() => parseCommand("autoscale 30")).toThrow(/autoscale max <n>/);
+    const paas = run(shop("paas"), "instances 15").state;
+    expect(renderStatus(sim, paas)).not.toMatch(/^autoscaling:/m);
+    const scaling = { ...paas, benefits: [...paas.benefits, "paasAutoscaling"] };
+    expect(renderStatus(sim, scaling)).toMatch(/^autoscaling: instances 15 \(min 15, max 20, following today's instances until you set it\) \| baseline 1\.5× yesterday's demand/m);
+    expect(renderCommands(sim, scaling)).toMatch(/autoscale max <n>/);
+    const capped = run(scaling, "autoscale max 18");
+    expect(capped.lines[0]).toBe("setAutoscaleMax: done");
+    expect(renderStatus(sim, capped.state)).toMatch(/^autoscaling: instances 15 \(min 15, max 18\)/m);
+    expect(run(scaling, "autoscale max 10").lines[0]).toMatch(/^setAutoscaleMax refused: Set a maximum between your minimum of 15/);
+  });
+
   it("shows API instances on PaaS and the provider's fee on SaaS", () => {
     const paas = run(shop("paas"), "buyapi").state;
     expect(renderCommands(sim, paas)).toMatch(/apiinstances <0–20>/);

@@ -37,7 +37,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 61;
+export const GAME_STATE_VERSION = 62;
 
 /**
  * The four phases a game's jobs open in, in order, each opened by a milestone: Build from day 1, Launch when Launch is
@@ -1011,6 +1011,12 @@ export interface GameState {
   dangerMeter: number;
   /** The random events that could fire next, lowest threshold first. Kept from the student. */
   encounterList: Encounter[];
+  /**
+   * PaaS autoscaling (#261): `min`, the app instances last set by hand, which the baseline never goes below; `max`, the
+   * most instances bursts can reach, set with `autoscale max N` (left out, maxFactor × today's instances); and
+   * `maxHitDay`, the first day demand went over the maximum, when time stopped. Left out until one is set.
+   */
+  autoscale?: { min?: number; max?: number; maxHitDay?: number };
   /** The risks that made the meter climb faster on the day just played. */
   dangerRisks: DangerRisk[];
   /** Its own seeded RNG, so rolling encounters doesn't change the day-to-day randomness of load and growth. */
@@ -1159,6 +1165,7 @@ export type Action =
    * next day played, and billed monthly a day's share at a time from then.
    */
   | { type: "setInstances"; count: number }
+  | { type: "setAutoscaleMax"; max: number }
   /**
    * Sets the size of a managed service on PaaS, at once, like an instance count. The cache can be turned off with
    * a null size; the database can't.
