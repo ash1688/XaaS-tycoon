@@ -1743,19 +1743,45 @@ describe("servers on IaaS", () => {
     expect(flat.advance(changedMind, 5).state.spend).toEqual(flat.advance(fleet(begin(), BIG_APP, BIG_DB), 5).state.spend);
   });
 
-  it("derives ops needed from the servers, ready or not, and cuts every tier when short", () => {
+  it("derives ops needed from the servers running, not those on order, and cuts every tier when short", () => {
     // 1 ops for each app server and database, 0.5 for each cache and load balancer, rounded up.
     const state = begin();
     expect(flat.opsNeededNow(state)).toBe(2);
     expect(flat.opsNeeded("iaas")).toBe(2);
+    // Servers on order need no ops until they're ready (#259), but are counted for once they are.
     const cached = rent(state, "cache", "small");
-    expect(flat.opsNeededNow(cached)).toBe(3);
-    expect(flat.opsNeededNow(rent(cached, "loadBalancer", "small"))).toBe(3);
-    expect(flat.opsNeededNow(rent(rent(cached, "loadBalancer", "small"), "app", "small"))).toBe(4);
+    expect(flat.opsNeededNow(cached)).toBe(2);
+    expect(flat.opsNeededOnceReady(cached)).toBe(3);
+    const more = rent(rent(cached, "loadBalancer", "small"), "app", "small");
+    expect(flat.opsNeededOnceReady(more)).toBe(4);
+    expect(flat.opsNeededNow(flat.advance(more).state)).toBe(4);
     expect(flat.opsNeededNow(fleet(state))).toBe(0);
     // With 1 of the 2 ops needed, each tier keeps 40% + 60% × ½ = 70%.
     expect(flat.units(withStaff(state, { ops: 1 }))).toMatchObject({ cu: { capacity: 7_000 }, dbu: { capacity: 7_000 } });
     expect(flat.units(withStaff(state, { ops: 2 }))).toMatchObject({ cu: { capacity: 10_000 } });
+  });
+
+  it("slides the ops cut with the share of ops work missing, shows it and stops time when it starts (#259)", () => {
+    // Two app servers, a database and a cache: 3.5 ops of work, so 4 people.
+    const kit = fleet(begin(), ["app", "massive"], ["app", "massive"], ["database", "massive"], ["cache", "small"]);
+    expect(flat.opsNeededNow(kit)).toBe(4);
+    expect(flat.opsShortfall(withStaff(kit, { ops: 4 }))).toBeNull();
+    // 3 of the 3.5 ops of work: 40% + 60% × 3/3.5, about 91%, not the 85% that 3 of 4 people would give.
+    expect(flat.opsShortfall(withStaff(kit, { ops: 3 }))).toEqual({ have: 3, needed: 4, capacityShare: 0.91 });
+    // Each person short cuts more.
+    const shares = [3, 2, 1, 0].map((ops) => flat.opsShortfall(withStaff(kit, { ops }))!.capacityShare);
+    expect(shares).toEqual([...shares].sort((a, b) => b - a));
+    expect(shares.at(-1)).toBe(config.capacity.unstaffedShare);
+    expect(flat.units(withStaff(kit, { ops: 3 }))!.opsCut).toBeCloseTo(0.09, 2);
+
+    // Ordering a server doesn't cut today's capacity; once it's ready the team is short, and time stops that day.
+    const ready = withStaff(fleet(begin(), BIG_APP, BIG_DB), { ops: 2 });
+    const ordered = rent(ready, "app", "massive");
+    expect(flat.opsShortfall(ordered)).toBeNull();
+    const tick = flat.tick(ordered);
+    expect(tick.pauses).toContainEqual({ kind: "alert", id: "ops-shortfall", text: "Short of ops: 2 of 3 needed, capacity cut to 80%" });
+    // It stays short without stopping again, until ops catch up.
+    expect(flat.tick(tick.state).pauses.map((p) => p.id)).not.toContain("ops-shortfall");
   });
 
   it("counts free users' demand as well as paying ones'", () => {
@@ -2526,7 +2552,8 @@ describe("default PaaS and SaaS", () => {
   });
 
   it("needs a few fixed ops on PaaS and SaaS, no more than IaaS's first VMs", () => {
-    const iaasOps = s.opsNeededNow(setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 1 })));
+    // The first VMs need their ops once they're ready (#259).
+    const iaasOps = s.opsNeededOnceReady(setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 1 })));
     for (const model of ["paas", "saas"] as const) {
       expect(s.opsNeeded(model)).toBeGreaterThan(0);
       expect(s.opsNeeded(model)).toBeLessThanOrEqual(iaasOps);

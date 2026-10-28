@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { formatCash, formatCount, formatPrice, formatUptime } from "../api";
+import type { OpsShortfallView } from "@xaas/sim";
 import { useGame, type Tier } from "../game";
 
 // Load against capacity on the day just played, and uptime so far. Over 100% load is an outage. On a model with
@@ -11,6 +12,8 @@ import { useGame, type Tier } from "../game";
 const game = useGame();
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 const cachePercent = () => Math.round(100 * (game.meta?.cacheableShare ?? 0));
+const opsShortText = (s: OpsShortfallView) =>
+  `${formatCount(s.have)} of ${s.needed} needed, capacity cut to ${Math.round(100 * s.capacityShare)}%`;
 const cutPercent = computed(() => Math.round(100 * (game.units?.burst ? 0 : (game.units?.opsCut ?? 0))));
 
 // What gives CU and DBU: app servers (or instances) and databases, ready or on their way.
@@ -179,9 +182,9 @@ const launchNeeds = computed(() => {
           until {{ game.onOrder.length === 1 ? "it arrives" : "they arrive" }}.
         </template>
       </p>
-      <p v-if="game.understaffed" class="warn-text capacity-staff" data-testid="capacity-ops-short">
-        You're {{ game.opsPeople(game.opsShort) }} short, so every tier is cut<template v-if="cutPercent">
-          by {{ cutPercent }}%</template>. Hiring them gets it all back.
+      <p v-if="game.company.opsShortfall" class="warn-text capacity-staff" data-testid="capacity-ops-short">
+        <strong>Ops: {{ opsShortText(game.company.opsShortfall) }}.</strong> You're {{ game.opsPeople(game.opsShort) }}
+        short, so every tier is cut. Hiring them gets it all back.
         <RouterLink :to="`${game.base}/people`">Hire ops on the People page</RouterLink>.
       </p>
     </div>

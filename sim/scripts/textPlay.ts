@@ -10,6 +10,7 @@ import {
   gameLengthName,
   MANAGED_SERVICES,
   MODEL_IDS,
+  opsShortText,
   PRICE_BAND_NAMES,
   ROUND_NAMES,
   percent,
@@ -501,11 +502,16 @@ export function renderStatus(sim: Sim, state: GameState): string {
   if (units) {
     const tier = (name: string, t: { demand: number; capacity: number }) =>
       `${name} ${Math.round(t.demand)}/${Math.round(t.capacity)}${t.capacity > 0 ? ` (${pct((100 * t.demand) / t.capacity)})` : ""}`;
-    lines.push(`capacity: ${tier("CU", units.cu)} | ${tier("DBU", units.dbu)} | ${tier("CH", units.ch)} | runs out first: ${units.binding.toUpperCase()}`);
+    const cut = units.opsCut > 0 && !units.burst ? ` | every tier CUT to ${pct(100 * (1 - units.opsCut))} for missing ops` : "";
+    lines.push(`capacity: ${tier("CU", units.cu)} | ${tier("DBU", units.dbu)} | ${tier("CH", units.ch)} | runs out first: ${units.binding.toUpperCase()}${cut}`);
     if (units.loadBalancer.needed && units.loadBalancer.uncovered > 0) {
       lines.push(`  load balancers don't cover ${units.loadBalancer.uncovered} app servers: they add no capacity`);
     }
-  } else if (state.model === "saas") {
+  }
+  // Too few ops for the servers running cuts capacity (#259).
+  const opsShort = sim.opsShortfall(state);
+  if (opsShort) lines.push(`ops: ${opsShortText(opsShort)} (hire ops, or retrain someone into ops)`);
+  if (!units && state.model === "saas") {
     const provider = sim.provider(state);
     if (provider) {
       lines.push(
@@ -1880,7 +1886,9 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
       ],
     };
   }
-  return { state: current, rows, lines: [`${command.action.type}${command.times > 1 ? ` ×${done}` : ""}: done${paid}`] };
+  // A server order that will need more ops than the team has, once it's ready (#259).
+  const opsNote = orderOpsNote(sim, state, current);
+  return { state: current, rows, lines: [`${command.action.type}${command.times > 1 ? ` ×${done}` : ""}: done${paid}${opsNote ? `. ${opsNote}` : ""}`] };
 }
 
 /**
@@ -1967,6 +1975,18 @@ function negotiationLines(funder: Party, n: NegotiationView | null): string[] {
     (r, i) =>
       `  offer ${i + 1} ${termsText(funder, n.offers[i]!)}; you asked ${termsText(funder, r.counter)}, ${rollText(r)} → offer ${i + 2} ${termsText(funder, n.offers[i + 1]!)}`,
   );
+}
+
+/**
+ * After an order raises the ops staff the servers will need beyond the ops team's work, what it'll need: an order on
+ * the way needs no ops until it's ready, so this is the time to hire. Empty otherwise.
+ */
+function orderOpsNote(sim: Sim, before: GameState, after: GameState): string {
+  const needed = sim.opsNeededOnceReady(after);
+  const ops = sim.staff(after).find((p) => p.pool === "ops");
+  const have = ops ? ops.output : 0;
+  if (needed <= sim.opsNeededOnceReady(before) || needed <= have) return "";
+  return `OPS: once it's ready you'll need ${needed} ops staff, and yours do the work of ${Math.round(have * 100) / 100}: hire ops (or retrain someone) before then, or capacity is cut.`;
 }
 
 /** After a refused letgo or move for want of staff, who the team has now, so the player can pick a grade they have. */
