@@ -809,12 +809,10 @@ function bargain(sim: Sim, state: GameState, policy: PayPolicy): GameState {
  */
 export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameState {
   let s = settlePay(sim, state, strategy);
-  // The price opens with the Launch phase (#236): set once, as soon as it's open.
+  // The price opens with the Launch phase (#236): set once, as soon as it's open. Launch sets it again as the opening
+  // price (#257), at the same factor.
   if (strategy.priceFactor !== 1 && s.priceChanges.length === 0 && sim.phase(s).open.price) {
-    // On the payments app the transaction fee moves with the monthly fee.
-    const fairRate = sim.payments(s)?.fairRate;
-    const rate = fairRate === undefined ? {} : { rate: Math.round(fairRate * strategy.priceFactor * 10_000) / 10_000 };
-    s = tryAction(sim, s, { type: "setPrice", price: Math.round(sim.fairPrice(s) * strategy.priceFactor * 100) / 100, ...rate });
+    s = tryAction(sim, s, { type: "setPrice", ...strategyPrice(sim, s, strategy) });
   }
   if (strategy.migrateDay !== undefined && s.day >= strategy.migrateDay && s.migrations === 0 && !s.migration) {
     // Only once the quote leaves a month of running costs in the bank.
@@ -832,7 +830,7 @@ export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameSta
     s = tryAction(sim, s, { type: "takeLoan" });
   }
   // Launch first, so ops and support, which open with it (#236), are hired the same day.
-  s = launchWhenSetUp(sim, s);
+  s = launchWhenSetUp(sim, s, strategy);
   const units = sim.units(s);
   const full = !!units && (units.cu.demand >= units.cu.capacity || units.dbu.demand >= units.dbu.capacity);
   // Before and over the launch ramp, every strategy sets up servers for the launch total: the first decision.
@@ -873,10 +871,19 @@ export function playDay(sim: Sim, state: GameState, strategy: Strategy): GameSta
  * Presses Launch as soon as the MVP is done and servers ready for the next day can serve users (an app server and a
  * database), so go-live comes as early as it can. Missing ops don't hold it back: they only cut capacity.
  */
-function launchWhenSetUp(sim: Sim, state: GameState): GameState {
+function launchWhenSetUp(sim: Sim, state: GameState, strategy: Strategy): GameState {
   if (sim.launch(state).status !== "ready") return state;
   const units = sim.units(state);
-  return !units || (units.cu.capacity > 0 && units.dbu.capacity > 0) ? tryAction(sim, state, { type: "launch" }) : state;
+  return !units || (units.cu.capacity > 0 && units.dbu.capacity > 0)
+    ? tryAction(sim, state, { type: "launch", ...strategyPrice(sim, state, strategy) })
+    : state;
+}
+
+/** The strategy's price: the fair price × its price factor, and on the payments app the fair rate × it too. */
+function strategyPrice(sim: Sim, state: GameState, strategy: Strategy): { price: number; rate?: number } {
+  const fairRate = sim.payments(state)?.fairRate;
+  const price = Math.round(sim.fairPrice(state) * strategy.priceFactor * 100) / 100;
+  return fairRate === undefined ? { price } : { price, rate: Math.round(fairRate * strategy.priceFactor * 10_000) / 10_000 };
 }
 
 /** The first outage from load on a day, by the tier that ran over: read from the day's log. */

@@ -478,12 +478,19 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("pricing.dearness", "Customers", W, "Extra hit when already dear", "A rise's effect is multiplied by (new price ÷ fair price) to this power. 0 for no effect.", range(0, 5, 0.05));
   add("pricing.maxRiseShare", "Customers", W, "Most payers one rise can lose", "The biggest share of paying users one rise can affect.", SHARE);
   add("pricing.dropToFreeShare", "Customers", W, "Drop to free share", "Of the paying users who stop paying each day, the share who drop to free. The rest leave. A rise uses each customer type's own share.", SHARE);
-  add("pricing.backlashTicketsPerUser", "Customers", W, "Backlash tickets per user", "Support tickets each affected user raises over a rise's backlash.", range(0, 20, 0.1));
-  add("pricing.cutGainStrength", "Customers", W, "Cut: new users", "A cut brings this × (cut ÷ fair price)^curve new users, as a share of users, before the cap. Only the part below the fair price counts.", range(0, 5, 0.05));
+  add("pricing.backlashTicketsPerUser", "Customers", W, "Backlash tickets per user", "Support tickets each paying user who contacts support over a rise raises.", range(0, 20, 0.1));
+  add("pricing.grumbleStrength", "Customers", W, "Rise: grumbling", "Of the payers who stay through a rise, this × (rise ÷ the type's threshold)^curve grumble online, before the cap.", range(0, 5, 0.05));
+  add("pricing.maxGrumble", "Customers", W, "Rise: most grumbling", "The most of the payers who stay through a rise who grumble online.", SHARE);
+  add("pricing.supportStrength", "Customers", W, "Rise: contacting support", "Of the payers who stay through a rise, this × (rise ÷ the type's threshold)^curve contact support, before the cap.", range(0, 5, 0.05));
+  add("pricing.maxSupport", "Customers", W, "Rise: most contacting support", "The most of the payers who stay through a rise who contact support.", SHARE);
+  add("pricing.grumbleDivertStrength", "Customers", W, "Grumbling: new users to rivals", "While a rise's backlash lasts, this × grumblers ÷ users of new users go to rivals instead, before the cap.", range(0, 20, 0.1));
+  add("pricing.maxGrumbleDivert", "Customers", W, "Grumbling: most new users to rivals", "The most of the new users grumbling can send to rivals.", SHARE);
+  add("pricing.expectedPriceDays", "Customers", W, "Expected price (days)", "Days a price must hold before customers expect it. A cut is measured from the price they expect.", range(1, 180, 1));
+  add("pricing.cutGainStrength", "Customers", W, "Cut: new users", "A cut brings this × (cut ÷ the type's threshold)^curve new users, as a share of users, before the cap. Only the part below the price customers expect counts.", range(0, 5, 0.05));
   add("pricing.maxCutGain", "Customers", W, "Cut: most new users", "The most new users one cut can bring, as a share of users.", range(0, 5, 0.05));
   add("pricing.cutUpgradeStrength", "Customers", W, "Cut: upgrades", "A cut turns this × (cut ÷ fair price)^curve of free users into payers, before the cap.", range(0, 5, 0.05));
   add("pricing.maxCutUpgrade", "Customers", W, "Cut: most upgrades", "The most of the free users one cut can turn into payers.", SHARE);
-  add("pricing.priceMemoryDays", "Customers", W, "Price memory (days)", "A rise counts from, and a cut only below, the lowest price customers remember from this many days: small rises add up like one, and undoing a cut brings no new wave.", range(0, 180, 1));
+  add("pricing.priceMemoryDays", "Customers", W, "Price memory (days)", "A rise counts from the lowest price customers remember from this many days: small rises add up like one, and rising then cutting back over and over loses overall.", range(0, 180, 1));
   add("pricing.priceChurn", "Customers", "", "Payers lost to a dear price", "Share of paying users who stop paying each day at twice the fair price; × (price ÷ fair − 1)² in general.", range(0, 0.5, 0.001));
   add("pricing.maxPriceChurn", "Customers", "", "Most payers lost to a dear price a day", "The most of the paying users a dear price can lose in a day.", SHARE);
 
@@ -532,7 +539,8 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("conversion.neutralUptime", "Customers", C, "Neutral uptime %", "Recent uptime at which uptime neither helps nor hurts conversion. Above it helps, below it hurts.", range(0, 99, 0.5));
   add("conversion.uptimeEffect", "Customers", C, "Uptime effect", "100% recent uptime multiplies conversion by 1 + this; each step below neutral lowers it at the same rate.", range(0, 5, 0.05));
   add("conversion.satisfactionEffect", "Customers", C, "Satisfaction effect", "100% satisfaction multiplies conversion by 1 + this, with good satisfaction as the neutral line.", range(0, 5, 0.05));
-  add("conversion.priceSensitivity", "Customers", C, "Price effect on conversion", "Above the fair price, conversion is multiplied by (price ÷ fair price) to minus this. 0 for no effect.", range(0, 5, 0.05));
+  add("conversion.priceSensitivity", "Customers", C, "Price effect on conversion", "Conversion is multiplied by (price ÷ fair price) to minus this: less above the fair price, more at or below it, up to the most boost. 0 for no effect.", range(0, 5, 0.05));
+  add("conversion.maxPriceBoost", "Customers", C, "Most price boost to conversion", "At or below the fair price, conversion rises by at most this share (0.3 = 30% more).", range(0, 5, 0.05));
   add("conversion.maxRate", "Customers", C, "Highest conversion rate", "The most of the free users who can start paying in a day, whatever helps.", range(0, 1, 0.005));
 
   // Customers: API traffic

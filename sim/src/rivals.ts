@@ -9,7 +9,7 @@ import {
 } from "./config.ts";
 import type { Features } from "./features.ts";
 import type { Pricing } from "./pricing.ts";
-import { pounds } from "./finance.ts";
+import { count, pounds } from "./finance.ts";
 import { marketSize } from "./market.ts";
 import { nextRandom, seedRng } from "./rng.ts";
 import type { GameState, LogEntry, RivalJoin, RivalState } from "./state.ts";
@@ -78,7 +78,8 @@ interface Contender {
 export function createRivals(config: GameConfig, features: Features, pricing: Pricing) {
   const rivalConfigs = (productType: ProductTypeId): RivalConfig[] => config.productTypes[productType].rivals ?? [];
   // Prices are what a usual month costs a customer: on the payments app, the fee and the transaction fee together.
-  const fairPrice = (productType: ProductTypeId) => pricing.fairMonthly(productType);
+  // The fair price, moved with inflation once pay reviews have settled: a new game's before any.
+  const fairPrice = (state: Pick<GameState, "productType" | "pastPayReviews">) => pricing.fairMonthly(state);
   /** The student's price in a change, as a usual month's cost. */
   const changed = (state: GameState, price: number, rate: number | undefined) =>
     pricing.monthly(state.productType, price, rate ?? state.transactionRate);
@@ -86,17 +87,18 @@ export function createRivals(config: GameConfig, features: Features, pricing: Pr
   const clamp = (n: number, low: number, high: number) => Math.min(high, Math.max(low, n));
 
   /** A rival's price stance applied to a price, kept to the configured band around the fair price. */
-  function stancePrice(productType: ProductTypeId, price: number): number {
-    const fair = fairPrice(productType);
+  function stancePrice(state: Pick<GameState, "productType" | "pastPayReviews">, price: number): number {
+    const fair = fairPrice(state);
     return penny(clamp(price, fair * config.rivals.minPriceMultiple, fair * config.rivals.maxPriceMultiple));
   }
 
   /** A new game's rivals, at their stance against the fair price, with a random stream of their own. */
   function startingRivals(productType: ProductTypeId, seed: number) {
-    const fair = fairPrice(productType);
+    const start = { productType, pastPayReviews: [] };
+    const fair = fairPrice(start);
     const rivals: RivalState[] = rivalConfigs(productType).map((r) => ({
       id: r.id,
-      price: stancePrice(productType, fair * r.priceStance),
+      price: stancePrice(start, fair * r.priceStance),
       users: r.startingUsers,
       staffQuality: 0,
       reactedTo: fair,
@@ -148,8 +150,8 @@ export function createRivals(config: GameConfig, features: Features, pricing: Pr
   }
 
   /** Each contender's share of a customer type's new users: in proportion to e^value. */
-  function sharesFor(productType: ProductTypeId, type: CustomerTypeId, list: Contender[]): number[] {
-    const fair = fairPrice(productType);
+  function sharesFor(state: GameState, type: CustomerTypeId, list: Contender[]): number[] {
+    const fair = fairPrice(state);
     const pw = config.rivals.priceWeight[type];
     const qw = config.rivals.qualityWeight[type];
     const values = list.map((c) => qw * (c.quality / 100) - pw * Math.log(Math.max(0.01, c.price) / fair));
@@ -161,7 +163,7 @@ export function createRivals(config: GameConfig, features: Features, pricing: Pr
 
   /** Each customer type's split of new users between the contenders. */
   function contest(state: GameState, list = contenders(state)): Record<CustomerTypeId, number[]> {
-    return Object.fromEntries(CUSTOMER_TYPE_IDS.map((t) => [t, sharesFor(state.productType, t, list)])) as Record<
+    return Object.fromEntries(CUSTOMER_TYPE_IDS.map((t) => [t, sharesFor(state, t, list)])) as Record<
       CustomerTypeId,
       number[]
     >;
@@ -222,7 +224,7 @@ export function createRivals(config: GameConfig, features: Features, pricing: Pr
    * A rival's day: it answers the price the student charged reactionDays ago if it hasn't yet, then wins its share of
    * the market's new users. Staff who joined a rival since yesterday are logged first.
    */
-  function rivalsDay(state: GameState, day: number) {
+  function rivalsDay(state: GameState, day: number, diverted = 0) {
     const configs = rivalConfigs(state.productType);
     const entries: LogEntry[] = [];
     for (const j of state.rivalJoins) {
@@ -240,7 +242,7 @@ export function createRivals(config: GameConfig, features: Features, pricing: Pr
       rng = next;
       const undercut = roll < config.rivals.undercutChance;
       const target = undercut ? Math.min(seen * r.priceStance, seen * (1 - config.rivals.undercutShare)) : seen * r.priceStance;
-      const price = stancePrice(state.productType, target);
+      const price = stancePrice(state, target);
       if (price !== rival.price) {
         const text = undercut
           ? `${r.name} undercut you: it now charges ${pounds(price)} a month, against your ${pounds(seen)}.`
@@ -252,10 +254,25 @@ export function createRivals(config: GameConfig, features: Features, pricing: Pr
     // Rivals grow from their own users, by the value they offer the product's usual mix of customers.
     const split = contest(state, contenders({ ...state, rivals: priced }));
     const mix = marketMix(state.productType);
+    // New users grumbling sent away go, type by type, to the rival that's the best value for them.
+    const won = priced.map(() => 0);
+    if (diverted > 0 && priced.length) {
+      const newMix = marketMix(state.productType);
+      for (const t of CUSTOMER_TYPE_IDS) {
+        const shares = split[t].slice(1);
+        const best = shares.indexOf(Math.max(...shares));
+        won[best]! += diverted * newMix[t];
+      }
+      const names = priced.map((_, i) => configs[i]!.name).filter((_, i) => Math.round(won[i]!) > 0);
+      if (names.length) {
+        const text = `Complaints about your price rise are spreading online: ${count.format(diverted)} new ${diverted === 1 ? "user" : "users"} went to ${names.join(" and ")} instead.`;
+        entries.push({ text, cashDelta: 0, kind: "rival" });
+      }
+    }
     const rivals = priced.map((rival, i) => {
       const r = configs[i]!;
       const room = Math.max(0, 1 - rival.users / Math.max(1, r.maxUsers));
-      const gained = Math.round(rival.users * r.dailyGrowth * room * growthFor(split, mix, i + 1));
+      const gained = Math.round(rival.users * r.dailyGrowth * room * growthFor(split, mix, i + 1) + won[i]!);
       return { ...rival, users: rival.users + gained };
     });
     return { rivals, rivalRng: rng, rivalJoins: [] as RivalJoin[], entries };

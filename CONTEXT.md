@@ -51,7 +51,7 @@ One step of the timed flow: a day, or a week in a career. A week is seven days s
 _Avoid_: Turn, round
 
 **Drift**:
-The slow change in the world over a long game (until IPO or a career). At each **year's end** (every 365 days), running prices rise by a fresh random 2–6% and servers and VMs added from then give about 10% more units for the money; kit already owned keeps its units. The student's own price and pay never drift: pay rises only in pay reviews. Servers age through the hardware slider's wear, whose lifespan scales with the game length. A 180-day or 1-year game never reaches a year's end.
+The slow change in the world over a long game (until IPO or a career). At each **year's end** (every 365 days), running prices rise by a fresh random 2–6% and servers and VMs added from then give about 10% more units for the money; kit already owned keeps its units. The student's own price and pay never drift: pay rises only in pay reviews, and the student's price changes only when they change it (the **fair price** moves with each pay review's inflation instead). Servers age through the hardware slider's wear, whose lifespan scales with the game length. A 180-day or 1-year game never reaches a year's end.
 _Avoid_: Eras, ageing
 
 **Year's end**:
@@ -206,6 +206,26 @@ _Avoid_: Acquisition mix, inflow
 **Price threshold**:
 The price at which a customer type starts to react badly.
 _Avoid_: Pain point, willingness to pay
+
+**Fair price**:
+The monthly price users think the product is worth, which each customer type's price threshold is a multiple of. It starts at the product's own and rises with each pay review's inflation, compounding. The student's price never moves by itself.
+_Avoid_: Market price, list price
+
+**Opening price**:
+The price set as Launch is pressed (the fair price if none is given). Launch users react to it, and it holds until the usual price lock after go-live.
+_Avoid_: Launch price, starting price
+
+**Price bands**:
+How each customer type splits over a price. A rise splits paying users into accept, grumble online, contact support, drop to free and leave; a cut splits the new users it could bring, and the opening price the launch users, into join paying, join free and don't join. The bands slide with the size of the change against the type's price threshold.
+_Avoid_: Segments, buckets
+
+**Grumbling online**:
+Paying users who stay through a rise but complain about it publicly. While the backlash lasts, they send a share of new users to the rival that's the best value for each customer type.
+_Avoid_: Bad reviews, word of mouth (word of mouth is a cut's wave)
+
+**Expected price**:
+The price customers expect: the latest that has held for 30 days. A cut is measured from it, so a cut back from a rise that hasn't held is no bargain. A rise is still measured from the lowest price customers remember over 60 days.
+_Avoid_: Reference price, anchor
 
 **Price reaction**:
 How many users leave or go free after a price change: each customer type's reaction weighted by its share of users. Contract users are left out.

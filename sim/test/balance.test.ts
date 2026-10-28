@@ -26,7 +26,8 @@ describe("balance harness", () => {
     const again = runAll(short, { seeds: [1, 2], strategies });
     expect(again).toEqual(results);
     expect(renderReport(again, { seeds: [1, 2], strategies })).toBe(renderReport(results, { seeds: [1, 2], strategies }));
-  });
+    // A whole run of the harness again: near vitest's default 5s when the suite runs in parallel.
+  }, 20_000);
 
   it("gives different games for different seeds", () => {
     const sim = createSim(short);
@@ -73,7 +74,8 @@ describe("balance harness", () => {
       expect(r.pay.studentShare).toBeLessThan(1);
     }
     expect(renderReport(played, { seeds: [1], strategies: pay })).toContain("## Pay reviews by strategy");
-  });
+    // Every model and product three times over a 120-day game: about 5s on a busy machine, past vitest's default.
+  }, 20_000);
 
   it("renders a Markdown report with the headline tables and a section per strategy", () => {
     const report = renderReport(results, { seeds: [1, 2], strategies, title: "Test report" });

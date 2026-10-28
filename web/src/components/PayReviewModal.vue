@@ -219,7 +219,7 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
             <table class="quote" data-testid="pay-review-terms">
               <tbody>
                 <tr>
-                  <th scope="row">Inflation this review</th>
+                  <th scope="row">Inflation this review <span class="muted">it lifts your product's fair price too</span></th>
                   <td data-testid="pay-inflation">{{ pct(review.inflation) }}</td>
                 </tr>
                 <tr>

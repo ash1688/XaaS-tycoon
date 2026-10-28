@@ -91,6 +91,7 @@ import type {
   PlayEventView,
   PlaySnapshot,
   PricePreviewView,
+  PriceBandsView,
   SummaryView,
   TeacherCodeView,
   TeacherGamesView,
@@ -397,6 +398,7 @@ export async function buildApp(opts: AppOptions) {
       freeUsers: state.users - state.paidUsers,
       price: state.price,
       fairPrice: sim.fairPrice(state),
+      fairPriceView: sim.fairPriceView(state),
       dailyIncome: sim.dailyIncome(state),
       income: state.income,
       priceWave: sim.priceWave(state),
@@ -710,6 +712,25 @@ export async function buildApp(opts: AppOptions) {
     },
   );
 
+  // How launch users would split at an opening price, for the Launch dialog's chart. Changes nothing.
+  app.get<{ Params: { code: string; id: string }; Querystring: { price: number; rate?: number } }>(
+    "/api/codes/:code/companies/:id/launch-bands",
+    {
+      schema: {
+        querystring: {
+          type: "object",
+          required: ["price"],
+          properties: { price: { type: "number", minimum: 0 }, rate: { type: "number", minimum: 0 } },
+        },
+      },
+    },
+    async (req, reply) => {
+      const row = await findCompany(req.params.code, req.params.id);
+      if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      return simOf(row).launchBands(row.state, req.query.price, req.query.rate) satisfies PriceBandsView;
+    },
+  );
+
   // What a counter to a funder's offer would do, for the negotiation modal's live odds. Changes nothing.
   app.get<{
     Params: { code: string; id: string };
@@ -874,8 +895,9 @@ export async function buildApp(opts: AppOptions) {
             from: { enum: [...STAFF_POOLS] },
             // startMigration: the model to move to.
             model: { enum: [...MODEL_IDS] },
-            // setPrice: the monthly price, and on the payments app the share of each payment taken, set together. The
-            // sim checks them against the game's highest, refuses a rate on other products, and a £0 price without one.
+            // setPrice, and launch's opening price (the fair price if left out): the monthly price, and on the payments
+            // app the share of each payment taken, set together. The sim checks them against the game's highest,
+            // refuses a rate on other products, and a £0 price without one.
             price: { type: "number", minimum: 0 },
             rate: { type: "number", minimum: 0 },
             // rentServer and buyServer: the type and size of server. The sim checks the model rents or buys them.

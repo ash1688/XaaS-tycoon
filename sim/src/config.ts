@@ -746,8 +746,28 @@ export interface PricingConfig {
    * tier. The rest leave altogether. A rise's wave uses each customer type's own share instead (toFreeShare).
    */
   dropToFreeShare: number;
-  /** Support tickets each affected user raises over a rise's backlash: complaints, cancellations, refund requests. */
+  /** Support tickets each paying user who contacts support over a rise raises: complaints, cancellations, refunds. */
   backlashTicketsPerUser: number;
+  /**
+   * Of the paying users who stay through a rise, the share who grumble online: grumbleStrength × (rise ÷ the type's
+   * threshold)^waveCurve, at most maxGrumble. The same for contacting support, with supportStrength and maxSupport.
+   * The rest accept it.
+   */
+  grumbleStrength: number;
+  maxGrumble: number;
+  supportStrength: number;
+  maxSupport: number;
+  /**
+   * While a rise's backlash lasts, the share of new users who go to the rival that's the best value for their type
+   * instead: grumbleDivertStrength × grumblers ÷ users, at most maxGrumbleDivert.
+   */
+  grumbleDivertStrength: number;
+  maxGrumbleDivert: number;
+  /**
+   * Days a price must hold before customers expect it. A cut is measured from the price they expect: the latest that
+   * held this long. So cutting back from a rise that hasn't held is no bargain.
+   */
+  expectedPriceDays: number;
   /** New users a cut brings at d = 1, as a share of today's users, before the cap: cutGainStrength × d^waveCurve. */
   cutGainStrength: number;
   /** The most new users one cut can bring, as a share of today's users. */
@@ -758,9 +778,8 @@ export interface PricingConfig {
   maxCutUpgrade: number;
   /**
    * Days customers remember a lower price. A rise is measured from the lowest price in that time, less what the rises
-   * since have lost, so a run of small rises loses as many payers as one rise to the same price. A cut only counts for
-   * how far it goes below both that price and the fair price, so undoing a rise, cycling up and back down, or coming
-   * back to the fair price after any time above it brings no new wave.
+   * since have lost, so a run of small rises loses as many payers as one rise to the same price, and rising then
+   * cutting back over and over loses overall.
    */
   priceMemoryDays: number;
   /**
@@ -854,8 +873,12 @@ export interface ConversionConfig {
   uptimeEffect: number;
   /** How much 100% satisfaction raises conversion, with goodSatisfaction as the neutral line. */
   satisfactionEffect: number;
-  /** How strongly a price above the fair price puts free users off paying. 0 for no effect. */
+  /**
+   * How strongly the price moves conversion, as (price ÷ fair price) to minus this: above the fair price it puts free
+   * users off paying, at or below it it helps, up to maxPriceBoost more (0.3 = 30%). 0 for no effect.
+   */
   priceSensitivity: number;
+  maxPriceBoost: number;
   /** The highest daily conversion rate, whatever the multipliers (0.05 = 5% of free users a day). */
   maxRate: number;
 }
@@ -3105,7 +3128,17 @@ export const defaultConfig: GameConfig = {
     dearness: 1,
     maxRiseShare: 0.9,
     dropToFreeShare: 0.4,
-    backlashTicketsPerUser: 1,
+    // A 25% rise on a fair price: about 79% accept, 7% grumble online, 4.5% contact support and 10% stop paying.
+    // Doubling it: 80% stop paying, and most of the rest grumble.
+    backlashTicketsPerUser: 2,
+    grumbleStrength: 0.6,
+    maxGrumble: 0.5,
+    supportStrength: 0.4,
+    maxSupport: 0.3,
+    // 5% of users grumbling sends 15% of new users to rivals while the backlash lasts.
+    grumbleDivertStrength: 3,
+    maxGrumbleDivert: 0.5,
+    expectedPriceDays: 30,
     // A 12.5% cut (£20 to £17.50) brings about 3% more users and turns about 2% of free users into payers.
     cutGainStrength: 0.6,
     maxCutGain: 0.5,
@@ -3148,6 +3181,8 @@ export const defaultConfig: GameConfig = {
     uptimeEffect: 0.25,
     satisfactionEffect: 0.25,
     priceSensitivity: 2,
+    // Placeholder (#251): at or below the fair price, up to 30% more free users start paying.
+    maxPriceBoost: 0.3,
     maxRate: 0.05,
   },
   // A 20-day feature costs £2,000 to set up: all four on day 1 would take half the starting cash.

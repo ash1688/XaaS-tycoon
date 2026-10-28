@@ -117,6 +117,20 @@ test("Launch with nothing set up names what's missing, and goes ahead", async ({
     "No database: no users can be served",
   ]);
   await card.getByRole("button", { name: "Launch anyway" }).click();
+  // The Launch step: the opening price, the fair price to start, and how launch users would split at it.
+  const dialog = student.getByTestId("launch-dialog");
+  const fair = await student.getByTestId("launch-price-input").inputValue();
+  expect(Number(fair)).toBeGreaterThan(0);
+  await expect(dialog.getByTestId("band-chart")).toHaveAttribute("data-kind", "launch");
+  await expect(dialog.getByTestId("band-row")).toHaveCount(5);
+  await expect(dialog.getByTestId("launch-bands-summary")).toContainText("0% wouldn't join");
+  // Far above the fair price, most wouldn't join; the chart and summary follow the price.
+  await student.getByTestId("launch-price-input").fill("1000");
+  await expect(dialog.getByTestId("launch-bands-summary")).not.toContainText(" 0% wouldn't join");
+  await expect(dialog.getByRole("img", { name: /^Everyone: join paying 0/ })).toBeVisible();
+  await student.getByTestId("launch-price-input").fill(fair);
+  await expect(dialog.getByTestId("launch-bands-summary")).toContainText("0% wouldn't join");
+  await dialog.getByTestId("launch-confirm").click();
   await expect(card).toHaveAttribute("data-status", "launching");
   await expect(student.getByTestId("launch-headline")).toHaveText("Going live on day 2");
   await expect(card.getByTestId("launch-action")).toHaveCount(0);

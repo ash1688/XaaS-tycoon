@@ -10,6 +10,7 @@ import {
   gameLengthName,
   MANAGED_SERVICES,
   MODEL_IDS,
+  PRICE_BAND_NAMES,
   ROUND_NAMES,
   percent,
   quarterName,
@@ -27,6 +28,8 @@ import {
   type FunderId,
   type GameDate,
   type GameState,
+  type PriceBand,
+  type PriceBandsView,
   type VcTranche,
   type IpoResult,
   type NegotiationRound,
@@ -186,6 +189,21 @@ export function renderMix(sim: Sim, state: GameState): string {
 }
 
 /** The price line: "price £5/month (fair £5)", or on the payments app the fee and transaction fee together. */
+/**
+ * A price's bands, one line per customer type and one for everyone: "  casual (35%): accept 79.0%, grumble online
+ * 6.8%, ...". Who they split depends on the kind: paying users for a rise, the new users a cut or launch could bring.
+ */
+function bandLines(view: PriceBandsView): string[] {
+  if (view.kind === "none") return [];
+  const of = { rise: "of paying users", cut: "of the new users it could bring", launch: "of launch users" }[view.kind];
+  const row = (bands: PriceBand[]) => bands.map((b) => `${PRICE_BAND_NAMES[b.id].toLowerCase()} ${(100 * b.share).toFixed(1)}%`).join(", ");
+  return [
+    `bands (${of}):`,
+    ...view.types.map((t) => `  ${t.id} (${pct(100 * t.share)}): ${row(t.bands)}${view.kind === "cut" ? `; ${(100 * t.upgrade).toFixed(1)}% of free users start paying` : ""}`),
+    `  all: ${row(view.total)}${view.kind === "cut" ? `; ${(100 * view.upgrade).toFixed(1)}% of free users start paying` : ""}`,
+  ];
+}
+
 function renderPrice(sim: Sim, state: GameState): string {
   const pay = sim.payments(state);
   if (!pay) return `price ${price(state.price)}/month (fair ${price(sim.fairPrice(state))})`;
@@ -357,7 +375,23 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const { oneOffsThisWeek } = sim.runway(state);
   if (oneOffsThisWeek > 0) lines.push(`one-offs this week ${money(oneOffsThisWeek)} (not in costs: see \`costs\`)`);
   const priceOpen = sim.phase(state).open.price;
-  lines.push(`${renderPrice(sim, state)} | ${!priceOpen ? "set from Launch" : lock > 0 ? `locked ${lock} more days` : "can change"}`);
+  const launching = state.launchDay !== null && state.day < state.launchDay;
+  const priceState = state.ipo.approvedDay !== null
+    ? "locked from IPO approval until the bell"
+    : launching
+      ? `opening price, holds until go-live and ${lock - (state.launchDay! - state.day)} days after`
+      : !priceOpen
+        ? "set at Launch"
+        : lock > 0
+          ? `locked ${lock} more days`
+          : "can change";
+  lines.push(`${renderPrice(sim, state)} | ${priceState}`);
+  const fair = sim.fairPriceView(state);
+  if (fair.rise > 0) {
+    lines.push(
+      `fair price ${price(fair.fairPrice)}: up ${(100 * fair.rise).toFixed(1)}% from ${price(fair.baseFairPrice)} with inflation (last pay review ${(100 * fair.lastInflation!).toFixed(1)}%)`,
+    );
+  }
   const payments = renderPayments(sim, state);
   if (payments) lines.push(payments);
   const wave = sim.priceWave(state);
@@ -1174,7 +1208,10 @@ export function renderCommands(sim: Sim, state: GameState): string {
     );
   }
   if (sim.launch(state).status === "ready") {
-    lines.push(`  launch   (go live: your first users arrive at the end of the next day played; hosting bills start then)`);
+    lines.push(
+      `  launch [price]   (go live at an opening price, the fair ${price(sim.fairPrice(state))} if none: your first users arrive at the end of the next day played and react to it; hosting bills start then; the price holds until ${sim.config.pricing.lockDays} days after go-live)`,
+    );
+    lines.push(`  launchpreview <price>   (how launch users would split at an opening price: join paying, join free, don't join; changes nothing)`);
   }
   lines.push(`  optimise <0–100>   (% of developer time on optimisation rather than features, once the MVP is done)`);
   const toUnlock = unlockable(sim, state);
@@ -1345,6 +1382,7 @@ export type Command =
   /** `party`, for an investor's offer: the angel or the VC picked, checked against which is open. */
   | { kind: "action"; action: Action; times: number; party?: "angel" | "vc" }
   | { kind: "preview"; price: number; rate?: number }
+  | { kind: "launchPreview"; price: number; rate?: number }
   | { kind: "quote"; model: string }
   | { kind: "valuation" }
   | { kind: "market" }
@@ -1463,6 +1501,8 @@ export function parseCommand(text: string): Command {
       return one({ type: "setPrice", price: number(args[0], "a price"), ...rateArg(args[1]) });
     case "preview":
       return { kind: "preview", price: number(args[0], "a price"), ...rateArg(args[1]) };
+    case "launchpreview":
+      return { kind: "launchPreview", price: number(args[0], "an opening price"), ...rateArg(args[1]) };
     case "build":
       return one({ type: "buildFeature", feature: args[0] ?? "" });
     case "addon":
@@ -1585,7 +1625,7 @@ export function parseCommand(text: string): Command {
     case "odds":
       return { kind: "odds", funder: funder(args[0]), terms: terms(args.slice(1)) };
     case "launch":
-      return one({ type: "launch" });
+      return one({ type: "launch", ...(args[0] === undefined ? {} : { price: number(args[0], "an opening price") }), ...rateArg(args[1]) });
     case "buyapi":
       return one({ type: "buyApi" });
     case "switch":
@@ -1637,6 +1677,7 @@ function ticketsLine(t: TicketOutlook): string {
 
 /** Runs one parsed command that isn't an advance. A refused action is reported and logged, not thrown. */
 export function runCommand(sim: Sim, state: GameState, command: Command, who: Player): Turn {
+  if (command.kind === "launchPreview") return { state, rows: [], lines: bandLines(sim.launchBands(state, command.price, command.rate)) };
   if (command.kind === "preview") {
     const p = sim.pricePreview(state, command.price, command.rate);
     const label = (fee: number, r: number | null, m: number) => (r === null ? price(fee) : `${price(fee)} + ${percent(r)} (${price(m)} a usual month)`);
@@ -1652,6 +1693,9 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
             : "") +
           ticketsLine(p.tickets) +
           (p.locked ? `; price locked ${p.lockDaysLeft} more days` : ""),
+        `customers expect ${price(p.expectedPrice)} (a cut counts from it) and remember ${price(p.rememberedPrice)} (a rise counts from it)`,
+        ...(p.noWave ? [p.noWave] : []),
+        ...bandLines(p.bands),
       ],
     };
   }

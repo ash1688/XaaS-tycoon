@@ -349,7 +349,7 @@ describe("rendering", () => {
     expect(status[1]).toBe(
       "phase: Build (from day 1) | next: Launch, when you press Launch | open: Deployment model, Funding: the bank loan, friends and family and grants, Developers, Servers or racks",
     );
-    expect(renderStatus(sim, build)).toMatch(/^price £5\/month \(fair £5\) \| set from Launch$/m);
+    expect(renderStatus(sim, build)).toMatch(/^price £5\/month \(fair £5\) \| set at Launch$/m);
     const commands = renderCommands(sim, build);
     expect(commands).toMatch(/^ {2}hire <developers> /m);
     expect(commands).not.toMatch(/^ {2}(price|preview|build|addon|benefit|buyapi|ipo|apply) /m);
@@ -1220,7 +1220,7 @@ describe("launch", () => {
     expect(renderCommands(button, state)).not.toMatch(/^ {2}launch /m);
     let done = state;
     while (!done.mvp.doneDay) done = play(done, "next 1").state;
-    expect(renderCommands(button, done)).toMatch(/^ {2}launch {3}\(go live/m);
+    expect(renderCommands(button, done)).toMatch(/^ {2}launch \[price\] {3}\(go live/m);
     expect(renderStatus(button, done)).toMatch(
       /launch: ready \(ready: type launch\); launching now would be short: No app server: no users can be served; No database: no users can be served/,
     );
@@ -1268,5 +1268,46 @@ describe("costs", () => {
     expect(sim.runway(charged).dailyCosts).toBe(sim.runway(state).dailyCosts);
     expect(renderStatus(sim, charged)).toContain("one-offs this week £2,500 (not in costs: see `costs`)");
     expect(run(charged, "costs").lines.at(-1)).toBe("One-offs this week (kit bought, severance, fees, events; not in daily costs): £2,500.");
+  });
+});
+
+describe("prices: the opening price and the bands", () => {
+  // A game whose MVP is done, waiting for Launch to be pressed.
+  const manual = createSim({ ...defaultConfig, mvp: NO_MVP, finalDay: 40, payReview: { ...defaultConfig.payReview, on: 0 } });
+  const waiting = () =>
+    inPhase(manual.advance(manual.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 })).state, "launch");
+  const play = (state: GameState, text: string) => {
+    const command = parseCommand(text);
+    return command.kind === "next" ? advanceUntil(manual, state, command.days, who) : runCommand(manual, state, command, who);
+  };
+
+  it("reads launch with an opening price, and launchpreview", () => {
+    expect(parseCommand("launch")).toMatchObject({ action: { type: "launch" } });
+    expect(parseCommand("launch 7.5")).toMatchObject({ action: { type: "launch", price: 7.5 } });
+    expect(parseCommand("launchpreview 7.5")).toEqual({ kind: "launchPreview", price: 7.5 });
+  });
+
+  it("launches at the opening price, then refuses a price change until go-live and locks it after", () => {
+    const state = waiting();
+    expect(renderCommands(manual, state)).toMatch(/ {2}launch \[price\] {3}\(go live at an opening price, the fair £5 if none/);
+    const preview = play(state, "launchpreview 12").lines.join("\n");
+    expect(preview).toMatch(/^bands \(of launch users\):/);
+    expect(preview).toMatch(/ {2}casual \(\d+(\.\d)?%\): join paying [\d.]+%, join free [\d.]+%, don't join [\d.]+%/);
+    const launched = play(state, "launch 6").state;
+    expect(launched.price).toBe(6);
+    expect(renderStatus(manual, launched)).toMatch(/price £6\/month \(fair £5\) \| opening price, holds until go-live and 14 days after/);
+    expect(play(launched, "price 7").lines[0]).toMatch(/setPrice refused: Your opening price of £6 holds until go-live on day \d+, and for 14 days after\./);
+  });
+
+  it("prints a preview's bands per customer type and in all, and what customers expect and remember", () => {
+    let state = sim.advance(launchPhase(), 15).state;
+    state = { ...state, priceLockedUntil: 0 };
+    const rise = run(state, `preview ${state.price * 1.4}`).lines.join("\n");
+    expect(rise).toMatch(/customers expect £[\d.]+ \(a cut counts from it\) and remember £[\d.]+ \(a rise counts from it\)/);
+    expect(rise).toMatch(/bands \(of paying users\):\n {2}casual \([\d.]+%\): accept [\d.]+%, grumble online [\d.]+%, contact support [\d.]+%, drop to free [\d.]+%, leave [\d.]+%/);
+    expect(rise).toMatch(/\n {2}all: accept [\d.]+%/);
+    const cut = run(state, `preview ${state.price * 0.6}`).lines.join("\n");
+    expect(cut).toMatch(/bands \(of the new users it could bring\):/);
+    expect(cut).toMatch(/% of free users start paying/);
   });
 });
