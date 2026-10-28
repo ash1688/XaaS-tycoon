@@ -116,6 +116,8 @@ export interface CsuiteRoleView {
 /** The C-suite for the C-suite page: every role, and the equity cap. */
 export interface CsuiteView {
   roles: CsuiteRoleView[];
+  /** Why no executive can be appointed now (a pay holiday), or null. */
+  appointBlocked: string | null;
   /** The most the C-suite's equity can come to, what it has taken and what's left (0.1 = 10%). */
   equityCap: number;
   equityUsed: number;
@@ -318,6 +320,7 @@ export function createCsuite(config: GameConfig) {
     const { equityCap } = config.csuite;
     return {
       roles,
+      appointBlocked: appointBlocked(state),
       equityCap,
       equityUsed: Math.round(used * 10_000) / 10_000,
       equityLeft: Math.round(Math.max(0, equityCap - used) * 10_000) / 10_000,
@@ -337,6 +340,8 @@ export function createCsuite(config: GameConfig) {
       throw new SimError("role_filled", `${filled.name} is your ${roleName(role)}: the C-suite is hired for good, so the role can't be filled again.`);
     }
     if (!isOpen(state, role)) throw new SimError("role_not_open", `You can't hire a ${roleName(role)} yet. ${STAGE_TEXT[STAGES[role]]}`);
+    const blocked = appointBlocked(state);
+    if (blocked) throw new SimError("pay_holiday", blocked);
     const candidate = state.csuite.shortlists[role].find((c) => c.id === candidateId);
     if (!candidate) throw new SimError("unknown_candidate", `Pick a candidate from the ${roleName(role)} shortlist.`);
     const equity = askNow(state, candidate);
@@ -358,6 +363,16 @@ export function createCsuite(config: GameConfig) {
     const tiers =
       role === "cto" && !state.tiers.some((t) => t.tier === 2) ? [...state.tiers, { tier: 2 as const, day: state.day }] : state.tiers;
     return { ...state, shareholders, tiers, csuite: { ...state.csuite, hired: [...state.csuite.hired, executive] } };
+  }
+
+  /**
+   * Why no executive can be appointed now, or null: not while the board is on a pay holiday, on any difficulty, so a
+   * walkout can't be filled straight back. Staff hiring is unaffected.
+   */
+  function appointBlocked(state: GameState): string | null {
+    if (!onPayHoliday(state)) return null;
+    const { endDays } = config.csuite.payHoliday;
+    return `The C-suite is on a pay holiday: no new executives until they're paid. Get cash back above ${endDays} days of running costs first, and the holiday ends.`;
   }
 
   /** What the executives cost a day: their salaries, fixed for good. */
@@ -399,7 +414,9 @@ export function createCsuite(config: GameConfig) {
     // A company in liquidation pays no one; one that finished settles what it owes.
     if (state.status === "liquidated") return { state: skipped, entries: [] };
     if (state.status !== "playing") return settleBackPay(skipped, charge);
-    if (startDays <= 0 || state.csuite.hired.length === 0 || dailyCosts <= 0) return { state: skipped, entries: [] };
+    // With nobody hired a holiday can't start, but one that's on still ends as cash recovers: otherwise a board that
+    // walked out could never be appointed again.
+    if (startDays <= 0 || dailyCosts <= 0 || (state.csuite.hired.length === 0 && !onPayHoliday(state))) return { state: skipped, entries: [] };
     if (!onPayHoliday(state) && state.cash < startDays * dailyCosts) {
       return {
         state: { ...skipped, csuite: { ...skipped.csuite, payHolidaySince: state.day } },
@@ -413,7 +430,15 @@ export function createCsuite(config: GameConfig) {
       `Back pay: paid ${pounds(paid)} to the C-suite, ${left > 0 ? `${pounds(left)} still owed` : "all of it now"}`,
     );
     const entries: LogEntry[] = ended
-      ? [{ text: `Cash has recovered: your C-suite's ${pounds(pay)} a day of pay starts again tomorrow.`, cashDelta: 0, kind: "staff" }]
+      ? [
+          {
+            text: pay > 0
+              ? `Cash has recovered: your C-suite's ${pounds(pay)} a day of pay starts again tomorrow.`
+              : "Cash has recovered: the pay holiday is over, and you can appoint executives again.",
+            cashDelta: 0,
+            kind: "staff",
+          },
+        ]
       : [];
     return { state: back.state, entries: [...entries, ...back.entries] };
   }

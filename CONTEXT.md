@@ -101,7 +101,7 @@ When cash falls below about 7 days of running costs, the whole C-suite forgoes i
 _Avoid_: Pay freeze, deferred pay
 
 **Walkout**:
-An executive resigning after the pay holiday has run more than 30 days in a row: the most recently hired first, then one more every 7 days while it lasts (warned at 25 days). Their share of the back pay is due at once, and the bank pays it onto the loan (the bank loan, or the emergency loan on its 30-day term), not from cash, without counting as a shortfall. Their shares stay theirs and their equity still counts against the cap; the role opens again with its shortlist. Ending the holiday resets the count.
+An executive resigning after the pay holiday has run more than 30 days in a row: the most recently hired first, then one more every 7 days while it lasts (warned at 25 days). Their share of the back pay is due at once, and the bank pays it onto the loan (the bank loan, or the emergency loan on its 30-day term), not from cash, without counting as a shortfall. Their shares stay theirs and their equity still counts against the cap; the role opens again with its shortlist. Ending the holiday resets the count. No executive can be appointed while the holiday is on, so a walkout can't be filled straight back: the board shrinks until cash is back above 21 days of costs.
 _Avoid_: Quitting, firing
 
 **Staff**:

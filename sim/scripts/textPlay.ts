@@ -710,6 +710,7 @@ function csuiteLines(sim: Sim, state: GameState): string[] {
   const lines = [
     `c-suite: hired for good, no pay reviews; equity asks paid in new shares, shrinking as the ${tenth(view.equityCap)} cap fills (${tenth(view.equityUsed)} used, ${tenth(view.equityLeft)} left; the staff share scheme doesn't count). Every role must be filled to IPO: ${view.roles.filter((r) => r.executive).length} of ${view.roles.length} hired`,
     payHolidayLine(view.payHoliday),
+    ...(view.appointBlocked ? [`appoint: refused for now. ${view.appointBlocked}`] : []),
   ];
   for (const r of view.roles) {
     if (r.executive) {
