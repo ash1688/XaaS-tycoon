@@ -1659,6 +1659,8 @@ export interface PayReviewConfig {
   /** Days into the Grow phase the first review's rise starts: none before. Each later one is a quarter after the last. */
   growDays: number;
   inflation: { min: number; max: number };
+  /** The share of each review's inflation that lifts the product's fair price, compounding (0.25 = a quarter). */
+  fairPriceShare: number;
   /** The least offer is inflation less this (0.01 = one point), never below 0. */
   minOfferBelow: number;
   /** The most staff ask is inflation plus this. */
@@ -3034,6 +3036,8 @@ export const defaultConfig: GameConfig = {
     // About a month into Grow (#236), so a student isn't settling pay before they've launched and grown.
     growDays: 30,
     inflation: { min: 0.02, max: 0.06 },
+    // The fair price lifts by a quarter of each review's inflation: all of it outran what students could charge.
+    fairPriceShare: 0.25,
     minOfferBelow: 0.01,
     maxAskAbove: 0.04,
     fairRise: { days: 30, growthWeight: 0.02, maxGrowthAdjust: 0.02, profitBonus: 0.005, tightCashDays: 30, tightCashCut: 0.01 },

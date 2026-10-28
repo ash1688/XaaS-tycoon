@@ -689,6 +689,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("payReview.openEndedYearDays", "People", "Pay reviews", "Year in long games", "Until IPO and a career have years this many days long: a review every quarter of one, once they've started.", range(4, 3650, 1));
   add("payReview.inflation.min", "People", "Pay reviews", "Least inflation", "Each review rolls its own inflation from the least to the most (0.02 = 2%).", range(0, 0.2, 0.001));
   add("payReview.inflation.max", "People", "Pay reviews", "Most inflation", "The most inflation a review can roll.", range(0, 0.2, 0.001));
+  add("payReview.fairPriceShare", "People", "Pay reviews", "Inflation into the fair price", "The share of each review's inflation that lifts the product's fair price, compounding (0.25 = a quarter, 0 = never moves).", range(0, 1, 0.01));
   add("payReview.minOfferBelow", "People", "Pay reviews", "Least offer below inflation", "The student can't offer less than inflation less this (0.01 = one point), and never below 0%.", range(0, 0.2, 0.001));
   add("payReview.maxAskAbove", "People", "Pay reviews", "Most ask above inflation", "Staff open at inflation plus this, and never ask for more.", range(0, 0.2, 0.001));
   add("payReview.fairRise.days", "People", "Pay reviews", "Days of growth compared", "The fair rise looks at income over this many days against the same number before them.", GAME_DAY);

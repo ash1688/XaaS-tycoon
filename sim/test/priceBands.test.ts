@@ -193,16 +193,17 @@ describe("the IPO price lock", () => {
 });
 
 describe("the fair price follows inflation (#251)", () => {
-  it("rises by each pay review's inflation, compounding, while the student's own price stays put", () => {
+  it("rises by a quarter of each pay review's inflation, compounding, while the student's own price stays put", () => {
     let state = inPhase(running(), "grow");
     const base = defaultConfig.productTypes.ecommerce.pricing.fairPrice;
     const price = state.price;
     while (state.pastPayReviews.length < 2) state = auto.advance(state, 10).state;
     const [first, second] = state.pastPayReviews;
-    const expected = Math.round(base * (1 + first!.inflation) * (1 + second!.inflation) * 100) / 100;
+    const lift = (1 + first!.inflation / 4) * (1 + second!.inflation / 4);
+    const expected = Math.round(base * lift * 100) / 100;
     expect(auto.fairPrice(state)).toBe(expected);
     expect(auto.fairPriceView(state)).toMatchObject({ fairPrice: expected, baseFairPrice: base, lastInflation: state.pastPayReviews.at(-1)!.inflation });
-    expect(auto.fairPriceView(state).rise).toBeCloseTo((1 + first!.inflation) * (1 + second!.inflation) - 1, 10);
+    expect(auto.fairPriceView(state).rise).toBeCloseTo(lift - 1, 10);
     expect(state.price).toBe(price);
     // The customer types' thresholds move with it.
     expect(auto.customerMix(state).fairPrice).toBe(expected);
