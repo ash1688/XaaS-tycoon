@@ -686,10 +686,11 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
   }
 
   /**
-   * The bands launch users split into at an opening price, each type's against its threshold: above the fair price,
-   * the share a rise from the fair price to it would lose don't join (or join free, by the type's toFreeShare); of
-   * those who do, the share who pay is the product's paid share at the fair price, less the dearer the price is to the
-   * type and more the cheaper. So launching far above the fair price brings few users and fewer payers.
+   * The bands launch users split into at an opening price, each type's against its threshold (#286). Above the fair
+   * price, the share a rise from the fair price to it would lose don't join (or join free, by the type's toFreeShare).
+   * Of those who join, each type pays at odds of k × (threshold ÷ price) ^ paidShareSensitivity: a type that would put
+   * up with a dearer price is readier to pay, and every type more so the cheaper the price, but never all of them. k is
+   * set so that at the fair price the product's paid share (1 − freeShare) holds across its mix.
    */
   function launchBands(state: GameState, price: number, rate?: number): PriceBandsView {
     const { price: fee, rate: toRate } = checkedPrice(state, price, rate);
@@ -697,19 +698,41 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
     const fair = fairMonthly(state);
     const { freeShare } = config.productTypes[state.productType].pricing;
     const mix = baseMix(state.productType);
+    const s = config.pricing.paidShareSensitivity;
+    const k = launchOdds(state, 1 - freeShare, mix);
+    const paying = (odds: number) => (Number.isFinite(odds) ? odds / (1 + odds) : 1);
     const types = CUSTOMER_TYPE_IDS.map((id): TypeBands => {
       const th = threshold(state, id);
       const { name, toFreeShare } = config.customerTypes[id];
       const lost = riseLost(config.pricing, fair, at, th);
-      const ratio = at / fair;
-      const s = config.pricing.paidShareSensitivity;
-      const pull = ratio >= 1 ? ratio ** -s : ratio ** ((-s * fair) / th);
-      const joinPaid = (1 - lost) * Math.min(1, (1 - freeShare) * pull);
+      const joinPaid = (1 - lost) * paying(k * (th / at) ** s);
       const notJoin = lost * (1 - toFreeShare);
       const bands = { joinPaid, joinFree: Math.max(0, 1 - joinPaid - notJoin), notJoin };
       return { id, name, share: mix[id], bands: JOIN_BANDS.map((b) => ({ id: b, share: bands[b as keyof typeof bands] })), upgrade: 0 };
     });
     return withTotal("launch", types);
+  }
+
+  /**
+   * The k for launchBands: the odds scale at which the mix's paid share at the fair price is `paid`. Found by halving,
+   * as each type's share k·r ÷ (1 + k·r) rises with k. Infinite when everyone pays, 0 when nobody does.
+   */
+  function launchOdds(state: GameState, paid: number, mix: Record<CustomerTypeId, number>): number {
+    if (paid >= 1) return Infinity;
+    if (paid <= 0) return 0;
+    const fair = fairMonthly(state);
+    const s = config.pricing.paidShareSensitivity;
+    const ratios = CUSTOMER_TYPE_IDS.map((id) => [mix[id], (threshold(state, id) / fair) ** s] as const);
+    const share = (k: number) => ratios.reduce((sum, [m, r]) => sum + (m * k * r) / (1 + k * r), 0);
+    let lo = 0;
+    let hi = 1;
+    while (share(hi) < paid) hi *= 2;
+    for (let i = 0; i < 60; i++) {
+      const mid = (lo + hi) / 2;
+      if (share(mid) < paid) lo = mid;
+      else hi = mid;
+    }
+    return (lo + hi) / 2;
   }
 
   /**
