@@ -74,7 +74,9 @@ const opened = (state: GameState, tier: TierNumber): GameState => {
 function withHistory(state: GameState, days: number, income: number, hoursDown = 0): GameState {
   const last = state.spendByDay.at(-1)!;
   const history = Array.from({ length: days }, (_, i) => ({ ...last, day: state.day - days + i + 1, income, hoursDown }));
-  return { ...state, spendByDay: [...state.spendByDay, ...history] };
+  // In place of the days played they cover, so each day is counted once.
+  const before = state.spendByDay.filter((d) => d.day <= state.day - days);
+  return { ...state, spendByDay: [...before, ...history] };
 }
 
 const tier = (state: GameState, n: TierNumber, s: Sim = sim) => s.tiers(state).find((t) => t.tier === n)!;
@@ -181,8 +183,42 @@ describe("tiers", () => {
     const poor = withHistory({ ...base, users: 8_000 }, 30, 1_500);
     expect(sim.advance(poor).state.tiers.map((t) => t.tier)).toEqual([2]);
     const flaky = withHistory({ ...base, users: 8_000 }, 30, 2_500, 1);
-    expect(tier(flaky, 3).conditions[1]).toMatchObject({ value: 95.83, met: false });
+    expect(tier(flaky, 3).conditions[1]).toMatchObject({ value: 95.8, met: false });
     expect(sim.advance(flaky).state.tiers.map((t) => t.tier)).toEqual([2]);
+  });
+
+  it("measure tier 3's uptime as the status and the IPO do: since launch while under 30 days, never 0% (#285)", () => {
+    // Launched on day 10, played to day 20 with 2 hours down on each of the last 5 days: 11 days since launch.
+    const base = sim.advance(begin("saas"), 3).state;
+    const last = base.spendByDay.at(-1)!;
+    const spendByDay = Array.from({ length: 20 }, (_, i) => ({ ...last, day: i + 1, hoursDown: i >= 15 ? 2 : 0 }));
+    const early: GameState = { ...base, day: 20, launchDay: 10, spendByDay };
+    const expected = 100 * (1 - 10 / (11 * 24));
+    const uptime = tier(early, 3).conditions[1]!;
+    expect(uptime).toMatchObject({ value: Math.round(expected * 10) / 10, met: false });
+    expect(sim.recordUptime(early)).toBeCloseTo(expected, 10);
+    // Before launch there's no record: 100%, not 0%.
+    expect(tier({ ...early, launchDay: null }, 3).conditions[1]!.value).toBe(100);
+    expect(tier({ ...early, spendByDay: spendByDay.map((d) => ({ ...d, hoursDown: 0 })) }, 3).conditions[1]).toMatchObject({ value: 100, met: true });
+  });
+
+  it("show the same uptime in tier 3, the status and the IPO check on every day of a real game (#285)", () => {
+    // A company that never scales has outages early on, under 30 days into trading.
+    const full = createSim(defaultConfig);
+    const noScaling = STRATEGIES.find((s) => s.id === "no-scaling")!;
+    let state = full.newGame({ companyName: "Tiered Co", productType: "social", model: "iaas", seed: 1 });
+    const seen: number[] = [];
+    for (let i = 0; i < 60; i++) {
+      state = full.tick(playDay(full, state, noScaling)).state;
+      const record = Math.round(full.recordUptime(state) * 10) / 10;
+      expect(tier(state, 3, full).conditions[1]!.value).toBe(record);
+      if (state.launchDay === null) continue;
+      expect(record).toBeGreaterThan(0);
+      const ipo = full.ipo(state).conditions.find((c) => c.id === "uptime")!;
+      expect(ipo.now.startsWith(`${record}%`)).toBe(true);
+      seen.push(record);
+    }
+    expect(Math.min(...seen)).toBeLessThan(99);
   });
 
   it("open tier 4 once an angel investor's money is taken, after tiers 2 and 3", () => {
