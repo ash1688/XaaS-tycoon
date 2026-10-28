@@ -535,7 +535,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
       `servers: ${servers
         .map(
           (s) =>
-            `#${s.id} ${s.size} ${s.type} ${s.units} ${s.apiu ? "APIU (switched)" : UNIT[s.type]}${s.unitBoost > 1 && s.type !== "loadBalancer" ? ` (+${percent(s.unitBoost - 1)} newer kit)` : ""}${s.rack !== null ? ` in rack #${s.rack}` : ""}${s.status === "pending" ? ` (arrives in ${s.daysLeft}d)` : ""}${hardwareText(s)}`,
+            `#${s.id} ${s.size} ${s.type} ${s.units} ${s.apiu ? "APIU (switched)" : UNIT[s.type]}${s.unitBoost > 1 && s.type !== "loadBalancer" ? ` (+${percent(s.unitBoost - 1)} newer kit)` : ""}${s.rack !== null ? ` in rack #${s.rack}` : ""}${s.status === "pending" ? ` (arrives in ${s.daysLeft}d)` : ""}${s.leavesOn !== null ? ` (${state.model === "onprem" ? "SELLING" : "CANCELLING"}: goes at the end of day ${s.leavesOn}, when its replacement is ready; still serving and billed)` : ""}${hardwareText(s)}`,
         )
         .join(", ")}`,
     );
@@ -1327,7 +1327,11 @@ export function renderCommands(sim: Sim, state: GameState): string {
         );
       }
     }
-    lines.push(`  ${state.model === "onprem" ? "sell" : "cancel"} <server id>`);
+    const retire = state.model === "onprem" ? "sell" : "cancel";
+    lines.push(
+      `  ${retire} <server id> [now]   (waits for a replacement of the same kind on order; refused if it'd leave capacity below today's load, ` +
+        `or on Hard goes ahead with "now")`,
+    );
     if (state.api && sim.servers(state).some((s) => s.type === "app")) {
       lines.push(`  switch <app server id> <cu|apiu>   (an app server gives CU or APIU, as many of either)`);
     }
@@ -1611,9 +1615,13 @@ export function parseCommand(text: string): Command {
     case "rent":
       return one({ type: "rentServer", server: type(args[0]), size: size(args[1]) });
     case "sell":
-      return one({ type: "sellServer", id: number(args[0], "a server id") });
-    case "cancel":
-      return one({ type: "cancelServer", id: number(args[0], "a server id") });
+    case "cancel": {
+      // "cancel 3", or "cancel 3 now" to go ahead without waiting for a replacement, or on Hard despite the load.
+      const id = number(args[0], "a server id");
+      if (args[1] !== undefined && args[1] !== "now") throw new SimError("bad_command", `Expected "${verb} <server id>" or "${verb} <server id> now".`);
+      const now = args[1] === "now" ? { now: true } : {};
+      return one(verb === "sell" ? { type: "sellServer", id, ...now } : { type: "cancelServer", id, ...now });
+    }
     case "instances":
       return one({ type: "setInstances", count: number(args[0], "an instance count") });
     case "managed":

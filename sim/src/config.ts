@@ -68,7 +68,8 @@ export type VcLean = (typeof VC_LEANS)[number];
 
 /**
  * A difficulty's numbers: multipliers on the preset's own numbers, so a teacher's preset is just as much easier or
- * harder. A difficulty only changes numbers, never which systems a game has. Normal is all 1s: the preset as it is.
+ * harder, and how far it trusts the student with a dangerous cancel. A difficulty never changes which systems a game
+ * has. Normal is all 1s: the preset as it is.
  */
 export interface DifficultyNumbers {
   name: string;
@@ -85,27 +86,43 @@ export interface DifficultyNumbers {
    * can float without outside investors (#265).
    */
   tier4Revenue: boolean;
+  /**
+   * Whether a cancel or sale that would leave capacity below today's load can go ahead once confirmed (Hard), rather
+   * than being refused (#260).
+   */
+  confirmRiskyCancels: boolean;
 }
 
 /** The built-in difficulties. Not on the config page: the teacher picks which are allowed, not what they do. */
 export const DIFFICULTIES: Record<DifficultyId, DifficultyNumbers> = {
   easy: {
     name: "Easy",
-    blurb: "More starting cash, fewer random events, and customers put up with dearer prices.",
+    blurb:
+      "More starting cash, fewer random events, and customers put up with dearer prices. A server can't be cancelled or sold if that would leave you short of capacity.",
     startingCash: 1.5,
     dangerRise: 0.75,
     priceThreshold: 1.15,
     tier4Revenue: false,
+    confirmRiskyCancels: false,
   },
-  normal: { name: "Normal", blurb: "The game as designed.", startingCash: 1, dangerRise: 1, priceThreshold: 1, tier4Revenue: false },
+  normal: {
+    name: "Normal",
+    blurb: "The game as designed. A server can't be cancelled or sold if that would leave you short of capacity.",
+    startingCash: 1,
+    dangerRise: 1,
+    priceThreshold: 1,
+    tier4Revenue: false,
+    confirmRiskyCancels: false,
+  },
   hard: {
     name: "Hard",
     blurb:
-      "Less starting cash, more random events, and customers are quicker to leave over price. Tier 4 also opens on revenue, so you can float without outside investors.",
+      "Less starting cash, more random events, and customers are quicker to leave over price. Tier 4 also opens on revenue, so you can float without outside investors. You can cancel or sell a server that leaves you short of capacity, once you confirm it: the outage is yours.",
     startingCash: 0.8,
     dangerRise: 1.33,
     priceThreshold: 0.9,
     tier4Revenue: true,
+    confirmRiskyCancels: true,
   },
 };
 

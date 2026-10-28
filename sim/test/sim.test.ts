@@ -4,6 +4,7 @@ import { settlingPay } from "./settlingPay.ts";
 import {
   createSim,
   defaultConfig,
+  DIFFICULTIES,
   GAME_STATE_VERSION,
   lawsuitOdds,
   MODEL_IDS,
@@ -1603,8 +1604,8 @@ describe("servers on IaaS", () => {
   it("starts a new IaaS game with the configured starter setup, ready for the first day", () => {
     const state = begin();
     expect(flat.servers(state)).toEqual([
-      { id: 1, type: "app", size: "massive", name: "App server", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, unitBoost: 1, apiu: false, monthlyCost: 0, paid: null, sellBack: null, rack: null, performance: null, wear: null, wearDaysLeft: null, wearWarning: false, risk: null, crashedDays: 0, overheatedDays: 0 },
-      { id: 2, type: "database", size: "massive", name: "Database", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, unitBoost: 1, apiu: false, monthlyCost: 0, paid: null, sellBack: null, rack: null, performance: null, wear: null, wearDaysLeft: null, wearWarning: false, risk: null, crashedDays: 0, overheatedDays: 0 },
+      { id: 1, type: "app", size: "massive", name: "App server", status: "ready", readyDay: 1, daysLeft: 0, leavesOn: null, units: 10_000, unitBoost: 1, apiu: false, monthlyCost: 0, paid: null, sellBack: null, rack: null, performance: null, wear: null, wearDaysLeft: null, wearWarning: false, risk: null, crashedDays: 0, overheatedDays: 0 },
+      { id: 2, type: "database", size: "massive", name: "Database", status: "ready", readyDay: 1, daysLeft: 0, leavesOn: null, units: 10_000, unitBoost: 1, apiu: false, monthlyCost: 0, paid: null, sellBack: null, rack: null, performance: null, wear: null, wearDaysLeft: null, wearWarning: false, risk: null, crashedDays: 0, overheatedDays: 0 },
     ]);
     expect(flat.units(state)).toMatchObject({ cu: { demand: 10, capacity: 10_000 }, dbu: { demand: 10, capacity: 10_000 } });
   });
@@ -1784,6 +1785,73 @@ describe("servers on IaaS", () => {
     expect(flat.tick(tick.state).pauses.map((p) => p.id)).not.toContain("ops-shortfall");
   });
 
+  describe("cancelling a VM (#260)", () => {
+    // Every difficulty allowed, so a game can start on any.
+    const anyLevel = createSim({ ...flatConfig, allowedDifficulties: { easy: 1, normal: 1, hard: 1 } });
+    /** A massive app server, database and small cache, on a difficulty: 1,000 users need 10 CU and DBU. */
+    const kit = (difficulty?: string) =>
+      fleet(
+        withStaff(anyLevel.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 42, ...(difficulty ? { difficulty } : {}) }), { ops: 10 }),
+        BIG_APP,
+        BIG_DB,
+        ["cache", "small"],
+      );
+    const refusal = (state: GameState, action: Action) => {
+      try {
+        flat.applyAction(state, action);
+      } catch (e) {
+        return { code: (e as SimError).code, message: (e as SimError).message };
+      }
+      return null;
+    };
+    const ids = (state: GameState) => state.servers.map((s) => s.id);
+
+    it("waits for a replacement of the same kind on order, still serving and billed, then goes", () => {
+      const state = rent(kit(), "app", "small");
+      const replacement = state.servers.at(-1)!;
+      const waiting = flat.applyAction(state, { type: "cancelServer", id: 1 });
+      expect(flat.servers(waiting).find((s) => s.id === 1)).toMatchObject({ status: "ready", leavesOn: replacement.readyDay });
+      expect(flat.units(waiting)!.cu.capacity).toBe(flat.units(state)!.cu.capacity);
+      expect(refusal(waiting, { type: "cancelServer", id: 1 })?.code).toBe("already_leaving");
+      // It serves through the day the replacement is ready, then goes at the end of it.
+      const day = flat.advance(waiting, replacement.readyDay - waiting.day);
+      expect(ids(day.state)).not.toContain(1);
+      expect(day.log.at(-1)!.entries).toContainEqual({ text: "App server #1 (massive) cancelled: its replacement is ready.", cashDelta: 0 });
+      expect(outages(day.log)).toEqual([]);
+    });
+
+    it("refuses on Easy and Normal a cancel that leaves capacity below today's load, saying why", () => {
+      for (const difficulty of ["easy", "normal"]) {
+        const state = kit(difficulty);
+        expect(refusal(state, { type: "cancelServer", id: 1 }), difficulty).toEqual({
+          code: "cancel_unsafe",
+          message: "You can't cancel that server: it would leave no compute (CU) for today's load. Rent a replacement first, and the cancel will wait until it's ready.",
+        });
+        // Confirming doesn't help below Hard.
+        expect(refusal(state, { type: "cancelServer", id: 1, now: true })?.code, difficulty).toBe("cancel_unsafe");
+        // A cancel that leaves enough goes at once.
+        expect(ids(flat.applyAction(state, { type: "cancelServer", id: 3 }))).toEqual([1, 2]);
+      }
+    });
+
+    it("lets Hard cancel it once confirmed, and the outage is the student's", () => {
+      const state = kit("hard");
+      expect(refusal(state, { type: "cancelServer", id: 1 })).toEqual({
+        code: "confirm_cancel",
+        message: "Cancelling that server would leave no compute (CU) for today's load: expect an outage. To go ahead anyway, confirm it (`cancel 1 now`).",
+      });
+      const gone = flat.applyAction(state, { type: "cancelServer", id: 1, now: true });
+      expect(ids(gone)).toEqual([2, 3]);
+      expect(outages(flat.advance(gone).log).length).toBeGreaterThan(0);
+    });
+
+    it("says so in each difficulty's description", () => {
+      expect(DIFFICULTIES.easy.blurb).toMatch(/can't be cancelled or sold if that would leave you short of capacity/);
+      expect(DIFFICULTIES.normal.blurb).toMatch(/can't be cancelled or sold if that would leave you short of capacity/);
+      expect(DIFFICULTIES.hard.blurb).toMatch(/cancel or sell a server that leaves you short of capacity, once you confirm it/);
+    });
+  });
+
   it("counts free users' demand as well as paying ones'", () => {
     const allPaid = { ...withUsers(begin(), 2_000), paidUsers: 2_000 };
     const allFree = withUsers(begin(), 2_000);
@@ -1830,8 +1898,8 @@ describe("servers on IaaS", () => {
     expect(code({ type: "rentServer", server: "mainframe" as ServerType, size: "small" })).toBe("unknown_server");
     expect(code({ type: "rentServer", server: "app", size: "huge" as ServerSize })).toBe("unknown_server");
     expect(code({ type: "cancelServer", id: 99 })).toBe("unknown_server");
-    rent(state, "app", "small");
-    flat.applyAction(state, { type: "cancelServer", id: 1 });
+    // Cancelling with a replacement on order (it waits for it) leaves the state it started from alone too.
+    flat.applyAction(rent(state, "app", "small"), { type: "cancelServer", id: 1 });
     expect(state).toEqual(copy);
   });
 
@@ -1954,6 +2022,24 @@ describe("servers on-prem", () => {
   };
   const BIG_DB: Kind = ["database", "massive"];
   const BIG_APP: Kind = ["app", "massive"];
+
+  it("sells with the same rules as cancelling: waits for a replacement, and refuses one that leaves it short (#260)", () => {
+    const state = fleet(begin(), BIG_APP, BIG_DB);
+    expect(code(() => sell(state, 1))).toBe("cancel_unsafe");
+    const ordered = buy(state, "app", "massive");
+    const arrives = ordered.servers.at(-1)!.readyDay;
+    const refund = own.servers(ordered).find((s) => s.id === 1)!.sellBack!;
+    const waiting = sell(ordered, 1);
+    // Refunded when it goes, not before.
+    expect(waiting.cash).toBe(ordered.cash);
+    expect(own.servers(waiting).find((s) => s.id === 1)!.leavesOn).toBe(arrives);
+    const played = own.advance(waiting, arrives - waiting.day);
+    expect(played.state.servers.map((s) => s.id)).not.toContain(1);
+    expect(played.log.at(-1)!.entries).toContainEqual(
+      expect.objectContaining({ text: expect.stringMatching(/^App server #1 \(massive\) sold back for £[\d,]+: its replacement is ready\.$/), cashDelta: refund }),
+    );
+    expect(outages(played.log)).toEqual([]);
+  });
 
   it("starts with the starter kit, bought on day 1 on top of the server room, ready for the first day", () => {
     const state = own.newGame({ companyName: "Acme", productType: "social", model: "onprem", seed: 42 });

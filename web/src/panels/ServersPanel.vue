@@ -40,9 +40,10 @@ const groups = computed(() =>
     const sizes = SERVER_SIZES.map((size) => {
       const list = servers.value.filter((s) => s.type === type && s.size === size && (!buying.value || s.status === "ready"));
       const pending = list.filter((s) => s.status === "pending");
+      const leaving = list.filter((s) => s.leavesOn !== null);
       const switched = list.filter((s) => s.apiu);
       const units = list.filter((s) => !s.apiu).reduce((sum, s) => sum + s.units, 0);
-      return { size, list, pending, switched, units, apiu: switched.reduce((sum, s) => sum + s.units, 0) };
+      return { size, list, pending, leaving, switched, units, apiu: switched.reduce((sum, s) => sum + s.units, 0) };
     }).filter((g) => g.list.length);
     const count = sizes.reduce((n, g) => n + g.list.length, 0);
     const apiu = sizes.reduce((sum, g) => sum + g.apiu, 0);
@@ -207,7 +208,9 @@ function stepDown(type: ServerType) {
 // Cancelling one of a group (IaaS): one still being set up first, then the newest. Selling one (on-prem): the newest.
 const cancelling = ref<ServerView>();
 function pickToCancel(list: ServerView[]) {
-  cancelling.value = list.findLast((s) => s.status === "pending") ?? list.at(-1);
+  // One already waiting to go for its replacement is left out (#260).
+  const left = list.filter((s) => s.leavesOn === null);
+  cancelling.value = left.findLast((s) => s.status === "pending") ?? left.at(-1);
 }
 
 // What cancelling (or selling) a ready server does to the tier it gives, worked out from today's demand: over 100%
@@ -247,9 +250,9 @@ const cancelWarning = computed(() => {
     .filter((x) => x.status === "pending" && x.type === s.type && x.id !== s.id)
     .sort((a, b) => a.readyDay - b.readyDay)[0];
   const over = percent >= 999 ? "have no capacity" : `be at ${percent}%`;
-  return coming
-    ? `${name} would ${over} until your new ${coming.size} ${lower(coming.name)} is ready, after day ${coming.readyDay}: expect outages. Keep this one until then, and ${buying.value ? "sell" : "cancel"} it after.`
-    : `${name} would ${over}: expect outages. ${buying.value ? "Buy" : "Rent"} more first, and ${buying.value ? "sell" : "cancel"} this one once they're ready.`;
+  // With a replacement on order the cancel waits for it, so there's nothing to warn of (#260).
+  if (coming) return null;
+  return `${name} would ${over}: expect outages. ${buying.value ? "Buy" : "Rent"} more first: the ${buying.value ? "sale" : "cancel"} then waits until they're ready.`;
 });
 
 // Servers on order need no ops until they're ready, but then they do (#259): said as soon as one is ordered.
@@ -259,9 +262,18 @@ const opsForOrders = computed(() => {
   return `Once the servers on order are ready you'll need ${game.opsPeople(c.opsNeededOnceReady)}, and yours do the work of ${formatCount(game.opsWork)}. Hire ops (or retrain someone) before then, or capacity is cut.`;
 });
 
-async function cancel() {
+// A replacement of the same kind on order that the cancel (or sale) would wait for: it goes once that's ready (#260).
+const waitsFor = computed(() => {
+  const s = cancelling.value;
+  if (!s || s.status === "pending") return null;
+  const taken = servers.value.filter((x) => x.type === s.type && x.leavesOn !== null).length;
+  return servers.value.filter((x) => x.type === s.type && x.status === "pending").sort((a, b) => a.readyDay - b.readyDay)[taken] ?? null;
+});
+
+// `now` goes ahead without waiting, or on Hard despite the load, once the student confirms it.
+async function cancel(now = false) {
   if (!cancelling.value) return;
-  await game.act({ type: buying.value ? "sellServer" : "cancelServer", id: cancelling.value.id });
+  await game.act({ type: buying.value ? "sellServer" : "cancelServer", id: cancelling.value.id, ...(now ? { now: true } : {}) });
   if (!game.error) cancelling.value = undefined;
 }
 </script>
@@ -342,6 +354,10 @@ async function cancel() {
             </span>
             <span v-if="s.pending.length" class="pending-note" :data-testid="`pending-${g.type}-${s.size}`">
               {{ s.pending.length }} setting up, {{ readyWhen(s.pending[0]!) }}
+            </span>
+            <span v-if="s.leaving.length" class="pending-note" :data-testid="`leaving-${g.type}-${s.size}`">
+              {{ s.leaving.length }} {{ buying ? "selling" : "cancelling" }}: still serving until the end of day
+              {{ s.leaving[0]!.leavesOn }}, when {{ s.leaving.length === 1 ? "its replacement is" : "their replacements are" }} ready
             </span>
           </div>
           <div v-if="g.type === 'app' && hasApi" class="switch-buttons">
@@ -437,7 +453,16 @@ async function cancel() {
 
     <AppModal small :open="!!cancelling" :title="buying ? 'Sell a server' : 'Cancel a VM'" @close="cancelling = undefined">
       <template v-if="cancelling">
-        <p v-if="game.error" class="error" role="alert">{{ game.error }}</p>
+        <p v-if="game.error" class="error" role="alert" data-testid="cancel-error">{{ game.error }}</p>
+        <p v-if="waitsFor" class="muted" data-testid="cancel-waits">
+          Your new {{ waitsFor.size }} {{ lower(waitsFor.name) }} is on its way, so this one keeps serving, and is still
+          {{ buying ? "running" : "billed" }}, until it's ready after day {{ waitsFor.readyDay }}. Then it goes.
+        </p>
+        <div v-if="game.errorCode === 'confirm_cancel'" class="confirm-buttons" data-testid="cancel-now">
+          <button :disabled="game.busy" class="danger-fill" data-testid="cancel-now-confirm" @click="cancel(true)">
+            {{ buying ? "Sell it anyway" : "Cancel it anyway" }}: the outage is mine
+          </button>
+        </div>
         <template v-if="buying">
           <p>
             Sell a {{ cancelling.size }} {{ lower(cancelling.name) }}
@@ -455,7 +480,7 @@ async function cancel() {
             another takes {{ days(readyDays) }} to arrive.
           </p>
           <div class="confirm-buttons">
-            <button :disabled="game.busy" data-testid="sell-confirm" @click="cancel">
+            <button :disabled="game.busy" data-testid="sell-confirm" @click="cancel()">
               Sell it for {{ formatCash(cancelling.sellBack ?? 0) }}
             </button>
             <button class="ghost" :disabled="game.busy" @click="cancelling = undefined">Keep it</button>
@@ -475,7 +500,7 @@ async function cancel() {
             away, and renting another takes a day to set up.
           </p>
           <div class="confirm-buttons">
-            <button :disabled="game.busy" data-testid="cancel-confirm" @click="cancel">Cancel it</button>
+            <button :disabled="game.busy" data-testid="cancel-confirm" @click="cancel()">Cancel it</button>
             <button class="ghost" :disabled="game.busy" @click="cancelling = undefined">Keep it</button>
           </div>
         </template>

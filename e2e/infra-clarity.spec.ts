@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { movedNow, pinLaunchUsers } from "./staff.ts";
+import { movedNow, pinLaunchUsers, setDifficulty } from "./staff.ts";
 
 // Infrastructure clarity (playtest 1): the bar with no capacity sets it and says why, what has to be ready before
 // launch, the ops cut on every bar, advice that puts ops and load balancers first, and a warning before a cancel that
@@ -95,8 +95,49 @@ test("missing ops show on every bar and come first in the advice; then a full lo
   await servers.getByTestId("size-app").selectOption("medium");
   await servers.getByRole("button", { name: "Cancel a medium app server" }).click();
   const cancel = student.getByRole("dialog", { name: "Cancel a VM" });
-  await expect(cancel.getByTestId("cancel-warning")).toContainText(
-    /Compute would have no capacity until your new small app server is ready, after day \d+: expect outages\./,
+  // With the small one on order, the cancel waits for it (#260): no outage to warn of.
+  await expect(cancel.getByTestId("cancel-warning")).toHaveCount(0);
+  await expect(cancel.getByTestId("cancel-waits")).toContainText(
+    /Your new small app server is on its way, so this one keeps serving, and is still billed, until it's ready after day \d+\. Then it goes\./,
   );
-  await cancel.getByRole("button", { name: "Keep it" }).click();
+  await cancel.getByTestId("cancel-confirm").click();
+  await expect(cancel).toHaveCount(0);
+  await expect(servers.getByTestId("leaving-app-medium")).toContainText(/1 cancelling: still serving until the end of day \d+, when its replacement is ready/);
+});
+
+test("on Easy and Normal a cancel that leaves capacity short is refused; on Hard it's confirmed in a dialog (#260)", async ({
+  browser,
+  request,
+}) => {
+  for (const difficulty of ["normal", "hard"] as const) {
+    const { id, act, play } = await newCompany(request, `Cancel ${difficulty} Ltd`);
+    await setDifficulty(id, difficulty);
+    await pinLaunchUsers(id, 3_000);
+    await act({ type: "rentServer", server: "app", size: "medium" });
+    await act({ type: "rentServer", server: "database", size: "medium" });
+    while ((await play()).launch.status !== "launched");
+    await play();
+
+    const student = await (await browser.newContext()).newPage();
+    await student.goto(`/play/${code}/${id}/infrastructure`);
+    const servers = student.getByTestId("servers-panel");
+    await servers.getByTestId("size-app").selectOption("medium");
+    await servers.getByRole("button", { name: "Cancel a medium app server" }).click();
+    const cancel = student.getByRole("dialog", { name: "Cancel a VM" });
+    await cancel.getByTestId("cancel-confirm").click();
+    if (difficulty === "normal") {
+      await expect(cancel.getByTestId("cancel-error")).toContainText("You can't cancel that server: it would leave no compute (CU) for today's load.");
+      await expect(cancel.getByTestId("cancel-now")).toHaveCount(0);
+      await cancel.getByRole("button", { name: "Keep it" }).click();
+    } else {
+      await expect(cancel.getByTestId("cancel-error")).toContainText("Cancelling that server would leave no compute (CU) for today's load: expect an outage.");
+      await cancel.getByTestId("cancel-now-confirm").click();
+      await expect(cancel).toHaveCount(0);
+    }
+    const left = (await (await request.get(`/api/codes/${code}/companies/${id}`)).json()).servers as { type: string }[];
+    expect(left.some((s) => s.type === "app"), difficulty).toBe(difficulty === "normal");
+    // Each round makes its own code: deleted here, as afterEach only deletes the last.
+    await request.delete(`/api/teacher/codes/${code}`);
+    code = null;
+  }
 });

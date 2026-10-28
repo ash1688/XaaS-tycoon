@@ -439,6 +439,34 @@ describe("the paid API", () => {
     expect(status).toMatch(/^capacity: .* \| every tier CUT to \d+% for missing ops$/m);
   });
 
+  it("cancels with `cancel N now` on Hard only, and shows a cancel waiting for its replacement (#260)", () => {
+    expect(parseCommand("cancel 3 now")).toMatchObject({ action: { type: "cancelServer", id: 3, now: true } });
+    expect(parseCommand("sell 3")).toMatchObject({ action: { type: "sellServer", id: 3 } });
+    expect(() => parseCommand("cancel 3 later")).toThrow(/cancel <server id> now/);
+    const anyLevel = createSim({ ...defaultConfig, mvp: NO_MVP, launch: AUTO_LAUNCH, allowedDifficulties: { easy: 1, normal: 1, hard: 1 } });
+    const go = (s: GameState, text: string) => runCommand(anyLevel, s, parseCommand(text), who);
+    const setUp = (difficulty: string) => {
+      const state = inPhase(anyLevel.newGame({ companyName: "Shop Co", productType: "ecommerce", model: "iaas", seed: 3, takeLoan: true, difficulty }), "grow");
+      const rented = go(go(state, "rent app large").state, "rent database large").state;
+      // Live, with users on the servers.
+      return advanceUntil(anyLevel, rented, 5, who).state;
+    };
+    const normal = setUp("normal");
+    const app = normal.servers.find((s) => s.type === "app")!.id;
+    expect(go(normal, `cancel ${app}`).lines[0]).toMatch(/^cancelServer refused: You can't cancel that server: it would leave no compute \(CU\) for today's load/);
+    expect(go(normal, `cancel ${app} now`).lines[0]).toMatch(/^cancelServer refused: You can't cancel/);
+    // With a replacement on order it waits, and the status says so.
+    const waiting = go(go(normal, "rent app large").state, `cancel ${app}`).state;
+    expect(renderStatus(anyLevel, waiting)).toMatch(new RegExp(`#${app} large app .*\\(CANCELLING: goes at the end of day \\d+, when its replacement is ready; still serving and billed\\)`));
+    expect(renderCommands(anyLevel, waiting)).toMatch(/cancel <server id> \[now\]/);
+
+    const hard = setUp("hard");
+    expect(go(hard, `cancel ${app}`).lines[0]).toMatch(new RegExp(`cancelServer refused: Cancelling that server would .*: expect an outage\\. To go ahead anyway, confirm it \\(\`cancel ${app} now\`\\)\\.`));
+    const gone = go(hard, `cancel ${app} now`);
+    expect(gone.lines[0]).toBe("cancelServer: done");
+    expect(gone.state.servers.map((s) => s.id)).not.toContain(app);
+  });
+
   it("stops time when calls start being dropped", () => {
     let state = run(shop("iaas"), "rent app large").state;
     state = run(state, "rent database large").state;

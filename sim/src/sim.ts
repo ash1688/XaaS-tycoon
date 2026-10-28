@@ -908,11 +908,11 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       case "rentServer":
         return servers.rentServer(state, action.server, action.size);
       case "cancelServer":
-        return servers.cancelServer(state, action.id);
+        return servers.cancelServer(state, action.id, action.now === true, retireRules(state));
       case "buyServer":
         return servers.buyServer(state, action.server, action.size, action.rack);
       case "sellServer":
-        return servers.sellServer(state, action.id);
+        return servers.sellServer(state, action.id, action.now === true, retireRules(state));
       case "buyRack":
         return racks.buyRack(state, action.size);
       case "sellRack":
@@ -1148,8 +1148,11 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       rivalRng: market.rivalRng,
       rivalJoins: market.rivalJoins,
     };
+    // Servers cancelled or sold while waiting for a replacement go once it's ready, after today's bills (#260).
+    const left = servers.leaveDay(played, day);
+    entries.push(...left.entries);
     // Managed autoscaling sets tomorrow's instances to today's demand.
-    const scaled = autoscaleInstances(played);
+    const scaled = autoscaleInstances(left.state);
     entries.push(...scaled.entries);
     // The danger meter rises with the day's risks, on the model the day was played on.
     const risen: GameState = { ...scaled.state, ...encounters.riseDay(scaled.state, live, served.overloaded) };
@@ -1200,6 +1203,15 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
    * Managed autoscaling (a PaaS model benefit): after the day, the platform sets the app instance count to the day's
    * CU demand plus its headroom, within the platform's limits, serving from tomorrow.
    */
+  /**
+   * How this game's cancels and sales are checked (#260): against today's load, refused when it'd leave the company
+   * short, or on Hard, allowed once confirmed.
+   */
+  const retireRules = (state: GameState) => ({
+    shortBy: (without: GameState) => infra.shortBy(state, without),
+    confirm: DIFFICULTIES[difficulty].confirmRiskyCancels,
+  });
+
   function autoscaleInstances(state: GameState): { state: GameState; entries: LogEntry[] } {
     const scaling = managedAutoscaling(config, state, state.model);
     const platform = servers.managed(state);

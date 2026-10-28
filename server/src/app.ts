@@ -930,6 +930,9 @@ export async function buildApp(opts: AppOptions) {
             // cancelServer, sellServer and switchServer: one of the company's servers, by id; sellRack, one of its racks.
             // The sim checks it's theirs.
             id: { type: "integer", minimum: 1 },
+            // cancelServer and sellServer: go ahead now, rather than wait for a replacement on order, or on Hard,
+            // despite leaving capacity short of today's load (#260).
+            now: { type: "boolean" },
             // buyServer: the rack to install it in, by id. Left out, it goes in the first with room.
             rack: { type: "integer", minimum: 1 },
             // switchServer: whether the app server gives CU or APIU.

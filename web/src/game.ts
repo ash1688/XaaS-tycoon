@@ -51,6 +51,8 @@ export function createGame(code: string, id: string) {
   const company = ref<CompanyView>();
   const loadError = ref("");
   const error = ref("");
+  // The last refusal's code, for a control that answers one: "confirm_cancel" asks to confirm a cancel on Hard (#260).
+  const errorCode = ref("");
   const busy = ref(false);
   // Every day played since the page opened, oldest first. The server keeps the game, not its log.
   const dayLogs = ref<DayLog[]>([]);
@@ -250,6 +252,7 @@ export function createGame(code: string, id: string) {
   async function showError(e: unknown) {
     if (e instanceof RequestError && e.code === "finished") return load();
     error.value = (e as Error).message;
+    errorCode.value = e instanceof RequestError ? e.code : "";
   }
 
   async function loadSummary() {
@@ -269,6 +272,7 @@ export function createGame(code: string, id: string) {
   async function act(action: ActionBody) {
     busy.value = true;
     error.value = "";
+    errorCode.value = "";
     try {
       company.value = await api.act(code, id, action);
     } catch (e) {
@@ -429,6 +433,7 @@ export function createGame(code: string, id: string) {
     company,
     loadError,
     error,
+    errorCode,
     busy,
     dayLogs,
     lastDay,

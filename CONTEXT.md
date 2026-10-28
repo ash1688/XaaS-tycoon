@@ -23,8 +23,12 @@ A permanent, scripted practice game every student has, which can be restarted at
 _Avoid_: Tutorial mode, practice game
 
 **Difficulty**:
-Easy, Normal or Hard: a set of numbers the student picks from those the teacher allows. Never changes which systems exist. On Hard, tier 4 also opens on a revenue milestone, so a company can float without outside investors.
+Easy, Normal or Hard: a set of numbers the student picks from those the teacher allows. Never changes which systems exist. On Hard, tier 4 also opens on a revenue milestone, so a company can float without outside investors, and a dangerous cancel can go ahead once confirmed (see **Cancelling**).
 _Avoid_: Mode, level
+
+**Cancelling**:
+Taking a ready server out of service: cancelling a rented VM, or selling back bought kit. With a replacement of the same kind on order it waits for it, still serving and billed, and goes at the end of the day the replacement is ready. Otherwise, if what's left wouldn't carry today's load, Easy and Normal refuse it and Hard asks the student to confirm (`cancel N now`), and the outage is theirs. A server still being set up can always be cancelled at once.
+_Avoid_: Decommission, retire (in the student's words)
 
 **Bootstrapped float**:
 A float with no outside investors' money along the way: no friends and family, angel, VC or vulture. The grant and the bank loan aren't shares, so they don't count. The end screen flags it: "Floated without outside investors".

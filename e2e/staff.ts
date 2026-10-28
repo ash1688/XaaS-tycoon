@@ -215,3 +215,16 @@ export async function movedNow(id: string, from = "developers", to = "ops") {
     await sql.end();
   }
 }
+
+/**
+ * Puts a company on another difficulty, as if picked when it started, for a spec about what a difficulty changes when
+ * the default config only allows Normal. Reload the page after.
+ */
+export async function setDifficulty(id: string, difficulty: "easy" | "normal" | "hard") {
+  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
+  try {
+    await sql`update companies set state = jsonb_set(state, '{difficulty}', ${sql.json(difficulty)}) where id = ${id}`;
+  } finally {
+    await sql.end();
+  }
+}
