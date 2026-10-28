@@ -130,7 +130,7 @@ describe("the score and the shareholder breakdown (#264)", () => {
       shareholders: [...state.shareholders, { id: "public", shares: 2_000, day: 90 }],
       ipo: { ...state.ipo, approvedDay: 85, result: ipo },
     };
-    const lines = runScript(sim, floated, "valuation", "AI").lines.join("\n");
+    const lines = runScript(sim, floated, "valuation", { player: "AI" }).lines.join("\n");
     expect(lines).toContain(`market value £${(50 * inIssue).toLocaleString("en-GB")} at the first day's close; share price £50.00`);
     expect(lines).toContain(`You: ${state.shareholders[0]!.shares.toLocaleString("en-GB")} shares`);
     expect(lines).toContain(`worth £${(50 * state.shareholders[0]!.shares).toLocaleString("en-GB")}`);

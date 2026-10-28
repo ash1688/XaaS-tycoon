@@ -88,9 +88,9 @@ function newGame(file: string, args: string[]) {
   save(file, game, [row]);
   const difficulty = DIFFICULTIES[state.difficulty];
   // The founder's seed money, as the end screen's breakdown shows it: the starting cash, before any loan (#283).
-  const seed = sim.summarise(state).capTable.shareholders.find((r) => r.id === "student")?.putIn ?? 0;
+  const seedMoney = sim.summarise(state).capTable.shareholders.find((r) => r.id === "student")?.putIn ?? 0;
   const borrowed = state.loan ? `, plus the bank loan's £${state.loan.amount.toLocaleString("en-GB")}` : "";
-  console.log(`Difficulty: ${difficulty.name}. ${difficulty.blurb}\nStarting cash: £${seed.toLocaleString("en-GB")}, your seed money${borrowed}.\n\n${renderStatus(sim, state)}\n\n${renderCommands(sim, state)}`);
+  console.log(`Difficulty: ${difficulty.name}. ${difficulty.blurb}\nStarting cash: £${seedMoney.toLocaleString("en-GB")}, your seed money${borrowed}.\n\n${renderStatus(sim, state)}\n\n${renderCommands(sim, state)}`);
 }
 
 function play(file: string, script: string) {
