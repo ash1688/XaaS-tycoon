@@ -30,6 +30,14 @@ _Avoid_: Mode, level
 Taking a ready server out of service: cancelling a rented VM, or selling back bought kit. With a replacement of the same kind on order it waits for it, still serving and billed, and goes at the end of the day the replacement is ready, checked against today's load as it goes: if the replacement is smaller and what's left wouldn't carry the load, Easy and Normal keep it waiting, a day at a time, and Hard lets it go with a warning. Otherwise, if what's left wouldn't carry today's load, Easy and Normal refuse it and Hard asks the student to confirm (`cancel N now`), and the outage is theirs. A server still being set up can always be cancelled at once.
 _Avoid_: Decommission, retire (in the student's words)
 
+**Predictable costs**:
+The IPO condition that daily costs over the record vary by no more than the limit, the costliest day set aside. It also needs costs to have held 14 days at their new level after the last C-suite hire, so hiring the board the day before applying can't slip past it; the checklist says until which day.
+_Avoid_: Cost stability, steady costs
+
+**Scored at approval**:
+What the IPO's offer and first day of trading are scored on (the comfort, the valuation, the offer price and growth) is frozen the day the IPO is approved. Cutting costs or anything else between approval and the opening bell changes nothing.
+_Avoid_: Locked-in figures, snapshot
+
 **Bootstrapped float**:
 A float with no outside investors' money along the way: no friends and family, angel, VC or vulture. The grant and the bank loan aren't shares, so they don't count. The end screen flags it: "Floated without outside investors".
 _Avoid_: Solo IPO, self-funded

@@ -1593,6 +1593,11 @@ export interface IpoConfig {
   maxCostSwing: number;
   /** The costliest days of the record left out of the costs' swing, so a single costly day doesn't fail it. */
   costDaysSetAside: number;
+  /**
+   * Days costs must hold at their new level after the last C-suite hire before the company can apply (#292): the
+   * predictable-costs condition isn't met until then.
+   */
+  costsHoldDays: number;
   comfortMargin: number;
   coldChance: { min: number; max: number };
   coldDelayDays: number;
@@ -3005,6 +3010,7 @@ export const defaultConfig: GameConfig = {
     minSatisfaction: 70,
     maxCostSwing: 0.25,
     costDaysSetAside: 1,
+    costsHoldDays: 14,
     comfortMargin: 0.25,
     coldChance: { min: 0.05, max: 0.3 },
     coldDelayDays: 30,

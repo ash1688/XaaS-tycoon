@@ -7,7 +7,7 @@ import { nextRandom } from "./rng.ts";
 import type { Servers } from "./servers.ts";
 import type { Shares } from "./shares.ts";
 import { staffOutput } from "./staff.ts";
-import { SimError, type DaySpend, type GameState, type IpoApplication, type IpoResult, type LogEntry } from "./state.ts";
+import { SimError, type DaySpend, type GameState, type IpoApplication, type IpoResult, type IpoScored, type LogEntry } from "./state.ts";
 
 /** The readiness check's six conditions. */
 export type IpoConditionId = "trading" | "usersAndRevenue" | "uptime" | "costs" | "security" | "csuite";
@@ -125,7 +125,7 @@ export function createIpo(
 ) {
   const c = config.ipo;
 
-  const startingIpo = () => ({ ipo: { applications: [], approvedDay: null, retryDay: 0, result: null } });
+  const startingIpo = () => ({ ipo: { applications: [], approvedDay: null, retryDay: 0, result: null, scored: null } });
 
   /** The last recordDays days played, from the launch on. */
   const record = (state: GameState) => sinceLaunch(state, c.recordDays);
@@ -175,6 +175,10 @@ export function createIpo(
     const swing = mean > 0 ? sd / mean : 0;
     const setAsideText =
       setAside === 0 ? "" : setAside === 1 ? ", your costliest day set aside" : `, your ${setAside} costliest days set aside`;
+    // Costs hold costsHoldDays at their new level after the last C-suite hire before the record counts (#292).
+    const lastHire = state.csuite.hired.reduce<number | null>((last, e) => (last === null || e.day > last ? e.day : last), null);
+    const holdsFrom = lastHire === null ? null : lastHire + c.costsHoldDays;
+    const settling = holdsFrom !== null && state.day < holdsFrom;
 
     const yours = layerOwner(state.model, "os") === "you";
     const opsNeeded = servers.opsNeeded(state);
@@ -237,9 +241,11 @@ export function createIpo(
       {
         id: "costs",
         label: "Predictable costs",
-        met: hasRecord && swing <= c.maxCostSwing,
-        needed: `daily costs over the last ${c.recordDays} days varying by no more than ${percent(c.maxCostSwing)}${setAsideText}: one-offs such as kit bought don't count`,
-        now: recorded(`${pounds(Math.round(dailyCosts))} a day, varying by ${percent(swing)} around ${pounds(Math.round(mean))}`),
+        met: hasRecord && swing <= c.maxCostSwing && !settling,
+        needed: `daily costs over the last ${c.recordDays} days varying by no more than ${percent(c.maxCostSwing)}${setAsideText}, and holding ${c.costsHoldDays} days at their new level after your last C-suite hire: one-offs such as kit bought don't count`,
+        now:
+          recorded(`${pounds(Math.round(dailyCosts))} a day, varying by ${percent(swing)} around ${pounds(Math.round(mean))}`) +
+          (settling ? `; your last C-suite hire was on day ${lastHire}, so costs must hold at the new level until day ${holdsFrom} before you can apply` : ""),
       },
       c.maxCostSwing <= 0 ? 1 : clamp01((c.maxCostSwing - swing) / (c.comfortMargin * c.maxCostSwing)),
     );
@@ -320,19 +326,35 @@ export function createIpo(
     };
   }
 
-  function offer(state: GameState): IpoOffer {
+  /** The figures the IPO is scored on today: the comfort, the valuation and price, growth and each graded line. */
+  function scoreNow(state: GameState): IpoScored {
+    const r = readiness(state);
     const v = shares.valuation(state);
-    const offerPrice = v.sharePrice;
+    return {
+      comfort: comfortOf(r),
+      valuation: v.valuation,
+      offerPrice: v.sharePrice,
+      growth: v.growth,
+      graded: [...r.conditions.filter((x) => x.id !== "csuite"), ...r.signals].map(({ label, now, comfort }) => ({ label, now, comfort })),
+    };
+  }
+
+  /** What the IPO is scored on: frozen at approval (#292), so changes between approval and the bell don't count. */
+  const scored = (state: GameState): IpoScored => state.ipo.scored ?? scoreNow(state);
+
+  function offer(state: GameState): IpoOffer {
+    const v = scored(state);
+    const offerPrice = v.offerPrice;
     const floats: FloatPreview[] = [];
     for (let p = Math.round(c.minFloat * 100); p <= Math.round(c.maxFloat * 100); p++) {
       floats.push(preview(state, p / 100, offerPrice));
     }
     return {
       valuation: v.valuation,
-      sharesInIssue: v.sharesInIssue,
+      sharesInIssue: sharesInIssue(state),
       offerPrice,
       studentShares: studentShares(state),
-      studentShare: studentShares(state) / v.sharesInIssue,
+      studentShare: studentShares(state) / sharesInIssue(state),
       minFloat: c.minFloat,
       maxFloat: c.maxFloat,
       floats,
@@ -415,7 +437,8 @@ export function createIpo(
         ipo: { ...state.ipo, applications, retryDay: state.day + c.coldDelayDays },
       };
     }
-    return { ...state, rng, ipo: { ...state.ipo, applications, approvedDay: state.day } };
+    // Approved: what it's scored on freezes now (#292).
+    return { ...state, rng, ipo: { ...state.ipo, applications, approvedDay: state.day, scored: scoreNow(state) } };
   }
 
   /** A roughly normal random number with mean 0 and standard deviation 1, and the next RNG state. */
@@ -465,10 +488,9 @@ export function createIpo(
         { min: c.minFloat, max: c.maxFloat },
       );
     }
-    const r = readiness(state);
-    const comfort = comfortOf(r);
-    const v = shares.valuation(state);
-    const offerPrice = v.sharePrice;
+    // Scored on the figures frozen at approval (#292).
+    const v = scored(state);
+    const { comfort, offerPrice } = v;
     const p = preview(state, float, offerPrice);
     const growth = Math.max(-1, Math.min(1, v.growth));
     const drift = c.minDrift + (c.maxDrift - c.minDrift) * comfort + c.growthDrift * growth;
@@ -491,7 +513,7 @@ export function createIpo(
       day: state.day,
       float,
       newShares: p.newShares,
-      sharesBefore: v.sharesInIssue,
+      sharesBefore: sharesInIssue(state),
       sharesAfter: p.sharesAfter,
       valuation: v.valuation,
       offerPrice,
@@ -503,7 +525,7 @@ export function createIpo(
       studentShare: yours / p.sharesAfter,
       studentValue: Math.round(yours * closePrice),
       comfort: Math.round(comfort * 100) / 100,
-      reasons: reasons([...r.conditions.filter((x) => x.id !== "csuite"), ...r.signals], v.growth, float, drift, closePrice / offerPrice - 1),
+      reasons: reasons(v.graded, v.growth, float, drift, closePrice / offerPrice - 1),
     };
     const entry: LogEntry = {
       text: `${state.companyName} floated ${percent(float)}: ${count.format(p.newShares)} new shares at ${pounds(offerPrice)} raised ${pounds(p.cashRaised)}.`,

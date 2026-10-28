@@ -15,6 +15,7 @@ const EASY_IPO = {
   "ipo.products.ecommerce.payingUsers": 0,
   "ipo.minTradingDays": 0,
   "ipo.recordDays": 2,
+  "ipo.costsHoldDays": 0,
   "ipo.minUptime": 0,
   "ipo.minSatisfaction": 0,
   "ipo.maxCostSwing": 5,
