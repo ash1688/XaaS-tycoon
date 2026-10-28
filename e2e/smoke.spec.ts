@@ -328,6 +328,8 @@ test("running out of cash brings a vulture VC's rescue, a buy-back, then liquida
   await expect(summary).toContainText("Went into liquidation on day 4");
   await expect(student.getByTestId("summary-rescue")).toContainText("Rescued by a vulture VC on day 3");
   await expect(student.getByTestId("summary-cash")).toHaveText(/^-£/);
+  // A liquidated company is worth nothing, so it scores £0 (#264).
+  await expect(student.getByTestId("summary-score")).toHaveText("£0");
   await goTo(student, "People");
   await expect(student.getByTestId("read-only")).toContainText("This game has ended");
   await expect(student.getByRole("button", { name: "Hire one mid developer" })).toBeDisabled();

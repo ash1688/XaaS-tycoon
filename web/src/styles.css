@@ -1748,6 +1748,28 @@ fieldset > p {
   min-width: 0;
 }
 
+/* The money raised, what the company is worth, the score, and who owns it (#264). */
+.summary .score {
+  margin: 0.75rem 0 1rem;
+}
+
+.summary .score-headline {
+  font-size: 1.15rem;
+  margin: 0 0 0.25rem;
+}
+
+.summary .score-line {
+  margin: 0 0 0.5rem;
+}
+
+.summary .score table {
+  width: 100%;
+}
+
+.summary .score caption {
+  text-align: left;
+}
+
 /* Profit or loss, said by the label and the sign as well as the colour. */
 .summary-headline {
   display: flex;

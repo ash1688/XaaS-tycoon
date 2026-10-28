@@ -153,7 +153,7 @@ export type {
 export type { GradeView, HireView, StaffPoolView } from "./staff.ts";
 export type { ModerationView } from "./moderation.ts";
 export { hasContent, lawsuitOdds } from "./moderation.ts";
-export type { GameSummary, IncomeCostDay, LoanSummary, PeakUsers, SummaryDay } from "./summary.ts";
+export type { CapTableSummary, GameSummary, IncomeCostDay, LoanSummary, PeakUsers, ShareholderSummary, SummaryDay } from "./summary.ts";
 export { interestIn, profitCosts } from "./finance.ts";
 export {
   FUNDER_IDS,
@@ -656,10 +656,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const staff = createStaff(config, finance);
   const benefits = createBenefits(config, finance);
   const migration = createMigration(config, infra, features, events, servers, benefits);
-  const summary = createSummary(config, infra);
   const loan = createLoan(config, finance, (s) => runway(s).dailyCosts);
   const launch = createLaunch(config, servers, pricing, infra.units);
   const shares = createShares(config, finance, conversion);
+  const summary = createSummary(config, infra, shares);
   const api = createApi(config, features, finance, infra.apiuOn);
   const encounters = createEncounters(config, servers);
   const ipo = createIpo(config, finance, shares, servers, (s) => runway(s));

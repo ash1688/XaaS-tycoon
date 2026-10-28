@@ -338,7 +338,11 @@ What the company is worth on the stock market after the IPO: share price × shar
 _Avoid_: Market cap, valuation (valuation is before the IPO)
 
 **Score**:
-The student's share of the company × its valuation, or × its market value at the close of the first day if the game ended in an IPO.
+What the student's own shares are worth at the end: their share of the company × its valuation, or × its market value at the close of the first day if the game ended in an IPO, less any debt still owed. There's no bonus for floating, and a liquidated company scores £0. The end screen shows it under the headline "raised £X, now worth £Y" and the shareholder breakdown.
+
+**Shareholder breakdown**:
+The end screen's table of everyone who owns the company: the founder (with their seed money, the starting cash), friends and family, the angel, each VC, the vulture, the C-suite, the staff share scheme and the public float. Each row gives what they put in, their stake, its worth and their multiple; the stakes add up to 100%, and the founder row's worth is the score.
+_Avoid_: Cap table (in the student's words)
 
 **Ownership floor**:
 The lowest share of the company a VC will let itself fall to before the IPO; dilution below it is borne by everyone else.
