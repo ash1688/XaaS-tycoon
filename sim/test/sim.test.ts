@@ -126,6 +126,13 @@ function noWaves() {
     priceMemoryDays: 0,
     priceChurn: 0,
     maxPriceChurn: 0.5,
+    grumbleStrength: 0,
+    maxGrumble: 0.5,
+    supportStrength: 0,
+    maxSupport: 0.3,
+    grumbleDivertStrength: 0,
+    maxGrumbleDivert: 0.5,
+    expectedPriceDays: 30,
   };
 }
 
@@ -553,18 +560,24 @@ describe("launch", () => {
     }
   });
 
-  it("puts more of the arrivals on the free tier at a price set above the fair one before they come", () => {
+  it("has launch users react to a price set above the fair one before they come, through the bands", () => {
     const setUpWithPrice = (price?: number) => {
       const st = setUp(defaults, fresh(defaults, "iaas", "ecommerce"));
       return price ? defaults.applyAction(inPhase(st, "launch"), { type: "setPrice", price }) : st;
     };
-    // A shop's paid share is 70% at its £6 fair price; at twice that, half as many pay. A free user or two may start
-    // paying on the way, as on any day.
+    // A shop's paid share is 70% at its £6 fair price. A free user or two may start paying on the way, as on any day.
     const fair = playTo(defaults, setUpWithPrice(), 4);
-    const dear = playTo(defaults, setUpWithPrice(12), 4);
-    expect([fair.users, dear.users]).toEqual([3_000, 3_000]);
+    expect(fair.users).toBe(3_000);
     expect(Math.abs(fair.paidUsers - 2_100)).toBeLessThanOrEqual(5);
-    expect(Math.abs(dear.paidUsers - 1_050)).toBeLessThanOrEqual(5);
+    // At twice it, as the bands say: fewer join, and fewer of those who do pay.
+    const priced = setUpWithPrice(12);
+    const bands = defaults.launchBands(priced, 12);
+    const total = (id: string) => bands.total.find((b) => b.id === id)!.share;
+    const dear = playTo(defaults, priced, 4);
+    expect(Math.abs(dear.users - 3_000 * (1 - total("notJoin")))).toBeLessThanOrEqual(3);
+    expect(Math.abs(dear.paidUsers - 3_000 * total("joinPaid"))).toBeLessThanOrEqual(5);
+    expect(dear.users).toBeLessThan(2_000);
+    expect(dear.paidUsers / dear.users).toBeLessThan(0.5);
   });
 
   it("has no users, income, tickets, outages or hosting bills before the first users arrive, while staff and the loan are charged", () => {
@@ -6865,16 +6878,20 @@ describe("free-to-paid conversion", () => {
     expect(converted(70)).toBeGreaterThan(converted(30));
   });
 
-  it("falls with a price above the fair price, and isn't raised by a price below it", () => {
+  it("falls with a price above the fair price, and rises at or below it, up to the cap (#251)", () => {
     const state = begin();
     const dear = s.applyAction(state, setPrice(60));
     expect(multiplier(s, dear, "price")).toBeCloseTo(0.25, 10);
     expect(s.conversion(dear).drivers[3]).toMatchObject({ effect: "hurting", value: 2 });
     expect(s.advance(dear).state.conversionsToday).toBeLessThan(s.advance(state).state.conversionsToday);
-    // A cheap price brings its upgrades once, through the price wave, not every day here as well.
+    // At the fair price it neither helps nor hurts; a little below it helps, and far below it is capped at 30% more.
+    expect(multiplier(s, state, "price")).toBe(1);
+    const under = s.applyAction(state, setPrice(28.5));
+    expect(multiplier(s, under, "price")).toBeCloseTo(0.95 ** -2, 10);
     const cheap = s.applyAction(state, setPrice(15));
-    expect(multiplier(s, cheap, "price")).toBe(1);
-    expect(s.conversion(cheap).rate).toBe(s.conversion(state).rate);
+    expect(multiplier(s, cheap, "price")).toBeCloseTo(1.3, 10);
+    expect(s.conversion(cheap).drivers[3]).toMatchObject({ effect: "helping" });
+    expect(s.conversion(cheap).rate).toBeCloseTo(s.conversion(state).rate * 1.3, 10);
     // The effect is tunable: at 0 a high price makes no difference.
     const flat = converting({ priceSensitivity: 0 });
     expect(multiplier(flat, flat.applyAction(begin(flat), setPrice(60)), "price")).toBe(1);
@@ -6903,10 +6920,9 @@ describe("free-to-paid conversion", () => {
         const joinedPaid = done.joinedPaid - doneBefore.joinedPaid;
         // Paying users rise by the wave's upgrades and new payers plus the day's conversions, and nothing more.
         expect(next.paidUsers - before.paidUsers).toBe(upgraded + joinedPaid + next.conversionsToday);
-        // Conversions come from the free users the wave left, at the usual rate: the cut doesn't raise it.
+        // Conversions come from the free users the wave left, at the day's rate, which the cheaper price raises.
         const freeAfterWave = next.users - (next.paidUsers - next.conversionsToday);
         expect(next.conversionsToday).toBe(Math.round(freeAfterWave * sm.conversion(before).rate));
-        expect(sm.conversion(before).drivers[3]!.multiplier).toBe(1);
         // Each has its own log line.
         expect(log[0]!.entries.some((e) => e.kind === "price")).toBe(true);
         expect(conversionLog(log)).toHaveLength(1);
@@ -6985,34 +7001,31 @@ describe("alpha patch: pricing exploits and balance", () => {
       expect(gained(s, dear, 288)).toBeLessThan(fromFair / 5);
     });
 
-    it("counts a cut only below the lowest price customers remember", () => {
-      // Up to £45 and back to £30 two weeks later: undoing a rise brings no wave.
+    it("counts a cut only below the price customers expect: one that has held for 30 days", () => {
+      // Up to £45 and back to £30 two weeks later: £45 hasn't held long enough to be expected, so undoing it brings no
+      // wave, and the preview says why.
       const risen = s.advance(s.applyAction(begin(), setPrice(45)), 14).state;
-      expect(s.pricePreview(risen, 30).total).toMatchObject({ joined: 0, joinedPaid: 0, upgraded: 0 });
-      // Below £30 it counts for the part below: a cut to £25 brings about what £30 to £25 would, not £45 to £25.
+      expect(s.pricePreview(risen, 30)).toMatchObject({ expectedPrice: 30, total: { joined: 0, joinedPaid: 0, upgraded: 0 } });
+      expect(s.pricePreview(risen, 30).noWave).toMatch(/^No wave: customers expect £30, the price that held for 30 days, and this is no lower/);
+      // Below £30 it counts for the part below: a cut to £25 brings what £30 to £25 would (on the fewer users the rise
+      // left), not £45 to £25.
       expect(gained(s, risen, 25)).toBeGreaterThan(0);
       expect(gained(s, risen, 25)).toBeLessThanOrEqual(gained(s, begin(), 25));
-      // Down to £20, back up to £30 and down to £20 again: customers remember £20, so the second cut brings nothing.
-      const cycle = (sm: Sim) => {
-        const down = sm.advance(sm.applyAction(begin(sm), setPrice(20)), 14).state;
-        return sm.advance(sm.applyAction(down, setPrice(30)), 14).state;
-      };
-      expect(gained(s, cycle(s), 20)).toBe(0);
-      // The memory is config: with none, every cut counts from today's price, as far as the fair price.
-      const forgetful = priced({ priceMemoryDays: 0 });
-      expect(gained(forgetful, cycle(forgetful), 20)).toBeGreaterThan(0);
+      expect(s.pricePreview(risen, 25).noWave).toBeNull();
+      // Held 30 days, £45 is what customers expect: a cut from it is a discount, and counts from it.
+      const settled = s.advance(s.applyAction(begin(), setPrice(45)), 31).state;
+      expect(s.pricePreview(settled, 40).expectedPrice).toBe(45);
+      expect(gained(s, settled, 40)).toBeGreaterThan(0);
+      // The rise is still measured from the lowest price remembered, £30, for the 60 days.
+      expect(s.pricePreview(settled, 50)).toMatchObject({ rememberedPrice: 30 });
     });
 
-    it("brings no wave from a cut back to the fair price, however long the price was dear", () => {
-      // £45 for well past the price memory, so £45 is all customers remember: the cut back to £30 is still no bargain.
-      const dear = s.advance(s.applyAction(begin(), setPrice(45)), defaultConfig.pricing.priceMemoryDays + 10).state;
-      expect(s.pricePreview(dear, 30).total).toMatchObject({ joined: 0, joinedPaid: 0, upgraded: 0 });
-      // A cut below the fair price counts only for the part below it: £45 to £25 brings what £30 to £25 would.
-      const fromFair = s.pricePreview(begin(), 25).total;
-      const fromDear = s.pricePreview(dear, 25).total;
-      expect(fromDear.joined / dear.users).toBeCloseTo(fromFair.joined / begin().users, 2);
-      const free = (state: GameState) => state.users - state.paidUsers;
-      expect(fromDear.upgraded / free(dear)).toBeCloseTo(fromFair.upgraded / free(begin()), 2);
+    it("counts a cut back from a price that has held as a discount, the more so the further below it", () => {
+      // £45 held well past 30 days: customers expect it, so a cut back to the fair price brings a wave (#251).
+      const dear = s.advance(s.applyAction(begin(), setPrice(45)), 40).state;
+      expect(gained(s, dear, 30)).toBeGreaterThan(0);
+      // A cut to £25 counts from £45, so it brings more than one from the fair price.
+      expect(gained(s, dear, 25)).toBeGreaterThan(gained(s, begin(), 25));
     });
 
     it("earns no more from rising and cutting back to the fair price than from holding it", () => {
@@ -7036,6 +7049,12 @@ describe("alpha patch: pricing exploits and balance", () => {
       // Rising and cutting back each lock comes out no better.
       const quick = play(Array.from({ length: 12 }, (_, i) => [1 + 14 * i, i % 2 ? 30 : 45] as [number, number]), 170);
       expect(quick.earned).toBeLessThan(held.earned);
+      // Nor does cutting back as soon as each rise has held long enough to be expected, so the cut counts as a
+      // discount: the rise is measured from the lowest price remembered, and loses more than the cut wins back.
+      const expected = defaultConfig.pricing.expectedPriceDays;
+      const settled = play(Array.from({ length: 5 }, (_, i) => [1 + (expected + 1) * i, i % 2 ? 30 : 45] as [number, number]), 170);
+      expect(settled.earned).toBeLessThan(held.earned);
+      expect(settled.paidUsers).toBeLessThan(held.paidUsers);
     });
   });
 

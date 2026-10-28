@@ -298,6 +298,7 @@ A 180-day game counts internally as one year, split into **four equal quarters**
   - **Schemes only go up.** A slider can be raised in a later review but never lowered or removed; a toggle once on stays on. Only the increase counts towards that review's offer.
   - If the tribunal picks the staff's figure, it's a cash rise only; if it picks the student's or the middle, the student's scheme increases apply.
 - **The rise is pool-wide.** It lifts every staff pool's day rate, so existing staff get it and new hires join at the new rate. The C-suite is left out. Pay reviews replace wage inflation from drift.
+- **Inflation lifts the fair price too** (#251). Each settled review raises the product's fair price by that review's inflation figure, compounding, whatever rise was agreed with staff: inflation is the market. A 180-day game's three reviews leave it roughly 6–18% higher. The student's own price never moves by itself.
 - **Without a head of people** the student deals with staff directly: staff are stricter on the roll, want cash, and value schemes at only about 70%. **With a head of people** they're friendlier, value schemes fully or more, and the tribunal leans slightly the student's way.
 - **A pay history** on the People page lists past reviews, how each ended, the rises given and the current schemes with their running costs.
 
@@ -383,6 +384,16 @@ In the alpha, willingness to pay and the free/paid split were set per product. I
 - **Uptime:** businesses leave faster when it's poor.
 
 The **Customers page** shows the mix as a bar, with each type's price threshold marked and contract users as a separate block. Pricing becomes reading the market rather than guessing.
+
+**Opening price and price locks (#257).** Pressing Launch sets an **opening price** (the fair price if none is given), and launch users react to it through the bands below: they join paying, join free or don't join. The price holds from pressing Launch until the usual 14-day lock after go-live. It's also locked from IPO approval until the opening bell, and the lock lifts if a cold market postpones the float.
+
+**Sliding-scale bands.** Every price change splits each customer type into bands that slide with the size of the change against the type's threshold:
+
+- **A rise** splits paying users into **accept**, **grumble online**, **contact support** (which raises tickets), **drop to free** and **leave**. Small rises are mostly accepted; large ones mostly drop to free or leave. While the backlash lasts, those grumbling online send a share of new users to the rival that's the best value for each type, more the more there are.
+- **A cut** brings new users (who join paying, join free or don't join) and turns some free users into payers. It's measured from the **expected price**, the latest that has held for 30 days, so a cut back from a recent rise is no bargain, while a cut from a price that has settled works as a discount. A cut to a price that's still dear to a type counts for less. A rise is still measured from the lowest price remembered over 60 days, so rising and cutting back over and over loses overall.
+- **Conversion:** at or below the fair price, more free users start paying each day, up to 30% more (#251).
+
+The pricing panel and the Launch step show a stacked bar per customer type and in total, updating as the price changes; the text game's `preview` and `launchpreview` print the bands.
 
 A price change hits each customer type differently, so students learn to price for who their users are. Growing a different mix (for example through marketing or features aimed at professionals) changes what the company can charge. *Types and figures are placeholders.*
 

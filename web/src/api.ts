@@ -19,6 +19,7 @@ import type {
   PresetUpdateBody,
   PresetView,
   PricePreviewView,
+  PriceBandsView,
   SummaryView,
   TeacherCodeView,
   TeacherGamesView,
@@ -82,6 +83,14 @@ export const api = {
     request<PricePreviewView>(
       "GET",
       `/api/codes/${enc(code)}/companies/${enc(id)}/price-preview?price=${enc(String(price))}` +
+        (rate === undefined ? "" : `&rate=${enc(String(rate))}`),
+    ),
+
+  // How launch users would split at an opening price, for the Launch dialog's chart. Changes nothing.
+  launchBands: (code: string, id: string, price: number, rate?: number) =>
+    request<PriceBandsView>(
+      "GET",
+      `/api/codes/${enc(code)}/companies/${enc(id)}/launch-bands?price=${enc(String(price))}` +
         (rate === undefined ? "" : `&rate=${enc(String(rate))}`),
     ),
 

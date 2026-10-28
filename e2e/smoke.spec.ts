@@ -1149,6 +1149,12 @@ test("a student previews prices live, raises the price, and sees the backlash an
     "At £6.25 you'd make £24 a day more than now (£224 a day) once the wave settles. 55 paying users leave and 71 drop to free.",
   );
   await expect(preview.getByRole("img", { name: /The wave day by day/ })).toBeVisible();
+  // The bands: a stacked bar per customer type and everyone, a rise's five, adding up to all of paying users.
+  const bands = preview.getByTestId("band-chart");
+  await expect(bands).toHaveAttribute("data-kind", "rise");
+  await expect(bands.getByTestId("band-row")).toHaveCount(5);
+  await expect(bands.getByRole("img", { name: /^Casual users: accept [\d.]+%, grumble online [\d.]+%, contact support [\d.]+%, drop to free 7\.5%, leave 5%$/ })).toBeVisible();
+  await expect(preview.getByTestId("price-expected")).toContainText("Customers expect £5, the price that has held a month");
   // The rise's backlash tickets against today's support, as the sim quotes them: whether the team keeps up (#163).
   const quote = await (await request.get(`/api/codes/${code}/companies/${id}/price-preview?price=6.25`)).json();
   const n = (x: number) => x.toLocaleString("en-GB");
@@ -1165,6 +1171,8 @@ test("a student previews prices live, raises the price, and sees the backlash an
   await expect(preview.getByTestId("preview-joined")).toBeVisible();
   await expect(preview.getByTestId("preview-upgraded")).toBeVisible();
   await expect(preview.getByTestId("preview-left")).toBeHidden();
+  await expect(bands).toHaveAttribute("data-kind", "cut");
+  await expect(bands.getByRole("img", { name: /^Everyone: join paying [\d.]+%, join free [\d.]+%, don't join [\d.]+%$/ })).toBeVisible();
   // Each price tried is listed to compare, the best marked; a quick step tries another in one click.
   const compare = dialog.getByTestId("price-compare");
   await expect(compare.getByRole("row")).toHaveCount(3);

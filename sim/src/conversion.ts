@@ -66,13 +66,14 @@ export function createConversion(config: GameConfig, features: Features, pricing
   function drivers(state: GameState): ConversionDriver[] {
     const active = features.activeCount(state);
     const uptime = recentUptime(state);
-    const ratio = pricing.monthlyNow(state) / pricing.fairMonthly(state.productType);
+    const ratio = pricing.monthlyNow(state) / pricing.fairMonthly(state);
     return [
       driver("features", 1 + c.perFeature * active, active),
       driver("uptime", around(uptime, c.neutralUptime, c.uptimeEffect), uptime),
       driver("satisfaction", around(state.satisfaction, config.support.goodSatisfaction, c.satisfactionEffect), state.satisfaction),
-      // At most 1: a cut's upgrades come from its wave, once, not here every day as well.
-      driver("price", Math.min(1, ratio ** -c.priceSensitivity), ratio),
+      // Above the fair price it hurts; at or below it helps, up to maxPriceBoost (#251). A cut's wave upgrades free users
+      // once on top, measured from the price customers expect.
+      driver("price", Math.min(1 + c.maxPriceBoost, ratio ** -c.priceSensitivity), ratio),
     ];
   }
 

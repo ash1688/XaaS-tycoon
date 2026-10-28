@@ -4760,3 +4760,85 @@ select:disabled {
   margin-top: 0.3rem;
   color: var(--muted);
 }
+
+/* How customers split over a price (BandChart): a stacked bar per customer type, then everyone. */
+.band-chart {
+  margin: 0.75rem 0;
+}
+
+.band-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.9rem;
+  margin: 0.3rem 0 0.5rem;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85rem;
+}
+
+.band-swatch {
+  display: inline-block;
+  width: 0.8rem;
+  height: 0.8rem;
+  margin-right: 0.3rem;
+  border-radius: 2px;
+  vertical-align: -0.1rem;
+}
+
+.band-row {
+  display: grid;
+  grid-template-columns: minmax(6rem, 9rem) 1fr;
+  align-items: center;
+  gap: 0.15rem 0.6rem;
+  margin: 0.3rem 0;
+  font-size: 0.85rem;
+}
+
+.band-total {
+  font-weight: 700;
+}
+
+.band-upgrade {
+  grid-column: 2;
+}
+
+.band-bar {
+  display: flex;
+  height: 1rem;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--border);
+}
+
+.band-part {
+  height: 100%;
+}
+
+.band-accept,
+.band-joinPaid {
+  background: var(--pos);
+}
+
+.band-joinFree {
+  background: var(--mix-enthusiasts);
+}
+
+.band-grumble {
+  background: var(--debt);
+}
+
+.band-support {
+  background: var(--shared);
+}
+
+.band-toFree {
+  background: var(--mix-casual);
+}
+
+.band-leave {
+  background: var(--neg);
+}
+
+.band-notJoin {
+  background: var(--rival-2);
+}

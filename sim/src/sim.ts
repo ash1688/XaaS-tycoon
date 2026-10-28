@@ -43,7 +43,7 @@ import { actionJob, advancePhase, checkJobOpen, phaseView, startingPhase, type P
 import { payHistory, type PayHistoryView } from "./payHistory.ts";
 import { createPayReview, type PayOfferPreview, type PayReviewView } from "./payReview.ts";
 import { schemeEntries, schemeViews, type SchemeLevels, type StaffSchemeView } from "./staffSchemes.ts";
-import { createPricing, type CustomerMixView, type PaymentsView, type PricePreview, type PriceWaveView } from "./pricing.ts";
+import { createPricing, type CustomerMixView, type FairPriceView, type PaymentsView, type PriceBandsView, type PricePreview, type PriceWaveView } from "./pricing.ts";
 import { createRacks, type RacksView } from "./racks.ts";
 import { createRescue, type RescueView } from "./rescue.ts";
 import { createRivals, type MarketView } from "./rivals.ts";
@@ -111,7 +111,20 @@ export type { DriftView } from "./drift.ts";
 export type { RescueView } from "./rescue.ts";
 export type { TicketOutlook } from "./support.ts";
 export type { MarketCompanyView, MarketView, TypeContestView } from "./rivals.ts";
-export type { CustomerMixView, CustomerTypeView, PaymentsView, PricePreview, PriceWaveView, TypeReaction } from "./pricing.ts";
+export type {
+  CustomerMixView,
+  CustomerTypeView,
+  FairPriceView,
+  PaymentsView,
+  PriceBand,
+  PriceBandId,
+  PriceBandsView,
+  PricePreview,
+  PriceWaveView,
+  TypeBands,
+  TypeReaction,
+} from "./pricing.ts";
+export { PRICE_BAND_NAMES } from "./pricing.ts";
 export { percent } from "./pricing.ts";
 export { weightedReaction } from "./pricing.ts";
 export type {
@@ -337,6 +350,13 @@ export interface Sim {
    * the payments app, the fair monthly fee: see payments for the fair rate.
    */
   fairPrice(state: GameState): number;
+  /** The fair price with why it moved: the product's own, how far inflation has lifted it, and the last review's. */
+  fairPriceView(state: GameState): FairPriceView;
+  /**
+   * How launch users would split at an opening price, before pressing Launch: each customer type's share joining
+   * paying, joining free and not joining, and all of them together. Rejects the prices setPrice does.
+   */
+  launchBands(state: GameState, price: number, rate?: number): PriceBandsView;
   /**
    * What changing the price would do if nothing else changed: income a day once the wave settles, paying users
    * leaving and dropping to free, new users and upgrades on a cut, and the wave day by day. Changes nothing, and works
@@ -918,7 +938,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       case "pickInvestor":
         return investors.pickInvestor(state, action.investor);
       case "launch":
-        return launch.launch(state);
+        return launch.launch(state, action.price, action.rate);
       case "buyApi":
         return api.buyApi(state);
       case "switchServer":
@@ -1000,7 +1020,9 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       [
         { users: ramping ? 0 : organic.arrived, weights: newMix },
         { users: wave.joined, weights: newMix },
-        { users: users - wave.users - marketing.users, weights: pricing.baseMix(state.productType) },
+        // Launch users in the mix the opening price let in, then any wave of free users from an event.
+        { users: launched.state.users - wave.users, weights: launched.joined ?? pricing.baseMix(state.productType) },
+        { users: viral.reduce((sum, n) => sum + n, 0), weights: pricing.baseMix(state.productType) },
         ...marketing.joined,
       ],
     );
@@ -1016,7 +1038,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const care = support.supportDay(state, bursts, moderated.satisfactionFactor);
 
     // Rivals answer the student's price from reactionDays ago and win their share of the market's new users.
-    const market = rivals.rivalsDay(state, day);
+    // While a rise's backlash lasts, grumbling online sends a share of the day's new users to rivals instead.
+    const divert = ramping ? 0 : pricing.grumbleDivert(state, day);
+    const diverted = divert > 0 && divert < 1 ? Math.round((organic.arrived * divert) / (1 - divert)) : 0;
+    const market = rivals.rivalsDay(state, day, diverted);
 
     // Developers work on the current build, and once the MVP was done before today, the slider's share of their output
     // goes into optimisation instead. A feature finished today helps growth from tomorrow, and so does today's
@@ -1342,8 +1367,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     monthlyInfrastructureCost: (s) => infra.monthlyInfrastructureCost(load(s)),
     monthlyAddonCost: (s) => features.monthlyAddonCost(load(s)),
     dailyIncome: (s) => pricing.dailyIncome(load(s)),
-    fairPrice: (s) => pricing.fairPrice(load(s).productType),
+    fairPrice: (s) => pricing.fairPrice(load(s)),
     pricePreview: (s, price, rate) => pricing.pricePreview(load(s), price, rate),
+    fairPriceView: (s) => pricing.fairPriceView(load(s)),
+    launchBands: (s, price, rate) => pricing.launchBands(load(s), price, rate),
     priceWave: (s) => pricing.priceWave(load(s)),
     priceLockDaysLeft: (s) => pricing.lockDaysLeft(load(s)),
     customerMix: (s) => mix.customerMix(load(s)),

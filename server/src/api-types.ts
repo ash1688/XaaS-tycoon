@@ -49,6 +49,8 @@ import type {
   PayReviewView,
   StaffSchemeView,
   PricePreview,
+  PriceBandsView,
+  FairPriceView,
   PaymentsView,
   PriceWaveView,
   ModelId,
@@ -307,6 +309,8 @@ export interface CompanyView {
   price: number;
   /** The monthly price users think the product is worth. Above it growth slows and fewer new users pay. */
   fairPrice: number;
+  /** The fair price with why it moved: the product's own, and how far pay reviews' inflation has lifted it (#251). */
+  fairPriceView: FairPriceView;
   /** What paying users pay per day at today's paid users and price: paid users × price ÷ 30. */
   dailyIncome: number;
   /** Everything paying users have paid so far. */
@@ -549,6 +553,7 @@ export type MigrationQuoteView = MigrationQuote;
  * Changes nothing.
  */
 export type PricePreviewView = PricePreview;
+export type { PriceBandsView, FairPriceView };
 
 /**
  * GET .../counter-odds?funder=&amount=&share=&days=: what countering a funder's open offer with those terms would do,

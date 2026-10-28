@@ -37,7 +37,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 56;
+export const GAME_STATE_VERSION = 57;
 
 /**
  * The four phases a game's jobs open in, in order, each opened by a milestone: Build from day 1, Launch when Launch is
@@ -552,6 +552,8 @@ export interface PriceWave {
    * × the share of its lost payers who leave rather than go free. Casual users leave first. Null for a cut.
    */
   leftMix: Record<CustomerTypeId, number> | null;
+  /** For a rise, the paying users who grumble online, sending new users to rivals while it lasts. 0 for a cut. */
+  grumblers: number;
 }
 
 /**
@@ -1209,7 +1211,7 @@ export type Action =
    * Presses Launch once the MVP is done: the company goes live on the next day played, and its first users arrive at
    * the end of it. It can launch short of servers or ops (see LaunchView.missing).
    */
-  | { type: "launch" }
+  | { type: "launch"; price?: number; rate?: number }
   /** Buys the product's paid API, charged at once. Calls start arriving from the next day played. */
   | { type: "buyApi" }
   /**

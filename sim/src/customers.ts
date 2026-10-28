@@ -87,6 +87,8 @@ export function createCustomers(
       support.satisfactionGrowth(state),
       // Rivals: winning or losing each customer type's new users to them.
       rivals.rivalGrowth(state),
+      // A rise's backlash: grumbling online sends some new users to rivals.
+      pricing.grumbleGrowth(state, day),
     ];
   }
 
