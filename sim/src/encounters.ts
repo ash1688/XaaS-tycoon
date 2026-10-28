@@ -182,7 +182,7 @@ export function createEncounters(config: GameConfig, servers: Servers, spikeDay:
     const event = next && eventConfig(next.event);
     if (!next || !event?.warning?.days || state.dangerMeter <= 0) return null;
     const within = state.dangerMeter + event.warning.days * encounters.dailyRise >= next.threshold;
-    return within ? { event: event.id, name: event.name, text: event.warning.text } : null;
+    return within ? { event: event.id, name: event.name, text: event.warning.byModel?.[state.model] ?? event.warning.text } : null;
   }
 
   /** A warning that came on today, for the day's log. */

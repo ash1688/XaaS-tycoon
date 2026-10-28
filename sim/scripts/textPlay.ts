@@ -119,9 +119,12 @@ const termsText = (party: Party, t: Terms) =>
 /** A roll's bonus in words: "+2 bonus", or below 0 (staff dealt with directly) "−1 penalty". */
 const bonusText = (bonus: number) => (bonus > 0 ? ` +${bonus} bonus` : bonus < 0 ? ` −${-bonus} penalty` : "");
 
-/** A roll in words: "rolled 15 −6 for asking 20% = 9: middle, they moved 50% of the way". */
-const rollText = (r: NegotiationRound) =>
-  `rolled ${r.die}${r.penalty ? ` −${r.penalty} for asking ${pct(r.ask * 100)}` : ""}${bonusText(r.bonus)} = ${r.total < 0 ? `−${-r.total}` : r.total}: ${r.result}, ${r.move < 0 ? `they dug in: the offer got worse by ${pct(-r.move * 100)} of what you asked` : `they moved ${pct(r.move * 100)} of the way`}`;
+/**
+ * A roll in words: "rolled 15 −6 for asking 20% = 9: middle, they moved 50% of the way". A low roll makes them dig in:
+ * a funder's offer gets worse, while staff in a pay review ask for more.
+ */
+const rollText = (r: NegotiationRound, pay = false) =>
+  `rolled ${r.die}${r.penalty ? ` −${r.penalty} for asking ${pct(r.ask * 100)}` : ""}${bonusText(r.bonus)} = ${r.total < 0 ? `−${-r.total}` : r.total}: ${r.result}, ${r.move < 0 ? `they dug in: ${pay ? "staff now ask for more, by" : "the offer got worse by"} ${pct(-r.move * 100)} of what you asked` : `they moved ${pct(r.move * 100)} of the way`}`;
 
 /** Where a negotiation stands: offer 2 of 3, with a counter left, or the final offer. */
 const standing = (n: NegotiationView) =>
@@ -221,7 +224,10 @@ function renderPayments(sim: Sim, state: GameState): string | null {
   const pay = sim.payments(state);
   if (!pay) return null;
   const { busy, multiplier } = pay.nextDay;
-  const tomorrow = busy ? `tomorrow is ${busy === "payday" ? "payday" : "Black Friday"}: payments x${multiplier}` : "tomorrow is a usual day";
+  // A payday rush runs several days: say which day of it tomorrow is, so "tomorrow is payday" twice running isn't a puzzle.
+  const rush = sim.config.productTypes[state.productType].transactions?.payday;
+  const paydayText = rush && rush.length > 1 ? `payday (day ${((pay.nextDay.day - rush.firstDay) % rush.every) + 1} of ${rush.length})` : "payday";
+  const tomorrow = busy ? `tomorrow is ${busy === "payday" ? paydayText : "Black Friday"}: payments x${multiplier}` : "tomorrow is a usual day";
   const when = (d: number | null) => (d === null ? "none" : d === pay.nextDay.day ? "tomorrow" : `day ${d}`);
   const saas = pay.usualDaySaasFee
     ? ` | SaaS platform's fee ${money(pay.usualDaySaasFee)}/day`
@@ -299,6 +305,15 @@ function unlockable(sim: Sim, state: GameState) {
   const items = sim.tiers(state).flatMap((t) => t.items).filter((i) => i.unlockable);
   const here = (i: (typeof items)[number]) => i.kind === "feature" || i.model === state.model;
   return [...items.filter(here), ...items.filter((i) => !here(i))];
+}
+
+const MODEL_SHORT = { onprem: "on-prem", iaas: "IaaS", paas: "PaaS", saas: "SaaS" } as const;
+
+/** An item to unlock with its price and what it is: a feature, a benefit for this model, or another model's benefit. */
+function unlockText(sim: Sim, state: GameState, i: ReturnType<typeof unlockable>[number]) {
+  const model = i.model === null ? "" : MODEL_SHORT[i.model];
+  const kind = i.kind === "feature" ? "feature" : i.model === state.model ? `${model} benefit` : `${model} benefit, not your model`;
+  return `${i.id} ${i.rpPrice} RP (${kind})`;
 }
 
 /**
@@ -448,7 +463,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
     `users ${state.users.toLocaleString("en-GB")} (paid ${state.paidUsers.toLocaleString("en-GB")}, free ${(state.users - state.paidUsers).toLocaleString("en-GB")}) | converting ${(conversion.rate * 100).toFixed(2)}%/day | ${reachText(reach)}`,
   );
   lines.push(
-    `satisfaction ${pct(state.satisfaction)} | uptime ${sim.uptime(state).toFixed(1)}% | tickets ${Math.round(sim.usualTickets(state))}/day vs ${Math.round(sim.dailyClearance(state))} cleared, backlog ${Math.round(state.backlog)}`,
+    `satisfaction ${pct(state.satisfaction)} | uptime ${sim.recordUptime(state).toFixed(1)}% over the last ${sim.config.ipo.recordDays} days (what the IPO judges) | tickets ${Math.round(sim.usualTickets(state))}/day vs ${Math.round(sim.dailyClearance(state))} cleared, backlog ${Math.round(state.backlog)}`,
   );
   const moderation = sim.moderation(state);
   if (moderation) {
@@ -478,7 +493,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
   if (research.unlocked) {
     const left = unlockable(sim, state);
     const spend = left.length
-      ? `can unlock ${left.map((i) => `${i.id} ${i.rpPrice} RP`).join(", ")}`
+      ? `can unlock ${left.map((i) => unlockText(sim, state, i)).join(", ")}`
       : sim.tiers(state).some((t) => t.items.some((i) => !i.unlocked))
         ? "nothing to unlock until the next tier is available"
         : "everything is unlocked";
@@ -493,7 +508,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
   }
   const launch = sim.launch(state);
   if (launch.status !== "launched") {
-    const when = launch.day !== null ? `, go-live day ${launch.day}` : launch.status === "ready" ? " (ready: type launch)" : "";
+    const when = launch.day !== null ? `, go-live day ${launch.day}` : launch.status === "ready" ? " (type launch)" : "";
     const short = launch.missing.length ? `; launching now would be short: ${launch.missing.join("; ")}` : "";
     lines.push(`launch: ${launch.status}${when}${short}`);
   }
@@ -503,9 +518,20 @@ export function renderStatus(sim: Sim, state: GameState): string {
     const tier = (name: string, t: { demand: number; capacity: number }) =>
       `${name} ${Math.round(t.demand)}/${Math.round(t.capacity)}${t.capacity > 0 ? ` (${pct((100 * t.demand) / t.capacity)})` : ""}`;
     const cut = units.opsCut > 0 && !units.burst ? ` | every tier CUT to ${pct(100 * (1 - units.opsCut))} for missing ops` : "";
-    lines.push(`capacity: ${tier("CU", units.cu)} | ${tier("DBU", units.dbu)} | ${tier("CH", units.ch)} | runs out first: ${units.binding.toUpperCase()}${cut}`);
-    if (units.loadBalancer.needed && units.loadBalancer.uncovered > 0) {
-      lines.push(`  load balancers don't cover ${units.loadBalancer.uncovered} app servers: they add no capacity`);
+    // The cache isn't a limit: with none, show what one could take off the database, not "CH 12/0".
+    const cache =
+      units.ch.capacity > 0
+        ? tier("CH", units.ch)
+        : `CH no cache${units.ch.demand >= 1 ? ` (one could take ${Math.round(units.ch.demand)} DBU off the database)` : ""}`;
+    lines.push(`capacity: ${tier("CU", units.cu)} | ${tier("DBU", units.dbu)} | ${cache} | runs out first: ${units.binding.toUpperCase()}${cut}`);
+    const lb = units.loadBalancer;
+    if (lb.needed && lb.uncovered > 0) {
+      const apps = (n: number) => `${n} app server${n === 1 ? "" : "s"}`;
+      lines.push(
+        lb.loadBalancers === 0
+          ? `  no load balancer: traffic reaches only 1 of your ${apps(lb.appServers)}, so ${lb.uncovered === 1 ? "the other adds" : `the other ${lb.uncovered} add`} no capacity (buy a load balancer)`
+          : `  your load balancers cover ${apps(lb.counted)} of ${lb.appServers}: ${apps(lb.uncovered)} add no capacity`,
+      );
     }
   }
   // Too few ops for the servers running cuts capacity (#259).
@@ -787,7 +813,7 @@ function payLines(sim: Sim, state: GameState): string[] {
     );
   }
   review.rounds.forEach((r, i) => {
-    lines.push(`  offer ${i + 1}: you offered ${offerText(sim, state, review.offerTerms[i]!, review.studentOffers[i]!)}, ${rollText(r)} → staff counter ${rise(review.staffFigures[i + 1]!)}`);
+    lines.push(`  offer ${i + 1}: you offered ${offerText(sim, state, review.offerTerms[i]!, review.studentOffers[i]!)}, ${rollText(r, true)} → staff counter ${rise(review.staffFigures[i + 1]!)}`);
   });
   lines.push(
     review.canAcceptCounter
@@ -857,6 +883,10 @@ function payOddsLines(p: PayOfferPreview): string[] {
 /** The student's share of the company, 0–1, from the cap table. */
 const yourShare = (sim: Sim, state: GameState) => sim.capTable(state).rows.find((r) => r.id === "student")?.share ?? 0;
 
+/** What the team costs a day, pay and staff schemes, as `pay` shows it: so a settled review's "was" matches it. */
+const teamCost = (sim: Sim, state: GameState) =>
+  sim.dailyStaffCost(state) + sim.staffSchemes(state).reduce((sum, x) => sum + x.costPerDay, 0);
+
 const tribunalPickText = { student: "your final offer", middle: "the middle", staff: "staff's figure" } as const;
 
 /** How an offer or an accepted counter left the review: settled on a rise, or staff's counter standing. */
@@ -865,7 +895,11 @@ function payResultLine(sim: Sim, before: GameState, after: GameState): string {
   if (review) {
     const r = review.rounds.at(-1)!;
     const left = `${review.offersLeft} offer${review.offersLeft === 1 ? " left, final" : "s left"}`;
-    return `offer ${offerText(sim, before, review.offerTerms.at(-1)!, review.studentOffers.at(-1)!)}: staff counter, ${rollText(r)} → they ask ${rise(review.staffFigure)} (${left}; "accept pay" agrees it)`;
+    // The ask in the words `pay` uses: with schemes in the offer, staff ask that much cash on top of them.
+    const ask = review.counter?.schemesText
+      ? `${rise(review.counter.cash)} cash plus your schemes (${review.counter.schemesText}), worth ${rise(review.staffFigure)} to them`
+      : `${rise(review.staffFigure)} in cash`;
+    return `offer ${offerText(sim, before, review.offerTerms.at(-1)!, review.studentOffers.at(-1)!)}: staff counter, ${rollText(r, true)} → they ask ${ask} (${left}; "accept pay" agrees it)`;
   }
   const settled = after.pastPayReviews.at(-1)!;
   const how =
@@ -878,7 +912,7 @@ function payResultLine(sim: Sim, before: GameState, after: GameState): string {
   const shares = settled.shareSaveShares
     ? `; share save issued ${settled.shareSaveShares.toLocaleString("en-GB")} new shares to the staff share scheme, so you own ${stake(yourShare(sim, after))} (was ${stake(yourShare(sim, before))})`
     : "";
-  return `pay review settled: ${how}. Pay ×${after.payMultiplier.toFixed(3)} of the day rates from day ${settled.startDay}: the team costs ${money(sim.dailyStaffCost(after))}/day (was ${money(sim.dailyStaffCost(before))})${schemes ? `; schemes held: ${schemes}` : ""}${shares}`;
+  return `pay review settled: ${how}. Pay ×${after.payMultiplier.toFixed(3)} of the day rates from day ${settled.startDay}: the team costs ${money(teamCost(sim, after))}/day, pay and schemes (was ${money(sim.payReview(before)?.dailyStaffCost ?? teamCost(sim, before))})${schemes ? `; schemes held: ${schemes}` : ""}${shares}`;
 }
 
 const endedText = (r: PayHistoryEntry) =>
@@ -1201,7 +1235,8 @@ function staffLines(sim: Sim, state: GameState): string[] {
       ? ` + agency ${p.agencyCount} (${p.agency.filter((x) => x.count).map((x) => `${x.count} ${x.grade}`).join(", ")})`
       : "";
     const pay = p.grades.map((x) => money(x.dayRate)).join("/");
-    const agencyPay = p.agency.map((x) => money(x.dayRate)).join("/");
+    // Researchers and marketers are permanent hires only: no agency rates to show.
+    const agencyPay = p.agency.length ? `, agency ${p.agency.map((x) => money(x.dayRate)).join("/")}/day` : ", no agency";
     const severance = p.grades.map((x) => money(x.severance)).join("/");
     const need = p.pool === "ops" ? `, need ${sim.opsNeededNow(state)}` : "";
     const hires = p.hiring.filter((h) => !h.retraining);
@@ -1214,8 +1249,8 @@ function staffLines(sim: Sim, state: GameState): string[] {
         ? ` | retraining, paid already: ${retraining.map((h) => `${h.count} ${h.grade} start day ${h.arrivesOn} (${h.daysLeft}d)`).join(", ")}`
         : "");
     lines.push(
-      `  ${p.pool} ${p.headcount} (${grades})${agency} work ${p.output}${need} | pay junior/mid/senior ${pay}/day, ` +
-        `agency ${agencyPay}/day | severance ${severance} each${hiring}${p.idle ? ` | IDLE: ${p.idle}` : ""}`,
+      `  ${p.pool} ${p.headcount} (${grades})${agency} work ${p.output}${need} | pay junior/mid/senior ${pay}/day` +
+        `${agencyPay} | severance ${severance} each${hiring}${p.idle ? ` | IDLE: ${p.idle}` : ""}`,
     );
   }
   return lines;
@@ -1277,10 +1312,8 @@ export function renderCommands(sim: Sim, state: GameState): string {
   lines.push(`  optimise <0–100>   (% of developer time on optimisation rather than features, once the MVP is done)`);
   const toUnlock = unlockable(sim, state);
   if (jobs.research && toUnlock.length) {
-    const what = (i: (typeof toUnlock)[number]) =>
-      `${i.id} ${i.rpPrice} RP (${i.kind === "feature" ? "feature" : i.model === state.model ? "model benefit" : `${sim.config.models[i.model!].name} benefit`})`;
     lines.push(
-      `  unlock <${toUnlock.map((i) => i.id).join("|")}>   (research points; you have ${+state.researchPoints.toFixed(1)}) ${toUnlock.map(what).join(", ")}`,
+      `  unlock <${toUnlock.map((i) => i.id).join("|")}>   (research points; you have ${+state.researchPoints.toFixed(1)}) ${toUnlock.map((i) => unlockText(sim, state, i)).join(", ")}`,
     );
   }
   const campaigns = sim.campaigns(state);
@@ -1473,6 +1506,7 @@ export type Command =
   | { kind: "payHistory" }
   | { kind: "drift" }
   | { kind: "costs" }
+  | { kind: "look" }
   | { kind: "campaigns" }
   | { kind: "campaignQuote"; customerType: CustomerTypeId; budget: number; days: number }
   | { kind: "csuite" }
@@ -1664,6 +1698,8 @@ export function parseCommand(text: string): Command {
       return { kind: "drift" };
     case "costs":
       return { kind: "costs" };
+    case "look":
+      return { kind: "look" };
     case "csuite":
       return { kind: "csuite" };
     case "appoint": {
@@ -1825,6 +1861,10 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
   if (command.kind === "payHistory") return { state, rows: [], lines: payHistoryLines(sim, state) };
   if (command.kind === "drift") return { state, rows: [], lines: driftLines(sim, state) };
   if (command.kind === "costs") return { state, rows: [], lines: costsLines(sim, state) };
+  // "look" inside a batch: the status and commands, as the look command shows them (the summary once it's over).
+  if (command.kind === "look") {
+    return { state, rows: [], lines: [renderStatus(sim, state), "", state.status === "playing" ? renderCommands(sim, state) : renderSummary(sim, state)] };
+  }
   if (command.kind === "campaigns") return { state, rows: [], lines: campaignsLines(sim, state) };
   if (command.kind === "campaignQuote") {
     const q = sim.campaignQuote(state, command.customerType, command.budget, command.days);
@@ -1970,7 +2010,7 @@ function autoPayLines(sim: Sim, before: GameState, after: GameState): string[] {
   const figures = review?.staffFigures ?? record!.staffFigures;
   const lines = ["auto-negotiated the pay review:"];
   for (let i = from; i < offers.length; i++) {
-    const answer = figures[i + 1] === undefined ? "staff accepted" : `staff counter ${rise(figures[i + 1]!)}${review ? `, ${rollText(review.rounds[i]!)}` : ""}`;
+    const answer = figures[i + 1] === undefined ? "staff accepted" : `staff counter ${rise(figures[i + 1]!)}${review ? `, ${rollText(review.rounds[i]!, true)}` : ""}`;
     lines.push(`  offer ${i + 1}: ${offerText(sim, before, terms[i]!, offers[i]!)} → ${answer}`);
   }
   if (!review) return [...lines, `  ${payResultLine(sim, before, after)}`];
@@ -2032,17 +2072,14 @@ export function runScript(sim: Sim, state: GameState, script: string, who: Playe
   const rows: LogRow[] = [];
   const lines: string[] = [];
   let skipped: string | null = null;
+  // Once the game is over, only what changes nothing still works: the valuation, who owns the company, the IPO, the
+  // market, the pay reviews settled.
+  const views = ["look", "valuation", "funding", "rescue", "ipo", "market", "costs", "campaigns", "payHistory", "calendar", "csuite", "drift"];
   for (const text of script.split(";").map((t) => t.trim()).filter(Boolean)) {
-    if (skipped) {
-      lines.push(`> ${text}`, `not run: ${skipped}`);
-      continue;
-    }
     try {
-      const command = parseCommand(text);
-      // Once the game is over, only what changes nothing still works: the valuation, who owns the company, the IPO, the
-      // market.
-      if (current.status !== "playing" && !["valuation", "funding", "rescue", "ipo", "market", "costs", "campaigns"].includes(command.kind)) {
-        skipped = "the game is over";
+      const command = skipped && current.status === "playing" ? null : parseCommand(text);
+      if (!command || (current.status !== "playing" && !views.includes(command.kind))) {
+        skipped ??= "the game is over";
         lines.push(`> ${text}`, `not run: ${skipped}`);
         continue;
       }

@@ -167,11 +167,20 @@ describe("runScript", () => {
     expect(turn.state.staff.ops).toEqual({ junior: 0, mid: 1, senior: 0 });
   });
 
-  it("says why each command after the game ends isn't run", () => {
-    const turn = runScript(sim, start(), "end; letgo ops; valuation", who);
-    expect(turn.lines).toContain("not run: the game is over");
-    expect(turn.lines.indexOf("> letgo ops")).toBeGreaterThan(-1);
-    expect(turn.lines.at(-1)).toBe("not run: the game is over");
+  it("says why each command after the game ends isn't run, and still shows what changes nothing", () => {
+    const turn = runScript(sim, start(), "end; letgo ops; valuation; payhistory; look", who);
+    expect(turn.lines[turn.lines.indexOf("> letgo ops") + 1]).toBe("not run: the game is over");
+    // Read-only views still work once it's over (#266): the brief asks for payhistory at the end.
+    expect(turn.lines[turn.lines.indexOf("> valuation") + 1]).toMatch(/^valuation £/);
+    expect(turn.lines[turn.lines.indexOf("> payhistory") + 1]).toMatch(/^pay history|no pay reviews/);
+    expect(turn.lines[turn.lines.indexOf("> look") + 1]).toMatch(/^== Test Co .*ENDED BY TEACHER/);
+  });
+
+  it("runs look inside a batch (#266)", () => {
+    const turn = runScript(sim, start(), "look", who);
+    expect(turn.lines[0]).toBe("> look");
+    expect(turn.lines[1]).toMatch(/^== Test Co /);
+    expect(turn.lines.join("\n")).toMatch(/^commands \(join several with ';'\):/m);
   });
 });
 
@@ -1202,7 +1211,7 @@ describe("tiers, model benefits and the hardware slider (#123)", () => {
     expect(renderStatus(sim, available)).toMatch(/photos locked \(unlock for 15 RP\)/);
     expect(renderCommands(sim, available)).not.toMatch(/^ {2}benefit /m);
     expect(renderCommands(sim, available)).toMatch(
-      /^ {2}unlock <photos\|managedMonitoring\|hardwareEfficiency1\|reservedInstances> {3}\(research points; you have 20\) photos 15 RP \(feature\), managedMonitoring 15 RP \(model benefit\), /m,
+      /^ {2}unlock <photos\|managedMonitoring\|hardwareEfficiency1\|reservedInstances> {3}\(research points; you have 20\) photos 15 RP \(feature\), managedMonitoring 15 RP \(PaaS benefit\), hardwareEfficiency1 15 RP \(on-prem benefit, not your model\), /m,
     );
     const open = run(available, "unlock managedmonitoring").state;
     expect(open.researchPoints).toBe(5);
@@ -1308,7 +1317,7 @@ describe("launch", () => {
     while (!done.mvp.doneDay) done = play(done, "next 1").state;
     expect(renderCommands(button, done)).toMatch(/^ {2}launch \[price\] {3}\(go live/m);
     expect(renderStatus(button, done)).toMatch(
-      /launch: ready \(ready: type launch\); launching now would be short: No app server: no users can be served; No database: no users can be served/,
+      /launch: ready \(type launch\); launching now would be short: No app server: no users can be served; No database: no users can be served/,
     );
     const launched = play(done, "launch").state;
     expect(launched.launchDay).toBe(done.day + 1);
@@ -1395,5 +1404,32 @@ describe("prices: the opening price and the bands", () => {
     const cut = run(state, `preview ${state.price * 0.6}`).lines.join("\n");
     expect(cut).toMatch(/bands \(of the new users it could bring\):/);
     expect(cut).toMatch(/% of free users start paying/);
+  });
+});
+
+describe("text sweep (#266)", () => {
+  it("shows no blank agency rate for researchers and marketers, who are permanent hires only", () => {
+    const text = renderStatus(sim, allOpen(start()));
+    expect(text).toMatch(/^ {2}researchers 0 .*\/day, no agency \| severance/m);
+    expect(text).toMatch(/^ {2}marketers 0 .*\/day, no agency \| severance/m);
+    expect(text).not.toMatch(/agency \/day/);
+  });
+
+  it("names the model each benefit to unlock is for", () => {
+    const state = { ...allOpen(start()), tiers: [{ tier: 2 as const, day: 1 }], researchPoints: 20 };
+    expect(renderStatus(sim, state)).toMatch(/research: .*can unlock photos 15 RP \(feature\), managedMonitoring 15 RP \(PaaS benefit\), .*\(on-prem benefit, not your model\)/);
+  });
+
+  it("points a model benefit's id at benefit rather than asking for a feature", () => {
+    const saas = inPhase(sim.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 }), "launch");
+    expect(run(saas, "addon premiumSupport").lines).toEqual([
+      "buyAddon refused: Premium support plan is a SaaS model benefit, not a feature: buy it as a benefit.",
+    ]);
+  });
+
+  it("shows the uptime the IPO judges: the last 30 days since launch", () => {
+    const state = run(start(), "next 1").state;
+    const down = { ...state, downtimeHours: 50, spendByDay: state.spendByDay.map((d) => ({ ...d, hoursDown: 0 })) };
+    expect(renderStatus(sim, down)).toMatch(/uptime 100\.0% over the last 30 days \(what the IPO judges\)/);
   });
 });

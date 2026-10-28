@@ -433,6 +433,8 @@ export interface Sim {
   conversion(state: GameState): ConversionView;
   /** Share of time up across every day played, as a percentage. 100 before the first day. */
   uptime(state: GameState): number;
+  /** Uptime over the IPO's record: the last recordDays days played since launch, as a percentage. 100 before launch. */
+  recordUptime(state: GameState): number;
   /** The product's features, in config order, with each one's progress. */
   features(state: GameState): FeatureView[];
   /**
@@ -1456,6 +1458,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     moderation: (s) => moderation.moderationView(load(s)),
     conversion: (s) => conversion.conversion(load(s)),
     uptime: (s) => infra.uptime(load(s)),
+    recordUptime: (s) => ipo.recordUptime(load(s)),
     features: (s) => features.features(load(s)),
     loan: (s) => loan.loanView(load(s)),
     loanQuote: (s) => loan.loanQuote(load(s)),
