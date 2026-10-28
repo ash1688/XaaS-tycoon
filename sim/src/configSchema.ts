@@ -350,6 +350,10 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("campaigns.holidayBonus", "Customers", CAMPAIGNS, "Holiday bonus", "A campaign timed for a holiday brings this × the users per pound, for the whole of its run.", MULTIPLIER);
   add("campaigns.marketPerUser", "Customers", CAMPAIGNS, "Market growth per user", "Brand awareness: each user a campaign brings in adds this to the product's market size, for good.", range(0, 100, 0.1));
   add("campaigns.marketGrowthCap", "Customers", CAMPAIGNS, "Market growth cap", "The most campaigns can add to the market, all told, as a share of the product's base market size (0.5: +50%).", range(0, 10, 0.05));
+  add("campaigns.quotePace.low", "Customers", CAMPAIGNS, "Quote: slow growth", "A campaign's quote plays its run forward with your other users growing at this × today's pace for its cheapest end.", range(0, 5, 0.05));
+  add("campaigns.quotePace.high", "Customers", CAMPAIGNS, "Quote: fast growth", "A campaign's quote plays its run forward with your other users growing at this × today's pace for its dearest end.", range(0, 5, 0.05));
+  add("campaigns.quoteMargin", "Customers", CAMPAIGNS, "Quote: margin", "Each end of a campaign's quote is widened by this share of its users, for chance (0.05 = 5%).", SHARE);
+  add("campaigns.almostFull", "Customers", CAMPAIGNS, "Market almost full", "With this share of the market taken, a campaign's quote says the market is almost full.", SHARE);
   const T = "Tiers";
   const TIER = range(1, 4, 1);
   const RP = range(0, 100_000, 1);

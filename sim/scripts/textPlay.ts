@@ -21,6 +21,8 @@ import {
   STAFF_GRADES,
   STAFF_POOLS,
   type Action,
+  type CampaignQuote,
+  type CampaignView,
   type CounterOdds,
   type CustomerTypeId,
   type DayLog,
@@ -306,17 +308,48 @@ function campaignLines(sim: Sim, state: GameState): string[] {
   const view = sim.campaigns(state);
   if (!view.unlocked) return [];
   const holiday = view.holiday ? `; one started now is timed for ${view.holiday.name} in ${view.holiday.daysUntil}d (×${view.holiday.bonus})` : "";
-  const one = (c: (typeof view.campaigns)[number]) =>
-    `#${c.id} ${c.customerType} (${c.grade} marketer) £${c.spent}/£${c.budget}, day ${c.daysRun}/${c.days}, ${c.users} users${c.costPerUser !== null ? ` at £${c.costPerUser.toFixed(2)}` : ""}${c.holiday ? ` (${c.holiday} bonus)` : ""} ${c.status}`;
   const on = view.campaigns.filter((c) => c.status === "starting" || c.status === "running");
-  const done = view.campaigns.filter((c) => c.status === "finished" || c.status === "stopped").slice(0, 3);
+  const done = view.campaigns.filter((c) => c.status === "finished" || c.status === "stopped");
   const m = view.marketers;
   const free = m.grades.filter((x) => x.free).map((x) => `${x.free} ${x.grade}`).join(", ");
+  const older = done.length > 3 ? [`  (${done.length - 3} older: "campaigns" lists them all)`] : [];
   return [
     `marketers: ${m.count}, ${m.free} free${free ? ` (${free}; a new campaign gets the ${m.next})` : ""} | a campaign needs a free marketer, whose grade work multiplies its users per pound`,
     `campaigns: ${view.running}/${view.capacity} running, market ${Math.round(100 * (1 - view.saturation))}% full${holiday}`,
-    ...[...on, ...done].map((c) => `  ${one(c)}`),
+    ...[...on, ...done.slice(0, 3)].map((c) => `  ${campaignLine(c)}`),
+    ...older,
   ];
+}
+
+/** "£1.10–£1.40": a quoted cost per user. */
+const quoteRange = (q: { low: number; high: number }) => `£${q.low.toFixed(2)}–£${q.high.toFixed(2)}`;
+
+/**
+ * One campaign: what it's spent, the users it's brought and their cost so far, against the cost per user it was quoted.
+ * "#2 casual (mid marketer) £400/£1000, day 4/10, 310 users at £1.29, quoted £1.20–£1.45 running".
+ */
+function campaignLine(c: CampaignView): string {
+  const each = c.costPerUser !== null ? ` at £${c.costPerUser.toFixed(2)}` : "";
+  const quoted = c.quote ? `, quoted ${quoteRange(c.quote)}` : "";
+  return `#${c.id} ${c.customerType} (${c.grade} marketer) £${c.spent}/£${c.budget}, day ${c.daysRun}/${c.days}, ${c.users} users${each}${quoted}${c.holiday ? ` (${c.holiday} bonus)` : ""} ${c.status}`;
+}
+
+/** Every campaign started, first to last, for "campaigns". */
+function campaignsLines(sim: Sim, state: GameState): string[] {
+  const view = sim.campaigns(state);
+  if (!view.unlocked) return ["campaigns: not open yet. They open when your first angel investor approaches."];
+  if (!view.campaigns.length) return ["campaigns: none started yet."];
+  return [`campaigns: ${view.campaigns.length} started`, ...[...view.campaigns].reverse().map((c) => `  ${campaignLine(c)}`)];
+}
+
+/**
+ * A campaign's quote over its whole run: "£1.10–£1.40 a user (710–910 users)", or with the market almost full,
+ * "market almost full: about 40 users for £1,000".
+ */
+function quoteText(q: CampaignQuote): string {
+  const about = Math.round((q.users.low + q.users.high) / 2);
+  if (q.almostFull || !q.costPerUser) return `market almost full: about ${about.toLocaleString("en-GB")} ${about === 1 ? "user" : "users"} for ${money(q.budget)}`;
+  return `${quoteRange(q.costPerUser)} a user (${q.users.low.toLocaleString("en-GB")}–${q.users.high.toLocaleString("en-GB")} users)`;
 }
 
 /** The company at a glance: everything a player sees on the dashboard, as short lines. */
@@ -1224,15 +1257,22 @@ export function renderCommands(sim: Sim, state: GameState): string {
   }
   const campaigns = sim.campaigns(state);
   if (campaigns.canStart) {
-    const each = campaigns.types.map((t) => `${t.id} £${t.usersPerPound > 0 ? (1 / t.usersPerPound).toFixed(2) : "∞"} a user now${t.running ? ` (${t.running} on it already)` : ""}`).join(", ");
+    // Each type quoted for £1,000 over 14 days (within the limits), over the whole run.
+    const budget = Math.min(campaigns.maxBudget, Math.max(campaigns.minBudget, 1_000));
+    const days = Math.min(campaigns.maxDays, Math.max(campaigns.minDays, 14));
+    const each = campaigns.types
+      .map((t) => `${t.id} ${quoteText(sim.campaignQuote(state, t.id, budget, days))}${t.running ? ` (${t.running} on it already)` : ""}`)
+      .join(", ");
     lines.push(
-      `  campaign <${campaigns.types.map((t) => t.id).join("|")}> <budget £${campaigns.minBudget}–${campaigns.maxBudget}> <days ${campaigns.minDays}–${campaigns.maxDays}>   (spent evenly from tomorrow; brings users of that type: ${each})`,
+      `  campaign <${campaigns.types.map((t) => t.id).join("|")}> <budget £${campaigns.minBudget}–${campaigns.maxBudget}> <days ${campaigns.minDays}–${campaigns.maxDays}>   (spent evenly from tomorrow; brings users of that type. ${money(budget)} over ${days} days: ${each})`,
     );
+    lines.push(`  campaignquote <type> <budget> <days>   (what a campaign would bring over its whole run, as the market fills; changes nothing)`);
   } else if (campaigns.unlocked && campaigns.why) {
     lines.push(`  (no new campaign: ${campaigns.why})`);
   }
   const stoppable = campaigns.campaigns.filter((c) => c.status === "starting" || c.status === "running");
   if (stoppable.length) lines.push(`  stopcampaign <${stoppable.map((c) => c.id).join("|")}>   (stops it after today: the rest of its budget isn't spent)`);
+  if (campaigns.campaigns.length) lines.push(`  campaigns   (every campaign started, past and present: spend, users and cost per user against its quote; changes nothing)`);
   const buyable = sim.benefits(state).filter((b) => b.onModel && b.unlocked && !b.active);
   if (jobs.features && buyable.length) {
     lines.push(
@@ -1398,6 +1438,8 @@ export type Command =
   | { kind: "payHistory" }
   | { kind: "drift" }
   | { kind: "costs" }
+  | { kind: "campaigns" }
+  | { kind: "campaignQuote"; customerType: CustomerTypeId; budget: number; days: number }
   | { kind: "csuite" }
   | { kind: "payOdds"; rise: number; schemes: Partial<SchemeLevels> }
   | { kind: "next"; days: number }
@@ -1520,6 +1562,15 @@ export function parseCommand(text: string): Command {
         budget: number(args[1]?.replace(/^£/, "").replace(/,/g, ""), "a budget"),
         days: number(args[2], "a length in days"),
       });
+    case "campaignquote":
+      return {
+        kind: "campaignQuote",
+        customerType: oneOf<CustomerTypeId>(args[0], CUSTOMER_TYPE_IDS, "a customer type"),
+        budget: number(args[1]?.replace(/^£/, "").replace(/,/g, ""), "a budget"),
+        days: number(args[2], "a length in days"),
+      };
+    case "campaigns":
+      return { kind: "campaigns" };
     case "stopcampaign":
       return one({ type: "stopCampaign", id: number(args[0], "a campaign id") });
     case "dropbenefit":
@@ -1730,6 +1781,11 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
   if (command.kind === "payHistory") return { state, rows: [], lines: payHistoryLines(sim, state) };
   if (command.kind === "drift") return { state, rows: [], lines: driftLines(sim, state) };
   if (command.kind === "costs") return { state, rows: [], lines: costsLines(sim, state) };
+  if (command.kind === "campaigns") return { state, rows: [], lines: campaignsLines(sim, state) };
+  if (command.kind === "campaignQuote") {
+    const q = sim.campaignQuote(state, command.customerType, command.budget, command.days);
+    return { state, rows: [], lines: [`campaign quote: ${q.customerType}, ${money(q.budget)} over ${q.days} days: ${quoteText(q)}`] };
+  }
   if (command.kind === "csuite") return { state, rows: [], lines: csuiteLines(sim, state) };
   if (command.kind === "payOdds") return { state, rows: [], lines: payOddsLines(sim.payOfferPreview(state, command.rise, command.schemes)) };
   if (command.kind === "end") {
@@ -1927,7 +1983,7 @@ export function runScript(sim: Sim, state: GameState, script: string, who: Playe
       const command = parseCommand(text);
       // Once the game is over, only what changes nothing still works: the valuation, who owns the company, the IPO, the
       // market.
-      if (current.status !== "playing" && !["valuation", "funding", "rescue", "ipo", "market", "costs"].includes(command.kind)) {
+      if (current.status !== "playing" && !["valuation", "funding", "rescue", "ipo", "market", "costs", "campaigns"].includes(command.kind)) {
         skipped = "the game is over";
         lines.push(`> ${text}`, `not run: ${skipped}`);
         continue;

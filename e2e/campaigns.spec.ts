@@ -90,6 +90,9 @@ test("the Marketing page opens at the first angel approach, and a campaign runs 
   await form.getByLabel(/^Budget/).fill("1400");
   await form.getByLabel(/^Length in days/).fill("14");
   await expect(form.getByTestId("campaign-estimate")).toContainText("spending £100 a day");
+  // The quote covers the whole run, as a range: never "£∞".
+  await expect(form.getByTestId("campaign-estimate")).toContainText(/£[\d.]+–£[\d.]+ a user over its whole run: [\d,]+–[\d,]+ casual users/);
+  await expect(form.getByTestId("campaign-estimate")).not.toContainText("∞");
   await form.getByRole("button", { name: "Start campaign" }).click();
 
   await expect(student.getByTestId("campaign-start")).toBeDisabled();
@@ -100,6 +103,8 @@ test("the Marketing page opens at the first angel approach, and a campaign runs 
   await expect(row).toHaveAttribute("data-status", "starting");
   await expect(row.getByTestId("campaign-spent")).toHaveText("£0 of £1,400");
   await expect(row.getByTestId("campaign-marketer-grade")).toHaveText("Mid");
+  // It keeps the quote it was given, to judge it against.
+  await expect(row.getByTestId("campaign-quoted")).toHaveText(/^£[\d.]+–£[\d.]+$/);
   await openTab(student, "Overview");
   await expect(student.getByTestId("campaigns-running")).toHaveText("1 of 1");
   await expect(student.getByTestId("marketers-free")).toHaveText("0 of 1 free");

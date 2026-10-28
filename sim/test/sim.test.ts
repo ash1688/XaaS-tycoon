@@ -3007,7 +3007,7 @@ describe("runway", () => {
     expect(sim.advance(schemes).state.cash - schemes.cash).toBe(-sim.runway(schemes).dailyCosts);
     const campaign = {
       ...{ id: 1, customerType: "casual" as const, budget: 700, days: 7, startDay: 2, endDay: 8, stopped: false },
-      ...{ holiday: null, grade: "mid" as const, spent: 0, earned: 0, users: 0, marketAdded: 0 },
+      ...{ holiday: null, grade: "mid" as const, spent: 0, earned: 0, users: 0, marketAdded: 0, quote: null },
     };
     const marketing = { ...staffed, campaigns: [campaign] };
     expect(headings(marketing)).toMatchObject({ campaigns: 100 });

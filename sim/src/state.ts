@@ -37,7 +37,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 57;
+export const GAME_STATE_VERSION = 58;
 
 /**
  * The four phases a game's jobs open in, in order, each opened by a milestone: Build from day 1, Launch when Launch is
@@ -752,6 +752,8 @@ export interface Campaign {
   users: number;
   /** What it has added to the product's market size (brand awareness), to the fraction: it stays after it ends. */
   marketAdded: number;
+  /** The cost per user it was quoted when started (see Campaigns.quote), low to high: null if it might bring no-one. */
+  quote: { low: number; high: number } | null;
 }
 
 /** Plain, JSON-serialisable game state. The server stores it as-is. */

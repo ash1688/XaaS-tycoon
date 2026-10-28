@@ -19,6 +19,7 @@ import type {
   PresetUpdateBody,
   PresetView,
   PricePreviewView,
+  CampaignQuoteView,
   PriceBandsView,
   SummaryView,
   TeacherCodeView,
@@ -92,6 +93,13 @@ export const api = {
       "GET",
       `/api/codes/${enc(code)}/companies/${enc(id)}/launch-bands?price=${enc(String(price))}` +
         (rate === undefined ? "" : `&rate=${enc(String(rate))}`),
+    ),
+
+  // What a campaign would bring over its whole run, for the Marketing page's quote. Changes nothing.
+  campaignQuote: (code: string, id: string, type: string, budget: number, days: number) =>
+    request<CampaignQuoteView>(
+      "GET",
+      `/api/codes/${enc(code)}/companies/${enc(id)}/campaign-quote?type=${enc(type)}&budget=${enc(String(budget))}&days=${enc(String(days))}`,
     ),
 
   // What a counter to a funder's offer would do, for the negotiation modal's live odds. Changes nothing.
