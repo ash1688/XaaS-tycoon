@@ -100,6 +100,10 @@ _Avoid_: Executives, leadership team, management
 When cash falls below about 7 days of running costs, the whole C-suite forgoes its pay until cash is back above about 21 days. Both lines use the same figure: running costs with the C-suite's pay, without Campaign spend. Pay missed is owed as **back pay**, paid in instalments once the holiday ends: each day, the cash above 7 days of costs spread over 14 days, so paying never takes cash back under the line that starts a holiday. Whatever's left when the game ends comes off the final cash: it eases cash when it's short, but saves nothing. It keeps a small company that has hired the full C-suite from running out of cash.
 _Avoid_: Pay freeze, deferred pay
 
+**Walkout**:
+An executive resigning after the pay holiday has run more than 30 days in a row: the most recently hired first, then one more every 7 days while it lasts (warned at 25 days). Their share of the back pay is due at once, and the bank pays it onto the loan (the bank loan, or the emergency loan on its 30-day term), not from cash, without counting as a shortfall. Their shares stay theirs and their equity still counts against the cap; the role opens again with its shortlist. Ending the holiday resets the count.
+_Avoid_: Quitting, firing
+
 **Staff**:
 The developers, ops, support, moderators, researchers and marketers hired and let go in bulk, as permanent or agency staff (researchers and marketers permanent only). Not the C-suite.
 _Avoid_: Employees, workers

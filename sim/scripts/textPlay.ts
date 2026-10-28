@@ -697,10 +697,11 @@ function csuiteLine(sim: Sim, state: GameState): string {
 /** The board's pay holiday in a line: on now, or when it would start. */
 function payHolidayLine(h: ReturnType<Sim["csuite"]>["payHoliday"]): string {
   if (h.startDays <= 0) return "pay holiday: off";
+  const walkout = h.walkoutDays > 0 ? `; after ${h.walkoutDays} days unpaid in a row, one executive resigns every ${h.walkoutEvery} days, their back pay going onto the loan` : "";
   const owed = h.owed > 0 ? `; ${money(h.owed)} of back pay owed, paid in instalments as cash recovers: the cash above ${h.startDays} days of running costs spread over ${h.backPayDays} days` : "";
   return h.since !== null
-    ? `pay holiday: since day ${h.since}, cash is low, so no executive is paid until cash is back above ${h.endDays} days of running costs (with their pay, without Campaigns)${owed}`
-    : `pay holiday: if cash falls below ${h.startDays} days of running costs (with C-suite pay, without Campaigns), every executive forgoes their pay until it's back above ${h.endDays} days; what they miss is owed${owed}`;
+    ? `pay holiday: since day ${h.since}, cash is low, so no executive is paid until cash is back above ${h.endDays} days of running costs (with their pay, without Campaigns)${walkout}${owed}`
+    : `pay holiday: if cash falls below ${h.startDays} days of running costs (with C-suite pay, without Campaigns), every executive forgoes their pay until it's back above ${h.endDays} days; what they miss is owed${walkout}${owed}`;
 }
 
 /** The C-suite in full: every role with when it opens, who fills it, or its shortlist. */
@@ -721,7 +722,7 @@ function csuiteLines(sim: Sim, state: GameState): string[] {
       lines.push(`  ${r.name} (open): ${r.blurb}`);
       for (const c of r.shortlist) {
         const effects = c.effects.length ? c.effects.map((x) => x.text).join("; ") : "no effect";
-        lines.push(`    ${c.id}  ${c.name}: strength ${Math.round(c.strength * 100)}%, ${money(c.salary)}/day, ${tenth(c.equity)} equity (${c.newShares.toLocaleString("en-GB")} new shares) | ${effects}`);
+        lines.push(`    ${c.id}  ${c.name}: strength ${Math.round(c.strength * 100)}%, ${money(c.salary)}/day, ${tenth(c.equity)} equity (${c.newShares.toLocaleString("en-GB")} new shares) | ${effects}${c.runway ? ` | ${c.runway}` : ""}`);
       }
     }
   }
@@ -1970,6 +1971,12 @@ export function runCommand(sim: Sim, state: GameState, command: Command, who: Pl
         `acceptInvestor: done. ${a.investor} put in ${money(a.amount)} for ${stake(a.share)}; valuation now ${money(sim.valuation(current).valuation)}. Target, both by day ${a.target.byDay}: ${money(a.target.dailyRevenue)}/day over ${a.target.days} days, and ${a.target.netUsers.toLocaleString("en-GB")} users net (gained less lost) from today.`,
       ],
     };
+  }
+  // Appointing an executive: what their pay does to the runway, as the shortlist said.
+  if (command.action.type === "hireExecutive") {
+    const { role, candidate } = command.action;
+    const note = sim.csuite(state).roles.find((r) => r.role === role)?.shortlist.find((c) => c.id === candidate)?.runway;
+    return { state: current, rows, lines: [`hireExecutive: done${note ? `. ${note}` : ""}`] };
   }
   // A server order that will need more ops than the team has, once it's ready (#259).
   const opsNote = orderOpsNote(sim, state, current);
