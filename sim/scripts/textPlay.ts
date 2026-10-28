@@ -689,9 +689,10 @@ function csuiteLine(sim: Sim, state: GameState): string {
 /** The board's pay holiday in a line: on now, or when it would start. */
 function payHolidayLine(h: ReturnType<Sim["csuite"]>["payHoliday"]): string {
   if (h.startDays <= 0) return "pay holiday: off";
+  const owed = h.owed > 0 ? `; ${money(h.owed)} of back pay owed, paid from the cash above ${h.endDays} days of running costs` : "";
   return h.since !== null
-    ? `pay holiday: since day ${h.since}, cash is low, so no executive is paid until cash is back above ${h.endDays} days of running costs`
-    : `pay holiday: if cash falls below ${h.startDays} days of running costs, every executive forgoes their pay until it's back above ${h.endDays} days`;
+    ? `pay holiday: since day ${h.since}, cash is low, so no executive is paid until cash is back above ${h.endDays} days of running costs (with their pay, without Campaigns)${owed}`
+    : `pay holiday: if cash falls below ${h.startDays} days of running costs (with C-suite pay, without Campaigns), every executive forgoes their pay until it's back above ${h.endDays} days; what they miss is owed${owed}`;
 }
 
 /** The C-suite in full: every role with when it opens, who fills it, or its shortlist. */

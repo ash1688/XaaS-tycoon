@@ -31,12 +31,17 @@ async function hire(role: CsuiteRole, candidate: string) {
     <p v-if="csuite.payHoliday.since !== null" class="pay-holiday" role="status" data-testid="csuite-pay-holiday">
       <strong>Pay holiday since day {{ csuite.payHoliday.since }}.</strong> Cash is low, so your C-suite is forgoing its
       {{ formatCash(csuite.dailyPay) }} a day of pay until you have {{ csuite.payHoliday.endDays }} days of running
-      costs in the bank.
+      costs in the bank. It's owed: {{ formatCash(csuite.payHoliday.owed) }} of back pay so far.
+    </p>
+    <p v-else-if="csuite.payHoliday.owed > 0" class="pay-holiday" data-testid="csuite-back-pay">
+      {{ formatCash(csuite.payHoliday.owed) }} of back pay still owed from the pay holiday: paid from the cash above
+      {{ csuite.payHoliday.endDays }} days of running costs, and anything left when the game ends comes off your cash.
     </p>
     <p v-else-if="csuite.dailyPay" data-testid="csuite-pay">C-suite pay: {{ formatCash(csuite.dailyPay) }} a day.</p>
     <p v-if="csuite.payHoliday.startDays > 0 && csuite.payHoliday.since === null" class="muted" data-testid="csuite-pay-holiday-rule">
       If cash falls below {{ csuite.payHoliday.startDays }} days of running costs, the board forgoes its pay until
-      there are {{ csuite.payHoliday.endDays }} days' worth in the bank. Pay it misses isn't owed later.
+      there are {{ csuite.payHoliday.endDays }} days' worth in the bank (running costs with C-suite pay, leaving out
+      Campaigns). What it misses is owed, and paid back once cash recovers.
     </p>
     <div v-for="r in open" :key="r.role" class="role" :data-testid="`csuite-${r.role}`">
       <h3>{{ r.name }}</h3>

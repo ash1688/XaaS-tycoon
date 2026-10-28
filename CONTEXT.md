@@ -89,8 +89,8 @@ The company's senior leaders. The student is the CEO; the others (CFO, CTO and s
 _Avoid_: Executives, leadership team, management
 
 **Pay holiday**:
-When cash falls below about 7 days of running costs, the whole C-suite forgoes its pay until cash is back above about 21 days. Pay missed isn't owed later. It keeps a small company that has hired the full C-suite from running out of cash.
-_Avoid_: Pay freeze, deferred pay (nothing is paid back)
+When cash falls below about 7 days of running costs, the whole C-suite forgoes its pay until cash is back above about 21 days. Both lines use the same figure: running costs with the C-suite's pay, without Campaign spend. Pay missed is owed as **back pay**, paid once the holiday ends from the cash above 21 days of costs, and whatever's left when the game ends comes off the final cash: it eases cash when it's short, but saves nothing. It keeps a small company that has hired the full C-suite from running out of cash.
+_Avoid_: Pay freeze, deferred pay
 
 **Staff**:
 The developers, ops, support, moderators, researchers and marketers hired and let go in bulk, as permanent or agency staff (researchers and marketers permanent only). Not the C-suite.
