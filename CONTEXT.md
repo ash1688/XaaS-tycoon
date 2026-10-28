@@ -23,8 +23,12 @@ A permanent, scripted practice game every student has, which can be restarted at
 _Avoid_: Tutorial mode, practice game
 
 **Difficulty**:
-Easy, Normal or Hard: a set of numbers the student picks from those the teacher allows. Never changes which systems exist.
+Easy, Normal or Hard: a set of numbers the student picks from those the teacher allows. Never changes which systems exist. On Hard, tier 4 also opens on a revenue milestone, so a company can float without outside investors.
 _Avoid_: Mode, level
+
+**Bootstrapped float**:
+A float with no outside investors' money along the way: no friends and family, angel, VC or vulture. The grant and the bank loan aren't shares, so they don't count. The end screen flags it: "Floated without outside investors".
+_Avoid_: Solo IPO, self-funded
 
 **Career**:
 The longest game length: the student founds the company at 18 and runs it until they retire at 65.

@@ -99,6 +99,10 @@ const biggest = computed(() =>
       </span>
     </div>
 
+    <p v-if="summary.bootstrapped" class="features-note" data-testid="summary-bootstrapped">
+      Floated without outside investors: no friends and family, angel or VC money along the way.
+    </p>
+
     <div v-if="summary.ipo" class="stats ipo-stats" data-testid="summary-ipo">
       <div class="stat">
         <span class="label">Cash raised</span>

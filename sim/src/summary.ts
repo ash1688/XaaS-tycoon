@@ -119,6 +119,11 @@ export interface GameSummary {
   finalDay: number | null;
   /** The float and the first day of trading, if the game ended in an IPO. */
   ipo: IpoResult | null;
+  /**
+   * It floated without outside investors (#265): no friends and family, angel, VC or vulture money taken. The grant and
+   * the bank loan aren't shares, so they don't count.
+   */
+  bootstrapped: boolean;
   cash: number;
   users: number;
   /** Of the users, those paying. The rest are free. */
@@ -249,6 +254,12 @@ export function createSummary(config: GameConfig, infra: Infrastructure, shares:
       vcRounds: vcLadder(state).length,
       finalDay: state.finalDay,
       ipo: state.ipo.result,
+      bootstrapped:
+        state.ipo.result !== null &&
+        state.funding.friendsAndFamily?.status !== "accepted" &&
+        !state.investors.angel &&
+        !state.investors.vc.deals.length &&
+        !state.rescue,
       cash: state.cash,
       users: state.users,
       paidUsers: state.paidUsers,

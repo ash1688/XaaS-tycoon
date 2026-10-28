@@ -362,6 +362,8 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("tiers.tier3.uptime", "Infrastructure", T, "Tier 3: uptime %", "The uptime % over those days that tier 3 also needs.", range(0, 100, 0.1));
   add("tiers.tier1BuildMultiplier", "Infrastructure", T, "Tier 1: build time", "Tier 1 features open at Launch with no research, and take this × their developer-days to build (2 = twice as long).", MULTIPLIER);
   add("tiers.tier3.days", "Infrastructure", T, "Tier 3: days measured", "How many of the latest days played tier 3's income and uptime are averaged over.", GAME_DAY);
+  add("tiers.tier4.dailyIncome", "Infrastructure", T, "Tier 4 on Hard: income a day", "On Hard, tier 4 also opens once the last days played (below) average this much income a day, so a company can float without outside investors.", POUNDS);
+  add("tiers.tier4.days", "Infrastructure", T, "Tier 4 on Hard: days", "The days played that Hard's tier 4 income is averaged over.", GAME_DAY);
   for (const p of PRODUCT_TYPE_IDS) {
     for (const f of base.productTypes[p]?.features ?? []) {
       add(`productTypes.${p}.features.${f.id}.tier`, "Infrastructure", T, `${base.productTypes[p].name}: ${f.name} tier`, "The tier this feature is in: it can only be built or bought once that tier is unlocked. Tier 1 is open from the start.", TIER);

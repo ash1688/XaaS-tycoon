@@ -2161,5 +2161,7 @@ export function renderSummary(sim: Sim, state: GameState): string {
     (r) =>
       `${r.name}: put in ${money(r.putIn)}, ${stake(r.stake)}, worth ${money(r.worth)}${r.multiple !== null ? `, ${r.multiple}× their money` : ""}`,
   );
-  return JSON.stringify({ headline, shareholders, score, ...summary, ...valuation }, null, 1);
+  // A bootstrapped float is an achievement, said in words (#265).
+  const flag = summary.bootstrapped ? { achievement: "Floated without outside investors" } : {};
+  return JSON.stringify({ ...flag, headline, shareholders, score, ...summary, ...valuation }, null, 1);
 }

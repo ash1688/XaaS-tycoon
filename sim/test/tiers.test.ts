@@ -195,6 +195,37 @@ describe("tiers", () => {
     expect(sim.advance(ready).state.tiers.map((t) => t.tier)).toEqual([2, 3, 4]);
   });
 
+  it("open tier 4 on Hard on a revenue milestone too, with no investor, but not on Easy or Normal (#265)", () => {
+    const any = createSim({ ...quiet, allowedDifficulties: { easy: 1, normal: 1, hard: 1 } });
+    const { tier4 } = tierConfig;
+    expect(tier4).toEqual({ dailyIncome: 2_500, days: 30 });
+    const at = (difficulty: "easy" | "normal" | "hard", income: number) => {
+      const state = any.newGame({ companyName: "Tiered Co", productType: "ecommerce", model: "saas", seed: 7, difficulty });
+      // Tiers 2 and 3 already reached, so only tier 4's condition is in question.
+      return withHistory({ ...state, tiers: [{ tier: 2, day: 1 }, { tier: 3, day: 1 }] }, tier4.days, income);
+    };
+    const hard = at("hard", tier4.dailyIncome);
+    expect(hard.investors.angel).toBeNull();
+    expect(tier(hard, 4, any).conditions).toEqual([
+      expect.objectContaining({ label: "An angel investor's money taken", met: false }),
+      expect.objectContaining({ label: "Every IPO condition met", met: false }),
+      { label: `Income a day, last ${tier4.days} days`, value: tier4.dailyIncome, target: tier4.dailyIncome, unit: "pounds", met: true },
+    ]);
+    // The day played joins the window, so a margin over the target carries it.
+    expect(any.advance(at("hard", tier4.dailyIncome + 200)).state.tiers.map((t) => t.tier)).toContain(4);
+    // Short of it, it stays shut.
+    expect(any.advance(at("hard", tier4.dailyIncome - 100)).state.tiers.map((t) => t.tier)).not.toContain(4);
+    // Easy and Normal are unchanged: no revenue route.
+    for (const d of ["easy", "normal"] as const) {
+      expect(tier(at(d, tier4.dailyIncome), 4, any).conditions).toHaveLength(2);
+      expect(any.advance(at(d, 10 * tier4.dailyIncome)).state.tiers.map((t) => t.tier)).not.toContain(4);
+    }
+    // The refusal for a locked tier 4 item says so on Hard.
+    expect(() => any.applyAction(inPhase(at("hard", 0), "grow"), { type: "buyAddon", feature: "recommendations" })).toThrow(
+      /or once your last 30 days average £2,500 a day in income/,
+    );
+  });
+
   it("are kept through a migration, with the product features built", () => {
     let state = opened(iaasSetup(begin()), 2);
     state = { ...state, features: { wishlists: { status: "built", progress: 10 } } };
