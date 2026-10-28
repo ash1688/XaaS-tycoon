@@ -181,7 +181,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("negotiation.moves.high", "Money", "Negotiation", "High roll moves", "Share of the way from the offer to the counter the next offer moves on a high roll.", SHARE);
   add("negotiation.moves.middle", "Money", "Negotiation", "Middle roll moves", "Share of the way the next offer moves on a middle roll.", SHARE);
   add("negotiation.moves.low", "Money", "Negotiation", "Low roll moves", "Share of the way the next offer moves on a low roll. Below 0 the offer gets worse instead: −0.2 moves it a fifth of the counter's distance the other way.", range(-1, 1, 0.01));
-  add("rescue.limitDays", "Money", "Rescue buyout", "How far below £0", "Days of daily costs that shortfalls can go onto the loan before the vulture VC steps in (or, after a rescue, liquidation).", GAME_DAY);
+  add("rescue.limitDays", "Money", "Rescue buyout", "How far below £0", "Days of daily costs, fixed when cash first goes below £0, that shortfalls can go onto the loan before the vulture VC steps in (or, after a rescue, liquidation).", GAME_DAY);
   add("rescue.breathingDays", "Money", "Rescue buyout", "Breathing space", "Days of losses the vulture VC's cash covers after the cost cuts, on top of what took cash below £0.", GAME_DAY);
   add("rescue.minCover", "Money", "Rescue buyout", "Least cover a day", "The breathing space counts at least this share of a day's running costs, even if the company is losing less.", SHARE);
   add("rescue.share", "Money", "Rescue buyout", "Share taken", "The vulture VC's share of the company once its new shares are issued (0.75 = 75%).", range(0.01, 0.99, 0.01));

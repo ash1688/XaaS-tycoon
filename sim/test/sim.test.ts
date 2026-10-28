@@ -2794,6 +2794,7 @@ describe("rescue buyout and liquidation", () => {
       day: 52,
       amount: 700,
       losses: 20,
+      shortfalls: 0,
       shares: 30_000,
       share: 0.75,
       cuts: [],
@@ -2995,9 +2996,11 @@ describe("shortfalls onto the loan, and the vulture VC past 7 days", () => {
     const note = log[0]!.entries.find((e) => e.text.startsWith("Cash went"))!;
     expect(note).toMatchObject({ cashDelta: 20 });
     expect(note.text).toMatch(/Cash went £20 below £0 with no bank loan, so the bank opened an emergency loan for it at 20.2%: £1 a day for 30 days/);
-    // The daily costs are £21 with the repayment: 7 days is £147, £127 more than the £20 on the loan.
-    expect(note.text).toMatch(/Shortfalls can go £127 further \(7 days of costs, £147 in all\) before a vulture VC steps in/);
-    expect(lenient.shortfall(state)).toEqual({ limitDays: 7, limit: 147, owed: 20, room: 127 });
+    // The limit is fixed at 7 days of the £20 daily costs on the day cash first went below £0: £140, £120 more than
+    // the £20 on the loan.
+    expect(note.text).toMatch(/Shortfalls can go £120 further \(7 days of costs, £140 in all\) before a vulture VC steps in/);
+    expect(lenient.shortfall(state)).toEqual({ limitDays: 7, limit: 140, owed: 20, room: 120, onto: "emergency loan" });
+    expect(state.shortfallLimit).toBe(140);
     // Borrowed, not income, so the cash chart adds up.
     expect(state.spendByDay.at(-1)).toMatchObject({ borrowed: 20, income: 0 });
     // Repaid from the next day like any loan.
@@ -3019,7 +3022,7 @@ describe("shortfalls onto the loan, and the vulture VC past 7 days", () => {
   it("stops time the first time cash goes below £0, saying how far it can still go", () => {
     const first = lenient.tick(atZero());
     expect(first.pauses).toEqual([
-      { kind: "alert", id: "shortfall", text: "Cash went below £0 and the shortfall went on your loan: £127 more and a vulture VC steps in" },
+      { kind: "alert", id: "shortfall", text: "Cash went below £0 and the shortfall went on your loan: £120 more and a vulture VC steps in" },
     ]);
     // Only the first time.
     expect(lenient.tick(first.state).pauses.map((p) => p.id)).not.toContain("shortfall");
@@ -3041,9 +3044,48 @@ describe("shortfalls onto the loan, and the vulture VC past 7 days", () => {
       }
     }
     expect(state.rescue!.day).toBeGreaterThan(52);
-    // What shortfalls put on the loan is still owed: the vulture VC only covered the day that took it past the limit.
-    expect(state.loan).toMatchObject({ emergency: true });
-    expect(state.loan!.shortfall).toBeGreaterThan(100);
+    // The vulture VC's cash paid off what shortfalls put on the emergency loan, so the full room below £0 is back.
+    expect(state.rescue!.shortfalls).toBeGreaterThan(100);
+    expect(state.loan).toMatchObject({ emergency: true, paidOffDay: state.rescue!.day, shortfall: 0 });
+    expect(lenient.shortfall(state)).toMatchObject({ owed: 0, onto: null });
+    expect(lenient.shortfall(state).room).toBe(lenient.shortfall(state).limit);
+    expect(state.shortfallLimit).toBeNull();
+  });
+
+  it("adds a later shortfall to the emergency loan on its short term: the repayment rises, the term doesn't stretch", () => {
+    const first = lenient.advance(atZero()).state;
+    const { state, log } = lenient.advance(first);
+    // £21 more short (£20 of IaaS and the £1 repayment) at 20.2% adds £26, repaid over 30 days: £1 more a day.
+    expect(state.loan).toMatchObject({ emergency: true, amount: 41, total: 56, dailyRepayment: 2, shortfall: 41 });
+    expect(state.loan!.lastDay).toBeLessThanOrEqual(state.day + 30);
+    expect(log[0]!.entries.find((e) => e.text.startsWith("Cash went"))!.text).toMatch(
+      /the shortfall went on your emergency loan, and the bank still wants it back fast: now £2 a day, until day \d+/,
+    );
+    // Many shortfalls later, it still ends within 30 days of the latest.
+    let later = state;
+    for (let i = 0; i < 4 && !later.rescue; i++) later = lenient.advance(later).state;
+    if (!later.rescue) expect(later.loan!.lastDay).toBeLessThanOrEqual(later.day + 30);
+  });
+
+  it("fixes the room below £0 when cash first goes there: hiring doesn't raise it", () => {
+    const first = lenient.advance(atZero()).state;
+    const hired = withStaff(first, { developers: 3 });
+    expect(lenient.runway(hired).dailyCosts).toBeGreaterThan(lenient.runway(first).dailyCosts);
+    expect(lenient.shortfall(hired).limit).toBe(lenient.shortfall(first).limit);
+  });
+
+  it("has a rescue pay off what shortfalls put on a bank loan, which keeps the rest at the same repayment", () => {
+    const rich = createSim({ ...config, startingCash: 100_000, rescue: { ...config.rescue, limitDays: 7 } });
+    const borrowed = rich.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, takeLoan: true });
+    const topped = rich.advance({ ...borrowed, cash: 50 }).state;
+    expect(topped.loan).toMatchObject({ shortfall: 80, dailyRepayment: 110 });
+    // Far below £0 the next day: past the limit, so the vulture VC steps in.
+    const { state, log } = rich.advance({ ...topped, cash: -5_000 });
+    expect(state.rescue).toMatchObject({ shortfalls: 80 });
+    expect(state.loan).toMatchObject({ amount: 17_900, shortfall: 0, dailyRepayment: 110, paidOffDay: null });
+    expect(rich.shortfall(state)).toMatchObject({ owed: 0, onto: "bank loan" });
+    expect(log[0]!.entries.map((e) => e.text)).toContain("The vulture VC's cash paid off the shortfalls on your bank loan");
+    expect(log[0]!.entries.find((e) => e.kind === "rescue")!.text).toMatch(/£80 to pay off the shortfalls on the loan/);
   });
 
   it("goes into liquidation the second time cash runs out, past the limit again", () => {
@@ -4169,7 +4211,7 @@ describe("default config", () => {
 
   it("liquidates a company that hires far more than it needs", () => {
     const start = sim180.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 7 });
-    const state = sim180.advance(withStaff(start, { developers: 12, ops: 2 }), defaultConfig.finalDay - 1).state;
+    const state = sim180.advance(withStaff(start, { developers: 16, ops: 2 }), defaultConfig.finalDay - 1).state;
     expect(state.status).toBe("liquidated");
     expect(state.day).toBeLessThan(defaultConfig.finalDay);
   });

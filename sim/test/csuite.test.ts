@@ -247,7 +247,9 @@ describe("pay and equity", () => {
     while (state.rescue === null && state.day < 30) state = sim.advance(state).state;
     expect(state.rescue).not.toBeNull();
     expect(state.csuite.hired.map((e) => e.role)).toEqual(["headOfOps"]);
-    expect(sim.advance(state).log[0]!.entries.some((e) => e.text.startsWith("Head of ops pay"))).toBe(true);
+    // Still on the payroll: paid again once the board's pay holiday ends with cash back.
+    const recovered = sim.advance({ ...state, cash: 100_000 }).state;
+    expect(sim.advance(recovered).log[0]!.entries.some((e) => e.text.startsWith("Head of ops pay"))).toBe(true);
   });
 });
 

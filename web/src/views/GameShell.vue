@@ -196,7 +196,7 @@ async function closeMenu() {
             {{ game.runway.days ? `Cash runs out in about ${days(game.runway.days)}.` : "Cash runs out on the next day you play." }}
           </strong>
           You're losing {{ formatCash(-game.runway.dailyNet) }} a day and have {{ formatCash(game.company.cash) }}. Below £0
-          the shortfall goes on your loan, up to {{ game.company.shortfall.limitDays }} days of costs
+          the shortfall goes on {{ game.company.shortfall.onto ? `your ${game.company.shortfall.onto}` : "an emergency loan" }}, up to {{ game.company.shortfall.limitDays }} days of costs
           ({{ formatCash(game.company.shortfall.limit) }}).
           <template v-if="game.company.rescue">Past that there's no second rescue: it's liquidation, and the game ends.</template>
           <template v-else>Past that a vulture VC rescues the company, but takes most of it; a second time is liquidation.</template>
