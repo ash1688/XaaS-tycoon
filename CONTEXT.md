@@ -248,7 +248,7 @@ Paying users who stay through a rise but complain about it publicly. While the b
 _Avoid_: Bad reviews, word of mouth (word of mouth is a cut's wave)
 
 **Expected price**:
-The price customers expect: the latest that has held for 30 days. A cut is measured from it, so a cut back from a rise that hasn't held is no bargain. A rise is still measured from the lowest price customers remember over 60 days.
+The price customers expect: the opening price at first, then every 14 days from the launch it moves halfway to the price in effect that day. A cut is measured from it, so cutting back soon after a rise is less of a bargain, and an old high price fades instead of making cut after cut look big. A rise is still measured from the lowest price of the last 60 days. No wave brings more users than the market has room for.
 _Avoid_: Reference price, anchor
 
 **Price reaction**:

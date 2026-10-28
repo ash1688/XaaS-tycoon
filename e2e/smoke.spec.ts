@@ -1160,7 +1160,7 @@ test("a student previews prices live, raises the price, and sees the backlash an
   await expect(bands).toHaveAttribute("data-kind", "rise");
   await expect(bands.getByTestId("band-row")).toHaveCount(5);
   await expect(bands.getByRole("img", { name: /^Casual users: accept [\d.]+%, grumble online [\d.]+%, contact support [\d.]+%, drop to free 7\.5%, leave 5%$/ })).toBeVisible();
-  await expect(preview.getByTestId("price-expected")).toContainText("Customers expect £5, the price that has held a month");
+  await expect(preview.getByTestId("price-expected")).toContainText("Customers expect £5: a cut counts from it, and it moves halfway to your price every 14 days");
   // The rise's backlash tickets against today's support, as the sim quotes them: whether the team keeps up (#163).
   const quote = await (await request.get(`/api/codes/${code}/companies/${id}/price-preview?price=6.25`)).json();
   const n = (x: number) => x.toLocaleString("en-GB");
