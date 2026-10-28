@@ -13,7 +13,7 @@ const m = computed(() => game.managed);
 const instanceCu = computed(() => (m.value ? m.value.instances * m.value.instanceUnits : 0));
 
 const setInstances = (count: number) => game.act({ type: "setInstances", count });
-// With managed autoscaling (#261): the instances set by hand are the minimum, and a maximum caps the burst instances.
+// PaaS autoscaling (#261): the instances set by hand are the minimum, and a maximum caps the burst instances.
 const scale = computed(() => game.company?.autoscale ?? null);
 const setMax = (max: number) => game.act({ type: "setAutoscaleMax", max });
 // With a paid API: API instances, the instance size, each giving APIU for its calls.
@@ -123,10 +123,10 @@ async function remove(service: ManagedService) {
 
       <li v-if="scale" data-testid="platform-autoscale">
         <div class="server-info">
-          <strong>Autoscaling</strong>
+          <strong>{{ scale.managed ? "Managed autoscaling" : "Basic autoscaling" }}</strong>
           <span class="muted" data-testid="autoscale-summary">
             Instances {{ scale.instances }} (min {{ scale.min }}, max {{ scale.max }}). Each night the platform sets
-            them to 1.5× yesterday's demand, never below the {{ scale.min }} you set. During a day, burst instances cover
+            them to {{ scale.baseline }}× yesterday's demand, never below the {{ scale.min }} you set. During a day, burst instances cover
             spikes up to your maximum, at {{ formatCash(scale.burstDayCost) }} each for the day. Demand over the maximum
             is an outage.
           </span>

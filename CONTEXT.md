@@ -158,7 +158,7 @@ The record of every pay review settled, on the People page and in text play: eac
 ### Infrastructure
 
 **Autoscaling (PaaS)**:
-The Managed autoscaling benefit. Each night the platform sets the app instances to a **baseline** of 1.5× yesterday's CU demand, never below the instances the student set by hand (their **minimum**, never reset). During a day **burst instances** cover a spike over the baseline at about twice an instance's price, up to a **maximum** the student sets (about 3× today's instances until they do); demand over it is an outage, and time stops the first time. The **autoscaler failure** event stops bursts for a day, more often on spike days, which is what the minimum insures against.
+On for every PaaS company. Each night the platform sets the app instances to a **baseline** of 1.25× yesterday's CU demand (**basic autoscaling**), or 1.5× with the Managed autoscaling benefit (**managed autoscaling**), never below the instances the student set by hand (their **minimum**, never reset). During a day **burst instances** cover a spike over the baseline at about twice an instance's price, up to a **maximum** the student sets (about 3× today's instances until they do); demand over it is an outage, and time stops the first time. The **autoscaler failure** event stops bursts for a day, more often on spike days, which is what the minimum insures against.
 _Avoid_: Auto-scaling, elastic scaling
 
 **Rack**:

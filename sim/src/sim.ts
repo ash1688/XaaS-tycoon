@@ -1,5 +1,5 @@
 import { createApi, type ApiView } from "./api.ts";
-import { createBenefits, managedAutoscaling, type BenefitView } from "./benefits.ts";
+import { createBenefits, type BenefitView } from "./benefits.ts";
 import { createCalendar, isIsoDate, type CalendarView } from "./calendar.ts";
 import { createCampaigns, type CampaignQuote, type CampaignsView } from "./campaigns.ts";
 import {
@@ -1167,7 +1167,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     // The first day demand went over the autoscaling maximum, when time stops (#261).
     const maxHit = served.maxHit && left.state.autoscale?.maxHitDay === undefined;
     const scaledFrom: GameState = maxHit ? { ...left.state, autoscale: { ...left.state.autoscale, maxHitDay: day } } : left.state;
-    // Managed autoscaling sets tomorrow's instances to the baseline.
+    // PaaS autoscaling sets tomorrow's instances to the baseline.
     const scaled = autoscaleInstances(scaledFrom);
     entries.push(...scaled.entries);
     // The danger meter rises with the day's risks, on the model the day was played on.
@@ -1225,8 +1225,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   });
 
   /**
-   * Managed autoscaling (a PaaS model benefit, #261): after the day, the platform sets the app instances to the
-   * baseline, 1.5× the day's CU demand, never below the minimum set by hand nor over the maximum, serving from
+   * PaaS autoscaling (#261): after the day, the platform sets the app instances to the baseline, 1.25× the day's CU
+   * demand (1.5× with Managed autoscaling), never below the minimum set by hand nor over the maximum, serving from
    * tomorrow. Burst instances during the day are in infra.serveLoad.
    */
   function autoscaleInstances(state: GameState): { state: GameState; entries: LogEntry[] } {
@@ -1234,7 +1234,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const platform = servers.managed(state);
     if (target === null || !platform || target === platform.instances) return { state, entries: [] };
     const floor = target === (state.autoscale?.min ?? 1) && target > 1 ? " (your minimum)" : "";
-    const text = `Managed autoscaling: ${platform.instances} → ${target} app instances for tomorrow${floor}.`;
+    const kind = infra.autoscaleView(state)?.managed ? "Managed autoscaling" : "Autoscaling";
+    const text = `${kind}: ${platform.instances} → ${target} app instances for tomorrow${floor}.`;
     return { state: servers.setInstances(state, target), entries: [{ text, cashDelta: 0 }] };
   }
 
@@ -1245,9 +1246,6 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   function setAutoscaleMax(state: GameState, max: number): GameState {
     const platform = servers.managed(state);
     if (!platform) throw new SimError("not_managed", `${config.models[state.model].name} doesn't autoscale instances for you.`);
-    if (!managedAutoscaling(config, state, state.model)) {
-      throw new SimError("no_autoscaling", "Buy the Managed autoscaling benefit first: then you can set its maximum.");
-    }
     const min = state.autoscale?.min ?? 1;
     if (!Number.isInteger(max) || max < min || max > platform.maxInstances) {
       throw new SimError("bad_instances", `Set a maximum between your minimum of ${min} and the platform's most, ${platform.maxInstances}.`);

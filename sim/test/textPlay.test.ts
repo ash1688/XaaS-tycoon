@@ -480,13 +480,13 @@ describe("the paid API", () => {
     expect(parseCommand("autoscale max 30")).toMatchObject({ action: { type: "setAutoscaleMax", max: 30 } });
     expect(() => parseCommand("autoscale 30")).toThrow(/autoscale max <n>/);
     const paas = run(shop("paas"), "instances 15").state;
-    expect(renderStatus(sim, paas)).not.toMatch(/^autoscaling:/m);
+    expect(renderStatus(sim, paas)).toMatch(/^basic autoscaling: instances 15 \(min 15, max 20, following today's instances until you set it\) \| baseline 1\.25× yesterday's demand/m);
     const scaling = { ...paas, benefits: [...paas.benefits, "paasAutoscaling"] };
-    expect(renderStatus(sim, scaling)).toMatch(/^autoscaling: instances 15 \(min 15, max 20, following today's instances until you set it\) \| baseline 1\.5× yesterday's demand/m);
+    expect(renderStatus(sim, scaling)).toMatch(/^managed autoscaling: instances 15 \(min 15, max 20, following today's instances until you set it\) \| baseline 1\.5× yesterday's demand/m);
     expect(renderCommands(sim, scaling)).toMatch(/autoscale max <n>/);
     const capped = run(scaling, "autoscale max 18");
     expect(capped.lines[0]).toBe("setAutoscaleMax: done");
-    expect(renderStatus(sim, capped.state)).toMatch(/^autoscaling: instances 15 \(min 15, max 18\)/m);
+    expect(renderStatus(sim, capped.state)).toMatch(/^managed autoscaling: instances 15 \(min 15, max 18\)/m);
     expect(run(scaling, "autoscale max 10").lines[0]).toMatch(/^setAutoscaleMax refused: Set a maximum between your minimum of 15/);
   });
 

@@ -1,5 +1,5 @@
 import type { GameConfig, ModelId, ProductTypeId } from "./config.ts";
-import { autoscaling, eventHours, managedAutoscaling, outageHours, powerSaving } from "./benefits.ts";
+import { autoscaling, eventHours, outageHours, paasAutoscaling, powerSaving } from "./benefits.ts";
 import type { Customers } from "./customers.ts";
 import type { EventToday, Events } from "./events.ts";
 import { outageShare, runningCostShare } from "./executives.ts";
@@ -47,7 +47,7 @@ export interface OpsShortfallView {
 }
 
 /**
- * PaaS autoscaling (#261), with managed autoscaling on: the app instances running today, the minimum set by hand that
+ * PaaS autoscaling (#261), on for every PaaS company: the app instances running today, the minimum set by hand that
  * the nightly baseline never goes below, and the most bursts can reach.
  */
 export interface AutoscaleView {
@@ -60,6 +60,10 @@ export interface AutoscaleView {
   maxSet: boolean;
   /** Each burst instance's price for a day: burstPremium × an instance's day rate. */
   burstDayCost: number;
+  /** Managed autoscaling (the benefit) is on, rather than basic autoscaling. */
+  managed: boolean;
+  /** The nightly baseline as a multiple of yesterday's CU demand: 1.25 basic, 1.5 managed. */
+  baseline: number;
 }
 
 /**
@@ -239,24 +243,24 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     return null;
   }
 
-  /** PaaS autoscaling's settings and today's instances, with managed autoscaling on; null otherwise (#261). */
+  /** PaaS autoscaling's settings and today's instances; null off PaaS (#261). */
   function autoscaleView(state: GameState): AutoscaleView | null {
-    const scaling = managedAutoscaling(config, state, state.model);
+    const scaling = paasAutoscaling(config, state, state.model);
     const platform = servers.managed(state);
     if (!scaling || !platform) return null;
     const min = state.autoscale?.min ?? 1;
     const set = state.autoscale?.max;
     const max = set ?? Math.min(platform.maxInstances, Math.max(min, Math.ceil(platform.instances * scaling.maxFactor)));
     const burstDayCost = Math.round((platform.instanceMonthlyCost / config.billing.daysPerMonth) * scaling.burstPremium * 100) / 100;
-    return { instances: platform.instances, min, max, maxSet: set !== undefined, burstDayCost };
+    return { instances: platform.instances, min, max, maxSet: set !== undefined, burstDayCost, managed: scaling.managed, baseline: 1 + scaling.headroom };
   }
 
   /**
    * The baseline for tomorrow (#261): the day's CU demand plus the headroom, in instances, never below the minimum set
-   * by hand nor over the maximum. Null without managed autoscaling.
+   * by hand nor over the maximum. Null off PaaS.
    */
   function autoscaleBaseline(state: GameState): number | null {
-    const scaling = managedAutoscaling(config, state, state.model);
+    const scaling = paasAutoscaling(config, state, state.model);
     const view = autoscaleView(state);
     const platform = servers.managed(state);
     if (!scaling || !view || !platform || platform.instanceUnits <= 0) return null;
