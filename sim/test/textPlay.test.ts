@@ -462,7 +462,7 @@ describe("the paid API", () => {
     };
     const normal = setUp("normal");
     const app = normal.servers.find((s) => s.type === "app")!.id;
-    expect(go(normal, `cancel ${app}`).lines[0]).toMatch(/^cancelServer refused: You can't cancel that server: it would leave no compute \(CU\) for today's load/);
+    expect(go(normal, `cancel ${app}`).lines[0]).toMatch(/^cancelServer refused: You can't cancel that server: without it, there'd be no compute \(CU\) left for today's load/);
     expect(go(normal, `cancel ${app} now`).lines[0]).toMatch(/^cancelServer refused: You can't cancel/);
     // With a replacement on order it waits, and the status says so.
     const waiting = go(go(normal, "rent app large").state, `cancel ${app}`).state;
@@ -470,7 +470,7 @@ describe("the paid API", () => {
     expect(renderCommands(anyLevel, waiting)).toMatch(/cancel <server id> \[now\]/);
 
     const hard = setUp("hard");
-    expect(go(hard, `cancel ${app}`).lines[0]).toMatch(new RegExp(`cancelServer refused: Cancelling that server would .*: expect an outage\\. To go ahead anyway, confirm it \\(\`cancel ${app} now\`\\)\\.`));
+    expect(go(hard, `cancel ${app}`).lines[0]).toMatch(new RegExp(`cancelServer refused: Without that server, .*: expect an outage\\. To cancel it anyway, confirm it \\(\`cancel ${app} now\`\\)\\.`));
     const gone = go(hard, `cancel ${app} now`);
     expect(gone.lines[0]).toBe("cancelServer: done");
     expect(gone.state.servers.map((s) => s.id)).not.toContain(app);

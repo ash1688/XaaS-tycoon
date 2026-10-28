@@ -1825,7 +1825,7 @@ describe("servers on IaaS", () => {
         const state = kit(difficulty);
         expect(refusal(state, { type: "cancelServer", id: 1 }), difficulty).toEqual({
           code: "cancel_unsafe",
-          message: "You can't cancel that server: it would leave no compute (CU) for today's load. Rent a replacement first, and the cancel will wait until it's ready.",
+          message: "You can't cancel that server: without it, there'd be no compute (CU) left for today's load. Rent a replacement first, and the cancel will wait until it's ready.",
         });
         // Confirming doesn't help below Hard.
         expect(refusal(state, { type: "cancelServer", id: 1, now: true })?.code, difficulty).toBe("cancel_unsafe");
@@ -1834,11 +1834,47 @@ describe("servers on IaaS", () => {
       }
     });
 
+    it("checks a waiting cancel against today's load as it goes: a smaller replacement keeps it waiting (#287)", () => {
+      for (const difficulty of ["easy", "normal"]) {
+        // 3,000 users need 30 CU: the massive server carries them, a small replacement can't.
+        const state = rent(withUsers(kit(difficulty), 3_000), "app", "small");
+        const replacement = state.servers.at(-1)!;
+        expect(flat.units(state)!.cu.capacity).toBeGreaterThan(30);
+        const waiting = flat.applyAction(state, { type: "cancelServer", id: 1 });
+        const day = flat.advance(waiting, replacement.readyDay - waiting.day);
+        // Still serving, waiting another day, saying why, with no outage.
+        expect(day.state.servers.find((s) => s.id === 1), difficulty).toMatchObject({ leavesOn: replacement.readyDay + 1 });
+        expect(day.log.at(-1)!.entries).toContainEqual({
+          text: expect.stringMatching(/^App server #1 \(massive\) isn't cancelled yet: without it, today's load would be \d+% of the compute \(CU\) left\. It keeps serving/),
+          cashDelta: 0,
+          kind: "danger",
+        });
+        expect(outages(day.log)).toEqual([]);
+        // Once more capacity arrives, it goes.
+        const more = rent(day.state, "app", "massive");
+        const later = flat.advance(more, more.servers.at(-1)!.readyDay - more.day);
+        expect(ids(later.state)).not.toContain(1);
+      }
+    });
+
+    it("warns on Hard as a waiting cancel goes short of today's load (#287)", () => {
+      const state = rent(withUsers(kit("hard"), 3_000), "app", "small");
+      const replacement = state.servers.at(-1)!;
+      const waiting = flat.applyAction(state, { type: "cancelServer", id: 1 });
+      const day = flat.advance(waiting, replacement.readyDay - waiting.day);
+      expect(ids(day.state)).not.toContain(1);
+      expect(day.log.at(-1)!.entries).toContainEqual({
+        text: expect.stringMatching(/^App server #1 \(massive\) cancelled: its replacement is ready\. Warning: without it, today's load would be \d+% of the compute \(CU\) left: expect an outage\.$/),
+        cashDelta: 0,
+        kind: "danger",
+      });
+    });
+
     it("lets Hard cancel it once confirmed, and the outage is the student's", () => {
       const state = kit("hard");
       expect(refusal(state, { type: "cancelServer", id: 1 })).toEqual({
         code: "confirm_cancel",
-        message: "Cancelling that server would leave no compute (CU) for today's load: expect an outage. To go ahead anyway, confirm it (`cancel 1 now`).",
+        message: "Without that server, there'd be no compute (CU) left for today's load: expect an outage. To cancel it anyway, confirm it (`cancel 1 now`).",
       });
       const gone = flat.applyAction(state, { type: "cancelServer", id: 1, now: true });
       expect(ids(gone)).toEqual([2, 3]);
@@ -2026,6 +2062,8 @@ describe("servers on-prem", () => {
   it("sells with the same rules as cancelling: waits for a replacement, and refuses one that leaves it short (#260)", () => {
     const state = fleet(begin(), BIG_APP, BIG_DB);
     expect(code(() => sell(state, 1))).toBe("cancel_unsafe");
+    // `now` doesn't get round it below Hard (#287).
+    expect(code(() => own.applyAction(state, { type: "sellServer", id: 1, now: true }))).toBe("cancel_unsafe");
     const ordered = buy(state, "app", "massive");
     const arrives = ordered.servers.at(-1)!.readyDay;
     const refund = own.servers(ordered).find((s) => s.id === 1)!.sellBack!;

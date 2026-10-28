@@ -126,11 +126,11 @@ test("on Easy and Normal a cancel that leaves capacity short is refused; on Hard
     const cancel = student.getByRole("dialog", { name: "Cancel a VM" });
     await cancel.getByTestId("cancel-confirm").click();
     if (difficulty === "normal") {
-      await expect(cancel.getByTestId("cancel-error")).toContainText("You can't cancel that server: it would leave no compute (CU) for today's load.");
+      await expect(cancel.getByTestId("cancel-error")).toContainText("You can't cancel that server: without it, there'd be no compute (CU) left for today's load.");
       await expect(cancel.getByTestId("cancel-now")).toHaveCount(0);
       await cancel.getByRole("button", { name: "Keep it" }).click();
     } else {
-      await expect(cancel.getByTestId("cancel-error")).toContainText("Cancelling that server would leave no compute (CU) for today's load: expect an outage.");
+      await expect(cancel.getByTestId("cancel-error")).toContainText("Without that server, there'd be no compute (CU) left for today's load: expect an outage.");
       await cancel.getByTestId("cancel-now-confirm").click();
       await expect(cancel).toHaveCount(0);
     }

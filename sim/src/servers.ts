@@ -628,12 +628,12 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
   }
 
   /**
-   * How a cancel or sale is checked (#260): `shortBy` says what losing servers would do to today's load ("leave
-   * compute at 130% of today's load"), or null if capacity still covers it; `confirm` is whether the difficulty lets a
-   * dangerous one go ahead once the student says `now`.
+   * How a cancel or sale is checked (#260): `shortBy` says what losing servers would do to today's load, from the
+   * state before to the state without them ("today's load would be 130% of the compute (CU) left"), or null if capacity
+   * still covers it; `confirm` is whether the difficulty lets a dangerous one go ahead once the student says `now`.
    */
   interface RetireRules {
-    shortBy: (without: GameState) => string | null;
+    shortBy: (before: GameState, without: GameState) => string | null;
     confirm: boolean;
   }
 
@@ -669,17 +669,17 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
       return { ...state, servers: state.servers.map((s) => (s.id === server.id ? { ...s, leavesOn: replaced } : s)) };
     }
     const without = { ...state, servers: state.servers.filter((s) => s.id !== server.id) };
-    const short = rules.shortBy(without);
+    const short = rules.shortBy(state, without);
     if (short && !rules.confirm) {
       throw new SimError(
         "cancel_unsafe",
-        `You can't ${verb} that server: it would ${short}. ${buys(state.model) ? "Buy" : "Rent"} a replacement first, and the ${verb === "sell" ? "sale" : "cancel"} will wait until it's ready.`,
+        `You can't ${verb} that server: without it, ${short}. ${buys(state.model) ? "Buy" : "Rent"} a replacement first, and the ${verb === "sell" ? "sale" : "cancel"} will wait until it's ready.`,
       );
     }
     if (short && !now) {
       throw new SimError(
         "confirm_cancel",
-        `${verb === "sell" ? "Selling" : "Cancelling"} that server would ${short}: expect an outage. To go ahead anyway, confirm it (\`${verb} ${server.id} now\`).`,
+        `Without that server, ${short}: expect an outage. To ${verb} it anyway, confirm it (\`${verb} ${server.id} now\`).`,
         { id: server.id },
       );
     }
@@ -698,18 +698,44 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
 
   /**
    * Servers cancelled or sold that go at the end of `day`, the day their replacements are ready: rented ones simply
-   * stop, bought ones are sold back, refunded then.
+   * stop, bought ones are sold back, refunded then. Each is checked against today's load as it goes (#287), as a
+   * replacement can be smaller: on Easy and Normal one that would leave capacity short keeps serving and waits another
+   * day, saying why; on Hard it goes, with a warning.
    */
-  function leaveDay(state: GameState, day: number): { state: GameState; entries: LogEntry[] } {
+  function leaveDay(state: GameState, day: number, rules: RetireRules): { state: GameState; entries: LogEntry[] } {
     const leaving = state.servers.filter((s) => s.leavesOn !== undefined && s.leavesOn <= day);
     if (!leaving.length) return { state, entries: [] };
-    const entries: LogEntry[] = leaving.map((s) => {
+    const sold = buys(state.model);
+    let next = state;
+    const entries: LogEntry[] = [];
+    for (const s of leaving) {
       const which = `${nameOf(s.type)} #${s.id} (${s.size})`;
-      if (!buys(state.model)) return { text: `${which} cancelled: its replacement is ready.`, cashDelta: 0 };
+      const without = { ...next, servers: next.servers.filter((x) => x.id !== s.id) };
+      const short = rules.shortBy(next, without);
+      if (short && !rules.confirm) {
+        next = { ...next, servers: next.servers.map((x) => (x.id === s.id ? { ...x, leavesOn: day + 1 } : x)) };
+        entries.push({
+          text: `${which} isn't ${sold ? "sold" : "cancelled"} yet: without it, ${short}. It keeps serving, and goes once what's left can carry the load.`,
+          cashDelta: 0,
+          kind: "danger",
+        });
+        continue;
+      }
+      next = without;
+      const warning = short ? ` Warning: without it, ${short}: expect an outage.` : "";
+      if (!sold) {
+        entries.push({ text: `${which} cancelled: its replacement is ready.${warning}`, cashDelta: 0, ...(short && { kind: "danger" as const }) });
+        continue;
+      }
       const refund = sellBackValue(state.model, s);
-      return { text: `${which} sold back for ${pounds(refund)}: its replacement is ready.`, cashDelta: refund, category: "infrastructure" as const };
-    });
-    return { state: { ...state, servers: state.servers.filter((s) => !leaving.includes(s)) }, entries };
+      entries.push({
+        text: `${which} sold back for ${pounds(refund)}: its replacement is ready.${warning}`,
+        cashDelta: refund,
+        category: "infrastructure",
+        ...(short && { kind: "danger" as const }),
+      });
+    }
+    return { state: next, entries };
   }
 
   /** Buys a server: charged at once, and on order until it arrives after the model's readyDays. */
