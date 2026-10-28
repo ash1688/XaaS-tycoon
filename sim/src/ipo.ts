@@ -99,6 +99,19 @@ const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 const HOURS_PER_DAY = 24;
 const MODEL_NAMES = { onprem: "on-prem", iaas: "IaaS", paas: "PaaS", saas: "SaaS" } as const;
 
+/** The last `days` days played, from the launch on: before it there's nothing to keep a record of. */
+const sinceLaunch = (state: Pick<GameState, "launchDay" | "day" | "spendByDay">, days: number) =>
+  state.launchDay === null ? [] : state.spendByDay.filter((d) => d.day >= state.launchDay! && d.day > state.day - days);
+
+/**
+ * Uptime over the last `days` days played since launch, as a percentage: over the days since launch while there are
+ * fewer, and 100 before any. The status, the IPO's record and tier 3's condition all use it (#285), so they agree.
+ */
+export function uptimeSinceLaunch(state: Pick<GameState, "launchDay" | "day" | "spendByDay">, days: number): number {
+  const played = sinceLaunch(state, days);
+  return 100 * (1 - played.reduce((s, d) => s + d.hoursDown, 0) / (Math.max(1, played.length) * HOURS_PER_DAY));
+}
+
 /**
  * The IPO: the readiness check on the Finance page, applying (with its hidden cold-market chance), the float and the
  * first day of trading. Ringing the opening bell ends every game. See IpoConfig.
@@ -114,11 +127,8 @@ export function createIpo(
 
   const startingIpo = () => ({ ipo: { applications: [], approvedDay: null, retryDay: 0, result: null } });
 
-  /** The last recordDays days played, from the launch on: before it there's nothing to keep a record of. */
-  const record = (state: GameState) =>
-    state.launchDay === null
-      ? []
-      : state.spendByDay.filter((d) => d.day >= state.launchDay! && d.day > state.day - c.recordDays);
+  /** The last recordDays days played, from the launch on. */
+  const record = (state: GameState) => sinceLaunch(state, c.recordDays);
   const sum = (days: DaySpend[], value: (d: DaySpend) => number) => days.reduce((s, d) => s + value(d), 0);
   /** A day's running costs, for profit: everything charged but a loan's capital, which isn't a cost. */
   const runningCosts = (d: DaySpend) => d.staff + d.infrastructure + d.cabling + d.power + d.addons + d.campaigns + d.interest;
@@ -133,10 +143,7 @@ export function createIpo(
    * Uptime over the record: the last recordDays days played since launch (fewer before then). The status shows this
    * figure too, so the uptime the student sees is the one the IPO judges.
    */
-  function recordUptime(state: GameState): number {
-    const days = record(state);
-    return 100 * (1 - sum(days, (d) => d.hoursDown) / (Math.max(1, days.length) * HOURS_PER_DAY));
-  }
+  const recordUptime = (state: GameState): number => uptimeSinceLaunch(state, c.recordDays);
 
   function readiness(state: GameState): { conditions: IpoCondition[]; signals: MarketSignal[] } {
     const product = c.products[state.productType];

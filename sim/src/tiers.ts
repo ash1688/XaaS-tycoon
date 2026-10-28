@@ -1,5 +1,6 @@
 import { DIFFICULTIES, TIER_NUMBERS, type GameConfig, type ModelId, type ProductTypeId, type TierNumber } from "./config.ts";
 import { hasExecutive } from "./executives.ts";
+import { uptimeSinceLaunch } from "./ipo.ts";
 import { count, pounds } from "./finance.ts";
 import { jobOpen } from "./phases.ts";
 import { SimError, type GameState, type LogEntry, type TierReached } from "./state.ts";
@@ -177,9 +178,10 @@ const lastDays = (state: Pick<GameState, "spendByDay">, days: number) => state.s
 /** Each part of a tier's condition today. */
 function conditions(config: GameConfig, state: GameState, tier: TierNumber, ctx: TierContext): TierConditionView[] {
   const { tier3 } = config.tiers;
-  const part = (label: string, value: number, target: number, unit: TierConditionView["unit"]) => ({
+  // Met on the figure itself, which `shown` may round for display, as the IPO's conditions are.
+  const part = (label: string, value: number, target: number, unit: TierConditionView["unit"], shown = value) => ({
     label,
-    value,
+    value: shown,
     target,
     unit,
     met: value >= target,
@@ -193,15 +195,13 @@ function conditions(config: GameConfig, state: GameState, tier: TierNumber, ctx:
         part("A CTO hired", hasExecutive(state, "cto") ? 1 : 0, 1, "yes"),
       ];
     case 3: {
-      // Averaged over the whole window, so a company that hasn't played that many days yet can't meet it.
-      const window = lastDays(state, tier3.days);
-      const full = window.length >= tier3.days;
-      const income = window.reduce((sum, d) => sum + d.income, 0) / Math.max(1, tier3.days);
-      const down = window.reduce((sum, d) => sum + d.hoursDown, 0);
-      const uptime = full ? 100 * (1 - down / (24 * tier3.days)) : 0;
+      // Income is averaged over the whole window, so a company that hasn't played that many days yet can't meet it.
+      // Uptime is the status's and the IPO's (#285): over the days since launch while there are fewer.
+      const income = lastDays(state, tier3.days).reduce((sum, d) => sum + d.income, 0) / Math.max(1, tier3.days);
+      const uptime = uptimeSinceLaunch(state, tier3.days);
       return [
         part(`Income a day, last ${tier3.days} days`, Math.round(income), tier3.dailyIncome, "pounds"),
-        part(`Uptime, last ${tier3.days} days`, Math.round(uptime * 100) / 100, tier3.uptime, "percent"),
+        part(`Uptime, last ${tier3.days} days`, uptime, tier3.uptime, "percent", Math.round(uptime * 10) / 10),
       ];
     }
     case 4: {
