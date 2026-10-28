@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import postgres from "postgres";
 import { E2E_DATABASE_URL, E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { createCode, launch } from "./staff.ts";
+import { createCode, movedNow, launch } from "./staff.ts";
 
 const money = (n: number) => n.toLocaleString("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 });
 
@@ -32,8 +32,8 @@ test("play to the end, then see profit or loss and income against costs, and the
     await sql.end();
   }
   const act = (data: object) => request.post(`/api/codes/${code}/companies/${id}/actions`, { data });
-  // A developer moves into ops at once (a hire would take days to start).
-  expect((await act({ type: "moveStaff", to: "ops" })).status()).toBe(200);
+  // A developer goes into ops at once (a hire, or retraining, would take days).
+  await movedNow(id);
   expect((await act({ type: "setPrice", price: fairPrice + 5 })).status()).toBe(200);
 
   const student = await (await browser.newContext()).newPage();

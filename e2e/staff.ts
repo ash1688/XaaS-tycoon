@@ -196,3 +196,22 @@ export async function withPreset<T>(
     await request.delete(`/api/teacher/presets/${id}`);
   }
 }
+
+/**
+ * Moves one mid straight from one team to another, a developer into ops unless told otherwise, as `move` did before it
+ * became retraining (#258), for a spec that needs them on the new team today rather than after a mid's lead time.
+ * Reload the page after.
+ */
+export async function movedNow(id: string, from = "developers", to = "ops") {
+  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
+  try {
+    const [row] = await sql`select state from companies where id = ${id}`;
+    const state = row!.state as { staff: Record<string, Record<string, number>> };
+    const staff = { ...state.staff, [from]: { ...state.staff[from]! }, [to]: { ...state.staff[to]! } };
+    staff[from]!.mid! -= 1;
+    staff[to]!.mid! += 1;
+    await sql`update companies set state = ${sql.json({ ...state, staff })} where id = ${id}`;
+  } finally {
+    await sql.end();
+  }
+}

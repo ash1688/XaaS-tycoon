@@ -1170,7 +1170,8 @@ function rescueLines(sim: Sim, state: GameState): string[] {
 
 /**
  * Staff by pool: permanent headcount by grade, any agency staff apart, everyone's work a day in mids (what's measured
- * against ops needed, build days and tickets), each grade's pay and severance, agency pay, and hires still to start.
+ * against ops needed, build days and tickets), each grade's pay and severance, agency pay, hires still to start and
+ * staff retraining into the pool, with the day each starts.
  */
 function staffLines(sim: Sim, state: GameState): string[] {
   const g = sim.config.staffGrades;
@@ -1189,9 +1190,15 @@ function staffLines(sim: Sim, state: GameState): string[] {
     const agencyPay = p.agency.map((x) => money(x.dayRate)).join("/");
     const severance = p.grades.map((x) => money(x.severance)).join("/");
     const need = p.pool === "ops" ? `, need ${sim.opsNeededNow(state)}` : "";
-    const hiring = p.hiring.length
-      ? ` | hired, not started: ${p.hiring.map((h) => `${h.count} ${h.agency ? "agency " : ""}${h.grade} on day ${h.arrivesOn} (${h.daysLeft}d)`).join(", ")}`
-      : "";
+    const hires = p.hiring.filter((h) => !h.retraining);
+    const retraining = p.hiring.filter((h) => h.retraining);
+    const hiring =
+      (hires.length
+        ? ` | hired, not started: ${hires.map((h) => `${h.count} ${h.agency ? "agency " : ""}${h.grade} on day ${h.arrivesOn} (${h.daysLeft}d)`).join(", ")}`
+        : "") +
+      (retraining.length
+        ? ` | retraining, paid already: ${retraining.map((h) => `${h.count} ${h.grade} start day ${h.arrivesOn} (${h.daysLeft}d)`).join(", ")}`
+        : "");
     lines.push(
       `  ${p.pool} ${p.headcount} (${grades})${agency} work ${p.output}${need} | pay junior/mid/senior ${pay}/day, ` +
         `agency ${agencyPay}/day | severance ${severance} each${hiring}${p.idle ? ` | IDLE: ${p.idle}` : ""}`,
@@ -1224,7 +1231,8 @@ export function renderCommands(sim: Sim, state: GameState): string {
   const grades = STAFF_GRADES.join("|");
   lines.push(
     `  hire <${hirable}> [agency] [${grades}] [n] | letgo <${pools}> [agency] [${grades}] [n] | move <to> [from] [${grades}]   ` +
-      `(grade defaults to mid; permanent staff unless "agency"; move is permanent staff only)`,
+      `(grade defaults to mid; permanent staff unless "agency"; move retrains permanent staff: they leave at once and ` +
+      `join after their grade's lead time, paid the new team's rate meanwhile, no severance)`,
   );
   const pay = sim.payments(state);
   if (!jobs.price) {

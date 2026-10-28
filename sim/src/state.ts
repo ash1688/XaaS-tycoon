@@ -37,7 +37,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 58;
+export const GAME_STATE_VERSION = 59;
 
 /**
  * The four phases a game's jobs open in, in order, each opened by a milestone: Build from day 1, Launch when Launch is
@@ -93,6 +93,11 @@ export interface Hire {
   agency: boolean;
   /** The first day they work and are paid: the day hired plus their grade's lead time, or the agency's. */
   arrivesOn: number;
+  /**
+   * Permanent staff moved from another team, retraining until arrivesOn: unlike a hire they're paid the new team's rate
+   * from the day they move (see staff.ts moveStaff).
+   */
+  retraining?: boolean;
 }
 
 /** Money spent in each category. */
@@ -863,7 +868,7 @@ export interface GameState {
   staff: Record<StaffPool, GradeCounts>;
   /** Agency staff on the team, by pool and grade: apart from the permanent staff above, and doing half their work. */
   agency: Record<StaffPool, GradeCounts>;
-  /** Hires waiting to start, in the order they were made. */
+  /** Hires waiting to start, and staff retraining into a new team, in the order they were made. */
   hiring: Hire[];
   /**
    * The day the company launched: its first users arrived at the end of it, the first day of the launch ramp. Null until

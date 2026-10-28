@@ -119,7 +119,8 @@ const sortedMoves = computed(() => moves.value.toSorted((a, b) => moveOrder(a.fr
       press Launch.
     </p>
     <div v-if="sortedMoves.length" class="move-staff" data-testid="move-staff">
-      <span class="muted">Retrain someone into another team, keeping their grade (a mid if there is one; no cost, any time):</span>
+      <span class="muted">Retrain someone into another team, keeping their grade (a mid if there is one). They leave at once and
+        join after their grade's lead time, paid the new team's rate meanwhile; no severance:</span>
       <div class="move-buttons">
         <button
           v-for="{ from, to } in sortedMoves"

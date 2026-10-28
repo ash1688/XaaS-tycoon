@@ -100,6 +100,10 @@ _Avoid_: Level, skill level, seniority
 Temporary staff who cost 1.25× and do half the work of permanent staff, arrive the next day, and can be let go with no severance.
 _Avoid_: Contractors, temps (contract users are customers)
 
+**Retraining**:
+Moving a permanent member of staff into another team (`move`). They leave their old team at once and join the new one after their grade's lead time, the same wait as a hire, keeping their grade. They're paid the new team's rate while they retrain, with no severance and no recruitment cost: cheaper than letting someone go and hiring, but not instant.
+_Avoid_: Transfer, reassign, redeploy
+
 **Permanent staff**:
 Staff employed directly, who are paid severance when let go.
 _Avoid_: Employees, full-time staff

@@ -78,8 +78,9 @@ export function createRescue(
         }
       }
     }
-    const hiresCancelled = state.hiring.reduce((sum, h) => sum + h.count, 0);
-    return { state: { ...state, ...counts, hiring: [] }, cuts, hiresCancelled, severance };
+    // Staff retraining stay: they're already on the payroll, not hires.
+    const hiresCancelled = state.hiring.filter((h) => !h.retraining).reduce((sum, h) => sum + h.count, 0);
+    return { state: { ...state, ...counts, hiring: state.hiring.filter((h) => h.retraining) }, cuts, hiresCancelled, severance };
   }
 
   /** The rescue buyout, on the day cash first went below £0: cuts, then cash for new shares. */

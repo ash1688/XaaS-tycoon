@@ -50,6 +50,8 @@ export interface HireView {
   arrivesOn: number;
   /** Days still to play before they work: 1 means they start on the next day played. */
   daysLeft: number;
+  /** Moved from another team and retraining: paid the new team's rate already, unlike a hire. Left out for a hire. */
+  retraining?: true;
 }
 
 /** One pool: its grades, permanent and agency, everyone on the team and their work, and the hires still to start. */
@@ -127,9 +129,18 @@ export function staffOutput(config: GameConfig, state: GameState, pool: StaffPoo
   return Math.round(work * poolBoost(config, state, pool) * 100) / 100;
 }
 
-/** What everyone on the team, permanent and agency, costs a day. Hires still to start cost nothing. */
+/** What staff retraining into a team cost a day, at its rate. */
+const retrainingCost = (config: GameConfig, state: GameState) =>
+  state.hiring
+    .filter((h) => h.retraining)
+    .reduce((sum, h) => sum + h.count * gradeDayRate(config, h.pool, h.grade, false, state.payMultiplier), 0);
+
+/**
+ * What everyone on the team, permanent and agency, costs a day, and staff retraining into a new team. Hires still to
+ * start cost nothing.
+ */
 export function dailyStaffCost(config: GameConfig, state: GameState): number {
-  return STAFF_POOLS.reduce(
+  return retrainingCost(config, state) + STAFF_POOLS.reduce(
     (sum, pool) =>
       sum +
       STAFF_GRADES.reduce(
@@ -250,7 +261,9 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
     checkPoolAndGrade(state, pool, grade);
     if (!Number.isInteger(count) || count < 1) throw new SimError("bad_count", "Pick a whole number of people, at least 1.");
     const isAgency = agency === true;
-    const same = (h: GameState["hiring"][number]) => h.pool === pool && h.grade === grade && h.agency === isAgency;
+    // Staff retraining aren't hires: they can't be cancelled, only let go once they've joined.
+    const same = (h: GameState["hiring"][number]) =>
+      h.pool === pool && h.grade === grade && h.agency === isAgency && !h.retraining;
     const waiting = state.hiring.filter(same).reduce((sum, h) => sum + h.count, 0);
     const name = `${isAgency ? "agency " : ""}${config.staffGrades[grade].name.toLowerCase()} ${poolName(pool)}`;
     if (waiting < 1) throw new SimError("no_hires", `You have no ${name} still to start.`);
@@ -282,8 +295,10 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
   }
 
   /**
-   * Moves one permanent member of staff between pools, keeping their grade: a mid if `from` has one, unless a grade is
-   * given. Agency staff stay where the agency placed them.
+   * Retrains one permanent member of staff into another pool, keeping their grade: a mid if `from` has one, unless a
+   * grade is given. They leave `from` at once and join `to` after their grade's lead time, the same wait as a new hire,
+   * paid `to`'s rate throughout: no severance and no recruitment cost, but not instant (#258). Agency staff stay where
+   * the agency placed them.
    */
   function moveStaff(
     state: GameState,
@@ -302,8 +317,17 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
       throw new SimError("no_staff", `You have no ${who} to move.`);
     }
     const fromCounts = { ...state.staff[from], [moving]: state.staff[from][moving] - 1 };
-    const toCounts = { ...state.staff[to], [moving]: state.staff[to][moving] + 1 };
-    return { ...state, staff: { ...state.staff, [from]: fromCounts, [to]: toCounts } };
+    const left = { ...state, staff: { ...state.staff, [from]: fromCounts } };
+    const leadDays = config.staffGrades[moving].leadDays;
+    // With no lead time (a teacher's config can set one), they join the new team at once.
+    if (leadDays === 0) return adjusted(left, to, moving, false, 1);
+    const arrivesOn = state.day + leadDays;
+    const same = (h: GameState["hiring"][number]) =>
+      h.pool === to && h.grade === moving && h.retraining === true && h.arrivesOn === arrivesOn;
+    const hiring = state.hiring.some(same)
+      ? state.hiring.map((h) => (same(h) ? { ...h, count: h.count + 1 } : h))
+      : [...state.hiring, { pool: to, grade: moving, count: 1, agency: false, arrivesOn, retraining: true }];
+    return { ...left, hiring };
   }
 
   /** Hires due by `day` join the team at the start of it, so they work and are paid that day. */
@@ -314,16 +338,23 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
     const agency = allPools((p) => ({ ...state.agency[p] }));
     for (const h of due) (h.agency ? agency : staff)[h.pool][h.grade] += h.count;
     const entries: LogEntry[] = due.map((h) => ({
-      text: `${people(h.count, h.pool, h.grade, h.agency)} started work.`,
+      text: `${people(h.count, h.pool, h.grade, h.agency)} ${h.retraining ? "finished retraining and started work" : "started work"}.`,
       cashDelta: 0,
       kind: "staff",
     }));
     return { state: { ...state, staff, agency, hiring: state.hiring.filter((h) => h.arrivesOn > day) }, entries };
   }
 
-  /** A day's pay, a line for each grade in each pool: permanent staff, then agency staff. */
+  /** A day's pay, a line for each grade in each pool: permanent staff, then agency staff, then staff retraining. */
   function staffEntries(state: GameState): LogEntry[] {
-    return STAFF_POOLS.flatMap((pool) =>
+    const retraining = state.hiring
+      .filter((h) => h.retraining)
+      .map((h): LogEntry => ({
+        text: `${config.staff[h.pool].name} pay, retraining (${h.count} ${config.staffGrades[h.grade].name.toLowerCase()}${plural(h.count, "", "s")})`,
+        cashDelta: -h.count * gradeDayRate(config, h.pool, h.grade, false, state.payMultiplier),
+        category: "staff",
+      }));
+    const onTeam = STAFF_POOLS.flatMap((pool) =>
       [false, true].flatMap((agency) => {
         const counts = (agency ? state.agency : state.staff)[pool];
         return STAFF_GRADES.filter((g) => counts[g] > 0).map((g): LogEntry => {
@@ -334,6 +365,7 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
         });
       }),
     );
+    return [...onTeam, ...retraining];
   }
 
   function gradeViews(state: GameState, pool: StaffPool, agency: boolean): GradeView[] {
@@ -367,7 +399,14 @@ export function createStaff(config: GameConfig, finance: ReturnType<typeof creat
       open: jobOpen(state, pool),
       hiring: state.hiring
         .filter((h) => h.pool === pool)
-        .map(({ grade, count, agency, arrivesOn }) => ({ grade, count, agency, arrivesOn, daysLeft: arrivesOn - state.day })),
+        .map(({ grade, count, agency, arrivesOn, retraining }) => ({
+          grade,
+          count,
+          agency,
+          arrivesOn,
+          daysLeft: arrivesOn - state.day,
+          ...(retraining ? { retraining: true as const } : {}),
+        })),
       idle: null,
     }));
   }

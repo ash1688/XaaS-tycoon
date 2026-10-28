@@ -954,14 +954,49 @@ describe("staff grades and lead times", () => {
     );
   });
 
-  it("moves people between pools keeping their grade, a mid unless told otherwise", () => {
+  it("retrains people into another pool keeping their grade, a mid unless told otherwise", () => {
     const state = team({ developers: { junior: 1, mid: 1, senior: 1 }, ops: { junior: 0, mid: 0, senior: 0 } });
     const mid = graded.applyAction(state, { type: "moveStaff", from: "developers", to: "ops" });
-    expect(mid.staff).toMatchObject({ developers: { junior: 1, mid: 0, senior: 1 }, ops: { junior: 0, mid: 1, senior: 0 } });
+    // They leave the old team at once and wait the grade's lead time to join the new one.
+    expect(mid.staff).toMatchObject({ developers: { junior: 1, mid: 0, senior: 1 }, ops: { junior: 0, mid: 0, senior: 0 } });
+    expect(pool(mid, "ops").hiring).toEqual([{ grade: "mid", count: 1, agency: false, arrivesOn: 8, daysLeft: 7, retraining: true }]);
     const senior = graded.applyAction(state, { type: "moveStaff", from: "developers", to: "ops", grade: "senior" });
-    expect(senior.staff.ops).toEqual({ junior: 0, mid: 0, senior: 1 });
+    expect(pool(senior, "ops").hiring).toEqual([{ grade: "senior", count: 1, agency: false, arrivesOn: 15, daysLeft: 14, retraining: true }]);
     // With no mid, a junior moves.
-    expect(graded.applyAction(mid, { type: "moveStaff", from: "developers", to: "ops" }).staff.ops).toEqual({ junior: 1, mid: 1, senior: 0 });
+    const junior = graded.applyAction(mid, { type: "moveStaff", from: "developers", to: "ops" });
+    expect(junior.staff.developers).toEqual({ junior: 0, mid: 0, senior: 1 });
+    expect(pool(junior, "ops").hiring.map((h) => [h.grade, h.arrivesOn])).toEqual([["mid", 8], ["junior", 4]]);
+  });
+
+  it("pays staff retraining the new team's rate, with no severance, until they join after the lead time (#258)", () => {
+    const state = team({ developers: { junior: 0, mid: 2, senior: 0 }, ops: { junior: 0, mid: 1, senior: 0 } });
+    const costBefore = graded.dailyStaffCost(state);
+    const moved = graded.applyAction(state, { type: "moveStaff", from: "developers", to: "ops" });
+    // No severance and no recruitment cost: the move itself costs nothing.
+    expect(moved.cash).toBe(state.cash);
+    // Paid ops' rate while retraining, not developers'.
+    const opsRate = pool(moved, "ops").grades.find((g) => g.grade === "mid")!.dayRate;
+    const devRate = pool(moved, "developers").grades.find((g) => g.grade === "mid")!.dayRate;
+    expect(graded.dailyStaffCost(moved)).toBe(costBefore - devRate + opsRate);
+    const day = graded.advance(moved);
+    expect(day.log[0]!.entries).toContainEqual({ text: "Ops pay, retraining (1 mid)", cashDelta: -opsRate, category: "staff" });
+    expect(day.state.staff.ops.mid).toBe(1);
+    // A retraining member of staff isn't a hire, so it can't be cancelled.
+    expect(() => graded.applyAction(day.state, { type: "cancelHire", pool: "ops", grade: "mid" })).toThrow(
+      expect.objectContaining({ code: "no_hires" }),
+    );
+    // On the day the lead time is up they join the team at the same grade.
+    const joined = graded.advance(moved, 7);
+    expect(joined.state.staff.ops.mid).toBe(2);
+    expect(joined.state.hiring).toEqual([]);
+    expect(joined.log.at(-1)!.entries).toContainEqual({
+      text: "1 mid ops person finished retraining and started work.",
+      cashDelta: 0,
+      kind: "staff",
+    });
+    // With no lead time (a teacher's config) they join at once.
+    const instant = createSim({ ...config, staffGrades: { ...config.staffGrades, mid: { ...config.staffGrades.mid, leadDays: 0 } } });
+    expect(instant.applyAction(state, { type: "moveStaff", from: "developers", to: "ops" }).staff.ops.mid).toBe(2);
   });
 
   it("makes a senior about twice a junior's work for about 1.7× the pay by default, arriving in 3, 7 and 14 days", () => {
@@ -4995,7 +5030,9 @@ describe("migration with servers", () => {
     expect(quote.setup.length).toBeGreaterThan(0);
     expect(quote.exitPenalty).toBe(calm.models.saas.exitPenalty);
     const moving = s.applyAction(bought, migrate("iaas"));
-    expect(counted(s.applyAction(moving, { type: "moveStaff", to: "ops" }))).toMatchObject({ developers: 2, ops: 101 });
+    const moved = s.applyAction(moving, { type: "moveStaff", to: "ops" });
+    expect(counted(moved)).toMatchObject({ developers: 2, ops: 100 });
+    expect(moved.hiring).toMatchObject([{ pool: "ops", retraining: true }]);
   });
 
   it("is deterministic, and resumes identically after a JSON round trip", () => {

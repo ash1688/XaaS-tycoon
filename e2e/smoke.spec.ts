@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import postgres from "postgres";
 import { E2E_DATABASE_URL, E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { createCode, launch, openTiers, pinLaunchUsers, reachPhase, withOnlyEncounter } from "./staff.ts";
+import { createCode, movedNow, launch, openTiers, pinLaunchUsers, reachPhase, withOnlyEncounter } from "./staff.ts";
 
 // The game's pages are reached through its nav bar.
 const goTo = (page: Page, name: string) =>
@@ -390,9 +390,10 @@ test("a SaaS company buys an add-on and pays for it per user", async ({ browser,
   await openTab(student, "Add-ons");
   await expect(student.getByTestId("config-team")).toContainText("Hire 1 more to buy add-ons");
   await expect(student.getByRole("button", { name: "Buy Direct messages add-on" })).toBeDisabled();
-  // A new developer would take days to start; moving the ops person in is at once.
+  // A new developer, or retraining the ops person, would take days: the ops person is put in at once here.
+  await movedNow(id, "ops", "developers");
+  await student.reload();
   await goTo(student, "People");
-  await student.getByRole("button", { name: "Move one ops person to developers" }).click();
   await expect(student.getByTestId("developers-count")).toHaveText("2");
 
   // Bought add-ons are active at once. 4,000 users at £0.08 is £320 a month.
@@ -465,12 +466,14 @@ test("a company migrates from IaaS to PaaS in the background while staff keep wo
   await expect(student.getByTestId("migration-days-left")).toHaveText("14 days");
   await expect(student.getByTestId("stack-note")).toContainText("changes to Deploy to a platform (PaaS)");
 
-  // Staff aren't tied up: move a developer into ops mid-migration.
+  // Staff aren't tied up: retrain a developer into ops mid-migration. They leave developers at once and join ops after
+  // a mid's lead time, shown with their start day.
   await goTo(student, "People");
   await expect(student.getByTestId("developers-count")).toHaveText("2");
   await student.getByRole("button", { name: "Move one developer to ops staff" }).click();
   await expect(student.getByTestId("developers-count")).toHaveText("1");
-  await expect(student.getByTestId("ops-count")).toHaveText("2");
+  await expect(student.getByTestId("ops-count")).toHaveText("1");
+  await expect(student.getByTestId("ops-hiring")).toContainText(/1 mid retraining, paid already: starts on day \d+, in 7 days\./);
 
   const continueTo = async (day: number) => {
     await student.getByRole("button", { name: "Continue" }).click();
@@ -791,8 +794,8 @@ test("a company plays to the final day and sees its summary, again when reopened
   }
   // In the Grow phase (#236), so ops can be staffed and the features tab is open.
   await reachPhase(id, "grow");
-  // Move a developer into ops, at once, for the ops IaaS needs, so the game runs smoothly to the end.
-  await request.post(`/api/codes/${code}/companies/${id}/actions`, { data: { type: "moveStaff", to: "ops" } });
+  // A developer into ops, at once, for the ops IaaS needs, so the game runs smoothly to the end.
+  await movedNow(id);
 
   // The e2e server runs a short game. Play every day of it.
   const student = await (await browser.newContext()).newPage();
@@ -990,14 +993,15 @@ test("a Home card opens an accessible modal with its controls, and Continue work
   // The first control: permanent or agency staff.
   await expect(modal.getByRole("radio", { name: "Permanent" }).first()).toBeFocused();
 
-  // Its quick actions work in place. A hire waits for its grade's lead time; a move is at once, and the card behind
-  // it keeps up.
+  // Its quick actions work in place. A hire waits for its grade's lead time, and so does a move, which retrains; the
+  // card behind it keeps up.
   await modal.getByRole("button", { name: "Hire one mid ops person" }).click();
   await expect(modal.getByTestId("ops-hiring")).toHaveText("1 mid hired: starts on day 8, in 7 days.");
   await expect(modal.getByTestId("ops-count")).toHaveText("1");
   await modal.getByRole("button", { name: "Move one developer to ops staff" }).click();
-  await expect(modal.getByTestId("ops-count")).toHaveText("2");
-  await expect(student.getByTestId("home-staff")).toContainText("1 dev · 2 ops");
+  await expect(modal.getByTestId("ops-count")).toHaveText("1");
+  await expect(modal.getByTestId("ops-hiring")).toContainText("1 mid retraining, paid already: starts on day 8, in 7 days.");
+  await expect(student.getByTestId("home-staff")).toContainText("1 dev · 1 ops");
   // Many at once: the number box hires that many of the picked grade in one go.
   await modal.getByRole("radio", { name: "Junior" }).nth(2).check();
   await modal.getByTestId("support-amount").fill("25");
