@@ -1,6 +1,7 @@
 import { TIER_NUMBERS, type GameConfig, type ModelId, type ProductTypeId, type TierNumber } from "./config.ts";
 import { hasExecutive } from "./executives.ts";
 import { count, pounds } from "./finance.ts";
+import { jobOpen } from "./phases.ts";
 import { SimError, type GameState, type LogEntry, type TierReached } from "./state.ts";
 
 /** What an item in a tier is: a product feature (kept through a migration) or a model benefit (lost on one). */
@@ -107,7 +108,10 @@ export function lockedMessage(config: GameConfig, state: UnlockState & Pick<Game
   if (!tierAvailable(state, item.tier)) {
     return `${item.name} is in tier ${item.tier}, which isn't available yet. ${conditionText(config, state, item.tier)}`;
   }
-  // Features and benefits open in Grow, with researchers (#236), so research is always open by now.
+  // Tier 1 opens at Launch (#263), research in Grow with researchers.
+  if (!jobOpen(state, "research")) {
+    return `${item.name} is in tier ${item.tier}: it needs unlocking with ${count.format(item.rpPrice)} RP, and research opens in the Grow phase, when your first angel investor approaches.`;
+  }
   return `${item.name} needs unlocking first: ${count.format(item.rpPrice)} RP on the Research page.`;
 }
 

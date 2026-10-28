@@ -34,12 +34,12 @@ import { createLoan, type LoanQuote, type LoanView, type ShortfallView } from ".
 import { mvpDay, mvpStatus, startingMvp, type MvpView } from "./mvp.ts";
 import { researchDay, researchView, type ResearchView } from "./research.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
-import { optimisationDay, optimisationView, type OptimisationView } from "./optimisation.ts";
+import { optimisationAtCap, optimisationDay, optimisationView, type OptimisationView } from "./optimisation.ts";
 import { createCustomerMix } from "./mix.ts";
 import { isNameAllowed } from "./nameFilter.ts";
 import type { CounterOdds, Terms } from "./negotiation.ts";
 import { createPauses, type TickResult } from "./pauses.ts";
-import { actionJob, advancePhase, checkJobOpen, phaseView, startingPhase, type PhaseView } from "./phases.ts";
+import { actionJob, advancePhase, checkJobOpen, jobOpen, phaseView, startingPhase, type PhaseView } from "./phases.ts";
 import { payHistory, type PayHistoryView } from "./payHistory.ts";
 import { createPayReview, type PayOfferPreview, type PayReviewView } from "./payReview.ts";
 import { schemeEntries, schemeViews, type SchemeLevels, type StaffSchemeView } from "./staffSchemes.ts";
@@ -818,7 +818,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     };
     // The upfront bill is a one-off. Day 1's record keeps the daily costs it ends on, as every day played does.
     const settled = finance.settle(started, 1, [...borrowed.entries, ...upfront.map((e) => ({ ...e, oneOff: true })), ...launched.entries]);
-    const first = advancePhase(settled.state).state;
+    const first = advancePhase(config, settled.state, csuite.openDay(settled.state, "cfo")).state;
     const record = first.spendByDay.at(-1)!;
     return { ...first, spendByDay: [...first.spendByDay.slice(0, -1), { ...record, costs: runway(first).dailyCosts }] };
   }
@@ -864,7 +864,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const job = actionJob(action);
     if (job) checkJobOpen(state, job);
     // Ringing the opening bell ends the game: what's still owed on the loan comes off the cash.
-    return endingDebt({ state: advancePhase(playAction(state, action)).state, entries: [] }).state;
+    const played = playAction(state, action);
+    return endingDebt({ state: advancePhase(config, played, csuite.openDay(played, "cfo")).state, entries: [] }).state;
   }
 
   function playAction(state: GameState, action: Action): GameState {
@@ -1167,7 +1168,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       left: (ramping ? 0 : organic.lost.reduce((sum, l) => sum + l.users, 0)) + (wave.left?.users ?? 0),
     });
     // An approach today may open a phase: the first angel's Grow, Series A's Scale. So may an auto launch.
-    const phased = advancePhase(funded.state);
+    const phased = advancePhase(config, funded.state, csuite.openDay(funded.state, "cfo"));
     // Then any tier whose condition is now met opens, for good.
     const opened = tiers.tiersDay(phased.state);
     const tiered: GameState =
@@ -1281,13 +1282,22 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
    */
   function developersIdle(state: GameState): string | null {
     if (staffOutput(config, state, "developers") <= 0 || state.mvp.doneDay === null) return null;
-    if (state.optimisationShare >= 1) return null;
-    // Only the features whose tier is unlocked can be built or bought.
+    // Only the features whose tier is unlocked can be built or bought, and only once the features job has opened.
     const all = config.productTypes[state.productType].features;
-    const list = all.filter((f) => isUnlocked(config, state, f.id));
+    const list = jobOpen(state, "features") ? all.filter((f) => isUnlocked(config, state, f.id)) : [];
     const allOn = list.every((f) => ["built", "addon"].includes(state.features[f.id]?.status ?? ""));
-    const locked = all.filter((f) => !isUnlocked(config, state, f.id));
+    const locked = all.filter((f) => !list.includes(f));
     const sofar = locked.length ? "unlocked so far " : "";
+    // With nothing to build and optimisation at its cap, every developer is idle, whatever the slider (#263).
+    if (allOn && optimisationAtCap(config, state)) {
+      const o = optimisationView(config, state, 0);
+      const what = state.model === "saas" ? `every add-on ${sofar}is on` : `every feature ${sofar}is built`;
+      return (
+        `Your developers have nothing to do: ${what}, and optimisation is at its cap (saving ${(100 * o.saving).toFixed(1)}% of at most ${Math.round(100 * o.cap)}%). ` +
+        "Move some to another team, where they retrain and keep their grade, or let them go to save their pay."
+      );
+    }
+    if (state.optimisationShare >= 1) return null;
     // Locked features either wait for their tier, or for research points to unlock them now it's available.
     const toUnlock = locked.some((f) => tierAvailable(state, featureTier(f)));
     const later = !locked.length
@@ -1300,6 +1310,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       ? `the ${Math.round(100 * (1 - state.optimisationShare))}% of your developers' time not on optimisation goes spare`
       : "your developers have nothing to do";
     const slider = optimising ? "" : " Or move the slider to put them on optimisation.";
+    if (!jobOpen(state, "features")) {
+      const tier1 = state.model === "saas" ? "tier 1 add-ons" : "tier 1 features";
+      return `Nothing to build until you launch, when ${tier1} open: ${spare}.${optimising ? "" : " Move the slider to put them on optimisation."}`;
+    }
     if (state.model === "saas") {
       const needed = config.addons.minConfigDevelopers;
       const setUp = needed > 0 ? ` Setting up an add-on needs the work of ${needed} developer${needed === 1 ? "" : "s"}.` : "";
@@ -1418,7 +1432,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     },
     drift: (s) => drift.driftView(load(s)),
     launch: (s) => launch.launchView(load(s)),
-    phase: (s) => phaseView(load(s)),
+    phase: (s) => {
+      const state = load(s);
+      return phaseView(config, state, csuite.openDay(state, "cfo"));
+    },
     mvp: (s) => mvpView(load(s)),
     optimisation: (s) => {
       const state = load(s);

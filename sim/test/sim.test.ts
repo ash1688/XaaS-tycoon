@@ -160,7 +160,8 @@ const config: GameConfig = {
   research: defaultConfig.research,
   csuite: defaultConfig.csuite,
   campaigns: defaultConfig.campaigns,
-  tiers: defaultConfig.tiers,
+  // Building at the features' own developer-days: tier 1's longer builds (#263) have their own tests (tiers.test.ts).
+  tiers: { ...defaultConfig.tiers, tier1BuildMultiplier: 1 },
   hardware: defaultConfig.hardware,
   drift: defaultConfig.drift,
   // Capacity far above any load here, so outages only happen where a test lowers it.

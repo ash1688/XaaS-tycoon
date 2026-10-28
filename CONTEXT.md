@@ -31,7 +31,7 @@ The longest game length: the student founds the company at 18 and runs it until 
 _Avoid_: Lifetime mode, 65 years
 
 **Phase**:
-One of the four stages a game's jobs open in: Build (to the MVP), Launch (to the first angel approach), Grow (to the Series A approach) and Scale (to the end). Jobs not yet open are hidden.
+One of the four stages a game's jobs open in: Build (to the MVP), Launch (to the first angel approach), Grow (to the Series A approach) and Scale (to the end). Jobs not yet open are hidden, and a phase lists only the jobs that apply to the company's product and model.
 _Avoid_: Stage, era, act
 
 **Checklist**:
@@ -154,7 +154,7 @@ One slot in a rack. Each server size takes a set number of them.
 _Avoid_: SU, slot
 
 **Tier**:
-A level of benefits, 1 to 4. Tier 1 is open from the start; each later tier becomes available once its condition is met, in order, and stays available. Each holds product features and model benefits, each with a stable id. Tier 1's items are unlocked from the start; above tier 1, each item in an available tier is unlocked with its own RP price, in any order.
+A level of benefits, 1 to 4. Tier 1 is open from the start; each later tier becomes available once its condition is met, in order, and stays available. Each holds product features and model benefits, each with a stable id. Tier 1's items are unlocked from the start, and its features can be built from Launch, taking longer than their developer-days alone; above tier 1, each item in an available tier is unlocked with its own RP price, in any order, once research opens in Grow.
 _Avoid_: Level, plan (there are no pricing plans)
 
 **Unlock**:

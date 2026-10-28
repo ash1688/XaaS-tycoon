@@ -67,7 +67,11 @@ export function mvpDay(config: GameConfig, input: MvpInput): { mvp: MvpProgress;
   const total = mvpSize(config, input.productType, input.model);
   const progress = Math.min(total, tidy(mvp.progress + output));
   if (progress >= total) {
-    const text = "MVP done: press Launch when you're set up, and your first users start arriving. Developers can build features now.";
+    // What developers can do now (#263): optimisation straight away, tier 1 from Launch, the tiers above in Grow.
+    const tier1 = input.model === "saas" ? "you can buy tier 1 add-ons for them to set up" : "they can build tier 1 features";
+    const text =
+      "MVP done: press Launch when you're set up, and your first users start arriving. " +
+      `Until then your developers can work on optimisation (the developer slider); from Launch ${tier1}. Research opens the higher tiers in the Grow phase.`;
     return { mvp: { progress, doneDay: day }, entries: [{ text, cashDelta: 0, kind: "launch" }] };
   }
   const text =

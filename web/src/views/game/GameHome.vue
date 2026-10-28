@@ -261,6 +261,16 @@ const alerts = computed(() => {
       page: "people",
       pageName: "People",
     });
+  // Developers with nothing to build and optimisation at its cap are paid to wait (#263).
+  const devsIdle = game.staffPool("developers")?.idle;
+  if (devsIdle && c.optimisation.atCap)
+    list.push({
+      id: "developers-idle",
+      text: "Developers idle",
+      detail: devsIdle,
+      page: "people",
+      pageName: "People",
+    });
   if (game.onSaas && game.configTeamShort && game.isOpen("features"))
     list.push({
       id: "config-team",

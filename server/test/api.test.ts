@@ -2743,6 +2743,8 @@ describe("features", () => {
   }
   // The cheapest feature, so builds finish in a few days.
   const [cheapest] = defaultConfig.productTypes.ecommerce.features.toSorted((a, b) => a.devDays - b.devDays);
+  // Its developer-days to build: tier 1's are multiplied (#263).
+  const cheapestDays = (cheapest!.tier ?? 1) === 1 ? cheapest!.devDays * defaultConfig.tiers.tier1BuildMultiplier : cheapest!.devDays;
   const statusOf = (company: CompanyView, id = cheapest!.id) => company.features.find((f) => f.id === id)!;
 
   it("lists the product's features from config, none started", async () => {
@@ -2757,7 +2759,7 @@ describe("features", () => {
     const building: ActionBody = { type: "buildFeature", feature: cheapest!.id };
     const started = await act(building);
     expect(started.statusCode).toBe(200);
-    const daysNeeded = Math.ceil(cheapest!.devDays / 3);
+    const daysNeeded = Math.ceil(cheapestDays / 3);
     expect(statusOf(started.json<CompanyView>())).toMatchObject({ status: "building", progress: 0, daysLeft: daysNeeded });
 
     let body: ContinueResult | undefined;
@@ -2771,7 +2773,7 @@ describe("features", () => {
     // Kept across reloads, and can't be built twice.
     expect(statusOf((await app.inject({ method: "GET", url })).json<CompanyView>())).toMatchObject({
       status: "built",
-      progress: cheapest!.devDays,
+      progress: cheapestDays,
     });
     const again = await act(building);
     expect(again.statusCode).toBe(400);
