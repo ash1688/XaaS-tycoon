@@ -450,6 +450,52 @@ describe("appointing an executive", () => {
   });
 });
 
+describe("no appointments on a pay holiday", () => {
+  const message = "The C-suite is on a pay holiday: no new executives until they're paid. Get cash back above 21 days of running costs first, and the holiday ends.";
+  const onHoliday = () => {
+    const hired = hire(sim, opened(), "headOfOps", 0);
+    const low = { ...hired, cash: Math.round(5 * sim.runway(hired).dailyCosts) };
+    return sim.advance(low).state;
+  };
+  const candidate = (state: GameState) => sim.csuite(state).roles.find((r) => r.role === "headOfSupport")!.shortlist[0]!.id;
+
+  it("refuses to appoint while the pay holiday is on, saying why, and allows it once it ends", () => {
+    const state = onHoliday();
+    expect(state.csuite.payHolidaySince).toBe(state.day);
+    expect(() => sim.applyAction(state, { type: "hireExecutive", role: "headOfSupport", candidate: candidate(state) })).toThrow(
+      expect.objectContaining({ code: "pay_holiday", message }),
+    );
+    expect(sim.csuite(state).appointBlocked).toBe(message);
+    expect(runScript(sim, state, "csuite", { player: "test" }).lines.join("\n")).toContain(`appoint: refused for now. ${message}`);
+    // Cash back: the holiday ends, and appointing is open again.
+    const recovered = sim.advance({ ...state, cash: Math.round(100 * sim.runway(state).dailyCosts) }).state;
+    expect(recovered.csuite.payHolidaySince ?? null).toBeNull();
+    expect(sim.csuite(recovered).appointBlocked).toBeNull();
+    const hired = sim.applyAction(recovered, { type: "hireExecutive", role: "headOfSupport", candidate: candidate(recovered) });
+    expect(hired.csuite.hired.map((e) => e.role)).toEqual(["headOfOps", "headOfSupport"]);
+  });
+
+  it("ends the holiday as cash recovers even after the whole board has walked out, so the roles can be filled again", () => {
+    const state = onHoliday();
+    // Everyone has resigned: the holiday is still on.
+    const empty: GameState = { ...state, csuite: { ...state.csuite, hired: [], payOwed: 0 } };
+    const still = sim.advance({ ...empty, cash: Math.round(10 * sim.runway(state).dailyCosts) }).state;
+    expect(still.csuite.payHolidaySince).toBe(state.day);
+    const recovered = sim.advance({ ...still, cash: 1_000_000 });
+    expect(recovered.state.csuite.payHolidaySince ?? null).toBeNull();
+    expect(recovered.log[0]!.entries.map((e) => e.text)).toContain("Cash has recovered: the pay holiday is over, and you can appoint executives again.");
+    expect(sim.applyAction(recovered.state, { type: "hireExecutive", role: "headOfSupport", candidate: candidate(recovered.state) }).csuite.hired).toHaveLength(1);
+  });
+
+  it("leaves staff hiring alone on a pay holiday", () => {
+    const state = onHoliday();
+    const hired = sim.applyAction(state, { type: "hire", pool: "developers" });
+    expect(hired.hiring.length + hired.staff.developers.junior + hired.staff.developers.mid + hired.staff.developers.senior).toBeGreaterThan(
+      state.hiring.length + state.staff.developers.junior + state.staff.developers.mid + state.staff.developers.senior,
+    );
+  });
+});
+
 describe("each role's effect, through its seam", () => {
   /** No MVP to build, so developers' work goes into features and the slider from day 1. */
   const built = createSim({ ...quiet, mvp: NO_MVP, launch: { ...quiet.launch, auto: 1 } });
