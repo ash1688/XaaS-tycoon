@@ -47,6 +47,11 @@ test("Product splits into Price, Features and Tiers tabs, kept in the URL and mo
   const tabs = student.getByRole("tablist", { name: "Product" });
   await expect(tabs.getByRole("tab")).toHaveText(["MVP"]);
 
+  // At Launch, tier 1 features open with the price (#263); research, and the Tiers tab, wait for Grow.
+  await reachPhase(id, "launch");
+  await student.reload();
+  await expect(tabs.getByRole("tab")).toHaveText(["Price", "Features"]);
+
   // The e2e server runs with no MVP, so Product opens on Price (with an MVP to build, Features comes first). The shop
   // sells a paid API, so it has an API tab too.
   await reachPhase(id, "grow");

@@ -347,7 +347,8 @@ describe("rendering", () => {
     const build = start();
     const status = renderStatus(sim, build).split("\n");
     expect(status[1]).toBe(
-      "phase: Build (from day 1) | next: Launch, when you press Launch | open: Deployment model, Funding: the bank loan, friends and family and grants, Developers, Servers or racks",
+      "phase: Build (from day 1) | next: Launch, when you press Launch | open: Deployment model, Funding: the bank loan, friends and family and grants, Developers, Instances" +
+        " | the CFO opens early once you take outside money (friends and family, or a grant)",
     );
     expect(renderStatus(sim, build)).toMatch(/^price £5\/month \(fair £5\) \| set at Launch$/m);
     const commands = renderCommands(sim, build);
@@ -360,11 +361,13 @@ describe("rendering", () => {
     expect(refused.rows[0]).toMatchObject({ type: "hire", ok: false, error: "not_yet" });
 
     const launch = inPhase(build, "launch", 5);
-    expect(renderStatus(sim, launch).split("\n")[1]).toMatch(/^phase: Launch \(from day 5\) \| next: Grow, when your first angel investor approaches \| open: .*, Price, Ops staff, Support staff, Moderators$/);
+    expect(renderStatus(sim, launch).split("\n")[1]).toMatch(/^phase: Launch \(from day 5\) \| next: Grow, when your first angel investor approaches \| open: .*, Price, Ops staff, Support staff, Moderators, Tier 1 features \| the CFO opens early/);
     expect(renderStatus(sim, launch)).toMatch(/^price £5\/month \(fair £5\) \| can change$/m);
     expect(renderCommands(sim, launch)).toMatch(/^ {2}hire <developers\|ops\|support\|moderators> /m);
     expect(renderCommands(sim, launch)).toMatch(/^ {2}price </m);
-    expect(renderCommands(sim, launch)).not.toMatch(/^ {2}(build|buyapi|ipo) /m);
+    // Tier 1 features open at Launch (#263); research, benefits, the API and the IPO wait.
+    expect(renderCommands(sim, launch)).toMatch(/^ {2}build <notifications> /m);
+    expect(renderCommands(sim, launch)).not.toMatch(/^ {2}(unlock|benefit|buyapi|ipo) /m);
 
     const grow = inPhase(build, "grow");
     expect(renderCommands(sim, grow)).toMatch(/^ {2}hire <developers\|ops\|support\|moderators\|researchers\|marketers> /m);

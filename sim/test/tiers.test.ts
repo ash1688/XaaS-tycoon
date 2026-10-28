@@ -560,6 +560,93 @@ describe("the hardware slider", () => {
   });
 });
 
+describe("tier 1 at Launch, and the phase gaps (#263)", () => {
+  /** A day in, its MVP (of none) done, in the Launch phase: no angel yet. */
+  const launched = (model: ModelId = "iaas", productType: ProductTypeId = "ecommerce") => {
+    const state = inPhase(sim.advance(begin(model, productType)).state, "launch");
+    expect(state.mvp.doneDay).not.toBeNull();
+    return state;
+  };
+  const wishlists = defaultConfig.productTypes.ecommerce.features.find((f) => f.id === "wishlists")!;
+
+  it("opens tier 1 features at Launch, with no research points, but research and the tiers above wait for Grow", () => {
+    const state = launched();
+    expect(sim.phase(state).open).toMatchObject({ features: true, research: false, researchers: false });
+    expect(wishlists.tier).toBe(1);
+    const view = sim.features(state).find((f) => f.id === "wishlists")!;
+    expect(view).toMatchObject({ tier: 1, rpPrice: 0, unlocked: true });
+    expect(sim.applyAction(state, { type: "buildFeature", feature: "wishlists" }).features.wishlists).toEqual({ status: "building", progress: 0 });
+    // A tier 2 feature needs research, which opens in Grow: the refusal says so, even once the tier is available.
+    const tier2 = { ...state, tiers: [{ tier: 2 as TierNumber, day: state.day }] };
+    expect(() => sim.applyAction(tier2, { type: "buildFeature", feature: "reviews" })).toThrow(/research opens in the Grow phase/);
+    expect(refusal(() => sim.applyAction({ ...tier2, researchPoints: 1_000 }, { type: "unlockItem", item: "reviews" }))).toBe("not_yet");
+    expect(sim.phase(inPhase(state, "grow")).open.research).toBe(true);
+  });
+
+  it("builds tier 1 features at tier1BuildMultiplier × their developer-days, but leaves an add-on's set-up fee alone", () => {
+    expect(tierConfig.tier1BuildMultiplier).toBe(2);
+    const state = launched();
+    expect(sim.features(state).find((f) => f.id === "wishlists")!.devDays).toBe(2 * wishlists.devDays);
+    expect(sim.features(state).find((f) => f.id === "reviews")!.devDays).toBe(defaultConfig.productTypes.ecommerce.features.find((f) => f.id === "reviews")!.devDays);
+    // Two developers, a developer-day a day each, take 2 × 10 ÷ 2 = 10 days, not 5.
+    let building = sim.applyAction({ ...state, optimisationShare: 0 }, { type: "buildFeature", feature: "wishlists" });
+    const output = sim.staff(building).find((p) => p.pool === "developers")!.output;
+    const days = Math.ceil((2 * wishlists.devDays) / output);
+    building = sim.advance(building, days - 1).state;
+    expect(building.features.wishlists!.status).toBe("building");
+    expect(sim.advance(building).state.features.wishlists!.status).toBe("built");
+    const saas = launched("saas");
+    expect(sim.features(saas).find((f) => f.id === "wishlists")!.addonSetupFee).toBe(wishlists.devDays * defaultConfig.addons.setupFeePerDevDay);
+  });
+
+  it("lists in the phase's open jobs only what applies to the product and model", () => {
+    const opens = (state: GameState) => Object.fromEntries(sim.phase(state).phases.map((p) => [p.id, p.opens]));
+    // E-commerce has no user content, so no moderators; on SaaS there are no servers to run.
+    const shop = opens(launched("saas", "ecommerce"));
+    expect(shop.launch).toEqual(["Price", "Ops staff", "Support staff", "Tier 1 add-ons"]);
+    expect(shop.build).toEqual(["Deployment model", "Funding: the bank loan, friends and family and grants", "Developers"]);
+    expect(shop.grow).toContain("The paid API");
+    // Social has user content, and no paid API.
+    const social = opens(launched("iaas", "social"));
+    expect(social.launch).toEqual(["Price", "Ops staff", "Support staff", "Moderators", "Tier 1 features"]);
+    expect(social.build).toContain("Servers");
+    expect(social.grow).not.toContain("The paid API");
+    expect(opens(launched("onprem")).build).toContain("Servers and racks");
+    expect(opens(launched("paas")).build).toContain("Instances");
+    // The log line for a new phase is filtered the same way.
+    const before = launched("iaas", "social");
+    const { log } = sim.advance({ ...before, investors: { ...before.investors, firstApproachDay: before.day } });
+    expect(texts(log)).toContain(
+      "A new phase: Grow. Now open: Researchers, Marketers, Research: tiers 2 to 4, Campaigns, The CFO, CTO and head of people.",
+    );
+  });
+
+  it("says when outside money opens the CFO, and leaves the CFO out of Grow's list once it has", () => {
+    const state = launched();
+    expect(sim.phase(state).phases.find((p) => p.id === "grow")!.opens).toContain("The CFO, CTO and head of people");
+    const ff = { status: "accepted" as const, day: state.day, amount: 10_000, shares: 100, valuation: 100_000 };
+    const funded = { ...state, funding: { ...state.funding, friendsAndFamily: ff } };
+    const phases = sim.phase(funded).phases;
+    expect(phases.find((p) => p.id === "launch")!.opens).toContain(`The CFO (outside money opened it on day ${state.day})`);
+    expect(phases.find((p) => p.id === "grow")!.opens).toContain("The CTO and head of people");
+  });
+
+  it("warns when developers have nothing to build and optimisation is at its cap, suggesting moving them", () => {
+    const state = launched();
+    expect(sim.optimisation(state).atCap).toBe(false);
+    const built = { ...state, features: { ...state.features, wishlists: { status: "built" as const, progress: 20 } } };
+    // Every tier 1 feature built, but optimisation still has gains to make: the usual note, not the warning.
+    expect(sim.staff(built).find((p) => p.pool === "developers")!.idle).toMatch(/^Every feature unlocked so far is built/);
+    const capped = { ...built, optimisationDays: 1_000, optimisationShare: 1 };
+    expect(sim.optimisation(capped).atCap).toBe(true);
+    expect(sim.staff(capped).find((p) => p.pool === "developers")!.idle).toMatch(
+      /^Your developers have nothing to do: every feature unlocked so far is built, and optimisation is at its cap \(saving [\d.]+% of at most \d+%\)\. Move some to another team, where they retrain and keep their grade, or let them go to save their pay\.$/,
+    );
+    // With a feature still to build, they aren't idle.
+    expect(sim.staff({ ...capped, features: {} }).find((p) => p.pool === "developers")!.idle).toBeNull();
+  });
+});
+
 describe("config", () => {
   it("puts every tier condition, RP price, benefit number and hardware number on the config page", () => {
     const paths = new Set(configFields().map((f) => f.path));

@@ -14,7 +14,16 @@ export interface OptimisationView {
   cap: number;
   /** Developer-days a day going into optimisation at today's developers and slider: 0 until the MVP is done. */
   output: number;
+  /** The saving has all but reached its cap (AT_CAP of it): more optimisation gains next to nothing. */
+  atCap: boolean;
 }
+
+/** The share of its cap at which optimisation's saving counts as at its cap: more work gains next to nothing. */
+export const AT_CAP = 0.95;
+
+/** Whether optimisation's saving has all but reached its cap on the company's model. */
+export const optimisationAtCap = (config: GameConfig, state: Pick<GameState, "model" | "optimisationDays">) =>
+  optimisationSaving(config, state.optimisationDays, state.model) >= AT_CAP * config.optimisation.cap[state.model];
 
 /** Developer-days rounded to the hundredth, so state stays tidy. */
 const tidy = (n: number) => Math.round(n * 100) / 100;
@@ -72,5 +81,6 @@ export function optimisationView(
     saving: optimisationSaving(config, state.optimisationDays, state.model),
     cap: config.optimisation.cap[state.model],
     output: optimisationOutput(state, output, state.mvp.doneDay !== null),
+    atCap: optimisationAtCap(config, state),
   };
 }

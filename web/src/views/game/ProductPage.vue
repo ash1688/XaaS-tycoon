@@ -20,7 +20,7 @@ const tabs = computed(() => {
   const list: { id: TabId; name: string }[] = [];
   if (game.isOpen("price")) list.push({ id: "price", name: "Price" });
   list.push({ id: "features", name: !game.isOpen("features") ? "MVP" : game.onSaas ? "Add-ons" : "Features" });
-  if (game.isOpen("features")) list.push({ id: "tiers", name: "Tiers" });
+  if (game.isOpen("research")) list.push({ id: "tiers", name: "Tiers" });
   if (game.company?.api && game.isOpen("api")) list.push({ id: "api", name: "API" });
   return list;
 });

@@ -1277,6 +1277,11 @@ export interface TiersConfig {
   tier3: { dailyIncome: number; uptime: number; days: number };
   /** Tier 4 opens on an angel deal taken or every IPO condition met. It has no numbers of its own. */
   benefits: ModelBenefitConfig[];
+  /**
+   * Tier 1 features open at Launch with no research, so they take this × their developer-days to build (2: twice as
+   * long). A SaaS add-on's set-up fee isn't affected.
+   */
+  tier1BuildMultiplier: number;
 }
 
 /**
@@ -2062,6 +2067,7 @@ export const defaultConfig: GameConfig = {
   tiers: {
     tier2: { marketShare: 0.35 },
     tier3: { dailyIncome: 2_000, uptime: 99, days: 30 },
+    tier1BuildMultiplier: 2,
     benefits: [
       {
         id: "hardwareEfficiency1",

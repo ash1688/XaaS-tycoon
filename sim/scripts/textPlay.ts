@@ -386,7 +386,10 @@ function phaseLine(sim: Sim, state: GameState): string {
   const phase = sim.phase(state);
   const next = phase.next ? ` | next: ${phase.next.name}, ${phase.next.opensWith[0]!.toLowerCase()}${phase.next.opensWith.slice(1)}` : "";
   const opens = phase.phases.filter((p) => p.day !== null).flatMap((p) => p.opens);
-  return `phase: ${phase.name} (from day ${phase.day})${next} | open: ${opens.join(", ")}`;
+  // Before Grow, outside money opens the CFO early (#263).
+  const cfo = sim.csuite(state).roles.find((r) => r.role === "cfo");
+  const early = cfo && cfo.openDay === null ? " | the CFO opens early once you take outside money (friends and family, or a grant)" : "";
+  return `phase: ${phase.name} (from day ${phase.day})${next} | open: ${opens.join(", ")}${early}`;
 }
 
 export function renderStatus(sim: Sim, state: GameState): string {
@@ -464,8 +467,11 @@ export function renderStatus(sim: Sim, state: GameState): string {
     const o = sim.optimisation(state);
     lines.push(
       `optimisation: ${Math.round(100 * o.share)}% of developer time, ${+o.days.toFixed(1)} dev-days built up, ` +
-        `saving ${(100 * o.saving).toFixed(1)}% of resource need per user (most ${Math.round(100 * o.cap)}% on this model)`,
+        `saving ${(100 * o.saving).toFixed(1)}% of resource need per user (most ${Math.round(100 * o.cap)}% on this model)${o.atCap ? ", at its cap" : ""}`,
     );
+    // Developers with nothing to build and optimisation at its cap are paid to wait (#263).
+    const idle = sim.staff(state).find((p) => p.pool === "developers")?.idle;
+    if (o.atCap && idle) lines.push(`IDLE DEVELOPERS: ${idle} (move <team> developers)`);
   }
   const research = sim.research(state);
   if (research.unlocked) {
@@ -1248,7 +1254,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
   }
   lines.push(`  optimise <0–100>   (% of developer time on optimisation rather than features, once the MVP is done)`);
   const toUnlock = unlockable(sim, state);
-  if (toUnlock.length) {
+  if (jobs.research && toUnlock.length) {
     const what = (i: (typeof toUnlock)[number]) =>
       `${i.id} ${i.rpPrice} RP (${i.kind === "feature" ? "feature" : i.model === state.model ? "model benefit" : `${sim.config.models[i.model!].name} benefit`})`;
     lines.push(
@@ -1274,7 +1280,7 @@ export function renderCommands(sim: Sim, state: GameState): string {
   if (stoppable.length) lines.push(`  stopcampaign <${stoppable.map((c) => c.id).join("|")}>   (stops it after today: the rest of its budget isn't spent)`);
   if (campaigns.campaigns.length) lines.push(`  campaigns   (every campaign started, past and present: spend, users and cost per user against its quote; changes nothing)`);
   const buyable = sim.benefits(state).filter((b) => b.onModel && b.unlocked && !b.active);
-  if (jobs.features && buyable.length) {
+  if (jobs.research && buyable.length) {
     lines.push(
       `  benefit <${buyable.map((b) => b.id).join("|")}>   ${buyable.map((b) => `${b.id} ${money(b.setupFee)} + ${money(b.monthlyFee)}/month: ${b.blurb}`).join("; ")}`,
     );
