@@ -58,6 +58,7 @@ import type {
   OpsShortfallView,
   ProductTypeId,
   ProviderView,
+  AutoscaleView,
   RunwayView,
   ShortfallView,
   ServerOption,
@@ -412,6 +413,8 @@ export interface CompanyView {
    * that bill. Null on other models.
    */
   provider: ProviderView | null;
+  /** PaaS autoscaling's instances, minimum (set by hand) and maximum, with managed autoscaling on; null otherwise. */
+  autoscale: AutoscaleView | null;
   /** Percentage of time up across every day played. */
   uptime: number;
   outageDays: number;

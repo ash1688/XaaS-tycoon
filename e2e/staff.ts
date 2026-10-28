@@ -228,3 +228,18 @@ export async function setDifficulty(id: string, difficulty: "easy" | "normal" | 
     await sql.end();
   }
 }
+
+/**
+ * Turns on a model benefit for a company, as if bought, for a spec about what it does rather than how it's unlocked.
+ * Reload the page after.
+ */
+export async function withBenefit(id: string, benefit: string) {
+  const sql = postgres(E2E_DATABASE_URL, { onnotice: () => {} });
+  try {
+    const [row] = await sql`select state from companies where id = ${id}`;
+    const state = row!.state as { benefits: string[] };
+    await sql`update companies set state = ${sql.json({ ...state, benefits: [...state.benefits, benefit] })} where id = ${id}`;
+  } finally {
+    await sql.end();
+  }
+}

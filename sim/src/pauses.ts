@@ -134,6 +134,10 @@ export function createPauses(config: GameConfig, views: PauseViews) {
     if (opsShort && !views.opsShortfall(before)) {
       add("alert", "ops-shortfall", `Short of ops: ${opsShortText(opsShort)}`);
     }
+    // The first time demand went over PaaS autoscaling's maximum (#261).
+    if (after.autoscale?.maxHitDay !== undefined && before.autoscale?.maxHitDay === undefined) {
+      add("alert", "autoscale-max", "Demand went over your autoscaling maximum: raise the maximum, or set more instances by hand");
+    }
     const use = capacityUse(after);
     const useBefore = capacityUse(before);
     if (use !== null && use > 100 && (useBefore === null || useBefore <= 100)) add("alert", "capacity", `Over capacity: ${use}% in use`);
