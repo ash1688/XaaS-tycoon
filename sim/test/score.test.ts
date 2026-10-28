@@ -91,7 +91,7 @@ describe("the score and the shareholder breakdown (#264)", () => {
 
   it("keeps a vulture bought back in the breakdown, holding nothing, with what the buy-back paid it (#283)", () => {
     const state = funded();
-    const rescue = { day: 70, amount: 40_000, losses: 30_000, shares: 4_000, share: 0.3, cuts: [], hiresCancelled: 0, savedPerDay: 0, severance: 0 };
+    const rescue = { day: 70, amount: 40_000, losses: 30_000, shortfalls: 0, shares: 4_000, share: 0.3, cuts: [], hiresCancelled: 0, savedPerDay: 0, severance: 0 };
     const boughtBack: GameState = { ...state, rescue: { ...rescue, boughtBack: { day: 90, price: 80_000 } } };
     const { capTable } = sim.summarise(boughtBack);
     expect(capTable.shareholders.at(-1)).toEqual({ id: "vulture", name: "Vulture VC (bought back)", putIn: 40_000, shares: 0, stake: 0, worth: 80_000, multiple: 2 });
