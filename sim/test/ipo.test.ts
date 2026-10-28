@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { renderSummary } from "../scripts/textPlay.ts";
 import { createSim, CSUITE_ROLES, defaultConfig, SimError, type CsuiteRole, type GameConfig, type GameState, type Sim } from "../src/index.ts";
 import { withFullCsuite } from "./executives.ts";
 import { allOpen } from "./phases.ts";
@@ -391,6 +392,14 @@ describe("the float and the opening bell", () => {
     expect(s.ipo(floated)).toMatchObject({ status: "floated", canApply: false });
     expect(s.summarise(floated)).toMatchObject({ ending: "ipo", ipo: floated.ipo.result });
     expect(() => s.advance(floated)).toThrow(new RegExp(`Acme floated on day ${floated.day}`));
+    // With no friends and family, angel, VC or vulture money, it's flagged as a bootstrapped float (#265).
+    expect(floated.investors.angel).toBeNull();
+    expect(s.summarise(floated).bootstrapped).toBe(true);
+    expect(JSON.parse(renderSummary(s, floated))).toMatchObject({ achievement: "Floated without outside investors", bootstrapped: true });
+    const backed = { ...floated, investors: { ...floated.investors, angel: { investor: "Ada Hart" } as GameState["investors"]["angel"] } };
+    expect(s.summarise(backed).bootstrapped).toBe(false);
+    expect(JSON.parse(renderSummary(s, backed)).achievement).toBeUndefined();
+    expect(s.summarise(approved()).bootstrapped).toBe(false);
     expect(refusal(() => ring(floated, 0.25))).toBe("finished");
     expect(refusal(() => s.applyAction(floated, { type: "hire", pool: "ops" }))).toBe("finished");
   });

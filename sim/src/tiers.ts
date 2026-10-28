@@ -1,4 +1,4 @@
-import { TIER_NUMBERS, type GameConfig, type ModelId, type ProductTypeId, type TierNumber } from "./config.ts";
+import { DIFFICULTIES, TIER_NUMBERS, type GameConfig, type ModelId, type ProductTypeId, type TierNumber } from "./config.ts";
 import { hasExecutive } from "./executives.ts";
 import { count, pounds } from "./finance.ts";
 import { jobOpen } from "./phases.ts";
@@ -102,7 +102,7 @@ export function isUnlocked(config: GameConfig, state: UnlockState, id: string): 
  * The refusal for an item that isn't unlocked: what the student has to do first. Either its tier isn't available
  * yet, or it is and the item needs unlocking with research points.
  */
-export function lockedMessage(config: GameConfig, state: UnlockState & Pick<GameState, "phase">, id: string): string {
+export function lockedMessage(config: GameConfig, state: UnlockState & Pick<GameState, "phase" | "difficulty">, id: string): string {
   const item = findItem(config, state, id);
   if (!item) return "That isn't in any tier.";
   if (!tierAvailable(state, item.tier)) {
@@ -155,7 +155,7 @@ export const tier2Users = (config: GameConfig, productType: ProductTypeId) =>
   Math.round((config.tiers.tier2.marketShare * config.productTypes[productType].growth.marketSize) / 100) * 100;
 
 /** A tier's condition in words, for a refusal or a log line. */
-function conditionText(config: GameConfig, state: Pick<GameState, "productType">, tier: TierNumber): string {
+function conditionText(config: GameConfig, state: Pick<GameState, "productType" | "difficulty">, tier: TierNumber): string {
   const { tier3 } = config.tiers;
   switch (tier) {
     case 1:
@@ -165,7 +165,9 @@ function conditionText(config: GameConfig, state: Pick<GameState, "productType">
     case 3:
       return `Tier 3 opens once your last ${tier3.days} days average ${pounds(tier3.dailyIncome)} a day in income and ${tier3.uptime}% uptime.`;
     case 4:
-      return "Tier 4 opens with an angel investor's money, or once you're ready for an IPO.";
+      return DIFFICULTIES[state.difficulty].tier4Revenue
+        ? `Tier 4 opens with an angel investor's money, once you're ready for an IPO, or once your last ${config.tiers.tier4.days} days average ${pounds(config.tiers.tier4.dailyIncome)} a day in income.`
+        : "Tier 4 opens with an angel investor's money, or once you're ready for an IPO.";
   }
 }
 
@@ -202,11 +204,17 @@ function conditions(config: GameConfig, state: GameState, tier: TierNumber, ctx:
         part(`Uptime, last ${tier3.days} days`, Math.round(uptime * 100) / 100, tier3.uptime, "percent"),
       ];
     }
-    case 4:
-      return [
+    case 4: {
+      const parts = [
         part("An angel investor's money taken", state.investors.angel ? 1 : 0, 1, "yes"),
         part("Every IPO condition met", ctx.ipoReady(state) ? 1 : 0, 1, "yes"),
       ];
+      if (!DIFFICULTIES[state.difficulty].tier4Revenue) return parts;
+      // On Hard, revenue opens it too (#265), averaged over the whole window like tier 3's.
+      const { tier4 } = config.tiers;
+      const income = lastDays(state, tier4.days).reduce((sum, d) => sum + d.income, 0) / Math.max(1, tier4.days);
+      return [...parts, part(`Income a day, last ${tier4.days} days`, Math.round(income), tier4.dailyIncome, "pounds")];
+    }
   }
 }
 

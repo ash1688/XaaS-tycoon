@@ -80,6 +80,11 @@ export interface DifficultyNumbers {
   dangerRise: number;
   /** Multiplies each customer type's price threshold: above 1, customers put up with dearer prices. */
   priceThreshold: number;
+  /**
+   * Tier 4 also opens on a revenue milestone (tiers.tier4), not only on an angel's money or IPO readiness: so a company
+   * can float without outside investors (#265).
+   */
+  tier4Revenue: boolean;
 }
 
 /** The built-in difficulties. Not on the config page: the teacher picks which are allowed, not what they do. */
@@ -90,14 +95,17 @@ export const DIFFICULTIES: Record<DifficultyId, DifficultyNumbers> = {
     startingCash: 1.5,
     dangerRise: 0.75,
     priceThreshold: 1.15,
+    tier4Revenue: false,
   },
-  normal: { name: "Normal", blurb: "The game as designed.", startingCash: 1, dangerRise: 1, priceThreshold: 1 },
+  normal: { name: "Normal", blurb: "The game as designed.", startingCash: 1, dangerRise: 1, priceThreshold: 1, tier4Revenue: false },
   hard: {
     name: "Hard",
-    blurb: "Less starting cash, more random events, and customers are quicker to leave over price.",
+    blurb:
+      "Less starting cash, more random events, and customers are quicker to leave over price. Tier 4 also opens on revenue, so you can float without outside investors.",
     startingCash: 0.8,
     dangerRise: 1.33,
     priceThreshold: 0.9,
+    tier4Revenue: true,
   },
 };
 
@@ -1275,7 +1283,11 @@ export interface TiersConfig {
   tier2: { marketShare: number };
   /** Tier 3 opens once the last `days` days played averaged this much income a day and this uptime %. */
   tier3: { dailyIncome: number; uptime: number; days: number };
-  /** Tier 4 opens on an angel deal taken or every IPO condition met. It has no numbers of its own. */
+  /**
+   * Tier 4 opens on an angel deal taken or every IPO condition met. On a difficulty with tier4Revenue (Hard), it also
+   * opens once the last `days` days played averaged this much income a day: the bootstrapped route to a float.
+   */
+  tier4: { dailyIncome: number; days: number };
   benefits: ModelBenefitConfig[];
   /**
    * Tier 1 features open at Launch with no research, so they take this × their developer-days to build (2: twice as
@@ -2068,6 +2080,8 @@ export const defaultConfig: GameConfig = {
     tier2: { marketShare: 0.35 },
     tier3: { dailyIncome: 2_000, uptime: 99, days: 30 },
     tier1BuildMultiplier: 2,
+    // Hard only (#265): about 75% of the IPO's revenue a day, so tier 4's features can help a bootstrapped company to it.
+    tier4: { dailyIncome: 2_500, days: 30 },
     benefits: [
       {
         id: "hardwareEfficiency1",
