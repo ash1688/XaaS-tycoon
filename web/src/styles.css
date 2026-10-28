@@ -4717,3 +4717,46 @@ select:disabled {
 .infra-page .server-actions {
   display: block;
 }
+
+/* The daily costs figure: hovering over it, or focusing it, shows the breakdown by heading. */
+.costs-figure {
+  position: relative;
+  /* Above a Home card's own click target, which covers the card. */
+  z-index: 1;
+  border-bottom: 1px dotted var(--muted);
+  cursor: help;
+}
+
+.costs-breakdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  left: 0;
+  z-index: 20;
+  min-width: 16rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: normal;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 12%);
+}
+
+.costs-figure:hover .costs-breakdown,
+.costs-figure:focus .costs-breakdown,
+.costs-figure:focus-within .costs-breakdown {
+  display: block;
+}
+
+.costs-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.costs-note {
+  margin-top: 0.3rem;
+  color: var(--muted);
+}

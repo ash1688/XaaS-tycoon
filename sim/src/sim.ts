@@ -221,10 +221,24 @@ export {
   type WaveEffect,
 } from "./state.ts";
 
+/** The headings the daily costs are broken down by. */
+export type CostHeadingId = "staff" | "executives" | "schemes" | "hosting" | "fees" | "campaigns" | "loan";
+
+/** One heading of the daily costs: what it comes to a day at today's numbers. */
+export interface CostHeading {
+  id: CostHeadingId;
+  label: string;
+  amount: number;
+}
+
 /**
- * What a usual day does to cash at today's users, price, API calls, staff, servers and loan, leaving out one-offs such as events
- * and a migration's first-day charges: income, running costs and the difference. days is how many more days cash lasts
- * at that rate before going below £0, or null when the company isn't losing money.
+ * The daily costs and runway, one figure for the costs line, runway, the IPO's predictable costs and the rescue.
+ * dailyCosts is every daily outgoing at today's numbers: staff pay, executive pay (none during the board's pay
+ * holiday), staff schemes, hosting, rent and power, add-ons and platform fees, campaign spend and loan repayments.
+ * One-offs (kit bought, severance, a tribunal fee, an event's bill, a grant paid back) are left out, and added up
+ * apart over the last 7 days. dailyIncome is the income averaged over the last 7 days played, so runway reacts to
+ * what the student controls without jumping on paydays. days is how many more days cash lasts at that rate before
+ * going below £0, or null when that income covers today's costs.
  */
 export interface RunwayView {
   dailyIncome: number;
@@ -232,7 +246,27 @@ export interface RunwayView {
   /** dailyIncome − dailyCosts: below 0, the company is burning cash. */
   dailyNet: number;
   days: number | null;
+  /** dailyCosts by heading, every heading in order, adding up to it. */
+  costs: CostHeading[];
+  /** Whether the board is on a pay holiday, so executive pay is left out. */
+  payHoliday: boolean;
+  /** The one-offs charged over the last 7 days, today's included: not in dailyCosts. */
+  oneOffsThisWeek: number;
 }
+
+/** The days runway averages income over, and one-offs are added up over. */
+export const RUNWAY_DAYS = 7;
+
+/** Each heading's name, in the order the breakdown lists them. */
+const COST_HEADINGS: Record<CostHeadingId, string> = {
+  staff: "Staff pay",
+  executives: "Executive pay",
+  schemes: "Staff schemes",
+  hosting: "Hosting, rent and power",
+  fees: "Add-ons and platform fees",
+  campaigns: "Campaigns",
+  loan: "Loan repayments",
+};
 
 export interface Sim {
   readonly config: GameConfig;
@@ -597,7 +631,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const shares = createShares(config, finance, conversion);
   const api = createApi(config, features, finance, infra.apiuOn);
   const encounters = createEncounters(config, servers);
-  const ipo = createIpo(config, finance, shares, servers, (s) => runway(s).dailyNet);
+  const ipo = createIpo(config, finance, shares, servers, (s) => runway(s));
   const tiers = createTiers(config, { ipoReady: (s) => ipo.ipoView(s).ready });
   /** The MVP at today's developers. */
   const mvpView = (state: GameState) => mvpStatus(config, { ...state, output: staffOutput(config, state, "developers") });
@@ -749,7 +783,11 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       load: Math.round(customers.baseLoad(launched.state, users, 1)),
       demand: customers.baseDemand(launched.state, users, 1),
     };
-    return advancePhase(finance.settle(started, 1, [...borrowed.entries, ...upfront, ...launched.entries]).state).state;
+    // The upfront bill is a one-off. Day 1's record keeps the daily costs it ends on, as every day played does.
+    const settled = finance.settle(started, 1, [...borrowed.entries, ...upfront.map((e) => ({ ...e, oneOff: true })), ...launched.entries]);
+    const first = advancePhase(settled.state).state;
+    const record = first.spendByDay.at(-1)!;
+    return { ...first, spendByDay: [...first.spendByDay.slice(0, -1), { ...record, costs: runway(first).dailyCosts }] };
   }
 
   /** Refuses a game from an older version, then ends one that has played its final day. */
@@ -1107,7 +1145,11 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       // C-suite roles that opened today, with their shortlists.
       ...csuite.openedEntries(yesterday, reviewed.state)];
     // Kit added today (managed autoscaling, a migration's new setup) gives what new kit gives now.
-    return { state: drift.stampNewKit(yesterday, reviewed.state), log: [{ day, entries: entriesToday }] };
+    const ended = drift.stampNewKit(yesterday, reviewed.state);
+    // The day's record keeps the daily costs it ended on, for the IPO's predictable costs.
+    const record = ended.spendByDay.at(-1)!;
+    const spendByDay = [...ended.spendByDay.slice(0, -1), { ...record, costs: runway(ended).dailyCosts }];
+    return { state: { ...ended, spendByDay }, log: [{ day, entries: entriesToday }] };
   }
 
   /**
@@ -1127,22 +1169,34 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
 
   function runway(state: GameState): RunwayView {
     // Charged the same way a day played charges them, so the rounding matches.
-    const charges = [
-      ...(state.launchDay !== null ? infra.infrastructureEntries(state, state.model, state.users) : []),
-      ...migration.newSetupEntries(state),
-      ...features.addonEntries(state),
-      ...benefits.benefitEntries(state),
-      ...staff.staffEntries(state),
-      ...csuite.payEntries(state),
-      ...schemeEntries(config, state),
-    ];
-    const repayment = loan.dailyRepayment(state);
+    const charged = (entries: LogEntry[]) => entries.reduce((sum, e) => sum - e.cashDelta, 0);
     const calls = api.usualDay(state);
-    const dailyCosts = repayment + calls.fee + pricing.usualSaasFee(state) - charges.reduce((sum, e) => sum + e.cashDelta, 0);
-    const dailyIncome = pricing.dailyIncome(state) + calls.income;
+    const amounts: Record<CostHeadingId, number> = {
+      staff: charged(staff.staffEntries(state)),
+      executives: charged(csuite.payEntries(state)),
+      schemes: charged(schemeEntries(config, state)),
+      hosting: charged([
+        ...(state.launchDay !== null ? infra.infrastructureEntries(state, state.model, state.users) : []),
+        ...migration.newSetupEntries(state),
+      ]),
+      fees: charged([...features.addonEntries(state), ...benefits.benefitEntries(state)]) + calls.fee + pricing.usualSaasFee(state),
+      campaigns: campaigns.dailySpend(state, state.day + 1),
+      loan: loan.dailyRepayment(state),
+    };
+    const costs = (Object.keys(COST_HEADINGS) as CostHeadingId[]).map((id) => ({ id, label: COST_HEADINGS[id], amount: amounts[id] }));
+    const dailyCosts = costs.reduce((sum, h) => sum + h.amount, 0);
+    // The last RUNWAY_DAYS days played, or as many as there have been: read from the end, as the record is in order.
+    let income = 0;
+    let oneOffsThisWeek = 0;
+    for (let i = state.spendByDay.length - 1; i >= 0 && state.spendByDay[i]!.day > state.day - RUNWAY_DAYS; i--) {
+      income += state.spendByDay[i]!.income;
+      oneOffsThisWeek += state.spendByDay[i]!.oneOffs;
+    }
+    const played = Math.min(RUNWAY_DAYS, state.day);
+    const dailyIncome = played > 0 ? Math.round((100 * income) / played) / 100 : 0;
     const dailyNet = dailyIncome - dailyCosts;
     const days = dailyNet < 0 ? Math.max(0, Math.floor(state.cash / -dailyNet)) : null;
-    return { dailyIncome, dailyCosts, dailyNet, days };
+    return { dailyIncome, dailyCosts, dailyNet, days, costs, payHoliday: (state.csuite.payHolidaySince ?? null) !== null, oneOffsThisWeek };
   }
 
   /**

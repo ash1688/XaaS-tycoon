@@ -328,7 +328,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
         const text = servers.isManaged(state.model)
           ? `${scaler.event.name}: the platform scaled up for ${what} over your setup`
           : `${scaler.event.name}: extra VMs for ${what} over capacity`;
-        charges.push({ text, cashDelta: -cost, category: "infrastructure" });
+        charges.push({ text, cashDelta: -cost, category: "infrastructure", oneOff: true });
       }
       return { ratio: 0, overloaded: false, charges, cause: "" };
     }
@@ -342,7 +342,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
       if (cost > 0) {
         const extra = [cu > 0 && `${count.format(Math.ceil(cu))} CU`, dbu > 0 && `${count.format(Math.ceil(dbu))} DBU`];
         const text = `Autoscaling: extra VMs for ${extra.filter(Boolean).join(" and ")} over capacity`;
-        charges.push({ text, cashDelta: -cost, category: "infrastructure" });
+        charges.push({ text, cashDelta: -cost, category: "infrastructure", oneOff: true });
       }
       afterScaling = servers.serve({ ...cap, cu: cap.cu + cu, dbu: cap.dbu + dbu }, demand);
     }

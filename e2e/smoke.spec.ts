@@ -243,8 +243,26 @@ test("running out of cash brings a vulture VC's rescue, a buy-back, then liquida
   await expect(student.getByTestId("low-cash")).toContainText("bank loan");
   await expect(student.getByTestId("home-runway")).toContainText("Runway");
   await expect(student.getByTestId("home-alerts")).toContainText("Cash runs out");
+  // The daily costs, one figure on Home and Finance, break down by heading on hover: before go-live, only staff pay.
+  // Day 1's upfront bill is a one-off.
+  const homeCosts = student.getByTestId("costs-figure");
+  const figure = (await homeCosts.innerText()).trim();
+  expect(figure).toMatch(/^£[\d,]+$/);
+  await expect(homeCosts.getByTestId("costs-breakdown")).toBeHidden();
+  await homeCosts.hover();
+  await expect(homeCosts.getByTestId("costs-breakdown")).toBeVisible();
+  await expect(homeCosts.getByTestId("costs-breakdown")).toContainText("Staff pay");
+  await expect(homeCosts.getByTestId("costs-breakdown")).toContainText("One-offs such as kit bought aren't daily costs.");
+  await expect(student.getByTestId("home-one-offs")).toContainText("of one-offs this week");
   await goTo(student, "People");
   await expect(student.getByTestId("low-cash")).toBeVisible();
+  await goTo(student, "Finance");
+  await expect(student.getByTestId("finance-costs")).toContainText("Costs a day");
+  const financeCosts = student.getByTestId("finance-costs").getByTestId("costs-figure");
+  expect((await financeCosts.innerText()).trim()).toBe(figure);
+  await expect(student.getByTestId("finance-one-offs")).toContainText("One-offs this week");
+  await financeCosts.focus();
+  await expect(student.getByTestId("finance-costs").getByTestId("costs-breakdown")).toBeVisible();
   await goTo(student, "Home");
   await student.getByRole("button", { name: "Continue" }).click();
 

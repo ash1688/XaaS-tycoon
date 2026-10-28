@@ -108,7 +108,7 @@ export function createIpo(
   finance: Finance,
   shares: Shares,
   servers: Servers,
-  dailyNet: (state: GameState) => number,
+  runway: (state: GameState) => { dailyCosts: number; dailyNet: number },
 ) {
   const c = config.ipo;
 
@@ -120,8 +120,8 @@ export function createIpo(
       ? []
       : state.spendByDay.filter((d) => d.day >= state.launchDay! && d.day > state.day - c.recordDays);
   const sum = (days: DaySpend[], value: (d: DaySpend) => number) => days.reduce((s, d) => s + value(d), 0);
-  /** A day's running costs: everything charged but a loan's capital, which isn't a cost. */
-  const runningCosts = (d: DaySpend) => d.staff + d.infrastructure + d.cabling + d.power + d.addons + d.interest;
+  /** A day's running costs, for profit: everything charged but a loan's capital, which isn't a cost. */
+  const runningCosts = (d: DaySpend) => d.staff + d.infrastructure + d.cabling + d.power + d.addons + d.campaigns + d.interest;
 
   /** Comfort over a "more than" threshold: 1 at comfortMargin over it. */
   const over = (value: number, need: number) => (need <= 0 ? 1 : clamp01((value / need - 1) / c.comfortMargin));
@@ -149,9 +149,10 @@ export function createIpo(
     const down = sum(days, (d) => d.hoursDown);
     const uptime = 100 * (1 - down / (n * HOURS_PER_DAY));
 
-    // The costliest days are set aside, so one fraud bill or severance payment doesn't spoil a steady record.
+    // The daily costs each day ended on: the costs line's figure, so one-offs don't count. The costliest days are set
+    // aside, so one campaign doesn't spoil a steady record.
     const setAside = Math.min(Math.max(0, Math.round(c.costDaysSetAside)), Math.max(0, days.length - 1));
-    const costs = days.map(runningCosts).sort((a, b) => a - b).slice(0, days.length - setAside);
+    const costs = days.map((d) => d.costs).sort((a, b) => a - b).slice(0, days.length - setAside);
     const kept = Math.max(1, costs.length);
     const mean = costs.reduce((s, x) => s + x, 0) / kept;
     const sd = Math.sqrt(costs.reduce((s, x) => s + (x - mean) ** 2, 0) / kept);
@@ -167,7 +168,7 @@ export function createIpo(
 
     const income = sum(days, (d) => d.income);
     const profit = income - sum(days, runningCosts);
-    const net = dailyNet(state);
+    const { dailyCosts, dailyNet: net } = runway(state);
     const profitable = hasRecord && profit >= 0 && income > 0;
     const margin = income > 0 ? profit / income : 0;
 
@@ -221,8 +222,8 @@ export function createIpo(
         id: "costs",
         label: "Predictable costs",
         met: hasRecord && swing <= c.maxCostSwing,
-        needed: `daily running costs over the last ${c.recordDays} days varying by no more than ${percent(c.maxCostSwing)}${setAsideText}: big one-off purchases count against you`,
-        now: recorded(`Varying by ${percent(swing)} around ${pounds(mean)} a day`),
+        needed: `daily costs over the last ${c.recordDays} days varying by no more than ${percent(c.maxCostSwing)}${setAsideText}: one-offs such as kit bought don't count`,
+        now: recorded(`${pounds(Math.round(dailyCosts))} a day, varying by ${percent(swing)} around ${pounds(Math.round(mean))}`),
       },
       c.maxCostSwing <= 0 ? 1 : clamp01((c.maxCostSwing - swing) / (c.comfortMargin * c.maxCostSwing)),
     );

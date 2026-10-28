@@ -1212,3 +1212,43 @@ describe("launch", () => {
     expect(play(launched, "next 1").state.users).toBeGreaterThan(0);
   });
 });
+
+describe("costs", () => {
+  it("shows the status line's costs by heading, the last 7 days' income and runway", () => {
+    const state = sim.advance(launchPhase(), 5).state;
+    const r = sim.runway(state);
+    const money = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
+    expect(renderStatus(sim, state)).toContain(`income ${money(r.dailyIncome)}/day (last 7 days) | costs ${money(r.dailyCosts)}/day`);
+    const lines = run(state, "costs").lines;
+    expect(lines[0]).toBe(`== Daily costs: ${money(r.dailyCosts)} a day`);
+    for (const h of r.costs) expect(lines).toContain(`  ${h.label}: ${money(h.amount)}`);
+    // The loan taken at the start is one of them.
+    expect(lines).toContain(`  Loan repayments: ${money(sim.loan(state)!.dailyRepayment)}`);
+    expect(lines).toContain(`Income averaged over the last 7 days: ${money(r.dailyIncome)} a day.`);
+    expect(lines.join("\n")).toMatch(r.days === null ? /Not losing money/ : new RegExp(`cash lasts about ${r.days} days?`));
+    expect(renderCommands(sim, state)).toMatch(/ {2}costs {3}\(the daily costs by heading/);
+  });
+
+  it("shows the executives' pay, and notes the board's pay holiday", () => {
+    const state = sim.advance(launchPhase(), 2).state;
+    const c = state.csuite.shortlists.cto[0]!;
+    const hired = { ...state, csuite: { ...state.csuite, hired: [{ role: "cto" as const, name: c.name, strength: c.strength, salary: 300, equity: 0, shares: 0, day: 1 }] } };
+    expect(run(hired, "costs").lines).toContain("  Executive pay: £300");
+    expect(sim.runway(hired).dailyCosts - sim.runway(state).dailyCosts).toBe(300);
+    const holiday = { ...hired, csuite: { ...hired.csuite, payHolidaySince: 2 } };
+    expect(run(holiday, "costs").lines).toContain("  Executive pay: £0 (the board's pay holiday: none while it lasts)");
+  });
+
+  it("puts one-offs on their own line, not in costs", () => {
+    // Over a week on, the upfront bill of day 1 is no longer this week's.
+    const state = sim.advance(launchPhase(), 8).state;
+    expect(sim.runway(state).oneOffsThisWeek).toBe(0);
+    expect(renderStatus(sim, state)).not.toMatch(/one-offs this week/);
+    // A day's record with a one-off on it: it shows apart, and the costs don't change.
+    const last = state.spendByDay.at(-1)!;
+    const charged = { ...state, spendByDay: [...state.spendByDay.slice(0, -1), { ...last, oneOffs: 2_500 }] };
+    expect(sim.runway(charged).dailyCosts).toBe(sim.runway(state).dailyCosts);
+    expect(renderStatus(sim, charged)).toContain("one-offs this week £2,500 (not in costs: see `costs`)");
+    expect(run(charged, "costs").lines.at(-1)).toBe("One-offs this week (kit bought, severance, fees, events; not in daily costs): £2,500.");
+  });
+});

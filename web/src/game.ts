@@ -111,7 +111,8 @@ export function createGame(code: string, id: string) {
   // "1 ops person", "2 ops staff".
   const opsPeople = (n: number) => `${n} ops ${n === 1 ? "person" : "staff"}`;
 
-  // Cash: what a usual day does to it, and how many days it lasts at that rate (null when not losing money).
+  // Cash: today's daily costs against the last 7 days' income, and how many days it lasts at that rate (null when not losing
+  // money).
   const runway = computed(() => company.value?.runway ?? null);
   const lowCash = computed(() => !over.value && runway.value?.days != null && runway.value.days <= LOW_CASH_DAYS);
 

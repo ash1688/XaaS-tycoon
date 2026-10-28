@@ -1469,7 +1469,8 @@ export interface IpoProductConfig {
  * minTradingDays since the launch; users and revenue, with a minimum paying customer base; an uptime record;
  * predictable costs; a security audit; and the full C-suite, every role hired. No investor's money is needed, though
  * Series A must approach to open the last C-suite roles. Records are measured over the last recordDays days played;
- * predictable costs leaves out the record's costDaysSetAside costliest days.
+ * predictable costs measures the daily costs each day ended on (the costs line's figure, without one-offs), leaving out the
+ * record's costDaysSetAside costliest days.
  *
  * Each condition but the full C-suite (yes or no) also has a comfort, 0–1: how far over it the company is, reaching 1
  * at comfortMargin over (0.25 = 25% over a "more than" threshold, or a quarter of the way from it to perfect). The
@@ -1495,9 +1496,9 @@ export interface IpoConfig {
   minUptime: number;
   /** Average satisfaction % over recordDays the market starts to take comfort from: not a condition to float. */
   minSatisfaction: number;
-  /** The most daily running costs over recordDays may vary: their standard deviation ÷ their mean. */
+  /** The most the daily costs over recordDays may vary: their standard deviation ÷ their mean. */
   maxCostSwing: number;
-  /** The costliest days of the record left out of the costs' swing, so a single one-off charge doesn't fail it. */
+  /** The costliest days of the record left out of the costs' swing, so a single costly day doesn't fail it. */
   costDaysSetAside: number;
   comfortMargin: number;
   coldChance: { min: number; max: number };

@@ -42,7 +42,7 @@ const refusal = (fn: () => unknown) => {
 
 /**
  * The company made comfortably over every condition, in Scale so the IPO is open: 2,000 users (1,000 paying £60 a month), 90% satisfaction, and on
- * every day played no downtime, steady costs and £1,000 of income.
+ * every day played no downtime, steady daily costs of £160 and £1,000 of income.
  */
 const makeReady = (played: GameState): GameState => ({
   // The full C-suite is hired.
@@ -65,6 +65,8 @@ const makeReady = (played: GameState): GameState => ({
     paidUsers: 1_000,
     satisfaction: 90,
     hoursDown: 0,
+    oneOffs: 0,
+    costs: 160,
   })),
 });
 
@@ -115,7 +117,7 @@ describe("the readiness checklist", () => {
       // The minimum paying customer base is part of users and revenue.
       ["usersAndRevenue", { ...state, paidUsers: 499 }],
       ["uptime", lastDays(state, 3, { hoursDown: 3 })],
-      ["costs", lastDays(state, 2, { infrastructure: 5_000 })],
+      ["costs", lastDays(state, 2, { costs: 5_000 })],
       ...CSUITE_ROLES.map((role): [string, GameState] => ["csuite", withoutRole(state, role)]),
     ];
     for (const [id, s] of broken) {
@@ -170,18 +172,36 @@ describe("the readiness checklist", () => {
     expect(sim.ipo(state).conditions[0]!.comfort).toBe(1);
   });
 
-  it("sets aside the costliest day, so a single one-off charge doesn't spoil predictable costs", () => {
+  it("measures the daily costs, so one-offs don't count, and sets aside the costliest day", () => {
     const state = ready();
-    // A fraud bill (charged as infrastructure) and a severance payment (staff), each one day of the record.
-    for (const spike of [{ infrastructure: 4_000 }, { staff: 6_000 }]) {
-      const once = lastDays(state, 1, spike);
-      expect(met(sim, once).costs).toBe(true);
-      expect(sim.ipo(once).conditions.find((c) => c.id === "costs")!.needed).toMatch(/your costliest day set aside/);
-      const twice = { ...once, spendByDay: once.spendByDay.map((d) => (d.day === state.day - 10 ? { ...d, ...spike } : d)) };
-      expect(met(sim, twice).costs).toBe(false);
+    // A fraud bill (charged as infrastructure) and a severance payment (staff) on most days: one-offs, not daily costs.
+    for (const spike of [{ infrastructure: 4_000, oneOffs: 3_950 }, { staff: 6_000, oneOffs: 5_900 }]) {
+      expect(met(sim, lastDays(state, RECORD - 1, spike)).costs).toBe(true);
     }
+    // Daily costs that jumped for a day are set aside once, but not twice.
+    const once = lastDays(state, 1, { costs: 4_000 });
+    expect(met(sim, once).costs).toBe(true);
+    expect(sim.ipo(once).conditions.find((c) => c.id === "costs")!.needed).toMatch(/your costliest day set aside/);
+    const twice = { ...once, spendByDay: once.spendByDay.map((d) => (d.day === state.day - 10 ? { ...d, costs: 4_000 } : d)) };
+    expect(met(sim, twice).costs).toBe(false);
     const strict = createSim({ ...quiet, ipo: { ...quiet.ipo, costDaysSetAside: 0 } });
-    expect(met(strict, lastDays(state, 1, { infrastructure: 4_000 })).costs).toBe(false);
+    expect(met(strict, once).costs).toBe(false);
+  });
+
+  it("shows the same costs figure as the costs line", () => {
+    for (const model of ["saas", "iaas"]) {
+      const state = ready(sim, model);
+      const line = sim.ipo(state).conditions.find((c) => c.id === "costs")!;
+      const costs = sim.runway(state).dailyCosts;
+      expect(costs).toBeGreaterThan(0);
+      expect(line.now).toMatch(new RegExp(`^£${Math.round(costs).toLocaleString("en-GB")} a day, varying by`));
+    }
+  });
+
+  it("records each day's daily costs as the costs line had them at its end", () => {
+    const start = begin(sim, "iaas");
+    const { state } = sim.advance(start, 3);
+    expect(state.spendByDay.at(-1)!.costs).toBe(sim.runway(state).dailyCosts);
   });
 
   it("audits security: on IaaS the OS is yours to patch, on SaaS the provider's", () => {

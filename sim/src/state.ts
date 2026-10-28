@@ -37,7 +37,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 54;
+export const GAME_STATE_VERSION = 55;
 
 /**
  * The four phases a game's jobs open in, in order, each opened by a milestone: Build from day 1, Launch when Launch is
@@ -126,6 +126,13 @@ export interface DaySpend extends Spend {
   satisfaction: number;
   /** Hours the service was down on the day, for the IPO's uptime record. */
   hoursDown: number;
+  /**
+   * Of the day's charges, the one-offs: kit bought, severance, a tribunal fee, an event's bill, a grant paid back.
+   * Kept apart from the daily costs, for "one-offs this week".
+   */
+  oneOffs: number;
+  /** The daily costs at the end of the day (RunwayView.dailyCosts), for the IPO's predictable costs. */
+  costs: number;
 }
 
 /**
@@ -1272,6 +1279,11 @@ export interface LogEntry {
   category?: SpendCategory;
   /** Of a loan repayment (debt), the interest in it. */
   interest?: number;
+  /**
+   * A one-off outgoing, not one of the daily costs: an event's bill, an outage's extra VMs, a migration's upfront
+   * cost or exit penalty, a withdrawn grant paid back. Every charge made between days is one too.
+   */
+  oneOff?: boolean;
   /**
    * On the payments app's income, which stream it is, kept apart on Finance: "fees" the monthly fee, "transactions"
    * the share of its users' payments. Other income (other products' price, API calls) has none.
