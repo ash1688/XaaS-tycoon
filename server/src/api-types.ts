@@ -413,7 +413,7 @@ export interface CompanyView {
    * that bill. Null on other models.
    */
   provider: ProviderView | null;
-  /** PaaS autoscaling's instances, minimum (set by hand) and maximum, with managed autoscaling on; null otherwise. */
+  /** PaaS autoscaling's instances, minimum (set by hand) and maximum, basic or managed; null off PaaS. */
   autoscale: AutoscaleView | null;
   /** Percentage of time up across every day played. */
   uptime: number;

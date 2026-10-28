@@ -426,7 +426,7 @@ export function renderStatus(sim: Sim, state: GameState): string {
   const fair = sim.fairPriceView(state);
   if (fair.rise > 0) {
     lines.push(
-      `fair price ${price(fair.fairPrice)}: up ${(100 * fair.rise).toFixed(1)}% from ${price(fair.baseFairPrice)} with inflation (last pay review ${(100 * fair.lastInflation!).toFixed(1)}%)`,
+      `fair price ${price(fair.fairPrice)}: up ${(100 * fair.rise).toFixed(1)}% from ${price(fair.baseFairPrice)} with a quarter of each pay review's inflation (last review's ${(100 * fair.lastInflation!).toFixed(1)}%)`,
     );
   }
   const payments = renderPayments(sim, state);
@@ -532,8 +532,8 @@ export function renderStatus(sim: Sim, state: GameState): string {
     const scale = sim.autoscale(state);
     if (scale) {
       lines.push(
-        `autoscaling: instances ${scale.instances} (min ${scale.min}, max ${scale.max}${scale.maxSet ? "" : ", following today's instances until you set it"}) | ` +
-          `baseline 1.5× yesterday's demand | burst instances ${money(scale.burstDayCost)} each a day`,
+        `${scale.managed ? "managed" : "basic"} autoscaling: instances ${scale.instances} (min ${scale.min}, max ${scale.max}${scale.maxSet ? "" : ", following today's instances until you set it"}) | ` +
+          `baseline ${scale.baseline}× yesterday's demand | burst instances ${money(scale.burstDayCost)} each a day`,
       );
     }
   }

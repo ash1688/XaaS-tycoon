@@ -1,5 +1,5 @@
 import { DANGER_RISKS, type DangerRisk, type EventConfig, type GameConfig } from "./config.ts";
-import { managedAutoscaling } from "./benefits.ts";
+import { paasAutoscaling } from "./benefits.ts";
 import { breachShare, patchingNeed } from "./executives.ts";
 import { layerOwner } from "./responsibility.ts";
 import { nextRandom } from "./rng.ts";
@@ -65,7 +65,7 @@ export function createEncounters(config: GameConfig, servers: Servers, spikeDay:
       if (!state.schedule.slice(last + 1).some((s) => follows.includes(s.event) && recent(s.day))) return false;
     }
     // An autoscaler can only fail for a company whose platform autoscales (#261).
-    if (effect.autoscalerFails && !(state.benefits && managedAutoscaling(config, { benefits: state.benefits, model: state.model }, state.model))) return false;
+    if (effect.autoscalerFails && !paasAutoscaling(config, { benefits: state.benefits ?? [], model: state.model }, state.model)) return false;
     return !(effect.featureGap && state.featureGaps.some((g) => g.event === event.id && g.model === state.model));
   }
 

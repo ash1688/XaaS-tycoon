@@ -59,7 +59,7 @@ One step of the timed flow: a day, or a week in a career. A week is seven days s
 _Avoid_: Turn, round
 
 **Drift**:
-The slow change in the world over a long game (until IPO or a career). At each **year's end** (every 365 days), running prices rise by a fresh random 2–6% and servers and VMs added from then give about 10% more units for the money; kit already owned keeps its units. The student's own price and pay never drift: pay rises only in pay reviews, and the student's price changes only when they change it (the **fair price** moves with each pay review's inflation instead). Servers age through the hardware slider's wear, whose lifespan scales with the game length. A 180-day or 1-year game never reaches a year's end.
+The slow change in the world over a long game (until IPO or a career). At each **year's end** (every 365 days), running prices rise by a fresh random 2–6% and servers and VMs added from then give about 10% more units for the money; kit already owned keeps its units. The student's own price and pay never drift: pay rises only in pay reviews, and the student's price changes only when they change it (the **fair price** moves by a quarter of each pay review's inflation instead). Servers age through the hardware slider's wear, whose lifespan scales with the game length. A 180-day or 1-year game never reaches a year's end.
 _Avoid_: Eras, ageing
 
 **Year's end**:
@@ -158,7 +158,7 @@ The record of every pay review settled, on the People page and in text play: eac
 ### Infrastructure
 
 **Autoscaling (PaaS)**:
-The Managed autoscaling benefit. Each night the platform sets the app instances to a **baseline** of 1.5× yesterday's CU demand, never below the instances the student set by hand (their **minimum**, never reset). During a day **burst instances** cover a spike over the baseline at about twice an instance's price, up to a **maximum** the student sets (about 3× today's instances until they do); demand over it is an outage, and time stops the first time. The **autoscaler failure** event stops bursts for a day, more often on spike days, which is what the minimum insures against.
+On for every PaaS company. Each night the platform sets the app instances to a **baseline** of 1.25× yesterday's CU demand (**basic autoscaling**), or 1.5× with the Managed autoscaling benefit (**managed autoscaling**), never below the instances the student set by hand (their **minimum**, never reset). During a day **burst instances** cover a spike over the baseline at about twice an instance's price, up to a **maximum** the student sets (about 3× today's instances until they do); demand over it is an outage, and time stops the first time. The **autoscaler failure** event stops bursts for a day, more often on spike days, which is what the minimum insures against.
 _Avoid_: Auto-scaling, elastic scaling
 
 **Rack**:
@@ -232,7 +232,7 @@ The price at which a customer type starts to react badly.
 _Avoid_: Pain point, willingness to pay
 
 **Fair price**:
-The monthly price users think the product is worth, which each customer type's price threshold is a multiple of. It starts at the product's own and rises with each pay review's inflation, compounding. The student's price never moves by itself.
+The monthly price users think the product is worth, which each customer type's price threshold is a multiple of. It starts at the product's own and rises by a quarter of each pay review's inflation, compounding. The student's price never moves by itself.
 _Avoid_: Market price, list price
 
 **Opening price**:

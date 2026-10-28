@@ -388,9 +388,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
       add(`${at}.effects.autoscaling.most`, "Infrastructure", T, `${name}: most extra`, "The most extra VMs can add, as a share of the servers' own units (0.5 = half as much again).", range(0, 10, 0.05));
     }
     if (e.managedAutoscaling) {
-      add(`${at}.effects.managedAutoscaling.headroom`, "Infrastructure", T, `${name}: baseline headroom`, "Each night the instances are set to the day's CU demand plus this share (0.5 = 1.5×), and never below the number set by hand.", range(0, 5, 0.05));
-      add(`${at}.effects.managedAutoscaling.burstPremium`, "Infrastructure", T, `${name}: burst premium`, "Each burst instance added during a day costs this many times an instance's day rate (2 = double).", range(1, 10, 0.1));
-      add(`${at}.effects.managedAutoscaling.maxFactor`, "Infrastructure", T, `${name}: default maximum`, "Until the student sets a maximum, it's this many times today's instances.", range(1, 10, 0.5));
+      add(`${at}.effects.managedAutoscaling.headroom`, "Infrastructure", T, `${name}: baseline headroom`, "With it, each night the instances are set to the day's CU demand plus this share (0.5 = 1.5×), in place of basic autoscaling's.", range(0, 5, 0.05));
     }
     if (e.outageHours !== undefined) add(`${at}.effects.outageHours`, "Infrastructure", T, `${name}: outage hours`, "Hours down in any outage are multiplied by this, rounded up (0.5 = half as long).", SHARE);
     if (e.cuDemand !== undefined) add(`${at}.effects.cuDemand`, "Infrastructure", T, `${name}: CU demand`, "CU demand is multiplied by this (0.75 = a quarter less).", SHARE);
@@ -641,6 +639,9 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     }
     if (servers.managed) {
       add(`models.${m}.servers.managed.maxInstances`, "Infrastructure", MODEL_LABELS[m], "Most app instances", "The most app instances a company can run on the platform.", range(1, 100, 1));
+      add(`models.${m}.servers.managed.autoscaling.headroom`, "Infrastructure", MODEL_LABELS[m], "Basic autoscaling headroom", "Each night the instances are set to the day's CU demand plus this share (0.25 = 1.25×), never below the number set by hand. Managed autoscaling raises it.", range(0, 5, 0.05));
+      add(`models.${m}.servers.managed.autoscaling.burstPremium`, "Infrastructure", MODEL_LABELS[m], "Burst premium", "Each burst instance added during a day costs this many times an instance's day rate (2 = double).", range(1, 10, 0.1));
+      add(`models.${m}.servers.managed.autoscaling.maxFactor`, "Infrastructure", MODEL_LABELS[m], "Default autoscaling maximum", "Until the student sets a maximum, it's this many times today's instances.", range(1, 10, 0.5));
       for (const t of ["database", "cache"] as const) {
         for (const size of SERVER_SIZES) {
           const unit = t === "database" ? "DBU" : "CH";
@@ -688,6 +689,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("payReview.openEndedYearDays", "People", "Pay reviews", "Year in long games", "Until IPO and a career have years this many days long: a review every quarter of one, once they've started.", range(4, 3650, 1));
   add("payReview.inflation.min", "People", "Pay reviews", "Least inflation", "Each review rolls its own inflation from the least to the most (0.02 = 2%).", range(0, 0.2, 0.001));
   add("payReview.inflation.max", "People", "Pay reviews", "Most inflation", "The most inflation a review can roll.", range(0, 0.2, 0.001));
+  add("payReview.fairPriceShare", "People", "Pay reviews", "Inflation into the fair price", "The share of each review's inflation that lifts the product's fair price, compounding (0.25 = a quarter, 0 = never moves).", range(0, 1, 0.01));
   add("payReview.minOfferBelow", "People", "Pay reviews", "Least offer below inflation", "The student can't offer less than inflation less this (0.01 = one point), and never below 0%.", range(0, 0.2, 0.001));
   add("payReview.maxAskAbove", "People", "Pay reviews", "Most ask above inflation", "Staff open at inflation plus this, and never ask for more.", range(0, 0.2, 0.001));
   add("payReview.fairRise.days", "People", "Pay reviews", "Days of growth compared", "The fair rise looks at income over this many days against the same number before them.", GAME_DAY);

@@ -39,12 +39,12 @@ const priceNote = computed(() => {
 const lockDaysLeft = computed(() => game.company?.priceLockDaysLeft ?? 0);
 // From IPO approval to the bell the price can't change at all (#257).
 const ipoLocked = computed(() => game.company?.ipo.status === "approved");
-// The fair price moves with each pay review's inflation (#251): why, in words, once it has.
+// The fair price moves with a quarter of each pay review's inflation (#251): why, in words, once it has.
 const fairMoved = computed(() => {
   const f = game.company?.fairPriceView;
   if (!f || f.rise <= 0) return "";
-  const last = f.lastInflation === null ? "" : ` (${formatRate(f.lastInflation)} in the last pay review)`;
-  return `Up ${formatRate(Math.round(f.rise * 10_000) / 10_000)} from ${formatPrice(f.baseFairPrice)} with inflation${last}`;
+  const last = f.lastInflation === null ? "" : `; the last pay review's inflation was ${formatRate(f.lastInflation)}`;
+  return `Up ${formatRate(Math.round(f.rise * 10_000) / 10_000)} from ${formatPrice(f.baseFairPrice)}, by a quarter of each pay review's inflation${last}`;
 });
 // At or below the fair price, more free users start paying each day.
 const atOrBelowFair = computed(() => {

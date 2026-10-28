@@ -358,7 +358,11 @@ describe("model benefits", () => {
   };
 
   it("managed monitoring halves PaaS outages", () => {
-    const busy = paasWith(Math.round((sim.managed(paasWith(0))!.instanceUnits * 1.5) / defaultConfig.productTypes.ecommerce.demand.cuPerUser));
+    // A maximum of the one instance, so autoscaling can't burst past the outage.
+    const busy = act(
+      paasWith(Math.round((sim.managed(paasWith(0))!.instanceUnits * 1.5) / defaultConfig.productTypes.ecommerce.demand.cuPerUser)),
+      { type: "setAutoscaleMax", max: 1 },
+    );
     const hours = sim.advance(busy).state.downtimeHours - busy.downtimeHours;
     expect(hours).toBeGreaterThan(1);
     const watched = act(busy, { type: "buyBenefit", benefit: "managedMonitoring" });
@@ -374,7 +378,7 @@ describe("model benefits", () => {
     const outages = (log: DayLog[]) => log.flatMap((d) => d.entries.filter((e) => e.kind === "outage"));
     const bursts = (log: DayLog[]) => log.flatMap((d) => d.entries.filter((e) => e.text.startsWith("Autoscaling: ")));
 
-    it("keeps a baseline of 1.5× yesterday's demand, never below the instances set by hand", () => {
+    it("keeps a baseline of 1.5× yesterday's demand with Managed autoscaling, never below the instances set by hand", () => {
       // Set by hand to 8, more than the baseline of about 1.5 × 3: kept as the minimum overnight, not reset.
       const high = sim.advance(autoscaled(needing(3), { type: "setInstances", count: 8 }));
       expect(instances(high.state)).toBe(8);
@@ -386,9 +390,21 @@ describe("model benefits", () => {
       expect(instances(low.state)).toBe(wanted);
       expect(texts(low.log)).toContain(`Managed autoscaling: 2 → ${wanted} app instances for tomorrow.`);
       expect(sim.autoscale(low.state)).toMatchObject({ min: 2 });
-      // Without the benefit, the count stays where the student set it.
-      expect(instances(sim.advance(needing(3)).state)).toBe(1);
-      expect(sim.autoscale(needing(3))).toBeNull();
+      expect(sim.autoscale(low.state)).toMatchObject({ managed: true, baseline: 1.5 });
+    });
+
+    it("autoscales every PaaS company: without the benefit, basic autoscaling keeps 1.25× yesterday's demand", () => {
+      const basic = sim.advance(act(needing(3), { type: "setInstances", count: 2 }));
+      const wanted = Math.ceil((basic.state.demand.cu * 1.25) / instanceUnits);
+      expect(wanted).toBeGreaterThan(2);
+      expect(wanted).toBeLessThan(Math.ceil((basic.state.demand.cu * 1.5) / instanceUnits) + 1);
+      expect(instances(basic.state)).toBe(wanted);
+      expect(texts(basic.log)).toContain(`Autoscaling: 2 → ${wanted} app instances for tomorrow.`);
+      expect(sim.autoscale(basic.state)).toMatchObject({ min: 2, managed: false, baseline: 1.25 });
+      // Bursts and the maximum work the same as with the benefit.
+      const capped = sim.tick(act(needing(3), { type: "setAutoscaleMax", max: 2 }));
+      expect(bursts(capped.log)[0]!.text).toMatch(/^Autoscaling: 1 burst instance for a spike/);
+      expect(outages(capped.log)[0]!.text).toMatch(/over your autoscaling maximum of 2 instances/);
     });
 
     it("adds burst instances for a spike at the premium, up to the maximum; over it is an outage that stops time once", () => {
@@ -418,11 +434,11 @@ describe("model benefits", () => {
       expect(again.pauses.map((p) => p.id)).not.toContain("autoscale-max");
     });
 
-    it("refuses a maximum below the minimum or over the platform's most, or without the benefit", () => {
+    it("refuses a maximum below the minimum or over the platform's most", () => {
       const state = autoscaled(needing(0), { type: "setInstances", count: 4 });
       expect(refusal(() => act(state, { type: "setAutoscaleMax", max: 3 }))).toBe("bad_instances");
       expect(refusal(() => act(state, { type: "setAutoscaleMax", max: 999 }))).toBe("bad_instances");
-      expect(refusal(() => act(needing(0), { type: "setAutoscaleMax", max: 5 }))).toBe("no_autoscaling");
+      expect(sim.autoscale(act(needing(0), { type: "setAutoscaleMax", max: 5 }))).toMatchObject({ max: 5, managed: false });
       // A minimum set over the maximum lifts the maximum with it.
       expect(sim.autoscale(act(state, { type: "setAutoscaleMax", max: 6 }, { type: "setInstances", count: 9 }))).toMatchObject({ min: 9, max: 9 });
     });
@@ -450,9 +466,16 @@ describe("model benefits", () => {
       expect(fired(due(10))).toBe(false);
       expect(fired(due(10 + 7 * quiet.encounters.dailyRise))).toBe(true);
       expect(fired(due(10, true))).toBe(true);
-      // Without managed autoscaling there's no autoscaler to fail.
+      // Basic autoscaling can fail too; with no autoscaling on the platform there's no autoscaler to fail.
       const plain = { ...needing(1), encounterList: [{ event: "autoscalerFailure", threshold: 10 }], dangerMeter: 100 };
-      expect(fired(plain)).toBe(false);
+      expect(fired(plain)).toBe(true);
+      const paas = quiet.models.paas;
+      const unscaled = createSim({
+        ...quiet,
+        events: [failure],
+        models: { ...quiet.models, paas: { ...paas, servers: { ...paas.servers!, managed: { ...paas.servers!.managed!, autoscaling: undefined } } } },
+      });
+      expect(unscaled.advance(plain).state.schedule.some((e) => e.event === "autoscalerFailure")).toBe(false);
     });
   });
 

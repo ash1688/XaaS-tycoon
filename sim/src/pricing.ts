@@ -263,14 +263,15 @@ export interface PriceWaveView {
 type FairState = Pick<GameState, "productType" | "pastPayReviews">;
 
 /**
- * How far inflation has lifted the fair price: each settled pay review's inflation, compounded (#251). The student's
- * own price never moves by itself.
+ * How far inflation has lifted the fair price: a share (payReview.fairPriceShare, a quarter) of each settled pay
+ * review's inflation, compounded (#251). The student's own price never moves by itself.
  */
-export const fairRise = (state: Pick<GameState, "pastPayReviews">) => state.pastPayReviews.reduce((rise, r) => rise * (1 + r.inflation), 1);
+export const fairRise = (config: GameConfig, state: Pick<GameState, "pastPayReviews">) =>
+  state.pastPayReviews.reduce((rise, r) => rise * (1 + config.payReview.fairPriceShare * r.inflation), 1);
 
 /** A product's fair monthly price (the fair fee on the payments app) moved with inflation, to the penny. */
 export const fairPriceOf = (config: GameConfig, state: FairState) =>
-  Math.round(config.productTypes[state.productType].pricing.fairPrice * fairRise(state) * 100) / 100;
+  Math.round(config.productTypes[state.productType].pricing.fairPrice * fairRise(config, state) * 100) / 100;
 
 const RISE_BANDS: PriceBandId[] = ["accept", "grumble", "support", "toFree", "leave"];
 const JOIN_BANDS: PriceBandId[] = ["joinPaid", "joinFree", "notJoin"];
@@ -1026,7 +1027,7 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
     return {
       fairPrice: fairPrice(state),
       baseFairPrice: config.productTypes[state.productType].pricing.fairPrice,
-      rise: fairRise(state) - 1,
+      rise: fairRise(config, state) - 1,
       lastInflation: last?.inflation ?? null,
     };
   }
