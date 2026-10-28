@@ -10,6 +10,8 @@ const game = useGame();
 const valuation = computed(() => game.company?.valuation ?? null);
 const yours = computed(() => game.company?.capTable.rows.find((r) => r.id === "student") ?? null);
 const signed = (n: number) => (n < 0 ? `−${formatCash(-n)}` : `+${formatCash(n)}`);
+// After the IPO the market prices the company, as the cap table does (#283): the formula below is for reference.
+const floated = computed(() => game.company?.ipo.result ?? null);
 </script>
 
 <template>
@@ -21,14 +23,19 @@ const signed = (n: number) => (n < 0 ? `−${formatCash(-n)}` : `+${formatCash(n
   >
     <h2 id="valuation-heading">Valuation</h2>
     <div class="stats">
-      <div class="stat">
+      <div v-if="floated" class="stat">
+        <span class="label">Market value</span>
+        <span class="value" data-testid="valuation">{{ formatCash(floated.marketValue) }}</span>
+        <small>At the first day's close. The formula below would say {{ formatCash(valuation.valuation) }}</small>
+      </div>
+      <div v-else class="stat">
         <span class="label">Valuation</span>
         <span class="value" data-testid="valuation">{{ formatCash(valuation.valuation) }}</span>
         <small>What the company is worth today</small>
       </div>
       <div class="stat">
         <span class="label">Share price</span>
-        <span class="value" data-testid="share-price">{{ formatSharePrice(valuation.sharePrice) }}</span>
+        <span class="value" data-testid="share-price">{{ formatSharePrice(floated ? floated.closePrice : valuation.sharePrice) }}</span>
         <small>{{ valuation.sharesInIssue.toLocaleString("en-GB") }} shares in issue</small>
       </div>
       <div class="stat">

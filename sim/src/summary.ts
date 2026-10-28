@@ -9,18 +9,21 @@ import type { DaySpend, GameEnding, GameState, IpoResult, Rescue, Shareholder, S
 /** One shareholder at the end, for the breakdown under the headline: what they put in, and what it's worth now. */
 export interface ShareholderSummary {
   id: Shareholder["id"];
-  /** "You", "Friends and family", "Northgate Ventures (VC)" … as on the cap table. */
+  /**
+   * "You", "Friends and family", "Northgate Ventures (VC)" … as on the cap table; "Vulture VC (bought back)" for a
+   * vulture whose shares the company bought back.
+   */
   name: string;
   /**
-   * Cash they put in: the founder's seed money (the starting cash, which varies by difficulty), each funder's
-   * investment (a VC's second tranche once paid), the vulture's rescue, the float's cash raised. 0 for the C-suite and
-   * the staff share scheme, whose shares were pay.
+   * Cash they put in: the founder's seed money (the starting cash on the game's difficulty, before any loan), each
+   * funder's investment (a VC's first tranche, and its second once paid), the vulture's rescue, the float's cash
+   * raised. 0 for the C-suite and the staff share scheme, whose shares were pay.
    */
   putIn: number;
   shares: number;
-  /** Their share of the company, 0–1. The rows' stakes add up to 1. */
+  /** Their share of the company, 0–1. The rows' stakes add up to 1: a bought-back vulture's is 0. */
   stake: number;
-  /** Stake × what the company is worth now, to the pound. */
+  /** Stake × what the company is worth now, to the pound; for a bought-back vulture, what the buy-back paid it. */
   worth: number;
   /** Worth ÷ put in: null when they put nothing in. */
   multiple: number | null;
@@ -40,7 +43,7 @@ export interface CapTableSummary {
   worth: number;
   /** The debt still owed when the game ended, taken off: 0 if none was. */
   debt: number;
-  /** Every shareholder, the founder first. */
+  /** Every shareholder, the founder first, and a vulture bought back (holding nothing) last. */
   shareholders: ShareholderSummary[];
 }
 
@@ -177,9 +180,10 @@ export function createSummary(config: GameConfig, infra: Infrastructure, shares:
       case "angel":
         return state.investors.angel?.amount ?? 0;
       case "vc":
+        // A deal's amount is the whole round, both tranches: the second counts only once it's paid.
         return state.investors.vc.deals
           .filter((d) => d.investor === h.investor)
-          .reduce((sum, d) => sum + d.amount + (d.tranche?.paidDay != null ? d.tranche.amount : 0), 0);
+          .reduce((sum, d) => sum + d.amount - (d.tranche && d.tranche.paidDay === null ? d.tranche.amount : 0), 0);
       case "vulture":
         return state.rescue?.amount ?? 0;
       case "public":
@@ -203,6 +207,13 @@ export function createSummary(config: GameConfig, infra: Infrastructure, shares:
       const each = Math.round((worth * h.shares) / table.sharesInIssue);
       return { id: h.id, name: row.name, putIn: cash, shares: h.shares, stake: h.shares / table.sharesInIssue, worth: each, multiple: cash > 0 ? Math.round((100 * each) / cash) / 100 : null };
     });
+    // A vulture bought back holds nothing, but it put cash in and got the buy-back price out.
+    const boughtBack = state.rescue?.boughtBack;
+    if (state.rescue && boughtBack) {
+      const { amount } = state.rescue;
+      const multiple = amount > 0 ? Math.round((100 * boughtBack.price) / amount) / 100 : null;
+      rows.push({ id: "vulture", name: "Vulture VC (bought back)", putIn: amount, shares: 0, stake: 0, worth: boughtBack.price, multiple });
+    }
     const raised = rows.filter((r) => r.id !== "student").reduce((sum, r) => sum + r.putIn, 0);
     return { raised, worth, debt, shareholders: rows };
   }
