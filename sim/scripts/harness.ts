@@ -753,7 +753,7 @@ function mvpTeam(sim: Sim, state: GameState, strategy: Strategy): GameState {
 /**
  * The pay review policy every bot plays without a PayPolicy of its own (see bargain), so its games get past the
  * reviews: offer inflation (pay held level in real terms), as cash or, with `schemes`, as those schemes and the rest in
- * cash, and if staff counter, accept their counter (which keeps the schemes, with cash on top).
+ * cash (at least the least in cash), and if staff counter, accept their counter (which keeps the schemes, with cash on top).
  */
 function settlePay(sim: Sim, state: GameState, strategy: Strategy): GameState {
   const review = sim.payReview(state);
@@ -761,7 +761,8 @@ function settlePay(sim: Sim, state: GameState, strategy: Strategy): GameState {
   if (strategy.pay) return bargain(sim, state, strategy.pay);
   const schemes = strategy.schemes;
   const worth = schemes ? sim.payOfferPreview(state, review.minOffer, schemes).schemeValue : 0;
-  const rise = Math.max(0, Math.round((review.inflation - worth) * 1000) / 1000);
+  // Never below the least in cash (#293): schemes come on top of it.
+  const rise = Math.max(review.minOffer, Math.round((review.inflation - worth) * 1000) / 1000);
   const offered = tryAction(sim, state, schemes ? { type: "offerPayRise", rise, schemes } : { type: "offerPayRise", rise });
   return sim.payReview(offered) ? tryAction(sim, offered, { type: "acceptPayCounter" }) : offered;
 }
@@ -785,7 +786,7 @@ function bargain(sim: Sim, state: GameState, policy: PayPolicy): GameState {
   const schemeWorth = schemes ? sim.payOfferPreview(s, first.minOffer, schemes).schemeValue : 0;
   let worth = policy.opening === "min" ? first.minOffer : toTenth(first.inflation + policy.opening);
   for (;;) {
-    const rise = Math.max(0, toTenth(worth - schemeWorth));
+    const rise = Math.max(first.minOffer, toTenth(worth - schemeWorth));
     const offered = tryAction(sim, s, schemes ? { type: "offerPayRise", rise, schemes } : { type: "offerPayRise", rise });
     if (offered === s) return tryAction(sim, s, { type: "acceptPayCounter" });
     s = offered;

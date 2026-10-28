@@ -223,7 +223,7 @@ const percent = (n: number) => `${Math.round(n * 100)}%`;
                   <td data-testid="pay-inflation">{{ pct(review.inflation) }}</td>
                 </tr>
                 <tr>
-                  <th scope="row">Least you can offer <span class="muted">inflation less a point</span></th>
+                  <th scope="row">Least you can offer in cash <span class="muted">inflation less a point, schemes on top</span></th>
                   <td data-testid="pay-min-offer">{{ pct(review.minOffer) }}</td>
                 </tr>
                 <tr>

@@ -167,8 +167,8 @@ npm run -s play -- summary <game>
   two, or one. Time stops the day before each, and the rise applies from its day. `look` shows when the next one is
   (`pay: ... next review before day N`). Each is named by the quarter it falls in (`Y2Q1` is quarter 1 of year 2). A
   game that never reaches Grow has none. Time stops, and `next` is refused until the review is settled. `pay` shows it: this review's inflation
-  (2–6%), the least you may offer (inflation less a point) and the most staff ask (inflation plus four points), where
-  they open. `offer 3.5` offers a 3.5% rise: staff accept an offer that reaches a hidden figure near a fair rise for
+  (2–6%), the least you may offer in cash (inflation less a point: schemes come on top of it, never in place of it,
+  and `payodds` refuses less too) and the most staff ask (inflation plus four points), where they open. `offer 3.5` offers a 3.5% rise: staff accept an offer that reaches a hidden figure near a fair rise for
   how the company is doing, or counter, and a dice roll decides how far they come down (a low roll makes them ask for
   more). `payodds 3.5` shows what an offer would cost a day and a year, and the odds on their counter. `accept pay`
   agrees their counter at any time. Your third offer is final: if staff don't accept it, it goes to a **tribunal**,

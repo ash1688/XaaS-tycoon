@@ -3060,20 +3060,21 @@ export const defaultConfig: GameConfig = {
     // Placeholders from the design (#189). Without a head of people the student deals with staff directly: staff take
     // a point off the roll on their counters, and count a scheme at about 70% of its value, as they want cash. A head of
     // people (#108) adds two points to the roll, takes half a point off staff's walk-away figure, has schemes counted at
-    // full value and leans the tribunal a little the student's way. Each scheme costs a different amount for what staff see in it, against the cash rise it stands in for (at a
-    // mean day rate of about £105): the pension about 0.76 of it, the health plan about 0.82, death in service about
-    // 0.57 and the discount scheme about 0.27. Cheaper than cash per point, but paid on every head for good, and the
-    // per-person ones cost more on a lower-paid team.
+    // full value and leans the tribunal a little the student's way (halved in #293: at 0.15 it won a pay cut 66-78% of
+    // the time). Each scheme costs a different amount for what staff see in it, against the cash rise it stands in for
+    // (at a mean day rate of about £105). Doubled in #293, as at about a third of cash they were the cheap way to
+    // settle: the pension now about 1.5 of it, the health plan about 1.6, death in service about 1.1 and the discount
+    // scheme about 0.55. Paid on every head for good, and the per-person ones cost more on a lower-paid team.
     peopleLead: {
       none: { rollBonus: -1, walkAwaySoftening: 0, schemeValuation: 0.7, tribunalLean: 0 },
-      headOfPeople: { rollBonus: 2, walkAwaySoftening: 0.005, schemeValuation: 1, tribunalLean: 0.15 },
+      headOfPeople: { rollBonus: 2, walkAwaySoftening: 0.005, schemeValuation: 1, tribunalLean: 0.075 },
     },
     schemes: {
       pension: {
         name: "Pension top-up",
         blurb: "The company pays more into staff pensions: a share of their pay on top.",
         maxLevel: 3,
-        wageShare: 0.004,
+        wageShare: 0.008,
         perPerson: 0,
         staffValue: 0.0075,
       },
@@ -3082,14 +3083,14 @@ export const defaultConfig: GameConfig = {
         blurb: "Eye tests, dental work and physio paid back: a flat sum per person.",
         maxLevel: 3,
         wageShare: 0,
-        perPerson: 0.3,
+        perPerson: 0.6,
         staffValue: 0.005,
       },
       deathInService: {
         name: "Death in service",
         blurb: "A payout to someone's family if they die while employed: cheap, and staff barely notice it.",
         maxLevel: 1,
-        wageShare: 0.001,
+        wageShare: 0.002,
         perPerson: 0,
         staffValue: 0.0025,
       },
@@ -3098,7 +3099,7 @@ export const defaultConfig: GameConfig = {
         blurb: "Staff discounts at shops and restaurants, like a Blue Light Card: very cheap per person.",
         maxLevel: 1,
         wageShare: 0,
-        perPerson: 0.05,
+        perPerson: 0.1,
         staffValue: 0.0025,
       },
       // The cheapest in cash and the most to staff: it's paid for in ownership, 1% of the company a level.
@@ -3107,7 +3108,7 @@ export const defaultConfig: GameConfig = {
         blurb: "Staff save from their pay to buy company shares cheaply: new shares for the staff share scheme, diluting you.",
         maxLevel: 3,
         wageShare: 0,
-        perPerson: 0.02,
+        perPerson: 0.04,
         staffValue: 0.01,
       },
     },
