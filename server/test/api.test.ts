@@ -1240,16 +1240,22 @@ describe("servers on-prem", () => {
     expect(company.servers.at(-1)).toMatchObject({ status: "pending", daysLeft: 3 });
   });
 
-  it("sells kit back for its share, but not kit still on order", async () => {
+  it("sells kit back for its share once a replacement is ready, but not kit still on order (#260)", async () => {
     const { company: before, act, get } = await setup();
-    await act({ type: "buyServer", server: "cache", size: "small" });
+    // Its only database: selling it would leave nothing for today's load.
+    expect((await act({ type: "sellServer", id: 2 })).json()).toMatchObject({ error: "cancel_unsafe" });
+    await act({ type: "buyServer", server: "database", size: "large" });
     const onOrder = await act({ type: "sellServer", id: 3 });
     expect(onOrder.statusCode).toBe(400);
     expect(onOrder.json()).toMatchObject({ error: "on_order" });
+    // With a replacement on order, the sale waits for it: still serving, and refunded when it goes.
     const sold = await act({ type: "sellServer", id: 2 });
     expect(sold.statusCode).toBe(200);
-    expect(sold.json<CompanyView>().cash).toBe(before.cash - onprem.purchase!.price.cache.small - onprem.purchase!.cablingCost + sellBack(onprem.purchase!.price.database.large));
-    expect((await get()).servers.map((s) => s.id)).toEqual([1, 3]);
+    const bought = before.cash - onprem.purchase!.price.database.large - onprem.purchase!.cablingCost;
+    expect(sold.json<CompanyView>().cash).toBe(bought);
+    const servers = (await get()).servers;
+    expect(servers.map((s) => s.id)).toEqual([1, 2, 3]);
+    expect(servers.find((s) => s.id === 2)!.leavesOn).toBe(servers.find((s) => s.id === 3)!.readyDay);
   });
 
   it("validates the body, and only buys and sells on-prem", async () => {

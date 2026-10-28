@@ -37,7 +37,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 60;
+export const GAME_STATE_VERSION = 61;
 
 /**
  * The four phases a game's jobs open in, in order, each opened by a milestone: Build from day 1, Launch when Launch is
@@ -594,6 +594,11 @@ export interface Server {
   overheatedUntil?: number;
   /** Crashed: it gives nothing on every day up to and including this one, while ops fix it. */
   crashedUntil?: number;
+  /**
+   * Cancelled or sold, waiting for its replacement (#260): it still serves and is billed, and goes at the end of this
+   * day, the day the replacement is ready. Left out otherwise.
+   */
+  leavesOn?: number;
 }
 
 /** A tier that became available, and the day it did. Tier 1 is available from the start, so isn't listed. */
@@ -1136,7 +1141,7 @@ export type Action =
   /** Rents a VM of a type and size, on IaaS. Billed monthly from the next day played, and ready the next day. */
   | { type: "rentServer"; server: ServerType; size: ServerSize }
   /** Cancels a rented VM, ready or not. Its rent stops: you pay only for the days you had it. */
-  | { type: "cancelServer"; id: number }
+  | { type: "cancelServer"; id: number; now?: boolean }
   /**
    * Buys a server of a type and size, on-prem. Its price is charged at once (infrastructure), with its cabling. It's on
    * order until it arrives after the delivery time, adding no capacity until then. An order can't be cancelled. It's
@@ -1144,7 +1149,7 @@ export type Action =
    */
   | { type: "buyServer"; server: ServerType; size: ServerSize; rack?: number }
   /** Sells back a bought server that has arrived, refunding the configured share of what it cost, at once. */
-  | { type: "sellServer"; id: number }
+  | { type: "sellServer"; id: number; now?: boolean }
   /** Buys a rack, on-prem: its price and cabling are charged at once, and it's installed at once. */
   | { type: "buyRack"; size: RackSize }
   /** Sells back an empty rack, refunding the configured share of what it cost, at once. */

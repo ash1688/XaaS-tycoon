@@ -509,6 +509,7 @@ Built-in **Easy, Normal and Hard** difficulties, working like game length:
 - The student picks one of the allowed difficulties when starting a company.
 - The class leaderboard is **split by difficulty**.
 - Difficulty changes numbers only (starting cash, event odds, price thresholds, how fast the danger meter climbs), never which systems exist.
+- **Dangerous cancels (#260):** cancelling a VM or selling kit waits for a replacement of the same kind on order (still serving and billed until it's ready). With none, a cancel that would leave capacity below today's load is refused on Easy and Normal; on Hard the student confirms it (`cancel N now`, or a dialog on the web) and the outage is theirs. The difficulty descriptions say so.
 
 ## Pacing
 
