@@ -55,6 +55,7 @@ import type {
   ProductTypeId,
   ProviderView,
   RunwayView,
+  ShortfallView,
   ServerOption,
   ServerView,
   SharesConfig,
@@ -426,6 +427,12 @@ export interface CompanyView {
    * the days of cash left at that rate (null when that income covers the costs), and this week's one-offs, kept apart.
    */
   runway: RunwayView;
+  /**
+   * How far cash can go below £0 before it has run out: shortfalls go onto the loan (an emergency loan with none) up
+   * to limitDays of the daily costs, with what they owe now and the room left; past that, the vulture VC's rescue, or
+   * after one, liquidation.
+   */
+  shortfall: ShortfallView;
   /**
    * What the company is worth today: the valuation, shares in issue, share price, and the drivers pushing it up or
    * down, in pounds, adding up to it.

@@ -40,6 +40,9 @@ const sim = createSim({
   calendar: { ...defaultConfig.calendar, holidays: [] },
   // Add-ons cost only their per-user price, so buying one fits in the starting cash.
   addons: { ...defaultConfig.addons, setupFeePerDevDay: 0 },
+  // Cash runs out the moment it goes below £0, as the rescue tests here were written for, unless a test says
+  // otherwise: shortfalls going on a loan first have their own test.
+  rescue: { ...defaultConfig.rescue, limitDays: 0 },
   servers: {
     ...defaultConfig.servers,
     types: {
@@ -1526,6 +1529,30 @@ describe("ledger, rescue buyout and liquidation", () => {
     });
     const [row] = await testDb.db.select().from(companies).where(eq(companies.id, company.id));
     expect(row!.status).toBe("liquidated");
+  });
+
+  it("puts a small shortfall on an emergency loan, with the room left before a rescue", async () => {
+    const lenient = createSim({ ...sim.config, rescue: defaultConfig.rescue });
+    const lenientApp = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), sim: lenient });
+    try {
+      const code = await newCode();
+      const created = await lenientApp.inject({
+        method: "POST",
+        url: `/api/codes/${code}/companies`,
+        payload: { name: "Acme", productType: "ecommerce", model: "iaas" },
+      });
+      const company = created.json<CompanyView>();
+      const url = `/api/codes/${code}/companies/${company.id}`;
+      await setCash(company.id, 10);
+      const body = (await lenientApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+      // £10 against the £25 a day: £15 short, on an emergency loan, and cash back at £0.
+      expect(body.company).toMatchObject({ day: 2, cash: 0, status: "active", rescue: null, loan: { emergency: true, amount: 15, term: 30 } });
+      expect(body.company.shortfall).toMatchObject({ limitDays: 7, owed: 15 });
+      expect(body.company.shortfall.room).toBe(body.company.shortfall.limit - 15);
+      expect(body.log[0]!.entries.map((e) => e.text)).toContainEqual(expect.stringMatching(/^Cash went £15 below £0 with no bank loan, so the bank opened an emergency loan/));
+    } finally {
+      await lenientApp.close();
+    }
   });
 
   it("keeps going at exactly zero cash", async () => {

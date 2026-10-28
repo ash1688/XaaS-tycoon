@@ -266,7 +266,23 @@ test("running out of cash brings a vulture VC's rescue, a buy-back, then liquida
   await goTo(student, "Home");
   await student.getByRole("button", { name: "Continue" }).click();
 
-  // The first time, a vulture VC rescues the company: the cash, the share it took and the cuts.
+  // A small shortfall goes on an emergency loan, as there's no bank loan: time stops, with the room left.
+  await expect(student.getByTestId("pause-reasons")).toContainText("Cash went below £0 and the shortfall went on your loan");
+  await expect(student.getByTestId("pause-reasons")).toContainText("more and a vulture VC steps in");
+  await expect(student.getByTestId("home-alerts")).toContainText("of shortfalls on your loan");
+  await expect(student.getByTestId("home-loan")).toContainText("emergency loan");
+  await goTo(student, "Finance");
+  await openTab(student, "Funding");
+  await expect(student.getByTestId("loan-panel")).toContainText("Emergency loan");
+  await expect(student.getByTestId("loan-emergency")).toContainText("so the term is short");
+  await expect(student.getByTestId("loan-shortfall")).toContainText("a vulture VC steps in");
+  await goTo(student, "Home");
+
+  // Far past what the loan can take, cash has run out: the first time, a vulture VC rescues the company, with the
+  // cash, the share it took and the cuts.
+  await setCash(-100_000);
+  await student.reload();
+  await student.getByRole("button", { name: "Continue" }).click();
   const rescue = student.getByTestId("home-day-log").getByTestId("rescue");
   await expect(rescue.first()).toContainText("a vulture VC rescued Broke Ltd");
   await expect(rescue.first()).toContainText("75% of the company. You now own 25%");
@@ -290,27 +306,27 @@ test("running out of cash brings a vulture VC's rescue, a buy-back, then liquida
   await setCash(1_000_000);
   await student.reload();
   await panel.getByTestId("buy-back").click();
-  await expect(panel.getByTestId("rescue-bought-back")).toContainText("You bought its shares back on day 2");
+  await expect(panel.getByTestId("rescue-bought-back")).toContainText("You bought its shares back on day 3");
   await openTab(student, "Valuation");
   await expect(student.getByTestId("cap-table")).not.toContainText("Vulture VC");
 
-  // The second time is liquidation: the game ends.
-  await setCash(100);
+  // The second time is liquidation: the game ends, and what's still owed on the emergency loan comes off the cash.
+  await setCash(-100_000);
   await student.reload();
   await goTo(student, "Home");
   await student.getByRole("button", { name: "Continue" }).click();
   await expect(student.getByTestId("liquidation-screen")).toContainText("Game over");
   await expect(student.getByTestId("liquidation-screen")).toContainText("gone into liquidation");
   await expect(student.getByTestId("low-cash")).toBeHidden();
-  await expect(student.getByTestId("home-loan")).toHaveText("No bank loan: banks don't lend to a company in liquidation.");
+  await expect(student.getByTestId("home-loan")).toHaveText("No more loans: banks don't lend to a company in liquidation.");
   await expect(student.getByTestId("home-day-log").getByTestId("liquidation")).toContainText(
-    "after the rescue buyout on day 2: Broke Ltd goes into liquidation",
+    "after the rescue buyout on day 3: Broke Ltd goes into liquidation",
   );
   // The game is over: Home shows the summary, Continue is off, and the pages are read-only.
   await expect(student.getByRole("button", { name: "Continue" })).toBeDisabled();
   const summary = student.getByTestId("summary");
-  await expect(summary).toContainText("Went into liquidation on day 3");
-  await expect(student.getByTestId("summary-rescue")).toContainText("Rescued by a vulture VC on day 2");
+  await expect(summary).toContainText("Went into liquidation on day 4");
+  await expect(student.getByTestId("summary-rescue")).toContainText("Rescued by a vulture VC on day 3");
   await expect(student.getByTestId("summary-cash")).toHaveText(/^-£/);
   await goTo(student, "People");
   await expect(student.getByTestId("read-only")).toContainText("This game has ended");

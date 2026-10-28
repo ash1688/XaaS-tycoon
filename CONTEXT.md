@@ -278,12 +278,32 @@ _Avoid_: Main investor
 One part of a VC round's cash. The first is paid on signing; the second only when the round's target is hit.
 _Avoid_: Instalment, payment
 
+**Daily costs**:
+Every daily outgoing at today's numbers: staff and executive pay, staff schemes, hosting, rent and power, add-ons and platform fees, Campaign spend and loan repayments. One figure for the costs line, runway, the IPO's predictable costs and the shortfall limit.
+_Avoid_: Burn, running costs, overheads
+
+**One-offs**:
+Outgoings that aren't daily costs: kit bought, severance, a tribunal fee, an event's bill, a grant paid back. Shown apart as "one-offs this week".
+_Avoid_: Capital costs, extras
+
+**Shortfall**:
+How far cash went below £0 on a day. It goes onto the bank loan being repaid (same repayment a day, a longer term), or onto an emergency loan with none, until what shortfalls owe would pass 7 days of daily costs: then the company has run out of cash.
+_Avoid_: Overdraft, deficit
+
+**Emergency loan**:
+The loan the bank opens for a shortfall when no loan is being repaid: at the rate a loan taken that day would have, over a short term (30 days). Shown as "loan (emergency)".
+_Avoid_: Overdraft, payday loan
+
+**Run out of cash**:
+Going further below £0 than the shortfall limit allows. The first time is a rescue buyout; after one, liquidation.
+_Avoid_: Going bust, bankrupt
+
 **Rescue buyout**:
 What happens the first time the company runs out of cash: a vulture VC puts in cash for a large share of the company and forces cost cuts.
 _Avoid_: Bailout, rescue
 
 **Vulture VC**:
-The investor behind a rescue buyout. Separate from the funding ladder; the student can buy its shares back at a price it sets.
+The investor behind a rescue buyout. Separate from the funding ladder; the student can buy its shares back at a price it sets, which follows its stake as later rounds dilute it.
 
 **Liquidation**:
 The end of a game: the company runs out of cash after it has already had a rescue buyout.

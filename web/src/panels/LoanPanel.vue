@@ -47,7 +47,7 @@ async function payOff() {
 <template>
   <section v-if="game.company" class="card cat-debt loan-panel" aria-labelledby="loan-heading" data-testid="loan-panel">
     <div class="row-between panel-head">
-      <h2 id="loan-heading">Bank loan</h2>
+      <h2 id="loan-heading">{{ open?.emergency ? "Emergency loan" : "Bank loan" }}</h2>
       <span v-if="loan" :class="['badge', open ? '' : 'done-badge']" data-testid="loan-status">
         {{ open ? "Repaying" : "Repaid" }}
       </span>
@@ -72,6 +72,16 @@ async function payOff() {
           <small>{{ open.daysLeft }} {{ open.daysLeft === 1 ? "repayment" : "repayments" }} left</small>
         </div>
       </div>
+      <p v-if="open.emergency" class="muted" data-testid="loan-emergency">
+        The bank opened this emergency loan when cash went below £0 with no loan to put the shortfall on. It wants its
+        money back fast, so the term is short.
+      </p>
+      <p v-if="game.company.shortfall.owed > 0" class="muted" data-testid="loan-shortfall">
+        {{ formatCash(game.company.shortfall.owed) }} of it is shortfalls from cash going below £0.
+        {{ formatCash(game.company.shortfall.room) }} more and
+        {{ game.company.rescue ? "the company goes into liquidation" : "a vulture VC steps in, for most of the company" }}:
+        that's {{ game.company.shortfall.limitDays }} days of costs ({{ formatCash(game.company.shortfall.limit) }}).
+      </p>
       <div
         class="loan-bar"
         role="progressbar"

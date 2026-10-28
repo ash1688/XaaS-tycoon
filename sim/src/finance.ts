@@ -62,6 +62,12 @@ const interestOf = (entries: LogEntry[]) => entries.reduce((sum, e) => sum + (e.
 export type RescueHook = (state: GameState) => { state: GameState; entries: LogEntry[] };
 
 /**
+ * What happens first when cash goes below £0, given the state with the day settled: the shortfall goes onto a loan,
+ * with cash back at £0 and its entries. Null when that would take it past the limit: cash has run out.
+ */
+export type ShortfallHook = (state: GameState) => { state: GameState; entries: LogEntry[] } | null;
+
+/**
  * Where the customers stood at the end of a day, kept with its spend for the summary, and its hours down (the last of
  * recent uptime's) for the IPO's uptime record.
  */
@@ -78,15 +84,16 @@ export function createFinance(config: GameConfig) {
    * The ledger. Applies a day's entries to cash, adds each charge to its category's running total and the day's
    * spend, and income to its own total, apart from the costs, so profit is income − profitCosts. Money borrowed or
    * raised from funders is cash but neither, kept on the day so the cash chart adds up. If cash has gone below zero,
-   * the first time `rescue` rescues the company, and after that it's liquidation and the game ends. Then ends it if
-   * this was the final day. Returns the entries with any notice of the rescue or end added. Liquidation on the final
-   * day counts as liquidation.
+   * `cover` first puts the shortfall on a loan; past its limit cash has run out, and the first time `rescue` rescues
+   * the company, and after that it's liquidation and the game ends. Then ends it if this was the final day. Returns
+   * the entries with any notice of the loan, rescue or end added. Liquidation on the final day counts as liquidation.
    */
   function settle(
     state: GameState,
     day: number,
     entries: LogEntry[],
     rescue?: RescueHook,
+    cover?: ShortfallHook,
   ): { state: GameState; entries: LogEntry[] } {
     const daySpend = noSpend();
     let dayIncome = 0;
@@ -126,7 +133,11 @@ export function createFinance(config: GameConfig) {
         },
       ],
     };
-    if (cash < 0 && rescue && !state.rescue) {
+    const covered = cash < 0 && cover ? cover(settled) : null;
+    if (covered) {
+      settled = covered.state;
+      entries = [...entries, ...covered.entries];
+    } else if (cash < 0 && rescue && !state.rescue) {
       const rescued = rescue(settled);
       settled = rescued.state;
       entries = [...entries, ...rescued.entries];

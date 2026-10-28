@@ -124,6 +124,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("loan.termPerDay", "Money", "Bank loan", "Shorter term per day later", "Days taken off the term for each day later the loan is taken (0.5 = a day shorter every two days).", range(0, 10, 0.05));
   add("loan.minTermDays", "Money", "Bank loan", "Shortest term", "The fewest repayment days a loan has, however late it's taken.", range(1, 3_650, 1));
   add("loan.minDays", "Money", "Bank loan", "No loans in the last days", "The bank won't lend with fewer days than this left in the game.", range(1, 365, 1));
+  add("loan.emergencyTermDays", "Money", "Bank loan", "Emergency loan term", "Repayment days for the emergency loan the bank opens when cash goes below £0 with no loan being repaid.", range(1, 365, 1));
   add("valuation.minimum", "Money", "Valuation", "Lowest valuation", "A company is never valued below this, even with no revenue.", POUNDS);
   add("valuation.averageDays", "Money", "Valuation", "Averaged over", "Days that revenue, paying users and satisfaction are averaged over for the valuation, so one day can't swing it and a price change can't move it at once.", GAME_DAY);
   add("valuation.fallDays", "Money", "Valuation", "Falls in revenue counted over", "Revenue is the lower of its average over the days above and over this many, so income lost shows within these days but a rise counts slowly. While paying users or income over this many days are below the same days before (or satisfaction drops below the line), the valuation can't rise, and once they aren't it catches up over about this many days.", GAME_DAY);
@@ -180,6 +181,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("negotiation.moves.high", "Money", "Negotiation", "High roll moves", "Share of the way from the offer to the counter the next offer moves on a high roll.", SHARE);
   add("negotiation.moves.middle", "Money", "Negotiation", "Middle roll moves", "Share of the way the next offer moves on a middle roll.", SHARE);
   add("negotiation.moves.low", "Money", "Negotiation", "Low roll moves", "Share of the way the next offer moves on a low roll. Below 0 the offer gets worse instead: −0.2 moves it a fifth of the counter's distance the other way.", range(-1, 1, 0.01));
+  add("rescue.limitDays", "Money", "Rescue buyout", "How far below £0", "Days of daily costs that shortfalls can go onto the loan before the vulture VC steps in (or, after a rescue, liquidation).", GAME_DAY);
   add("rescue.breathingDays", "Money", "Rescue buyout", "Breathing space", "Days of losses the vulture VC's cash covers after the cost cuts, on top of what took cash below £0.", GAME_DAY);
   add("rescue.minCover", "Money", "Rescue buyout", "Least cover a day", "The breathing space counts at least this share of a day's running costs, even if the company is losing less.", SHARE);
   add("rescue.share", "Money", "Rescue buyout", "Share taken", "The vulture VC's share of the company once its new shares are issued (0.75 = 75%).", range(0.01, 0.99, 0.01));

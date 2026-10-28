@@ -491,11 +491,18 @@ export function renderStatus(sim: Sim, state: GameState): string {
   );
 
   const loan = sim.loan(state);
+  const loanLabel = loan?.emergency ? "loan (emergency)" : "loan";
   if (loan?.remaining) {
     lines.push(
-      `loan: ${money(loan.remaining)} left, ${money(loan.dailyRepayment)}/day for ${loan.daysLeft} more days (to day ${loan.lastDay}); paying off now costs ${money(loan.payoff)}, saving ${money(loan.interestSaved)} interest`,
+      `${loanLabel}: ${money(loan.remaining)} left, ${money(loan.dailyRepayment)}/day for ${loan.daysLeft} more days (to day ${loan.lastDay}); paying off now costs ${money(loan.payoff)}, saving ${money(loan.interestSaved)} interest`,
     );
-  } else if (loan) lines.push(`loan: repaid${loan.paidOffDay !== null ? ` early on day ${loan.paidOffDay}` : ""}`);
+  } else if (loan) lines.push(`${loanLabel}: repaid${loan.paidOffDay !== null ? ` early on day ${loan.paidOffDay}` : ""}`);
+  // Once cash has gone below £0: how much further shortfalls can go on the loan before cash has run out.
+  if (state.firstShortfallDay !== null && state.status === "playing") {
+    const short = sim.shortfall(state);
+    const next = state.rescue ? "liquidation" : "the vulture VC steps in";
+    lines.push(`below £0: ${money(short.owed)} of shortfalls on the loan; ${money(short.room)} more (of ${short.limitDays} days of costs, ${money(short.limit)}) and ${next}`);
+  }
   const valuation = sim.valuation(state);
   const table = sim.capTable(state);
   lines.push(
@@ -1952,10 +1959,10 @@ function fundingLines(sim: Sim, state: GameState): string[] {
 }
 
 /**
- * Log entry kinds worth showing every day they appear. Feature, migration and API entries show only on days they stop
- * time.
+ * Log entry kinds worth showing every day they appear, loan notes included (a loan taken, a shortfall put on it, a
+ * loan repaid). Feature, migration and API entries show only on days they stop time.
  */
-const SHOWN_KINDS = new Set(["outage", "event", "rescue", "liquidation", "finished", "support", "price", "launch", "staff", "funding", "danger", "calendar", "rival", "drift"]);
+const SHOWN_KINDS = new Set(["outage", "event", "rescue", "liquidation", "finished", "support", "price", "launch", "staff", "funding", "danger", "calendar", "rival", "drift", "loan"]);
 const STOPPING_KINDS = new Set(["feature", "migration", "api"]);
 
 /**

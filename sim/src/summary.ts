@@ -46,11 +46,16 @@ export interface LoanSummary {
   interestPaid: number;
   /** Of the repaid, the amount borrowed being paid back: not a cost, as borrowing it wasn't income. */
   principalRepaid: number;
-  /** Interest saved by paying loans off early. */
+  /** Interest saved by paying loans off early, not counting the interest waived on one settled as the game ended. */
   interestSaved: number;
-  /** Still to repay on the latest loan: 0 once repaid. A loan's term can run past the final day. */
+  /** Still to repay on the latest loan: 0 once repaid, or once the game has ended and settled it. */
   remaining: number;
-  /** Every loan repaid in full. False on a game that ended while one was still being repaid. */
+  /**
+   * What was still owed on the loan when the game ended (its term can run past the final day), taken off the cash
+   * then: 0 if nothing was.
+   */
+  settledAtEnd: number;
+  /** Every loan repaid in full, one settled as the game ended included. False only while the game is still played. */
   fullyRepaid: boolean;
 }
 
@@ -195,8 +200,9 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
       repaid,
       interestPaid,
       principalRepaid: repaid - interestPaid,
-      interestSaved: sum((l) => (l.paidOffDay === null ? 0 : l.total - l.repaid)),
+      interestSaved: sum((l) => (l.paidOffDay === null || l.settledAtEnd ? 0 : l.total - l.repaid)),
       remaining: total - repaid,
+      settledAtEnd: loan.settledAtEnd ?? 0,
       fullyRepaid: !isOpen(loan),
     };
   }

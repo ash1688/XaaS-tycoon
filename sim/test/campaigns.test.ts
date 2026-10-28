@@ -441,12 +441,14 @@ describe("marketers (#180)", () => {
   });
 
   it("stop their campaigns when a rescue's cuts let them go", () => {
-    // Little cash and big campaigns, so cash runs out and the vulture VC's cuts take a quarter of each team.
+    // Little cash and big campaigns, so cash runs out and the vulture VC's cuts take a quarter of each team. Cash runs
+    // out at £0 here, with no shortfalls going on a loan first.
+    const strict = createSim({ ...quiet, rescue: { ...quiet.rescue, limitDays: 0 } });
     let state: GameState = { ...withMarketers({ senior: 4 }), cash: 20_000 };
     for (const t of ["casual", "enthusiasts", "professionals", "businesses"] as const) state = sim.applyAction(state, start(t, 5_000, 30));
     const texts: string[] = [];
     for (let i = 0; i < 60 && !state.rescue; i++) {
-      const played = sim.advance(state);
+      const played = strict.advance(state);
       state = played.state;
       texts.push(...played.log.flatMap((d) => d.entries.map((e) => e.text)));
     }
@@ -457,7 +459,7 @@ describe("marketers (#180)", () => {
     expect(ended).toHaveLength(1);
     expect(ended[0]).toMatchObject({ customerType: "businesses", endDay: state.day });
     expect(texts).toContain("Your campaign for businesses has stopped: its marketer has gone.");
-    expect(sim.campaigns(state)).toMatchObject({ running: 3, marketers: { count: 3, free: 0 } });
+    expect(strict.campaigns(state)).toMatchObject({ running: 3, marketers: { count: 3, free: 0 } });
   });
 
   it("are paid from the config, with schema entries", () => {
