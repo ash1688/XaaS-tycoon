@@ -22,6 +22,8 @@ npm run dev
 
 `npm run dev` starts the server on http://localhost:3080 and the web client on http://localhost:5180 (open this one). Postgres runs in Docker on host port 5433, so it doesn't clash with a local Postgres install.
 
+To run it without Docker on a machine that already has PostgreSQL 13 or newer, such as a college Windows VM, put your settings in `.env` and run `npm run serve`. That builds the web client and starts the server on its own. [docs/windows-vm.md](docs/windows-vm.md) has the step-by-step guide.
+
 To run the whole thing in Docker instead (app on http://localhost:3080):
 
 ```bash
