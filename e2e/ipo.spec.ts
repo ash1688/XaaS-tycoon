@@ -15,6 +15,7 @@ const EASY_IPO = {
   "ipo.products.ecommerce.payingUsers": 0,
   "ipo.minTradingDays": 0,
   "ipo.recordDays": 2,
+  "ipo.costsHoldDays": 0,
   "ipo.minUptime": 0,
   "ipo.minSatisfaction": 0,
   "ipo.maxCostSwing": 5,
@@ -133,5 +134,7 @@ test("float a company that's ready, ring the opening bell and watch the first da
   await expect(student.getByTestId("floated-screen")).toContainText("Bell Ltd floated on day 2");
   await expect(student.getByTestId("summary")).toContainText("Floated on day 2");
   await expect(student.getByTestId("summary-market-value")).toHaveText(`£${r.marketValue.toLocaleString("en-GB")}`);
+  // No investor's money was taken on the way, so the float is flagged (#265).
+  await expect(student.getByTestId("summary-bootstrapped")).toContainText("Floated without outside investors");
   await expect(student.getByRole("button", { name: "Continue" })).toBeDisabled();
 });

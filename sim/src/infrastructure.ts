@@ -1,5 +1,5 @@
 import type { GameConfig, ModelId, ProductTypeId } from "./config.ts";
-import { autoscaling, eventHours, outageHours, powerSaving } from "./benefits.ts";
+import { autoscaling, eventHours, outageHours, paasAutoscaling, powerSaving } from "./benefits.ts";
 import type { Customers } from "./customers.ts";
 import type { EventToday, Events } from "./events.ts";
 import { outageShare, runningCostShare } from "./executives.ts";
@@ -31,6 +31,39 @@ export interface ProviderView {
   monthlyPerUserBill: number;
   /** The provider's flat monthly bill, after any price rises. */
   monthlyCost: number;
+}
+
+/**
+ * Too few ops for the servers running (#259): "ops: 1 of 2 needed, capacity cut to 70%". The cut slides with the share
+ * of ops work missing.
+ */
+export interface OpsShortfallView {
+  /** The ops team's work a day, in mids. */
+  have: number;
+  /** Ops staff the running servers need, in people. */
+  needed: number;
+  /** The share of capacity left after the cut: 0.7 for a 30% cut. */
+  capacityShare: number;
+}
+
+/**
+ * PaaS autoscaling (#261), on for every PaaS company: the app instances running today, the minimum set by hand that
+ * the nightly baseline never goes below, and the most bursts can reach.
+ */
+export interface AutoscaleView {
+  instances: number;
+  /** The instances last set by hand: the baseline's floor. 1 until any are. */
+  min: number;
+  /** The most instances bursts can reach: set by the student, or maxFactor × today's instances until they do. */
+  max: number;
+  /** Whether the student set the maximum, rather than it following today's instances. */
+  maxSet: boolean;
+  /** Each burst instance's price for a day: burstPremium × an instance's day rate. */
+  burstDayCost: number;
+  /** Managed autoscaling (the benefit) is on, rather than basic autoscaling. */
+  managed: boolean;
+  /** The nightly baseline as a multiple of yesterday's CU demand: 1.25 basic, 1.5 managed. */
+  baseline: number;
 }
 
 /**
@@ -158,18 +191,84 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
     return Math.round(list * runningCostShare(config, state));
   }
 
+  /** The share of the ops the company needs that the ops team covers: 1 when nothing's missing. */
+  function opsCovered(state: GameState): number {
+    const work = servers.opsNeeded(state);
+    return work <= 0 ? 1 : Math.min(staffOutput(config, state, "ops"), work) / work;
+  }
+
   /**
-   * Each factor scales capacity. Models that need ops lose capacity in step with missing ops: on a model with servers,
-   * every tier does. Later mechanics add their own factors here.
+   * Each factor scales capacity. Models that need ops lose capacity in step with the share of ops work missing, so one
+   * short in a big team cuts less than one short in a small one (#259): on a model with servers, every tier does.
+   * Later mechanics add their own factors here.
    */
   function capacityFactors(state: GameState): number[] {
-    const needed = servers.opsNeeded(state);
-    const staffed = needed === 0 ? 1 : Math.min(staffOutput(config, state, "ops"), needed) / needed;
     const { unstaffedShare } = config.capacity;
-    return [unstaffedShare + (1 - unstaffedShare) * staffed];
+    return [unstaffedShare + (1 - unstaffedShare) * opsCovered(state)];
+  }
+
+  /**
+   * Too few ops for the servers running: the ops team's work, the ops needed and the share of capacity left, rounded
+   * down so any cut shows (#284). Null when ops cover it, and on a model without servers, where the provider carries
+   * the load whatever the ops: there's no capacity to cut.
+   */
+  function opsShortfall(state: GameState): OpsShortfallView | null {
+    if (!servers.hasServers(state.model) || opsCovered(state) >= 1) return null;
+    return {
+      have: Math.round(staffOutput(config, state, "ops") * 100) / 100,
+      needed: servers.opsNeeded(state),
+      capacityShare: Math.floor(capacityFactor(state) * 100) / 100,
+    };
   }
 
   const capacityFactor = (state: GameState) => capacityFactors(state).reduce((c, f) => c * f, 1);
+
+  /**
+   * What losing servers would do to today's load from tomorrow, for a cancel or sale (#260), to follow "without it, ":
+   * "today's load would be 130% of the compute (CU) left", "400 of today's 2,000 API calls would be dropped", or null if
+   * what's left still carries it. Measured
+   * against the servers kept now, so taking away one that wasn't helping a tier already over isn't blamed for it.
+   */
+  function shortBy(before: GameState, without: GameState): string | null {
+    if (!servers.hasServers(before.model)) return null;
+    const ratio = (s: GameState) => servers.serve(unitCapacity(s, s.day + 1), s.demand);
+    const was = ratio(before);
+    const will = ratio(without);
+    if (will.ratio > 1 && will.ratio > was.ratio + 1e-9) {
+      const tier = will.binding === "cu" ? "compute (CU)" : "database capacity (DBU)";
+      return Number.isFinite(will.ratio) ? `today's load would be ${Math.round(100 * will.ratio)}% of the ${tier} left` : `there'd be no ${tier} left for today's load`;
+    }
+    const calls = before.api?.calls ?? 0;
+    const served = (s: GameState) => Math.floor((apiuOn(s, s.day + 1) ?? Infinity) * config.api.callsPerApiu);
+    const lost = Math.min(calls, served(before)) - Math.min(calls, served(without));
+    if (lost > 0) return `${count.format(lost)} of today's ${count.format(calls)} API calls would be dropped`;
+    return null;
+  }
+
+  /** PaaS autoscaling's settings and today's instances; null off PaaS (#261). */
+  function autoscaleView(state: GameState): AutoscaleView | null {
+    const scaling = paasAutoscaling(config, state, state.model);
+    const platform = servers.managed(state);
+    if (!scaling || !platform) return null;
+    const min = state.autoscale?.min ?? 1;
+    const set = state.autoscale?.max;
+    const max = set ?? Math.min(platform.maxInstances, Math.max(min, Math.ceil(platform.instances * scaling.maxFactor)));
+    const burstDayCost = Math.round((platform.instanceMonthlyCost / config.billing.daysPerMonth) * scaling.burstPremium * 100) / 100;
+    return { instances: platform.instances, min, max, maxSet: set !== undefined, burstDayCost, managed: scaling.managed, baseline: 1 + scaling.headroom };
+  }
+
+  /**
+   * The baseline for tomorrow (#261): the day's CU demand plus the headroom, in instances, never below the minimum set
+   * by hand nor over the maximum. Null off PaaS.
+   */
+  function autoscaleBaseline(state: GameState): number | null {
+    const scaling = paasAutoscaling(config, state, state.model);
+    const view = autoscaleView(state);
+    const platform = servers.managed(state);
+    if (!scaling || !view || !platform || platform.instanceUnits <= 0) return null;
+    const wanted = Math.ceil((state.demand.cu * (1 + scaling.headroom)) / platform.instanceUnits);
+    return Math.min(view.max, Math.max(1, view.min, wanted));
+  }
 
   /** Units the servers give on a day, after any cut for missing ops. */
   const unitCapacity = (state: GameState, day: number) => servers.capacityOn(state, day, capacityFactor(state));
@@ -291,7 +390,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
         const cause = served.overloaded ? served.cause : eventCause();
         outage = { text: outageText(cause, hoursDown), cashDelta: 0, kind: "outage" };
       }
-      return { load, demand, rng, overloaded: served.overloaded, hoursDown, charges: served.charges, outage };
+      return { load, demand, rng, overloaded: served.overloaded, hoursDown, charges: served.charges, outage, maxHit: served.maxHit };
     }
 
     // With no capacity limit, the load always fits: only an event takes the service down.
@@ -305,7 +404,7 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
       const cause = overloaded ? `load hit ${percent}% of capacity` : eventCause();
       outage = { text: outageText(cause, hoursDown), cashDelta: 0, kind: "outage" };
     }
-    return { load, demand, rng, overloaded, hoursDown, charges, outage };
+    return { load, demand, rng, overloaded, hoursDown, charges, outage, maxHit: false };
   }
 
   /**
@@ -328,13 +427,31 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
         const text = servers.isManaged(state.model)
           ? `${scaler.event.name}: the platform scaled up for ${what} over your setup`
           : `${scaler.event.name}: extra VMs for ${what} over capacity`;
-        charges.push({ text, cashDelta: -cost, category: "infrastructure" });
+        charges.push({ text, cashDelta: -cost, category: "infrastructure", oneOff: true });
       }
-      return { ratio: 0, overloaded: false, charges, cause: "" };
+      return { ratio: 0, overloaded: false, charges, cause: "", maxHit: false };
+    }
+    // PaaS autoscaling (#261) adds burst instances for CU over the baseline, up to the maximum, each at a premium; not on
+    // a day the autoscaler fails. Demand over the maximum is an outage, and the first time time stops.
+    const scale = autoscaleView(state);
+    let maxHit = false;
+    let afterBurst = served;
+    if (scale && served.cuRatio > 1) {
+      const fails = today.some((t) => t.outcome.autoscalerFails);
+      const perInstance = cap.cu / Math.max(1, cap.loadBalancer.counted);
+      const room = Math.max(0, scale.max - scale.instances);
+      const wanted = perInstance > 0 ? Math.ceil((demand.cu - cap.cu) / perInstance) : room;
+      const burst = fails ? 0 : Math.min(room, wanted);
+      if (burst > 0) {
+        const text = `Autoscaling: ${burst} burst instance${burst === 1 ? "" : "s"} for a spike over your ${scale.instances}, at ${pounds(scale.burstDayCost)} each for the day`;
+        charges.push({ text, cashDelta: -Math.round(burst * scale.burstDayCost), category: "infrastructure", oneOff: true });
+      }
+      afterBurst = servers.serve({ ...cap, cu: cap.cu + burst * perInstance }, demand);
+      maxHit = !fails && wanted > room && afterBurst.cuRatio > 1;
     }
     // Autoscaling (a model benefit) starts extra VMs for what's over capacity, up to its most, charged by the unit.
     const scaling = autoscaling(config, state, state.model);
-    let afterScaling = served;
+    let afterScaling = afterBurst;
     if (scaling && served.ratio > 1) {
       const cu = Math.min(Math.max(0, demand.cu - cap.cu), cap.cu * scaling.most);
       const dbu = Math.min(Math.max(0, served.dbuAfterCache - cap.dbu), cap.dbu * scaling.most);
@@ -342,20 +459,25 @@ export function createInfrastructure(config: GameConfig, customers: Customers, e
       if (cost > 0) {
         const extra = [cu > 0 && `${count.format(Math.ceil(cu))} CU`, dbu > 0 && `${count.format(Math.ceil(dbu))} DBU`];
         const text = `Autoscaling: extra VMs for ${extra.filter(Boolean).join(" and ")} over capacity`;
-        charges.push({ text, cashDelta: -cost, category: "infrastructure" });
+        charges.push({ text, cashDelta: -cost, category: "infrastructure", oneOff: true });
       }
       afterScaling = servers.serve({ ...cap, cu: cap.cu + cu, dbu: cap.dbu + dbu }, demand);
     }
     const tier = afterScaling.binding === "cu" ? "compute (CU)" : "the database (DBU)";
+    const beyond = maxHit && afterScaling.binding === "cu" ? `, over your autoscaling maximum of ${scale!.max} instances` : "";
     const cause = Number.isFinite(afterScaling.ratio)
-      ? `${tier} hit ${Math.round(100 * afterScaling.ratio)}% of capacity${afterScaling === served ? "" : ", even with autoscaling"}`
+      ? `${tier} hit ${Math.round(100 * afterScaling.ratio)}% of capacity${beyond || (afterScaling === served ? "" : ", even with autoscaling")}`
       : `${tier} had no capacity`;
-    return { ratio: afterScaling.ratio, overloaded: afterScaling.ratio > 1, charges, cause };
+    return { ratio: afterScaling.ratio, overloaded: afterScaling.ratio > 1, charges, cause, maxHit };
   }
 
   return {
     opsNeeded,
     opsNeededNow: servers.opsNeeded,
+    opsShortfall,
+    shortBy,
+    autoscaleView,
+    autoscaleBaseline,
     upfrontEntries,
     upfrontCost,
     usualDemand,

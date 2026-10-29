@@ -40,7 +40,7 @@ export function createCustomerMix(config: GameConfig, features: Features, pricin
    * one it's over. Twice the casual users' threshold brings a quarter as many of them.
    */
   const priceFilter = (state: GameState) =>
-    byType((t) => Math.min(1, (pricing.monthlyNow(state) / pricing.threshold(state.productType, t)) ** -config.pricing.newUserFilter));
+    byType((t) => Math.min(1, (pricing.monthlyNow(state) / pricing.threshold(state, t)) ** -config.pricing.newUserFilter));
 
   /** Each reason new users split as they do. Multiplied together and scaled, they're the mix new users arrive in. */
   function newUserFactors(state: GameState): NewUserFactor[] {

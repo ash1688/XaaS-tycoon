@@ -104,7 +104,7 @@ describe("the MVP", () => {
     const { state: done, log } = sim.advance(state);
     expect(sim.mvp(done)).toMatchObject({ progress: 6.4, done: true, doneDay: 5, daysLeft: 0, launchDay: 5 });
     expect(log[0]!.entries.map((e) => e.text)).toContain(
-      "MVP done: press Launch when you're set up, and your first users start arriving. Developers can build features now.",
+      "MVP done: press Launch when you're set up, and your first users start arriving. Until then your developers can work on optimisation (the developer slider); from Launch you can buy tier 1 add-ons for them to set up. Research opens the higher tiers in the Grow phase.",
     );
     expect(sim.launch(done)).toMatchObject({ status: "ready", day: null, rampDay: 0, missing: [] });
     const waited = playTo(done, 12);

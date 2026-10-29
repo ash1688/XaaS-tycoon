@@ -38,6 +38,7 @@ export function createRescue(
   shares: Shares,
   usualDay: (state: GameState) => UsualDay,
   opsNeeded: (state: GameState) => number,
+  clearShortfall: (state: GameState) => { state: GameState; entries: LogEntry[] },
 ) {
   const r = config.rescue;
   /** "2 senior developers", "1 agency mid ops person". */
@@ -78,19 +79,25 @@ export function createRescue(
         }
       }
     }
-    const hiresCancelled = state.hiring.reduce((sum, h) => sum + h.count, 0);
-    return { state: { ...state, ...counts, hiring: [] }, cuts, hiresCancelled, severance };
+    // Staff retraining stay: they're already on the payroll, not hires.
+    const hiresCancelled = state.hiring.filter((h) => !h.retraining).reduce((sum, h) => sum + h.count, 0);
+    return { state: { ...state, ...counts, hiring: state.hiring.filter((h) => h.retraining) }, cuts, hiresCancelled, severance };
   }
 
-  /** The rescue buyout, on the day cash first went below £0: cuts, then cash for new shares. */
+  /**
+   * The rescue buyout, on the day cash ran out: cuts, then cash for new shares. Its cash also pays off the shortfalls
+   * on the loan, so the company has the full room below £0 again (#288).
+   */
   const rescue: RescueHook = (state) => {
     const cut = cutCosts(state);
     const savedPerDay = dailyStaffCost(config, state) - dailyStaffCost(config, cut.state);
-    const day = usualDay(cut.state);
+    const cleared = clearShortfall(cut.state);
+    const shortfalls = cut.state.cash - cleared.state.cash;
+    const day = usualDay(cleared.state);
     const losses = -state.cash;
     const cover = Math.max(-day.dailyNet, r.minCover * day.dailyCosts);
-    // It pays the severance of the permanent staff it lets go, on top of the losses.
-    const amount = Math.ceil((losses + cut.severance + r.breathingDays * cover) / 100) * 100;
+    // It pays the shortfalls and the severance of the permanent staff it lets go, on top of the losses.
+    const amount = Math.ceil((losses + shortfalls + cut.severance + r.breathingDays * cover) / 100) * 100;
     const inIssue = state.shareholders.reduce((sum, h) => sum + h.shares, 0);
     const newShares = Math.round((inIssue * r.share) / (1 - r.share));
     const share = newShares / (inIssue + newShares);
@@ -101,7 +108,7 @@ export function createRescue(
     ];
     const entries: LogEntry[] = [
       {
-        text: `Cash ran out, and a vulture VC rescued ${state.companyName}: it put in ${pounds(amount)} (${pounds(losses)} to cover the losses${cut.severance ? `, ${pounds(cut.severance)} for severance` : ""} and about ${r.breathingDays} days of breathing space) for ${count.format(newShares)} new shares, ${percent(share)} of the company. You now own ${percent(yours)}. Run out of cash again and it's liquidation.`,
+        text: `Cash ran out, past what the loan could take, and a vulture VC rescued ${state.companyName}: it put in ${pounds(amount)} (${pounds(losses)} to cover the losses${shortfalls ? `, ${pounds(shortfalls)} to pay off the shortfalls on the loan` : ""}${cut.severance ? `, ${pounds(cut.severance)} for severance` : ""} and about ${r.breathingDays} days of breathing space) for ${count.format(newShares)} new shares, ${percent(share)} of the company. You now own ${percent(yours)}. Run out of cash again and it's liquidation.`,
         cashDelta: amount,
         kind: "rescue",
       },
@@ -120,6 +127,7 @@ export function createRescue(
       day: state.day,
       amount,
       losses,
+      shortfalls,
       shares: newShares,
       share,
       cuts: cut.cuts,
@@ -130,29 +138,36 @@ export function createRescue(
     };
     return {
       state: {
-        ...finance.chargeNow(cut.state, entries),
+        ...finance.chargeNow(cleared.state, entries),
         shareholders: [...state.shareholders, { id: "vulture", shares: newShares, day: state.day }],
         rescue: record,
+        // The room below £0 is fixed afresh the next time cash goes there, at the costs after the cuts.
+        shortfallLimit: null,
       },
-      entries,
+      entries: [...entries, ...cleared.entries],
     };
   };
 
   /**
    * The vulture VC's price for all its shares: their part of the business's value today × the premium, but at least
-   * minReturn × the cash it put in. The business's value is the valuation's drivers but net cash and the minimum: the
-   * company buys them with its cash, so counting it would put the price out of reach whatever it had.
+   * minReturn × the cash it put in, scaled to its stake now against the stake it took: later rounds dilute it, and the
+   * price follows. The business's value is the valuation's drivers but net cash and the minimum: the company buys them
+   * with its cash, so counting it would put the price out of reach whatever it had.
    */
   function buyBackPrice(state: GameState, vultureShares: number): { price: number; detail: string } {
     const { sharesInIssue, drivers } = shares.valuation(state);
     const business = drivers.reduce((sum, d) => sum + (d.id === "netCash" || d.id === "minimum" ? 0 : d.amount), 0);
-    const worth = (Math.max(0, business) * vultureShares) / sharesInIssue;
-    const floor = r.minReturn * (state.rescue?.amount ?? 0);
+    const stake = vultureShares / sharesInIssue;
+    const worth = Math.max(0, business) * stake;
+    const took = state.rescue?.share ?? stake;
+    const diluted = took > 0 && stake < took ? stake / took : 1;
+    const floor = r.minReturn * (state.rescue?.amount ?? 0) * diluted;
     const price = Math.ceil(Math.max(worth * r.buyBackPremium, floor) / 100) * 100;
+    const scaled = diluted < 1 ? `, scaled to its ${percent(took)} stake now diluted to ${percent(stake)}` : "";
     const detail =
       worth * r.buyBackPremium >= floor
-        ? `${r.buyBackPremium}× its ${percent(vultureShares / sharesInIssue)} of the business, worth ${pounds(Math.round(worth))} at today's valuation leaving out the cash`
-        : `${r.minReturn}× the ${pounds(state.rescue?.amount ?? 0)} it put in: it never sells back for less`;
+        ? `${r.buyBackPremium}× its ${percent(stake)} of the business, worth ${pounds(Math.round(worth))} at today's valuation leaving out the cash`
+        : `${r.minReturn}× the ${pounds(state.rescue?.amount ?? 0)} it put in${scaled}: it never sells back for less`;
     return { price, detail };
   }
 

@@ -1748,6 +1748,28 @@ fieldset > p {
   min-width: 0;
 }
 
+/* The money raised, what the company is worth, the score, and who owns it (#264). */
+.summary .score {
+  margin: 0.75rem 0 1rem;
+}
+
+.summary .score-headline {
+  font-size: 1.15rem;
+  margin: 0 0 0.25rem;
+}
+
+.summary .score-line {
+  margin: 0 0 0.5rem;
+}
+
+.summary .score table {
+  width: 100%;
+}
+
+.summary .score caption {
+  text-align: left;
+}
+
 /* Profit or loss, said by the label and the sign as well as the colour. */
 .summary-headline {
   display: flex;
@@ -4716,4 +4738,129 @@ select:disabled {
 
 .infra-page .server-actions {
   display: block;
+}
+
+/* The daily costs figure: hovering over it, or focusing it, shows the breakdown by heading. */
+.costs-figure {
+  position: relative;
+  /* Above a Home card's own click target, which covers the card. */
+  z-index: 1;
+  border-bottom: 1px dotted var(--muted);
+  cursor: help;
+}
+
+.costs-breakdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  left: 0;
+  z-index: 20;
+  min-width: 16rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: normal;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 12%);
+}
+
+.costs-figure:hover .costs-breakdown,
+.costs-figure:focus .costs-breakdown,
+.costs-figure:focus-within .costs-breakdown {
+  display: block;
+}
+
+.costs-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.costs-note {
+  margin-top: 0.3rem;
+  color: var(--muted);
+}
+
+/* How customers split over a price (BandChart): a stacked bar per customer type, then everyone. */
+.band-chart {
+  margin: 0.75rem 0;
+}
+
+.band-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.9rem;
+  margin: 0.3rem 0 0.5rem;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85rem;
+}
+
+.band-swatch {
+  display: inline-block;
+  width: 0.8rem;
+  height: 0.8rem;
+  margin-right: 0.3rem;
+  border-radius: 2px;
+  vertical-align: -0.1rem;
+}
+
+.band-row {
+  display: grid;
+  grid-template-columns: minmax(6rem, 9rem) 1fr;
+  align-items: center;
+  gap: 0.15rem 0.6rem;
+  margin: 0.3rem 0;
+  font-size: 0.85rem;
+}
+
+.band-total {
+  font-weight: 700;
+}
+
+.band-upgrade {
+  grid-column: 2;
+}
+
+.band-bar {
+  display: flex;
+  height: 1rem;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--border);
+}
+
+.band-part {
+  height: 100%;
+}
+
+.band-accept,
+.band-joinPaid {
+  background: var(--pos);
+}
+
+.band-joinFree {
+  background: var(--mix-enthusiasts);
+}
+
+.band-grumble {
+  background: var(--debt);
+}
+
+.band-support {
+  background: var(--shared);
+}
+
+.band-toFree {
+  background: var(--mix-casual);
+}
+
+.band-leave {
+  background: var(--neg);
+}
+
+.band-notJoin {
+  background: var(--rival-2);
 }

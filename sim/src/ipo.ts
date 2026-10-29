@@ -1,5 +1,5 @@
 import { CSUITE_ROLES, type GameConfig } from "./config.ts";
-import { executiveIn, patchingNeed } from "./executives.ts";
+import { executiveIn } from "./executives.ts";
 import { count, pounds, type Finance } from "./finance.ts";
 import { marketSize } from "./market.ts";
 import { layerOwner } from "./responsibility.ts";
@@ -7,7 +7,7 @@ import { nextRandom } from "./rng.ts";
 import type { Servers } from "./servers.ts";
 import type { Shares } from "./shares.ts";
 import { staffOutput } from "./staff.ts";
-import { SimError, type DaySpend, type GameState, type IpoApplication, type IpoResult, type LogEntry } from "./state.ts";
+import { SimError, type DaySpend, type GameState, type IpoApplication, type IpoResult, type IpoScored, type LogEntry } from "./state.ts";
 
 /** The readiness check's six conditions. */
 export type IpoConditionId = "trading" | "usersAndRevenue" | "uptime" | "costs" | "security" | "csuite";
@@ -99,6 +99,19 @@ const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 const HOURS_PER_DAY = 24;
 const MODEL_NAMES = { onprem: "on-prem", iaas: "IaaS", paas: "PaaS", saas: "SaaS" } as const;
 
+/** The last `days` days played, from the launch on: before it there's nothing to keep a record of. */
+const sinceLaunch = (state: Pick<GameState, "launchDay" | "day" | "spendByDay">, days: number) =>
+  state.launchDay === null ? [] : state.spendByDay.filter((d) => d.day >= state.launchDay! && d.day > state.day - days);
+
+/**
+ * Uptime over the last `days` days played since launch, as a percentage: over the days since launch while there are
+ * fewer, and 100 before any. The status, the IPO's record and tier 3's condition all use it (#285), so they agree.
+ */
+export function uptimeSinceLaunch(state: Pick<GameState, "launchDay" | "day" | "spendByDay">, days: number): number {
+  const played = sinceLaunch(state, days);
+  return 100 * (1 - played.reduce((s, d) => s + d.hoursDown, 0) / (Math.max(1, played.length) * HOURS_PER_DAY));
+}
+
 /**
  * The IPO: the readiness check on the Finance page, applying (with its hidden cold-market chance), the float and the
  * first day of trading. Ringing the opening bell ends every game. See IpoConfig.
@@ -108,26 +121,29 @@ export function createIpo(
   finance: Finance,
   shares: Shares,
   servers: Servers,
-  dailyNet: (state: GameState) => number,
+  runway: (state: GameState) => { dailyCosts: number; dailyNet: number },
 ) {
   const c = config.ipo;
 
-  const startingIpo = () => ({ ipo: { applications: [], approvedDay: null, retryDay: 0, result: null } });
+  const startingIpo = () => ({ ipo: { applications: [], approvedDay: null, retryDay: 0, result: null, scored: null } });
 
-  /** The last recordDays days played, from the launch on: before it there's nothing to keep a record of. */
-  const record = (state: GameState) =>
-    state.launchDay === null
-      ? []
-      : state.spendByDay.filter((d) => d.day >= state.launchDay! && d.day > state.day - c.recordDays);
+  /** The last recordDays days played, from the launch on. */
+  const record = (state: GameState) => sinceLaunch(state, c.recordDays);
   const sum = (days: DaySpend[], value: (d: DaySpend) => number) => days.reduce((s, d) => s + value(d), 0);
-  /** A day's running costs: everything charged but a loan's capital, which isn't a cost. */
-  const runningCosts = (d: DaySpend) => d.staff + d.infrastructure + d.cabling + d.power + d.addons + d.interest;
+  /** A day's running costs, for profit: everything charged but a loan's capital, which isn't a cost. */
+  const runningCosts = (d: DaySpend) => d.staff + d.infrastructure + d.cabling + d.power + d.addons + d.campaigns + d.interest;
 
   /** Comfort over a "more than" threshold: 1 at comfortMargin over it. */
   const over = (value: number, need: number) => (need <= 0 ? 1 : clamp01((value / need - 1) / c.comfortMargin));
   /** Comfort over a percentage that tops out at 100: 1 a comfortMargin of the way from it to 100. */
   const overPercent = (value: number, need: number) =>
     need >= 100 ? 1 : clamp01((value - need) / (c.comfortMargin * (100 - need)));
+
+  /**
+   * Uptime over the record: the last recordDays days played since launch (fewer before then). The status shows this
+   * figure too, so the uptime the student sees is the one the IPO judges.
+   */
+  const recordUptime = (state: GameState): number => uptimeSinceLaunch(state, c.recordDays);
 
   function readiness(state: GameState): { conditions: IpoCondition[]; signals: MarketSignal[] } {
     const product = c.products[state.productType];
@@ -147,27 +163,32 @@ export function createIpo(
     const payersMet = payers >= product.payingUsers;
 
     const down = sum(days, (d) => d.hoursDown);
-    const uptime = 100 * (1 - down / (n * HOURS_PER_DAY));
+    const uptime = recordUptime(state);
 
-    // The costliest days are set aside, so one fraud bill or severance payment doesn't spoil a steady record.
+    // The daily costs each day ended on: the costs line's figure, so one-offs don't count. The costliest days are set
+    // aside, so one campaign doesn't spoil a steady record.
     const setAside = Math.min(Math.max(0, Math.round(c.costDaysSetAside)), Math.max(0, days.length - 1));
-    const costs = days.map(runningCosts).sort((a, b) => a - b).slice(0, days.length - setAside);
+    const costs = days.map((d) => d.costs).sort((a, b) => a - b).slice(0, days.length - setAside);
     const kept = Math.max(1, costs.length);
     const mean = costs.reduce((s, x) => s + x, 0) / kept;
     const sd = Math.sqrt(costs.reduce((s, x) => s + (x - mean) ** 2, 0) / kept);
     const swing = mean > 0 ? sd / mean : 0;
     const setAsideText =
       setAside === 0 ? "" : setAside === 1 ? ", your costliest day set aside" : `, your ${setAside} costliest days set aside`;
+    // Costs hold costsHoldDays at their new level after the last C-suite hire before the record counts (#292).
+    const lastHire = state.csuite.hired.reduce<number | null>((last, e) => (last === null || e.day > last ? e.day : last), null);
+    const holdsFrom = lastHire === null ? null : lastHire + c.costsHoldDays;
+    const settling = holdsFrom !== null && state.day < holdsFrom;
 
     const yours = layerOwner(state.model, "os") === "you";
     const opsNeeded = servers.opsNeeded(state);
     const ops = staffOutput(config, state, "ops");
-    // A CISO keeps patches up to date with fewer ops.
-    const patched = !yours || ops >= opsNeeded * patchingNeed(config, state);
+    // The ops needed count a CISO, who keeps patches up to date with fewer.
+    const patched = !yours || ops >= opsNeeded;
 
     const income = sum(days, (d) => d.income);
     const profit = income - sum(days, runningCosts);
-    const net = dailyNet(state);
+    const { dailyCosts, dailyNet: net } = runway(state);
     const profitable = hasRecord && profit >= 0 && income > 0;
     const margin = income > 0 ? profit / income : 0;
 
@@ -220,9 +241,11 @@ export function createIpo(
       {
         id: "costs",
         label: "Predictable costs",
-        met: hasRecord && swing <= c.maxCostSwing,
-        needed: `daily running costs over the last ${c.recordDays} days varying by no more than ${percent(c.maxCostSwing)}${setAsideText}: big one-off purchases count against you`,
-        now: recorded(`Varying by ${percent(swing)} around ${pounds(mean)} a day`),
+        met: hasRecord && swing <= c.maxCostSwing && !settling,
+        needed: `daily costs over the last ${c.recordDays} days varying by no more than ${percent(c.maxCostSwing)}${setAsideText}, and holding ${c.costsHoldDays} days at their new level after your last C-suite hire: one-offs such as kit bought don't count`,
+        now:
+          recorded(`${pounds(Math.round(dailyCosts))} a day, varying by ${percent(swing)} around ${pounds(Math.round(mean))}`) +
+          (settling ? `; your last C-suite hire was on day ${lastHire}, so costs must hold at the new level until day ${holdsFrom} before you can apply` : ""),
       },
       c.maxCostSwing <= 0 ? 1 : clamp01((c.maxCostSwing - swing) / (c.comfortMargin * c.maxCostSwing)),
     );
@@ -303,19 +326,35 @@ export function createIpo(
     };
   }
 
-  function offer(state: GameState): IpoOffer {
+  /** The figures the IPO is scored on today: the comfort, the valuation and price, growth and each graded line. */
+  function scoreNow(state: GameState): IpoScored {
+    const r = readiness(state);
     const v = shares.valuation(state);
-    const offerPrice = v.sharePrice;
+    return {
+      comfort: comfortOf(r),
+      valuation: v.valuation,
+      offerPrice: v.sharePrice,
+      growth: v.growth,
+      graded: [...r.conditions.filter((x) => x.id !== "csuite"), ...r.signals].map(({ label, now, comfort }) => ({ label, now, comfort })),
+    };
+  }
+
+  /** What the IPO is scored on: frozen at approval (#292), so changes between approval and the bell don't count. */
+  const scored = (state: GameState): IpoScored => state.ipo.scored ?? scoreNow(state);
+
+  function offer(state: GameState): IpoOffer {
+    const v = scored(state);
+    const offerPrice = v.offerPrice;
     const floats: FloatPreview[] = [];
     for (let p = Math.round(c.minFloat * 100); p <= Math.round(c.maxFloat * 100); p++) {
       floats.push(preview(state, p / 100, offerPrice));
     }
     return {
       valuation: v.valuation,
-      sharesInIssue: v.sharesInIssue,
+      sharesInIssue: sharesInIssue(state),
       offerPrice,
       studentShares: studentShares(state),
-      studentShare: studentShares(state) / v.sharesInIssue,
+      studentShare: studentShares(state) / sharesInIssue(state),
       minFloat: c.minFloat,
       maxFloat: c.maxFloat,
       floats,
@@ -398,7 +437,8 @@ export function createIpo(
         ipo: { ...state.ipo, applications, retryDay: state.day + c.coldDelayDays },
       };
     }
-    return { ...state, rng, ipo: { ...state.ipo, applications, approvedDay: state.day } };
+    // Approved: what it's scored on freezes now (#292).
+    return { ...state, rng, ipo: { ...state.ipo, applications, approvedDay: state.day, scored: scoreNow(state) } };
   }
 
   /** A roughly normal random number with mean 0 and standard deviation 1, and the next RNG state. */
@@ -448,10 +488,9 @@ export function createIpo(
         { min: c.minFloat, max: c.maxFloat },
       );
     }
-    const r = readiness(state);
-    const comfort = comfortOf(r);
-    const v = shares.valuation(state);
-    const offerPrice = v.sharePrice;
+    // Scored on the figures frozen at approval (#292).
+    const v = scored(state);
+    const { comfort, offerPrice } = v;
     const p = preview(state, float, offerPrice);
     const growth = Math.max(-1, Math.min(1, v.growth));
     const drift = c.minDrift + (c.maxDrift - c.minDrift) * comfort + c.growthDrift * growth;
@@ -474,7 +513,7 @@ export function createIpo(
       day: state.day,
       float,
       newShares: p.newShares,
-      sharesBefore: v.sharesInIssue,
+      sharesBefore: sharesInIssue(state),
       sharesAfter: p.sharesAfter,
       valuation: v.valuation,
       offerPrice,
@@ -486,7 +525,7 @@ export function createIpo(
       studentShare: yours / p.sharesAfter,
       studentValue: Math.round(yours * closePrice),
       comfort: Math.round(comfort * 100) / 100,
-      reasons: reasons([...r.conditions.filter((x) => x.id !== "csuite"), ...r.signals], v.growth, float, drift, closePrice / offerPrice - 1),
+      reasons: reasons(v.graded, v.growth, float, drift, closePrice / offerPrice - 1),
     };
     const entry: LogEntry = {
       text: `${state.companyName} floated ${percent(float)}: ${count.format(p.newShares)} new shares at ${pounds(offerPrice)} raised ${pounds(p.cashRaised)}.`,
@@ -502,7 +541,7 @@ export function createIpo(
     };
   }
 
-  return { startingIpo, ipoView, applyForIpo, ringBell };
+  return { startingIpo, ipoView, applyForIpo, ringBell, recordUptime };
 }
 
 export type Ipo = ReturnType<typeof createIpo>;

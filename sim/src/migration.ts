@@ -298,7 +298,7 @@ export function createMigration(
     const m = state.migration;
     if (!m) return [];
     const firstDay = m.phase === MIGRATION_PHASES[0] && m.phaseDaysDone === 0;
-    return [...(firstDay ? upfrontEntries(state, m) : []), ...newSetupEntries(state)];
+    return [...(firstDay ? upfrontEntries(state, m).map((e) => ({ ...e, oneOff: true })) : []), ...newSetupEntries(state)];
   }
 
   /** A seeded roll for whether a migration overruns, and by how many days. Always draws once, then again if so. */
@@ -408,7 +408,7 @@ export function createMigration(
     const exitPenalty = exitPenaltyOf(state);
     if (exitPenalty > 0) {
       const text = `Exit penalty: leaving ${left.name}`;
-      entries.push({ text, cashDelta: -exitPenalty, category: "infrastructure" });
+      entries.push({ text, cashDelta: -exitPenalty, category: "infrastructure", oneOff: true });
     }
     // Vendor lock-in. Add-ons belong to the SaaS provider, so they stay active and billed for the whole migration
     // (you're still on SaaS, paying for both setups) and are left behind on the day you leave: billing and their

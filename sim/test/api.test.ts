@@ -98,12 +98,16 @@ describe("calls against APIU", () => {
     let state = act(shop(), { type: "buyApi" }, { type: "rentServer", server: "api", size: "large" });
     state = sim.advance(state).state;
     const calls = state.api!.calls;
-    const runway = sim.runway(state);
-    expect(runway.dailyIncome).toBe(sim.dailyIncome(state) + Math.round(calls * pricePerCall));
     const { state: next, log } = sim.advance(state);
     expect(sim.api(next)).toMatchObject({ served: calls, dropped: 0 });
     expect(apiIncome(log)).toBe(Math.round(calls * pricePerCall));
     expect(apiLines(log)).toEqual([]);
+    // The runway's income is the income recorded over the last 7 days, the calls' included.
+    const income = entries(log).filter((e) => e.kind === "income").reduce((sum, e) => sum + e.cashDelta, 0);
+    expect(income).toBeGreaterThanOrEqual(apiIncome(log));
+    expect(next.spendByDay.at(-1)!.income).toBe(income);
+    const week = next.spendByDay.filter((d) => d.day >= 1 && d.day > next.day - 7).reduce((sum, d) => sum + d.income, 0);
+    expect(sim.runway(next).dailyIncome).toBeCloseTo(week / Math.min(7, next.day), 2);
   });
 
   it("loses capacity with ops short, like every other tier", () => {

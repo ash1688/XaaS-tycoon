@@ -109,7 +109,7 @@ function describe(e: PlayEventView): string {
     case "letGoAgency":
       return `Let go all agency staff${p.pool ? ` (${String(p.pool)})` : ""}`;
     case "moveStaff":
-      return `Moved one ${poolName(p.from ?? "?")} to ${poolName(p.to)}`;
+      return `Retraining one ${poolName(p.from ?? "?")} as ${poolName(p.to)}`;
     case "buildFeature":
       return `Started building ${featureName(p.feature)}`;
     case "buyAddon":

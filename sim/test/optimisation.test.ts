@@ -61,7 +61,7 @@ const refusal = (fn: () => unknown) => {
 describe("the developer slider", () => {
   it("starts at 0, with nothing optimised", () => {
     for (const model of MODEL_IDS) {
-      expect(sim.optimisation(begin(model)), model).toEqual({ share: 0, days: 0, saving: 0, cap: cap[model], output: 0 });
+      expect(sim.optimisation(begin(model)), model).toEqual({ share: 0, days: 0, saving: 0, cap: cap[model], output: 0, atCap: false });
     }
   });
 
@@ -113,7 +113,7 @@ describe("the developer slider", () => {
 
   it("doesn't count developers on optimisation as idle", () => {
     const idle = (state: GameState) => sim.staff(state).find((p) => p.pool === "developers")!.idle;
-    expect(idle(begin())).toMatch(/Or move the slider/);
+    expect(idle(begin())).toMatch(/[Mm]ove the slider to put them on optimisation/);
     expect(idle(act(begin(), { type: "setOptimisation", share: 1 }))).toBeNull();
     expect(idle(act(begin(), { type: "setOptimisation", share: 0.4 }))).toMatch(/the 60% of your developers' time not on optimisation/);
   });

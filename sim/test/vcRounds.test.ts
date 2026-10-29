@@ -333,7 +333,10 @@ describe("the IPO gate", () => {
     expect(unmet(state)).toEqual(["csuite"]);
     const hired = hireOpen(state);
     expect(SERIES_IDS.slice(1).map((r) => hired.investors.vc.firstApproachDay[r])).toEqual([null, null, null]);
-    expect(easyIpo.ipo(profitable(hired))).toMatchObject({ ready: true, canApply: true });
+    // Costs hold 14 days at their new level after the last hire first (#292).
+    expect(unmet(hired)).toEqual(["costs"]);
+    const settled = { ...hired, day: hired.day + easyIpo.config.ipo.costsHoldDays };
+    expect(easyIpo.ipo(profitable(settled))).toMatchObject({ ready: true, canApply: true });
   });
 
   it("puts no Series round on the checklist", () => {

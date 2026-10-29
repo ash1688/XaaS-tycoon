@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, useId, watch } from "vue";
+import { computed, onBeforeUnmount, ref, useId, watch } from "vue";
 import type { CampaignView, CustomerTypeId } from "@xaas/sim";
-import { formatCash, formatCount, formatPrice } from "../../api";
+import type { CampaignQuoteView } from "@xaas/server/api-types";
+import { api, formatCash, formatCount, formatPrice } from "../../api";
 import SubTabs from "../../components/SubTabs.vue";
 import { useGame } from "../../game";
 
@@ -9,7 +10,8 @@ import { useGame } from "../../game";
 // campaign (a customer type, a budget and a length) and it runs from the next day, spending its budget evenly and
 // bringing new users of that type directly, on top of normal growth. A pound buys fewer users as the market fills up
 // and when another campaign targets the same type; one started just before a holiday works better. Each campaign shows
-// its spend, users brought in and cost per user as it runs. Marketers (hired on People) run them, one each: a new
+// its spend, users brought in and cost per user as it runs, against the quote it was given: the quote plays the whole run
+// forward as the market fills, as a range of cost per user (or "market almost full"). Marketers (hired on People) run them, one each: a new
 // campaign gets the most senior free marketer, and a senior brings more users per pound than a junior. With no free
 // marketer the form is disabled and says why. Each user a campaign brings in also grows the market for good (brand
 // awareness), up to a cap: the page shows how far campaigns have grown it, and what each campaign added.
@@ -56,8 +58,38 @@ const budgetOk = computed(
 const daysOk = computed(
   () => typeof days.value === "number" && Number.isInteger(days.value) && !!view.value && days.value >= view.value.minDays && days.value <= view.value.maxDays,
 );
-/** About how many users the planned campaign brings in all, at what a pound buys today. */
-const estimate = computed(() => (picked.value && budgetOk.value ? Math.floor((budget.value as number) * picked.value.usersPerPound) : null));
+/**
+ * The planned campaign's quote over its whole run, from the sim as the form changes (and each day played): a range of
+ * users and of cost per user, or that the market is almost full.
+ */
+const QUOTE_DELAY_MS = 250;
+const quote = ref<CampaignQuoteView | null>(null);
+let quoteTimer: number | undefined;
+let quoteSeq = 0;
+watch(
+  [type, budget, days, budgetOk, daysOk, () => game.company?.day, () => view.value?.canStart],
+  () => {
+    window.clearTimeout(quoteTimer);
+    const seq = ++quoteSeq;
+    if (!view.value?.canStart || !budgetOk.value || !daysOk.value) {
+      quote.value = null;
+      return;
+    }
+    const plan = { type: type.value, budget: budget.value as number, days: days.value as number };
+    quoteTimer = window.setTimeout(async () => {
+      try {
+        const result = await api.campaignQuote(game.code, game.id, plan.type, plan.budget, plan.days);
+        if (seq === quoteSeq) quote.value = result;
+      } catch {
+        if (seq === quoteSeq) quote.value = null;
+      }
+    }, QUOTE_DELAY_MS);
+  },
+  { immediate: true },
+);
+onBeforeUnmount(() => window.clearTimeout(quoteTimer));
+/** About how many users the quote expects, for "market almost full". */
+const aboutUsers = computed(() => (quote.value ? Math.round((quote.value.users.low + quote.value.users.high) / 2) : 0));
 const perDay = computed(() => (budgetOk.value && daysOk.value ? Math.round((budget.value as number) / (days.value as number)) : null));
 const tooDear = computed(() => budgetOk.value && !!game.company && (budget.value as number) > game.company.cash);
 const canSubmit = computed(() => !!view.value?.canStart && budgetOk.value && daysOk.value && !tooDear.value && !game.busy && !game.over);
@@ -67,6 +99,7 @@ const past = computed(() => view.value?.campaigns.filter((c) => c.status === "fi
 
 const STATUS: Record<CampaignView["status"], string> = { starting: "Starts tomorrow", running: "Running", finished: "Finished", stopped: "Stopped" };
 const each = (c: CampaignView) => (c.costPerUser === null ? "—" : formatPrice(c.costPerUser));
+const quoted = (q: { low: number; high: number } | null) => (q === null ? "—" : `${formatPrice(q.low)}–${formatPrice(q.high)}`);
 
 function start() {
   if (!canSubmit.value) return;
@@ -162,10 +195,16 @@ const stop = (c: CampaignView) => game.actFrom("campaign-stop", { type: "stopCam
           <p v-if="view.canStart && nextGrade" class="muted" data-testid="campaign-marketer">
             Run by a {{ nextGrade.name.toLowerCase() }} marketer: ×{{ nextGrade.output }} users per pound.
           </p>
-          <p v-if="view.canStart && estimate !== null && perDay !== null" class="muted" data-testid="campaign-estimate">
-            About {{ formatCount(estimate) }} {{ picked?.name.toLowerCase() }} at today's market, spending
-            {{ formatCash(perDay) }} a day.
-            <template v-if="estimate > 0">About {{ formatPrice(Math.round((100 * (budget as number)) / estimate) / 100) }} a user.</template>
+          <p v-if="view.canStart && quote && perDay !== null" class="muted" data-testid="campaign-estimate">
+            <template v-if="quote.almostFull || !quote.costPerUser">
+              Market almost full: about {{ formatCount(aboutUsers) }} {{ picked?.name.toLowerCase() }} for
+              {{ formatCash(quote.budget) }}, spending {{ formatCash(perDay) }} a day.
+            </template>
+            <template v-else>
+              {{ formatPrice(quote.costPerUser.low) }}–{{ formatPrice(quote.costPerUser.high) }} a user over its whole run:
+              {{ formatCount(quote.users.low) }}–{{ formatCount(quote.users.high) }} {{ picked?.name.toLowerCase() }}, spending
+              {{ formatCash(perDay) }} a day. Each pound brings fewer as the market fills, so the quote allows for that.
+            </template>
           </p>
           <p v-if="tooDear" class="error" role="alert" data-testid="campaign-too-dear">
             That's more than the {{ formatCash(game.company.cash) }} you have.
@@ -188,6 +227,7 @@ const stop = (c: CampaignView) => game.actFrom("campaign-stop", { type: "stopCam
               <th scope="col">Spent</th>
               <th scope="col">Users brought in</th>
               <th scope="col">Cost per user</th>
+              <th scope="col">Quoted</th>
               <th scope="col">Market grown</th>
               <th scope="col">Status</th>
             </tr>
@@ -203,6 +243,7 @@ const stop = (c: CampaignView) => game.actFrom("campaign-stop", { type: "stopCam
               <td data-testid="campaign-spent">{{ formatCash(c.spent) }} of {{ formatCash(c.budget) }}</td>
               <td data-testid="campaign-users">{{ formatCount(c.users) }}</td>
               <td data-testid="campaign-cost-per-user">{{ each(c) }}</td>
+              <td data-testid="campaign-quoted">{{ quoted(c.quote) }}</td>
               <td data-testid="campaign-market-added">+{{ formatCount(c.marketAdded) }}</td>
               <td>
                 {{ STATUS[c.status] }}

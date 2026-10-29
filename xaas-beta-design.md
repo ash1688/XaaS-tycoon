@@ -243,9 +243,11 @@ In the game, launches and releases use made-up names, not real ones.
 - **Grades:** each pool (developers, ops, support, moderators) has junior, mid and senior staff, each with its own pay and output. For example, a senior clears about twice the tickets of a junior for about 1.7× the pay: cheaper per unit of work, dearer up front.
 - **Hiring lead time grows with grade:** juniors arrive in about 3 days, mids in 7 and seniors in 14. A crisis forces a choice between fast, cheap juniors and better seniors who arrive too late. *Placeholders.*
 - **The head of each pool** (C-suite) improves that pool's output.
+- **Ops shortfall (#259):** ops staff are needed for servers once they're running, not while they're on order. With too few, every tier's capacity is cut in step with the share of ops work missing: 40% + 60% × the share covered, measured against the work the servers need before rounding up to people, so being a little short cuts a little. The status says so (`ops: 1 of 2 needed, capacity cut to 70%`), time stops the day a shortfall starts, and ordering a server that will need more ops than the team has says so at once.
 - **Moderators** are a fourth pool, only for products where users post content: social, video and the games network. They handle reports as support handles tickets; too few means falling satisfaction and a higher chance of a lawsuit.
 - **Agency staff:** temporary staff who cost **1.25×** a permanent member of the same grade and do **half the work**. They arrive the next day, and can be let go and rehired freely with no severance. They're the expensive way to cover a short-term gap.
 - **Permanent staff** get a **severance payout** when let go, so cutting them has a cost.
+- **Retraining (#258):** moving permanent staff into another team takes them off their old team at once; they join the new team after their grade's lead time, at the same grade, shown under staff as retraining with their start day. They're paid the new team's rate meanwhile, with no severance or recruitment cost. Before, a move was instant and free, and bots used it to fix an ops shortfall overnight.
 - **Staff you let go can join a rival.**
 - **Hire and let go by number:** a number box next to each pool, so hiring 25 staff is one entry, not 25 clicks.
 - **Researchers and marketers** are two more pools, which unlock when the **first angel approaches**, whether or not the student takes the money. They're **permanent hires only** (no agency staff), with the same grades, lead times and severance as other pools, and start at 0. Both are flagged as **idle** on the staff page when they have nothing to do: researchers once there's nothing left to unlock, marketers when not running a campaign.
@@ -298,6 +300,7 @@ A 180-day game counts internally as one year, split into **four equal quarters**
   - **Schemes only go up.** A slider can be raised in a later review but never lowered or removed; a toggle once on stays on. Only the increase counts towards that review's offer.
   - If the tribunal picks the staff's figure, it's a cash rise only; if it picks the student's or the middle, the student's scheme increases apply.
 - **The rise is pool-wide.** It lifts every staff pool's day rate, so existing staff get it and new hires join at the new rate. The C-suite is left out. Pay reviews replace wage inflation from drift.
+- **Inflation lifts the fair price too** (#251). Each settled review raises the product's fair price by a quarter of that review's inflation figure (`payReview.fairPriceShare`), compounding, whatever rise was agreed with staff: inflation is the market. A 180-day game's three reviews leave it roughly 1.5–4.5% higher. (All of it outran what students could charge, so it was cut to a quarter.) The student's own price never moves by itself.
 - **Without a head of people** the student deals with staff directly: staff are stricter on the roll, want cash, and value schemes at only about 70%. **With a head of people** they're friendlier, value schemes fully or more, and the tribunal leans slightly the student's way.
 - **A pay history** on the People page lists past reviews, how each ended, the rises given and the current schemes with their running costs.
 
@@ -384,6 +387,16 @@ In the alpha, willingness to pay and the free/paid split were set per product. I
 
 The **Customers page** shows the mix as a bar, with each type's price threshold marked and contract users as a separate block. Pricing becomes reading the market rather than guessing.
 
+**Opening price and price locks (#257).** Pressing Launch sets an **opening price** (the fair price if none is given), and launch users react to it through the bands below: they join paying, join free or don't join. The price holds from pressing Launch until the usual 14-day lock after go-live. It's also locked from IPO approval until the opening bell, and the lock lifts if a cold market postpones the float.
+
+**Sliding-scale bands.** Every price change splits each customer type into bands that slide with the size of the change against the type's threshold:
+
+- **A rise** splits paying users into **accept**, **grumble online**, **contact support** (which raises tickets), **drop to free** and **leave**. Small rises are mostly accepted; large ones mostly drop to free or leave. While the backlash lasts, those grumbling online send a share of new users to the rival that's the best value for each type, more the more there are.
+- **A cut** brings new users (who join paying, join free or don't join) and turns some free users into payers. It's measured from the **expected price**, the latest that has held for 30 days, so a cut back from a recent rise is no bargain, while a cut from a price that has settled works as a discount. A cut to a price that's still dear to a type counts for less. A rise is still measured from the lowest price remembered over 60 days, so rising and cutting back over and over loses overall.
+- **Conversion:** at or below the fair price, more free users start paying each day, up to 30% more (#251).
+
+The pricing panel and the Launch step show a stacked bar per customer type and in total, updating as the price changes; the text game's `preview` and `launchpreview` print the bands.
+
 A price change hits each customer type differently, so students learn to price for who their users are. Growing a different mix (for example through marketing or features aimed at professionals) changes what the company can charge. *Types and figures are placeholders.*
 
 ## Tiered features and add-ons
@@ -411,6 +424,8 @@ In the alpha every feature and add-on was available from day 1, and SaaS student
 | On-prem | **Hardware efficiency:** better cooling and power efficiency. (Developers tuning the product to need fewer CU and DBU per user is now the developer slider, on every model.) |
 | IaaS | **Reserved instances** (cheaper VMs if you commit for longer), **autoscaling** for traffic spikes |
 | PaaS | **Managed autoscaling**, a **CDN** that takes load off the app, managed monitoring that warns before outages |
+
+**PaaS autoscaling (#261).** Every PaaS company autoscales. **Basic autoscaling** keeps a **baseline** of 1.25× yesterday's CU demand each night (`models.paas.servers.managed.autoscaling`); the Managed autoscaling benefit raises it to 1.5×. Either way it's never below the instances set by hand (a **minimum**, never reset: before, the platform reset 15 instances to 5 overnight). During a day, **burst instances** cover spikes over the baseline at 2× an instance's price, up to a **maximum** (`autoscale max N`, or a control on the web; about 3× today's instances until set). Demand over the maximum is an outage, and time stops the first time. A new **autoscaler failure** encounter stops bursts for a day; it waits up to about a week of the danger meter for a spike day (a payday, a holiday that brings load, a traffic spike) and resets the meter like any event. The status shows `instances 18 (min 15, max 30)`. *Placeholders: 1.5×, 2× and 3×.*
 | SaaS | Provider add-ons such as integrations, analytics and a **premium support plan** that shortens provider outages |
 
 The lesson: the more of the stack you own, the more you can optimise it yourself; the less you own, the more you buy ready-made from the provider.
@@ -496,6 +511,7 @@ Built-in **Easy, Normal and Hard** difficulties, working like game length:
 - The student picks one of the allowed difficulties when starting a company.
 - The class leaderboard is **split by difficulty**.
 - Difficulty changes numbers only (starting cash, event odds, price thresholds, how fast the danger meter climbs), never which systems exist.
+- **Dangerous cancels (#260):** cancelling a VM or selling kit waits for a replacement of the same kind on order (still serving and billed until it's ready). With none, a cancel that would leave capacity below today's load is refused on Easy and Normal; on Hard the student confirms it (`cancel N now`, or a dialog on the web) and the outage is theirs. The difficulty descriptions say so.
 
 ## Pacing
 

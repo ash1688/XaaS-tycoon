@@ -87,6 +87,8 @@ export function createCustomers(
       support.satisfactionGrowth(state),
       // Rivals: winning or losing each customer type's new users to them.
       rivals.rivalGrowth(state),
+      // A rise's backlash: grumbling online sends some new users to rivals.
+      pricing.grumbleGrowth(state, day),
     ];
   }
 
@@ -183,7 +185,21 @@ export function createCustomers(
     return `Paying users lost: ${count.format(left)} left and ${count.format(toFree)} dropped to free, because ${why.join(" and ")}.`;
   }
 
-  return { startingCustomers, baseLoad, baseDemand, grow };
+  /**
+   * How users are heading with nothing changed, for forecasts such as a Campaign's quote: the share of users each day
+   * brings before how full the market is (growth's factors at today's state, with no noise or outage), and the share who
+   * leave each day.
+   */
+  function outlook(state: GameState, day: number): { growth: number; churn: number } {
+    const growth = growthFactors(state, day, false).reduce((r, f) => r * f, config.productTypes[state.productType].growth.dailyGrowth);
+    const churn = Math.min(1, churnShares(state, 0).reduce((sum, c) => sum + c, 0));
+    // Paying users who stop paying and don't drop to free leave too.
+    const paying = state.users > 0 ? state.paidUsers / state.users : 0;
+    const stopPaying = Math.min(1, paidChurnShares(state, 0).reduce((sum, c) => sum + c, 0));
+    return { growth, churn: Math.min(1, churn + (1 - churn) * paying * stopPaying * (1 - config.pricing.dropToFreeShare)) };
+  }
+
+  return { startingCustomers, baseLoad, baseDemand, grow, outlook };
 }
 
 export type Customers = ReturnType<typeof createCustomers>;

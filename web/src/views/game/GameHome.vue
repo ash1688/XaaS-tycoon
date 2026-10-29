@@ -4,6 +4,7 @@ import type { GameDate, HolidayView } from "@xaas/sim";
 import { formatCash, formatCount, formatPrice, formatUptime } from "../../api";
 import { dayOf, days, devDays, useGame } from "../../game";
 import { formatShare } from "../../shares";
+import CostsFigure from "../../components/CostsFigure.vue";
 import OverviewCard from "../../components/OverviewCard.vue";
 import SummaryPanel from "../../components/SummaryPanel.vue";
 import CapacityPanel from "../../panels/CapacityPanel.vue";
@@ -153,7 +154,16 @@ const alerts = computed(() => {
     list.push({
       id: "low-cash",
       text: game.runway.days ? `Cash runs out in about ${days(game.runway.days)}` : "Cash runs out tomorrow",
-      detail: `You're losing ${formatCash(-game.runway.dailyNet)} a day. ${c.loanQuote ? "Take a bank loan or cut costs" : "Cut costs"} before you go below £0: ${c.rescue ? "there's no second rescue, so it's liquidation." : "a vulture VC would rescue you, but take most of the company."}`,
+      detail: `You're losing ${formatCash(-game.runway.dailyNet)} a day. ${c.loanQuote ? "Take a bank loan or cut costs" : "Cut costs"} before you go below £0: the shortfall goes on ${c.shortfall.onto ? `your ${c.shortfall.onto}` : "an emergency loan"}, but past ${c.shortfall.limitDays} days of costs ${c.rescue ? "there's no second rescue, so it's liquidation." : "a vulture VC would rescue you, but take most of the company."}`,
+      page: "finance?tab=funding",
+      pageName: "Finance",
+    });
+  // Shortfalls on the loan: how much further cash can go below £0 before it has run out.
+  if (c.shortfall.owed > 0)
+    list.push({
+      id: "shortfall",
+      text: `${formatCash(c.shortfall.owed)} of shortfalls on your loan`,
+      detail: `Cash went below £0, so the shortfall went on your ${c.loan?.emergency ? "emergency " : ""}loan. ${formatCash(c.shortfall.room)} more and ${c.rescue ? "the company goes into liquidation" : "a vulture VC steps in, for most of the company"}: that's ${c.shortfall.limitDays} days of costs in all.`,
       page: "finance?tab=funding",
       pageName: "Finance",
     });
@@ -251,6 +261,16 @@ const alerts = computed(() => {
       page: "people",
       pageName: "People",
     });
+  // Developers with nothing to build and optimisation at its cap are paid to wait (#263).
+  const devsIdle = game.staffPool("developers")?.idle;
+  if (devsIdle && c.optimisation.atCap)
+    list.push({
+      id: "developers-idle",
+      text: "Developers idle",
+      detail: devsIdle,
+      page: "people",
+      pageName: "People",
+    });
   if (game.onSaas && game.configTeamShort && game.isOpen("features"))
     list.push({
       id: "config-team",
@@ -285,8 +305,8 @@ const alerts = computed(() => {
       <span class="badge">Liquidation</span>
       <h2>Game over: you ran out of cash again</h2>
       <p>
-        {{ game.company.name }} went below £0 on day {{ game.company.day }}, after the vulture VC's rescue on day
-        {{ game.company.rescue?.day }}. There's no second rescue, so the company has gone into liquidation and the game
+        {{ game.company.name }} ran out of cash on day {{ game.company.day }}, further below £0 than the loan could take,
+        after the vulture VC's rescue on day {{ game.company.rescue?.day }}. There's no second rescue, so the company has gone into liquidation and the game
         has ended. You can't continue or change anything. Look at where your money went below, then
         <RouterLink :to="`/play/${game.code}`">start a new company</RouterLink> and try a different plan.
       </p>
@@ -419,8 +439,9 @@ const alerts = computed(() => {
             <strong :class="lastDayTotal < 0 ? 'neg' : 'pos'">{{ formatCash(lastDayTotal) }}</strong> on day
             {{ game.lastDay.day }}.
           </template>
-          Infrastructure {{ formatCash(game.company.monthlyInfrastructureCost) }} a month, staff
-          {{ formatCash(game.company.dailyStaffCost) }} a day.
+          Costs <CostsFigure /> a day<template v-if="game.company.runway.oneOffsThisWeek > 0"
+            >, and <span data-testid="home-one-offs">{{ formatCash(game.company.runway.oneOffsThisWeek) }} of one-offs this week</span></template
+          >.
         </p>
         <p v-if="!game.over" :class="['runway', { 'warn-text': game.lowCash }]" data-testid="home-runway">
           <template v-if="game.company.runway.days === null">
@@ -433,12 +454,12 @@ const alerts = computed(() => {
         </p>
         <p class="muted" data-testid="home-loan">
           <template v-if="game.company.loan?.remaining">
-            Includes a {{ formatCash(game.company.loan.amount) }} bank loan:
+            Includes a {{ formatCash(game.company.loan.amount) }} {{ game.company.loan.emergency ? "emergency" : "bank" }} loan:
             <strong>{{ formatCash(game.company.loan.dailyRepayment) }}</strong> a day to repay until day
             {{ game.company.loan.lastDay }}, {{ formatCash(game.company.loan.remaining) }} left.
           </template>
-          <template v-else-if="game.company.loan">Bank loan repaid in full.</template>
-          <template v-else-if="game.liquidated">No bank loan: banks don't lend to a company in liquidation.</template>
+          <template v-else-if="game.liquidated">No more loans: banks don't lend to a company in liquidation.</template>
+          <template v-else-if="game.company.loan">{{ game.company.loan.emergency ? "Emergency" : "Bank" }} loan repaid in full.</template>
           <template v-else-if="game.company.loanQuote && !game.over">
             No bank loan. You can borrow {{ formatCash(game.company.loanQuote.amount) }} on Finance.
           </template>
@@ -446,12 +467,19 @@ const alerts = computed(() => {
         </p>
         <template #detail>
           <p v-if="!game.over" data-testid="runway-detail">
-            A usual day brings in {{ formatCash(game.company.runway.dailyIncome) }} and costs
-            {{ formatCash(game.company.runway.dailyCosts) }}<template v-if="game.company.runway.days === null">, so
+            Over the last 7 days you've brought in {{ formatCash(game.company.runway.dailyIncome) }} a day, and a day
+            costs {{ formatCash(game.company.runway.dailyCosts) }}<template v-if="game.company.runway.days === null">, so
               cash is growing.</template
             ><template v-else>: at that rate your {{ formatCash(game.company.cash) }} lasts about
-              {{ days(game.company.runway.days) }}. {{ game.company.rescue ? "Below £0 again is liquidation." : "Below £0 brings a vulture VC's rescue, for most of the company." }}</template
+              {{ days(game.company.runway.days) }}. Below £0 the shortfall goes on {{ game.company.shortfall.onto ? `your ${game.company.shortfall.onto}` : "an emergency loan" }}, up to {{ game.company.shortfall.limitDays }} days of costs; past that,
+              {{ game.company.rescue ? "it's liquidation." : "a vulture VC's rescue, for most of the company." }}</template
             >
+          </p>
+          <p v-if="!game.over && game.company.runway.startingSoon > 0" data-testid="runway-starting-soon">
+            Starting soon: staff you've hired add {{ formatCash(game.company.runway.startingSoon) }} a day once they
+            start, not in the costs yet<template v-if="game.company.runway.daysOnceStarted !== null">. Then your cash
+              lasts about {{ days(game.company.runway.daysOnceStarted) }}</template
+            >.
           </p>
           <SpendPanel />
           <p class="modal-link"><RouterLink :to="page('finance')">Open Finance</RouterLink></p>

@@ -124,6 +124,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("loan.termPerDay", "Money", "Bank loan", "Shorter term per day later", "Days taken off the term for each day later the loan is taken (0.5 = a day shorter every two days).", range(0, 10, 0.05));
   add("loan.minTermDays", "Money", "Bank loan", "Shortest term", "The fewest repayment days a loan has, however late it's taken.", range(1, 3_650, 1));
   add("loan.minDays", "Money", "Bank loan", "No loans in the last days", "The bank won't lend with fewer days than this left in the game.", range(1, 365, 1));
+  add("loan.emergencyTermDays", "Money", "Bank loan", "Emergency loan term", "Repayment days for the emergency loan the bank opens when cash goes below £0 with no loan being repaid.", range(1, 365, 1));
   add("valuation.minimum", "Money", "Valuation", "Lowest valuation", "A company is never valued below this, even with no revenue.", POUNDS);
   add("valuation.averageDays", "Money", "Valuation", "Averaged over", "Days that revenue, paying users and satisfaction are averaged over for the valuation, so one day can't swing it and a price change can't move it at once.", GAME_DAY);
   add("valuation.fallDays", "Money", "Valuation", "Falls in revenue counted over", "Revenue is the lower of its average over the days above and over this many, so income lost shows within these days but a rise counts slowly. While paying users or income over this many days are below the same days before (or satisfaction drops below the line), the valuation can't rise, and once they aren't it catches up over about this many days.", GAME_DAY);
@@ -156,8 +157,9 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("ipo.recordDays", "Money", "IPO", "Records over", "Days the uptime, satisfaction, costs and profit records are measured over.", GAME_DAY);
   add("ipo.minUptime", "Money", "IPO", "Uptime record needed", "Uptime % over the record's days a company needs to float.", range(0, 100, 0.1));
   add("ipo.minSatisfaction", "Money", "IPO", "Satisfaction the market wants", "Average satisfaction % over the record's days above which the market grows more comfortable, cutting the cold-market chance and helping the first day of trading. Not needed to float.", range(0, 100, 1));
-  add("ipo.maxCostSwing", "Money", "IPO", "Most costs may vary", "Daily running costs over the record's days may vary by at most this (their standard deviation ÷ their mean; 0.25 = 25%). Big one-off purchases count against it.", range(0, 5, 0.01));
-  add("ipo.costDaysSetAside", "Money", "IPO", "Costliest days set aside", "The costliest days of the record left out when measuring how much costs vary, so one fraud bill or severance payment doesn't fail it.", range(0, 30, 1));
+  add("ipo.maxCostSwing", "Money", "IPO", "Most costs may vary", "Daily costs over the record's days may vary by at most this (their standard deviation ÷ their mean; 0.25 = 25%). One-offs such as kit bought don't count.", range(0, 5, 0.01));
+  add("ipo.costsHoldDays", "Money", "IPO", "Costs hold after a hire", "Days daily costs must hold at their new level after the last C-suite hire before the company can apply to float.", range(0, 60, 1));
+  add("ipo.costDaysSetAside", "Money", "IPO", "Costliest days set aside", "The costliest days of the record left out when measuring how much daily costs vary, so one costly day doesn't fail it.", range(0, 30, 1));
   add("ipo.comfortMargin", "Money", "IPO", "Comfortably ready at", "How far over a condition counts as comfortably ready (0.25 = 25% over), cutting the cold-market chance and helping the first day of trading.", range(0.01, 5, 0.01));
   add("ipo.coldChance.max", "Money", "IPO", "Cold-market chance, only just ready", "The chance applying meets a cold market when the company only just meets every condition.", SHARE);
   add("ipo.coldChance.min", "Money", "IPO", "Cold-market chance, comfortably ready", "The chance applying meets a cold market when the company is comfortably over every condition.", SHARE);
@@ -180,6 +182,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("negotiation.moves.high", "Money", "Negotiation", "High roll moves", "Share of the way from the offer to the counter the next offer moves on a high roll.", SHARE);
   add("negotiation.moves.middle", "Money", "Negotiation", "Middle roll moves", "Share of the way the next offer moves on a middle roll.", SHARE);
   add("negotiation.moves.low", "Money", "Negotiation", "Low roll moves", "Share of the way the next offer moves on a low roll. Below 0 the offer gets worse instead: −0.2 moves it a fifth of the counter's distance the other way.", range(-1, 1, 0.01));
+  add("rescue.limitDays", "Money", "Rescue buyout", "How far below £0", "Days of daily costs, fixed when cash first goes below £0, that shortfalls can go onto the loan before the vulture VC steps in (or, after a rescue, liquidation).", GAME_DAY);
   add("rescue.breathingDays", "Money", "Rescue buyout", "Breathing space", "Days of losses the vulture VC's cash covers after the cost cuts, on top of what took cash below £0.", GAME_DAY);
   add("rescue.minCover", "Money", "Rescue buyout", "Least cover a day", "The breathing space counts at least this share of a day's running costs, even if the company is losing less.", SHARE);
   add("rescue.share", "Money", "Rescue buyout", "Share taken", "The vulture VC's share of the company once its new shares are issued (0.75 = 75%).", range(0.01, 0.99, 0.01));
@@ -305,6 +308,9 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("csuite.shortlistSize", "People", "C-suite", "Candidates on a shortlist", "How many candidates each C-suite role's shortlist has, drawn as the game starts: one from each band of strength, weakest to strongest.", range(1, 6, 1));
   add("csuite.equityCap", "People", "C-suite", "Equity cap", "The most the whole C-suite's equity can add up to (0.1 = 10%). Each candidate's ask is their base ask × the share of the cap still unused, so asks shrink as it fills. The staff share scheme doesn't count.", range(0, 0.5, 0.005));
   add("csuite.payHoliday.startDays", "People", "C-suite", "Pay holiday below", "When cash falls below this many days of running costs (C-suite pay included), every executive forgoes their pay until it recovers. 0 turns the pay holiday off.", range(0, 365, 1));
+  add("csuite.payHoliday.backPayDays", "People", "C-suite", "Back pay spread over", "Once the pay holiday is over, each day pays back pay owed from the cash above the pay holiday's start line, spread over this many days.", range(1, 90, 1));
+  add("csuite.payHoliday.walkoutDays", "People", "C-suite", "Walkout after", "Once the pay holiday has run more than this many days in a row, the most recently hired executive resigns, their back pay going onto the loan. 0 for no walkouts.", range(0, 365, 1));
+  add("csuite.payHoliday.walkoutEvery", "People", "C-suite", "Then one more every", "After the first walkout, another executive resigns every this many days while the pay holiday lasts.", range(1, 90, 1));
   add("csuite.payHoliday.endDays", "People", "C-suite", "Pay holiday ends above", "The pay holiday ends, and executives are paid again, once cash is back above this many days of running costs.", range(0, 365, 1));
   add("csuite.payLuck", "People", "C-suite", "Luck in pay", "How much of a candidate's salary and equity ask is luck rather than strength: 0 makes the strongest always the dearest.", range(0, 1, 0.05));
   const EFFECT_HELP: Record<string, string> = {
@@ -348,13 +354,20 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("campaigns.holidayBonus", "Customers", CAMPAIGNS, "Holiday bonus", "A campaign timed for a holiday brings this × the users per pound, for the whole of its run.", MULTIPLIER);
   add("campaigns.marketPerUser", "Customers", CAMPAIGNS, "Market growth per user", "Brand awareness: each user a campaign brings in adds this to the product's market size, for good.", range(0, 100, 0.1));
   add("campaigns.marketGrowthCap", "Customers", CAMPAIGNS, "Market growth cap", "The most campaigns can add to the market, all told, as a share of the product's base market size (0.5: +50%).", range(0, 10, 0.05));
+  add("campaigns.quotePace.low", "Customers", CAMPAIGNS, "Quote: slow growth", "A campaign's quote plays its run forward with your other users growing at this × today's pace for its cheapest end.", range(0, 5, 0.05));
+  add("campaigns.quotePace.high", "Customers", CAMPAIGNS, "Quote: fast growth", "A campaign's quote plays its run forward with your other users growing at this × today's pace for its dearest end.", range(0, 5, 0.05));
+  add("campaigns.quoteMargin", "Customers", CAMPAIGNS, "Quote: margin", "Each end of a campaign's quote is widened by this share of its users, for chance (0.05 = 5%).", SHARE);
+  add("campaigns.almostFull", "Customers", CAMPAIGNS, "Market almost full", "With this share of the market taken, a campaign's quote says the market is almost full.", SHARE);
   const T = "Tiers";
   const TIER = range(1, 4, 1);
   const RP = range(0, 100_000, 1);
   add("tiers.tier2.marketShare", "Infrastructure", T, "Tier 2: share of the market", "Tier 2 opens once the company's users, paying or free, reach this share of its product's market size (0.35 = 35%), to the nearest 100 users.", SHARE);
   add("tiers.tier3.dailyIncome", "Infrastructure", T, "Tier 3: income a day", "Tier 3 opens once the last days played (below) average this much income a day, with the uptime below.", POUNDS);
   add("tiers.tier3.uptime", "Infrastructure", T, "Tier 3: uptime %", "The uptime % over those days that tier 3 also needs.", range(0, 100, 0.1));
+  add("tiers.tier1BuildMultiplier", "Infrastructure", T, "Tier 1: build time", "Tier 1 features open at Launch with no research, and take this × their developer-days to build (2 = twice as long).", MULTIPLIER);
   add("tiers.tier3.days", "Infrastructure", T, "Tier 3: days measured", "How many of the latest days played tier 3's income and uptime are averaged over.", GAME_DAY);
+  add("tiers.tier4.dailyIncome", "Infrastructure", T, "Tier 4 on Hard: income a day", "On Hard, tier 4 also opens once the last days played (below) average this much income a day, so a company can float without outside investors.", POUNDS);
+  add("tiers.tier4.days", "Infrastructure", T, "Tier 4 on Hard: days", "The days played that Hard's tier 4 income is averaged over.", GAME_DAY);
   for (const p of PRODUCT_TYPE_IDS) {
     for (const f of base.productTypes[p]?.features ?? []) {
       add(`productTypes.${p}.features.${f.id}.tier`, "Infrastructure", T, `${base.productTypes[p].name}: ${f.name} tier`, "The tier this feature is in: it can only be built or bought once that tier is unlocked. Tier 1 is open from the start.", TIER);
@@ -378,7 +391,9 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
       add(`${at}.effects.autoscaling.pricePerUnit`, "Infrastructure", T, `${name}: price per unit`, "What each CU or DBU over capacity costs for the day when extra VMs cover it.", range(0, 1_000, 0.5));
       add(`${at}.effects.autoscaling.most`, "Infrastructure", T, `${name}: most extra`, "The most extra VMs can add, as a share of the servers' own units (0.5 = half as much again).", range(0, 10, 0.05));
     }
-    if (e.managedAutoscaling) add(`${at}.effects.managedAutoscaling.headroom`, "Infrastructure", T, `${name}: headroom`, "Each night the instance count is set to the day's CU demand plus this share (0.25 = a quarter more).", range(0, 5, 0.05));
+    if (e.managedAutoscaling) {
+      add(`${at}.effects.managedAutoscaling.headroom`, "Infrastructure", T, `${name}: baseline headroom`, "With it, each night the instances are set to the day's CU demand plus this share (0.5 = 1.5×), in place of basic autoscaling's.", range(0, 5, 0.05));
+    }
     if (e.outageHours !== undefined) add(`${at}.effects.outageHours`, "Infrastructure", T, `${name}: outage hours`, "Hours down in any outage are multiplied by this, rounded up (0.5 = half as long).", SHARE);
     if (e.cuDemand !== undefined) add(`${at}.effects.cuDemand`, "Infrastructure", T, `${name}: CU demand`, "CU demand is multiplied by this (0.75 = a quarter less).", SHARE);
     if (e.eventHours) add(`${at}.effects.eventHours.multiplier`, "Infrastructure", T, `${name}: provider outage hours`, "Hours down from the provider's outages are multiplied by this, rounded up (0.5 = half as long).", SHARE);
@@ -476,12 +491,19 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("pricing.dearness", "Customers", W, "Extra hit when already dear", "A rise's effect is multiplied by (new price ÷ fair price) to this power. 0 for no effect.", range(0, 5, 0.05));
   add("pricing.maxRiseShare", "Customers", W, "Most payers one rise can lose", "The biggest share of paying users one rise can affect.", SHARE);
   add("pricing.dropToFreeShare", "Customers", W, "Drop to free share", "Of the paying users who stop paying each day, the share who drop to free. The rest leave. A rise uses each customer type's own share.", SHARE);
-  add("pricing.backlashTicketsPerUser", "Customers", W, "Backlash tickets per user", "Support tickets each affected user raises over a rise's backlash.", range(0, 20, 0.1));
-  add("pricing.cutGainStrength", "Customers", W, "Cut: new users", "A cut brings this × (cut ÷ fair price)^curve new users, as a share of users, before the cap. Only the part below the fair price counts.", range(0, 5, 0.05));
+  add("pricing.backlashTicketsPerUser", "Customers", W, "Backlash tickets per user", "Support tickets each paying user who contacts support over a rise raises.", range(0, 20, 0.1));
+  add("pricing.grumbleStrength", "Customers", W, "Rise: grumbling", "Of the payers who stay through a rise, this × (rise ÷ the type's threshold)^curve grumble online, before the cap.", range(0, 5, 0.05));
+  add("pricing.maxGrumble", "Customers", W, "Rise: most grumbling", "The most of the payers who stay through a rise who grumble online.", SHARE);
+  add("pricing.supportStrength", "Customers", W, "Rise: contacting support", "Of the payers who stay through a rise, this × (rise ÷ the type's threshold)^curve contact support, before the cap.", range(0, 5, 0.05));
+  add("pricing.maxSupport", "Customers", W, "Rise: most contacting support", "The most of the payers who stay through a rise who contact support.", SHARE);
+  add("pricing.grumbleDivertStrength", "Customers", W, "Grumbling: new users to rivals", "While a rise's backlash lasts, this × grumblers ÷ users of new users go to rivals instead, before the cap.", range(0, 20, 0.1));
+  add("pricing.maxGrumbleDivert", "Customers", W, "Grumbling: most new users to rivals", "The most of the new users grumbling can send to rivals.", SHARE);
+  add("pricing.expectedPriceDays", "Customers", W, "Expected price (days)", "Every this many days, the price customers expect moves halfway to your price. A cut is measured from the price they expect.", range(1, 180, 1));
+  add("pricing.cutGainStrength", "Customers", W, "Cut: new users", "A cut brings this × (cut ÷ the type's threshold)^curve new users, as a share of users, before the cap. Only the part below the price customers expect counts.", range(0, 5, 0.05));
   add("pricing.maxCutGain", "Customers", W, "Cut: most new users", "The most new users one cut can bring, as a share of users.", range(0, 5, 0.05));
   add("pricing.cutUpgradeStrength", "Customers", W, "Cut: upgrades", "A cut turns this × (cut ÷ fair price)^curve of free users into payers, before the cap.", range(0, 5, 0.05));
   add("pricing.maxCutUpgrade", "Customers", W, "Cut: most upgrades", "The most of the free users one cut can turn into payers.", SHARE);
-  add("pricing.priceMemoryDays", "Customers", W, "Price memory (days)", "A rise counts from, and a cut only below, the lowest price customers remember from this many days: small rises add up like one, and undoing a cut brings no new wave.", range(0, 180, 1));
+  add("pricing.priceMemoryDays", "Customers", W, "Price memory (days)", "A rise counts from the lowest price customers remember from this many days: small rises add up like one, and rising then cutting back over and over loses overall.", range(0, 180, 1));
   add("pricing.priceChurn", "Customers", "", "Payers lost to a dear price", "Share of paying users who stop paying each day at twice the fair price; × (price ÷ fair − 1)² in general.", range(0, 0.5, 0.001));
   add("pricing.maxPriceChurn", "Customers", "", "Most payers lost to a dear price a day", "The most of the paying users a dear price can lose in a day.", SHARE);
 
@@ -530,7 +552,8 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("conversion.neutralUptime", "Customers", C, "Neutral uptime %", "Recent uptime at which uptime neither helps nor hurts conversion. Above it helps, below it hurts.", range(0, 99, 0.5));
   add("conversion.uptimeEffect", "Customers", C, "Uptime effect", "100% recent uptime multiplies conversion by 1 + this; each step below neutral lowers it at the same rate.", range(0, 5, 0.05));
   add("conversion.satisfactionEffect", "Customers", C, "Satisfaction effect", "100% satisfaction multiplies conversion by 1 + this, with good satisfaction as the neutral line.", range(0, 5, 0.05));
-  add("conversion.priceSensitivity", "Customers", C, "Price effect on conversion", "Above the fair price, conversion is multiplied by (price ÷ fair price) to minus this. 0 for no effect.", range(0, 5, 0.05));
+  add("conversion.priceSensitivity", "Customers", C, "Price effect on conversion", "Conversion is multiplied by (price ÷ fair price) to minus this: less above the fair price, more at or below it, up to the most boost. 0 for no effect.", range(0, 5, 0.05));
+  add("conversion.maxPriceBoost", "Customers", C, "Most price boost to conversion", "At or below the fair price, conversion rises by at most this share (0.3 = 30% more).", range(0, 5, 0.05));
   add("conversion.maxRate", "Customers", C, "Highest conversion rate", "The most of the free users who can start paying in a day, whatever helps.", range(0, 1, 0.005));
 
   // Customers: API traffic
@@ -620,6 +643,9 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     }
     if (servers.managed) {
       add(`models.${m}.servers.managed.maxInstances`, "Infrastructure", MODEL_LABELS[m], "Most app instances", "The most app instances a company can run on the platform.", range(1, 100, 1));
+      add(`models.${m}.servers.managed.autoscaling.headroom`, "Infrastructure", MODEL_LABELS[m], "Basic autoscaling headroom", "Each night the instances are set to the day's CU demand plus this share (0.25 = 1.25×), never below the number set by hand. Managed autoscaling raises it.", range(0, 5, 0.05));
+      add(`models.${m}.servers.managed.autoscaling.burstPremium`, "Infrastructure", MODEL_LABELS[m], "Burst premium", "Each burst instance added during a day costs this many times an instance's day rate (2 = double).", range(1, 10, 0.1));
+      add(`models.${m}.servers.managed.autoscaling.maxFactor`, "Infrastructure", MODEL_LABELS[m], "Default autoscaling maximum", "Until the student sets a maximum, it's this many times today's instances.", range(1, 10, 0.5));
       for (const t of ["database", "cache"] as const) {
         for (const size of SERVER_SIZES) {
           const unit = t === "database" ? "DBU" : "CH";
@@ -667,6 +693,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
   add("payReview.openEndedYearDays", "People", "Pay reviews", "Year in long games", "Until IPO and a career have years this many days long: a review every quarter of one, once they've started.", range(4, 3650, 1));
   add("payReview.inflation.min", "People", "Pay reviews", "Least inflation", "Each review rolls its own inflation from the least to the most (0.02 = 2%).", range(0, 0.2, 0.001));
   add("payReview.inflation.max", "People", "Pay reviews", "Most inflation", "The most inflation a review can roll.", range(0, 0.2, 0.001));
+  add("payReview.fairPriceShare", "People", "Pay reviews", "Inflation into the fair price", "The share of each review's inflation that lifts the product's fair price, compounding (0.25 = a quarter, 0 = never moves).", range(0, 1, 0.01));
   add("payReview.minOfferBelow", "People", "Pay reviews", "Least offer below inflation", "The student can't offer less than inflation less this (0.01 = one point), and never below 0%.", range(0, 0.2, 0.001));
   add("payReview.maxAskAbove", "People", "Pay reviews", "Most ask above inflation", "Staff open at inflation plus this, and never ask for more.", range(0, 0.2, 0.001));
   add("payReview.fairRise.days", "People", "Pay reviews", "Days of growth compared", "The fair rise looks at income over this many days against the same number before them.", GAME_DAY);
@@ -752,6 +779,9 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
       }
       add(`${at}.encounter.maxTimes`, "Events", s, "Most times per game", "After firing this many times it no longer goes on the encounter list.", range(0, 20, 1));
       add(`${at}.encounter.fromDay`, "Events", s, "Earliest day", "It can't go on an encounter list rolled before this day.", GAME_DAY);
+      if (event.encounter.spikeWaitDays !== undefined) {
+        add(`${at}.encounter.spikeWaitDays`, "Events", s, "Waits for a spike day", "Once due, it waits for a payday, a busy holiday or a traffic spike, for up to about this many days.", range(0, 60, 1));
+      }
       add(`${at}.warning.days`, "Events", s, "Warning days", "The student gets a warning when it's next and this many well-run days would bring it. 0 for no warning.", range(0, 30, 1));
       add(`${at}.encounter.followsWithinDays`, "Events", s, "Only within days of what it follows", `It can only fire within this many days of the event it follows (${event.encounter.follows?.join(", ")}).`, GAME_DAY);
     }

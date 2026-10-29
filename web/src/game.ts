@@ -51,6 +51,8 @@ export function createGame(code: string, id: string) {
   const company = ref<CompanyView>();
   const loadError = ref("");
   const error = ref("");
+  // The last refusal's code, for a control that answers one: "confirm_cancel" asks to confirm a cancel on Hard (#260).
+  const errorCode = ref("");
   const busy = ref(false);
   // Every day played since the page opened, oldest first. The server keeps the game, not its log.
   const dayLogs = ref<DayLog[]>([]);
@@ -102,7 +104,8 @@ export function createGame(code: string, id: string) {
   // Mids it takes to make up a shortfall in work: 0.35 short is one more.
   const midsShort = (needed: number, have: number) => Math.max(0, Math.ceil(Math.round((needed - have) * 100) / 100));
   const opsWork = computed(() => work("ops"));
-  const understaffed = computed(() => !!company.value && opsWork.value < company.value.opsNeeded);
+  // Short of the ops work the running servers need, which cuts capacity (#259).
+  const understaffed = computed(() => !!company.value?.opsShortfall);
   const opsShort = computed(() => (company.value ? midsShort(company.value.opsNeeded, opsWork.value) : 0));
   // Ops that kit on order will need once it arrives, beyond those on the team: a shortfall coming, not here yet.
   const opsShortSoon = computed(() =>
@@ -111,7 +114,8 @@ export function createGame(code: string, id: string) {
   // "1 ops person", "2 ops staff".
   const opsPeople = (n: number) => `${n} ops ${n === 1 ? "person" : "staff"}`;
 
-  // Cash: what a usual day does to it, and how many days it lasts at that rate (null when not losing money).
+  // Cash: today's daily costs against the last 7 days' income, and how many days it lasts at that rate (null when not losing
+  // money).
   const runway = computed(() => company.value?.runway ?? null);
   const lowCash = computed(() => !over.value && runway.value?.days != null && runway.value.days <= LOW_CASH_DAYS);
 
@@ -248,6 +252,7 @@ export function createGame(code: string, id: string) {
   async function showError(e: unknown) {
     if (e instanceof RequestError && e.code === "finished") return load();
     error.value = (e as Error).message;
+    errorCode.value = e instanceof RequestError ? e.code : "";
   }
 
   async function loadSummary() {
@@ -267,6 +272,7 @@ export function createGame(code: string, id: string) {
   async function act(action: ActionBody) {
     busy.value = true;
     error.value = "";
+    errorCode.value = "";
     try {
       company.value = await api.act(code, id, action);
     } catch (e) {
@@ -427,6 +433,7 @@ export function createGame(code: string, id: string) {
     company,
     loadError,
     error,
+    errorCode,
     busy,
     dayLogs,
     lastDay,

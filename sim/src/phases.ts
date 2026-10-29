@@ -1,3 +1,4 @@
+import type { GameConfig, ModelId } from "./config.ts";
 import { PHASE_IDS, SimError, type Action, type GameState, type LogEntry, type PhaseId } from "./state.ts";
 
 /**
@@ -16,6 +17,7 @@ export const JOBS = [
   "researchers",
   "marketers",
   "features",
+  "research",
   "api",
   "campaigns",
   "ipo",
@@ -36,7 +38,10 @@ export const JOB_PHASES: Record<Job, PhaseId> = {
   moderators: "launch",
   researchers: "grow",
   marketers: "grow",
-  features: "grow",
+  // The designer's call (#263): tier 1 features at Launch, so developers have work after the MVP. Research, and the
+  // tiers above it, wait for Grow.
+  features: "launch",
+  research: "grow",
   api: "grow",
   campaigns: "grow",
   ipo: "scale",
@@ -54,7 +59,8 @@ const JOB_NAMES: Record<Job, string> = {
   moderators: "Moderators",
   researchers: "Researchers",
   marketers: "Marketers",
-  features: "Features and tiers",
+  features: "Features",
+  research: "Research and the tiers above tier 1",
   api: "The paid API",
   campaigns: "Campaigns",
   ipo: "The IPO",
@@ -70,20 +76,38 @@ const OPENS_WITH: Record<PhaseId, string> = {
   scale: "When Series A venture capitalists approach",
 };
 
-/** What opens in each phase, in words. Grow and Scale's C-suite roles open in csuite.ts. */
-const OPENS: Record<PhaseId, string[]> = {
-  build: ["Deployment model", "Funding: the bank loan, friends and family and grants", "Developers", "Servers or racks"],
-  launch: ["Price", "Ops staff", "Support staff", "Moderators"],
-  grow: [
-    "Researchers",
-    "Marketers",
-    "Features and tiers",
-    "The paid API",
-    "Campaigns",
-    "The CFO, CTO and head of people",
-  ],
-  scale: ["The rest of the C-suite", "The IPO"],
-};
+/** What a company runs its product on, by model, as the Build phase opens it: SaaS has nothing to run. */
+const KIT: Record<ModelId, string | null> = { onprem: "Servers and racks", iaas: "Servers", paas: "Instances", saas: null };
+
+/**
+ * What opens in each phase, in words, for this company: only the jobs that apply to its product and model (no
+ * moderators without user content, no paid API without one, no servers on SaaS). Grow and Scale's C-suite roles open
+ * in csuite.ts; the CFO opens early with outside money (`cfoDay`), and is listed with the phase it opened in.
+ */
+function opensFor(config: GameConfig, state: GameState, phase: PhaseId, cfoDay: number | null): string[] {
+  const product = config.productTypes[state.productType];
+  const saas = state.model === "saas";
+  // The phase the CFO opened in, when outside money opened it before Grow.
+  const cfoIn = cfoDay === null || (state.phaseDays.grow !== null && cfoDay >= state.phaseDays.grow) ? null : state.phaseDays.launch !== null && cfoDay >= state.phaseDays.launch ? "launch" : "build";
+  const cfo = cfoIn === phase ? [`The CFO (outside money opened it on day ${cfoDay})`] : [];
+  switch (phase) {
+    case "build":
+      return ["Deployment model", "Funding: the bank loan, friends and family and grants", "Developers", ...(KIT[state.model] ? [KIT[state.model]!] : []), ...cfo];
+    case "launch":
+      return ["Price", "Ops staff", "Support staff", ...(product.moderation ? ["Moderators"] : []), saas ? "Tier 1 add-ons" : "Tier 1 features", ...cfo];
+    case "grow":
+      return [
+        "Researchers",
+        "Marketers",
+        "Research: tiers 2 to 4",
+        ...(product.api ? ["The paid API"] : []),
+        "Campaigns",
+        cfoIn ? "The CTO and head of people" : "The CFO, CTO and head of people",
+      ];
+    case "scale":
+      return ["The rest of the C-suite", "The IPO"];
+  }
+}
 
 /** One phase as the student sees it: when it opens, whether and when it did, and what it opens. */
 export interface PhaseStepView {
@@ -150,6 +174,7 @@ export function actionJob(action: Action): Job | null {
     case "buyRack":
     case "sellRack":
     case "setInstances":
+    case "setAutoscaleMax":
     case "setManagedService":
     case "setPerformance":
       return "servers";
@@ -162,9 +187,10 @@ export function actionJob(action: Action): Job | null {
       return "funding";
     case "buildFeature":
     case "buyAddon":
+      return "features";
     case "unlockItem":
     case "buyBenefit":
-      return "features";
+      return "research";
     case "buyApi":
     case "switchServer":
     case "setApiInstances":
@@ -200,25 +226,27 @@ function milestonePhase(state: GameState): PhaseId {
  * Moves the phase on to the one the milestones have reached, if that's later, opening any skipped on the way on the
  * same day, with a log entry saying what opened. It never goes back.
  */
-export function advancePhase(state: GameState): { state: GameState; entries: LogEntry[] } {
+export function advancePhase(config: GameConfig, state: GameState, cfoDay: number | null): { state: GameState; entries: LogEntry[] } {
   const reached = milestonePhase(state);
   if (rank(reached) <= rank(state.phase)) return { state, entries: [] };
   const opened = PHASE_IDS.slice(rank(state.phase) + 1, rank(reached) + 1);
   const phaseDays = { ...state.phaseDays };
   for (const p of opened) phaseDays[p] = state.day;
-  const opens = opened.flatMap((p) => OPENS[p]);
+  const moved: GameState = { ...state, phase: reached, phaseDays };
+  const opens = opened.flatMap((p) => opensFor(config, moved, p, cfoDay).filter((o) => !o.startsWith("The CFO (")));
   const text = `A new phase: ${PHASE_NAMES[reached]}. Now open: ${opens.join(", ")}.`;
-  return { state: { ...state, phase: reached, phaseDays }, entries: [{ text, cashDelta: 0, kind: "phase" }] };
+  return { state: moved, entries: [{ text, cashDelta: 0, kind: "phase" }] };
 }
 
-export function phaseView(state: GameState): PhaseView {
+/** The phase view. `cfoDay` is the day the CFO's role opened, or null while it's shut (see Csuite.openDay). */
+export function phaseView(config: GameConfig, state: GameState, cfoDay: number | null): PhaseView {
   const next = PHASE_IDS[rank(state.phase) + 1];
   return {
     id: state.phase,
     name: PHASE_NAMES[state.phase],
     day: state.phaseDays[state.phase] ?? state.day,
     next: next ? { id: next, name: PHASE_NAMES[next], opensWith: OPENS_WITH[next] } : null,
-    phases: PHASE_IDS.map((id) => ({ id, name: PHASE_NAMES[id], opensWith: OPENS_WITH[id], day: state.phaseDays[id], opens: OPENS[id] })),
+    phases: PHASE_IDS.map((id) => ({ id, name: PHASE_NAMES[id], opensWith: OPENS_WITH[id], day: state.phaseDays[id], opens: opensFor(config, state, id, cfoDay) })),
     open: Object.fromEntries(JOBS.map((job) => [job, jobOpen(state, job)])) as Record<Job, boolean>,
   };
 }

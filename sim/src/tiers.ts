@@ -1,6 +1,8 @@
-import { TIER_NUMBERS, type GameConfig, type ModelId, type ProductTypeId, type TierNumber } from "./config.ts";
+import { DIFFICULTIES, TIER_NUMBERS, type GameConfig, type ModelId, type ProductTypeId, type TierNumber } from "./config.ts";
 import { hasExecutive } from "./executives.ts";
+import { uptimeSinceLaunch } from "./ipo.ts";
 import { count, pounds } from "./finance.ts";
+import { jobOpen } from "./phases.ts";
 import { SimError, type GameState, type LogEntry, type TierReached } from "./state.ts";
 
 /** What an item in a tier is: a product feature (kept through a migration) or a model benefit (lost on one). */
@@ -101,13 +103,16 @@ export function isUnlocked(config: GameConfig, state: UnlockState, id: string): 
  * The refusal for an item that isn't unlocked: what the student has to do first. Either its tier isn't available
  * yet, or it is and the item needs unlocking with research points.
  */
-export function lockedMessage(config: GameConfig, state: UnlockState & Pick<GameState, "phase">, id: string): string {
+export function lockedMessage(config: GameConfig, state: UnlockState & Pick<GameState, "phase" | "difficulty">, id: string): string {
   const item = findItem(config, state, id);
   if (!item) return "That isn't in any tier.";
   if (!tierAvailable(state, item.tier)) {
     return `${item.name} is in tier ${item.tier}, which isn't available yet. ${conditionText(config, state, item.tier)}`;
   }
-  // Features and benefits open in Grow, with researchers (#236), so research is always open by now.
+  // Tier 1 opens at Launch (#263), research in Grow with researchers.
+  if (!jobOpen(state, "research")) {
+    return `${item.name} is in tier ${item.tier}: it needs unlocking with ${count.format(item.rpPrice)} RP, and research opens in the Grow phase, when your first angel investor approaches.`;
+  }
   return `${item.name} needs unlocking first: ${count.format(item.rpPrice)} RP on the Research page.`;
 }
 
@@ -151,7 +156,7 @@ export const tier2Users = (config: GameConfig, productType: ProductTypeId) =>
   Math.round((config.tiers.tier2.marketShare * config.productTypes[productType].growth.marketSize) / 100) * 100;
 
 /** A tier's condition in words, for a refusal or a log line. */
-function conditionText(config: GameConfig, state: Pick<GameState, "productType">, tier: TierNumber): string {
+function conditionText(config: GameConfig, state: Pick<GameState, "productType" | "difficulty">, tier: TierNumber): string {
   const { tier3 } = config.tiers;
   switch (tier) {
     case 1:
@@ -161,7 +166,9 @@ function conditionText(config: GameConfig, state: Pick<GameState, "productType">
     case 3:
       return `Tier 3 opens once your last ${tier3.days} days average ${pounds(tier3.dailyIncome)} a day in income and ${tier3.uptime}% uptime.`;
     case 4:
-      return "Tier 4 opens with an angel investor's money, or once you're ready for an IPO.";
+      return DIFFICULTIES[state.difficulty].tier4Revenue
+        ? `Tier 4 opens with an angel investor's money, once you're ready for an IPO, or once your last ${config.tiers.tier4.days} days average ${pounds(config.tiers.tier4.dailyIncome)} a day in income.`
+        : "Tier 4 opens with an angel investor's money, or once you're ready for an IPO.";
   }
 }
 
@@ -171,9 +178,10 @@ const lastDays = (state: Pick<GameState, "spendByDay">, days: number) => state.s
 /** Each part of a tier's condition today. */
 function conditions(config: GameConfig, state: GameState, tier: TierNumber, ctx: TierContext): TierConditionView[] {
   const { tier3 } = config.tiers;
-  const part = (label: string, value: number, target: number, unit: TierConditionView["unit"]) => ({
+  // Met on the figure itself, which `shown` may round for display, as the IPO's conditions are.
+  const part = (label: string, value: number, target: number, unit: TierConditionView["unit"], shown = value) => ({
     label,
-    value,
+    value: shown,
     target,
     unit,
     met: value >= target,
@@ -187,22 +195,26 @@ function conditions(config: GameConfig, state: GameState, tier: TierNumber, ctx:
         part("A CTO hired", hasExecutive(state, "cto") ? 1 : 0, 1, "yes"),
       ];
     case 3: {
-      // Averaged over the whole window, so a company that hasn't played that many days yet can't meet it.
-      const window = lastDays(state, tier3.days);
-      const full = window.length >= tier3.days;
-      const income = window.reduce((sum, d) => sum + d.income, 0) / Math.max(1, tier3.days);
-      const down = window.reduce((sum, d) => sum + d.hoursDown, 0);
-      const uptime = full ? 100 * (1 - down / (24 * tier3.days)) : 0;
+      // Income is averaged over the whole window, so a company that hasn't played that many days yet can't meet it.
+      // Uptime is the status's and the IPO's (#285): over the days since launch while there are fewer.
+      const income = lastDays(state, tier3.days).reduce((sum, d) => sum + d.income, 0) / Math.max(1, tier3.days);
+      const uptime = uptimeSinceLaunch(state, tier3.days);
       return [
         part(`Income a day, last ${tier3.days} days`, Math.round(income), tier3.dailyIncome, "pounds"),
-        part(`Uptime, last ${tier3.days} days`, Math.round(uptime * 100) / 100, tier3.uptime, "percent"),
+        part(`Uptime, last ${tier3.days} days`, uptime, tier3.uptime, "percent", Math.round(uptime * 10) / 10),
       ];
     }
-    case 4:
-      return [
+    case 4: {
+      const parts = [
         part("An angel investor's money taken", state.investors.angel ? 1 : 0, 1, "yes"),
         part("Every IPO condition met", ctx.ipoReady(state) ? 1 : 0, 1, "yes"),
       ];
+      if (!DIFFICULTIES[state.difficulty].tier4Revenue) return parts;
+      // On Hard, revenue opens it too (#265), averaged over the whole window like tier 3's.
+      const { tier4 } = config.tiers;
+      const income = lastDays(state, tier4.days).reduce((sum, d) => sum + d.income, 0) / Math.max(1, tier4.days);
+      return [...parts, part(`Income a day, last ${tier4.days} days`, Math.round(income), tier4.dailyIncome, "pounds")];
+    }
   }
 }
 

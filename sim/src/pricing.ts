@@ -1,6 +1,7 @@
 import type { Calendar } from "./calendar.ts";
-import { CUSTOMER_TYPE_IDS, type CustomerTypeId, type GameConfig, type ProductTypeId } from "./config.ts";
+import { CUSTOMER_TYPE_IDS, type CustomerTypeId, type GameConfig, type PricingConfig, type ProductTypeId } from "./config.ts";
 import { count, pounds } from "./finance.ts";
+import { marketSize } from "./market.ts";
 import { SimError, type GameState, type LogEntry, type PriceChange, type PriceWave, type WaveEffect } from "./state.ts";
 import type { Support, TicketBurst, TicketOutlook } from "./support.ts";
 
@@ -43,6 +44,116 @@ export interface PricePreview {
   lockDaysLeft: number;
   /** How long the price would be locked after this change. */
   lockDays: number;
+  /** How each customer type would split into bands, and all of them together: see PriceBandsView. */
+  bands: PriceBandsView;
+  /**
+   * The price customers expect, a cut is measured from: the opening price, moved halfway to the price in effect every
+   * expectedPriceDays since launch.
+   */
+  expectedPrice: number;
+  /** Days between each halfway step the expected price takes. */
+  expectedPriceDays: number;
+  /**
+   * The lowest price in effect over the last priceMemoryDays: a rise is measured from it, less what the rises since
+   * have already lost.
+   */
+  rememberedPrice: number;
+  priceMemoryDays: number;
+  /** Why a change starts no wave, in words, when it doesn't; null when it does or nothing changes. */
+  noWave: string | null;
+}
+
+/**
+ * The bands customers split into over a price: a rise's accept, grumble online, contact support, drop to free and
+ * leave; a cut's (and the opening price's) join paying, join free and don't join.
+ */
+export type PriceBandId = "accept" | "grumble" | "support" | "toFree" | "leave" | "joinPaid" | "joinFree" | "notJoin";
+
+/** Each band's name, for the screens and the text game. */
+export const PRICE_BAND_NAMES: Record<PriceBandId, string> = {
+  accept: "Accept",
+  grumble: "Grumble online",
+  support: "Contact support",
+  toFree: "Drop to free",
+  leave: "Leave",
+  joinPaid: "Join paying",
+  joinFree: "Join free",
+  notJoin: "Don't join",
+};
+
+/** The fair price with why it moved (#251). */
+export interface FairPriceView {
+  /** Today's, moved with inflation, and the product's own before any. */
+  fairPrice: number;
+  baseFairPrice: number;
+  /** How far inflation has lifted it in all (0.06 = 6%). */
+  rise: number;
+  /** The last settled pay review's inflation, which last moved it; null before any. */
+  lastInflation: number | null;
+}
+
+/** One band: its share of the group it splits (0.2 = 20%). */
+export interface PriceBand {
+  id: PriceBandId;
+  share: number;
+}
+
+/** One customer type's bands, adding up to 1: of its paying users for a rise, of the users it could bring otherwise. */
+export interface TypeBands {
+  id: CustomerTypeId;
+  name: string;
+  /** The type's share of users, which weights it in the total. */
+  share: number;
+  bands: PriceBand[];
+  /** On a cut, the share of the type's free users who start paying. 0 otherwise. */
+  upgrade: number;
+}
+
+/**
+ * A price's bands for the chart: "rise" splits paying users, "cut" the new users it could bring, "launch" the launch
+ * users at an opening price; "none" when nothing changes. The total is the types weighted by their shares.
+ */
+export interface PriceBandsView {
+  kind: "rise" | "cut" | "launch" | "none";
+  types: TypeBands[];
+  total: PriceBand[];
+  /** On a cut, the share of all free users who start paying. */
+  upgrade: number;
+}
+
+/**
+ * The share of a customer type's paying users a rise from `from` to `price` loses in all, against the type's
+ * threshold: riseStrength × (rise ÷ threshold)^waveCurve × how dear the new price is to the type, and the dearer it
+ * is, the fewer can stay. 0 for no rise.
+ */
+export function riseLost(p: PricingConfig, from: number, price: number, threshold: number): number {
+  if (price <= from) return 0;
+  const size = ((price - from) / threshold) ** p.waveCurve;
+  const dearer = Math.max(1, price / threshold) ** p.dearness;
+  const most = 1 - (1 - p.maxRiseShare) / dearer;
+  return Math.min(most, p.riseStrength * size * dearer);
+}
+
+/**
+ * One customer type's bands for a rise, adding up to 1. `lost` is the share of its payers the rise loses (see
+ * riseReactions): toFreeShare of them drop to free and the rest leave. Of those who stay, the bigger the rise against
+ * the type's threshold the more grumble online or contact support; the rest accept.
+ */
+export function riseBands(p: PricingConfig, lost: number, toFreeShare: number, rise: number, threshold: number): Record<PriceBandId, number> {
+  const size = Math.max(0, rise / threshold) ** p.waveCurve;
+  const stay = 1 - lost;
+  const grumble = stay * Math.min(p.maxGrumble, p.grumbleStrength * size);
+  const support = stay * Math.min(p.maxSupport, p.supportStrength * size);
+  return {
+    accept: Math.max(0, stay - grumble - support),
+    grumble,
+    support,
+    toFree: lost * toFreeShare,
+    leave: lost * (1 - toFreeShare),
+    joinPaid: 0,
+    joinFree: 0,
+    notJoin: 0,
+  };
 }
 
 /**
@@ -158,6 +269,23 @@ export interface PriceWaveView {
   days: (WaveEffect & { day: number })[];
 }
 
+/** What the fair price depends on: the product, and the pay reviews whose inflation has lifted it. */
+type FairState = Pick<GameState, "productType" | "pastPayReviews">;
+
+/**
+ * How far inflation has lifted the fair price: a share (payReview.fairPriceShare, a quarter) of each settled pay
+ * review's inflation, compounded (#251). The student's own price never moves by itself.
+ */
+export const fairRise = (config: GameConfig, state: Pick<GameState, "pastPayReviews">) =>
+  state.pastPayReviews.reduce((rise, r) => rise * (1 + config.payReview.fairPriceShare * r.inflation), 1);
+
+/** A product's fair monthly price (the fair fee on the payments app) moved with inflation, to the penny. */
+export const fairPriceOf = (config: GameConfig, state: FairState) =>
+  Math.round(config.productTypes[state.productType].pricing.fairPrice * fairRise(config, state) * 100) / 100;
+
+const RISE_BANDS: PriceBandId[] = ["accept", "grumble", "support", "toFree", "leave"];
+const JOIN_BANDS: PriceBandId[] = ["joinPaid", "joinFree", "notJoin"];
+
 const noEffect = (): WaveEffect => ({ left: 0, toFree: 0, joined: 0, joinedPaid: 0, upgraded: 0, tickets: 0 });
 const EFFECT_KEYS = Object.keys(noEffect()) as (keyof WaveEffect)[];
 function addEffects(a: WaveEffect, b: WaveEffect): WaveEffect {
@@ -176,8 +304,8 @@ export const percent = (rate: number) => `${Math.round(rate * 10_000) / 100}%`;
  * product's fair price, which sets how fast users grow and how many new users pay.
  */
 export function createPricing(config: GameConfig, calendar: Calendar, support: Support) {
-  /** The fair monthly price: on the payments app, the fair monthly fee. */
-  const fairPrice = (productType: ProductTypeId) => config.productTypes[productType].pricing.fairPrice;
+  /** The fair monthly price, to the penny, moved with inflation: on the payments app, the fair monthly fee. */
+  const fairPrice = (state: FairState) => fairPriceOf(config, state);
   const transactionsOf = (productType: ProductTypeId) => config.productTypes[productType].transactions;
 
   /**
@@ -189,8 +317,8 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
     return price + (tx && rate ? rate * tx.volumePerPaidUser : 0);
   }
   /** The fair price customers react against: the fair price, plus the fair rate's share on the payments app. */
-  const fairMonthly = (productType: ProductTypeId) =>
-    monthly(productType, fairPrice(productType), transactionsOf(productType)?.fairRate ?? null);
+  const fairMonthly = (state: FairState) =>
+    monthly(state.productType, fairPrice(state), transactionsOf(state.productType)?.fairRate ?? null);
   /** What a usual month costs a paying user today. */
   const monthlyNow = (state: GameState) => monthly(state.productType, state.price, state.transactionRate);
 
@@ -202,13 +330,12 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
     return Object.fromEntries(shares) as Record<CustomerTypeId, number>;
   }
 
-  /** A customer type's price threshold for a product: the fair price times the type's multiple. */
-  const threshold = (productType: ProductTypeId, type: CustomerTypeId) =>
-    fairMonthly(productType) * config.customerTypes[type].thresholdMultiple;
+  /** A customer type's price threshold: the fair price times the type's multiple. */
+  const threshold = (state: FairState, type: CustomerTypeId) => fairMonthly(state) * config.customerTypes[type].thresholdMultiple;
 
   /** Each customer type with its share of users and its reaction, worked out from its threshold. */
   const byType = (state: GameState, reaction: (threshold: number) => number): TypeReaction[] =>
-    CUSTOMER_TYPE_IDS.map((id) => ({ id, share: state.customerMix[id], reaction: reaction(threshold(state.productType, id)) }));
+    CUSTOMER_TYPE_IDS.map((id) => ({ id, share: state.customerMix[id], reaction: reaction(threshold(state, id)) }));
 
   /** A new company's price, paid users and customer mix: the fair price, and the product's free share and mix. */
   function startingPricing(productType: ProductTypeId, users: number) {
@@ -251,6 +378,27 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
     return { price: fee, rate: checked };
   }
 
+  /**
+   * The opening price, set as Launch is pressed for go-live on `launchDay`: the price given, or the fair price (and
+   * fair rate) with none. Nobody has paid anything yet, so it starts no wave, and it's locked from now until lockDays
+   * after go-live.
+   */
+  function openingPrice(state: GameState, launchDay: number, price?: number, rate?: number): GameState {
+    const tx = transactionsOf(state.productType);
+    const opening =
+      price === undefined
+        ? { price: fairPrice(state), rate: tx ? (rate ?? tx.fairRate) : null }
+        : checkedPrice(state, price, rate);
+    if (price === undefined && rate !== undefined) checkedPrice(state, opening.price, rate);
+    return {
+      ...state,
+      price: opening.price,
+      transactionRate: opening.rate,
+      priceWave: null,
+      priceLockedUntil: launchDay + config.pricing.lockDays,
+    };
+  }
+
   /** Days until the price can be changed again: 0 when it can. */
   const lockDaysLeft = (state: GameState) => Math.max(0, state.priceLockedUntil - state.day);
 
@@ -262,6 +410,17 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
     const { price: to, rate: toRate } = checkedPrice(state, price, rate);
     // Today's price again changes nothing, so it starts no wave and no lock.
     if (to === state.price && toRate === state.transactionRate) return state;
+    // From pressing Launch until go-live the opening price holds: there's nobody to react to a change yet.
+    if (state.launchDay !== null && state.day < state.launchDay) {
+      throw new SimError(
+        "price_launching",
+        `Your opening price of ${priceText(state.price, state.transactionRate)} holds until go-live on day ${state.launchDay}, and for ${plural(config.pricing.lockDays, "day", "days")} after.`,
+      );
+    }
+    // From IPO approval to the bell: raising income for free before trading starts would mislead the market.
+    if (state.ipo.approvedDay !== null) {
+      throw new SimError("price_locked_ipo", "Your price is locked from your IPO's approval until the opening bell: investors are buying the company as it stands.");
+    }
     const left = lockDaysLeft(state);
     if (left > 0) {
       throw new SimError(
@@ -325,13 +484,7 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
     const p = config.pricing;
     const from = rememberedPrice(state);
     // The share of the type's payers a rise from the remembered price to `price` loses in all.
-    const lost = (price: number, th: number) => {
-      if (price <= from) return 0;
-      const size = ((price - from) / th) ** p.waveCurve;
-      const dearer = Math.max(1, price / th) ** p.dearness;
-      const most = 1 - (1 - p.maxRiseShare) / dearer;
-      return Math.min(most, p.riseStrength * size * dearer);
-    };
+    const lost = (price: number, th: number) => riseLost(p, from, price, th);
     const now = monthlyNow(state);
     return byType(state, (th) => {
       if (to <= now) return 0;
@@ -342,8 +495,30 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
   }
 
   /**
+   * The price customers expect, a cut is measured from (#251, #291): the opening price at first, then every
+   * expectedPriceDays from the launch it moves halfway to the price in effect that day. So a rise is only partly
+   * expected a fortnight on, cutting back from it is less of a bargain than it looks, and an old high price fades
+   * rather than standing as the reference for a cut after cut.
+   */
+  function expectedPrice(state: GameState): number {
+    const was = (price: number, rate?: number | null) => monthly(state.productType, price, rate ?? null);
+    const changes = state.priceChanges;
+    const first = state.launchDay ?? 1;
+    const opening = changes.length ? was(changes[0]!.from, changes[0]!.fromRate) : monthlyNow(state);
+    // The price in effect on a day: the latest change made on or before it.
+    const on = (day: number) => {
+      const c = changes.findLast((x) => x.day <= day);
+      return c ? was(c.to, c.toRate) : opening;
+    };
+    const step = Math.max(1, config.pricing.expectedPriceDays);
+    let expected = opening;
+    for (let day = first + step; day <= state.day; day += step) expected += (on(day) - expected) / 2;
+    return expected;
+  }
+
+  /**
    * The lowest price customers remember: the lowest in effect over the last priceMemoryDays, today's included. A rise
-   * is measured from it, and a cut only counts below it.
+   * is measured from it.
    */
   function rememberedPrice(state: GameState): number {
     const since = state.day - config.pricing.priceMemoryDays;
@@ -365,42 +540,91 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
   }
 
   /**
-   * The whole wave a change from today's price to `to` would cause, from today's users. A rise loses the price
-   * reaction's share of paying users, each customer type's reaction weighted by its share (see riseReactions), and
-   * each type drops to free by its own share. A cut's size scales with the cut against each customer type's
-   * threshold, raised to waveCurve and weighted by the type's share, so a small tweak barely registers and a big jump
-   * hits hard. A cut counts only below both the fair
-   * price and the lowest price customers remember: coming back down to the fair price is no bargain, however long the
-   * price was dear, and a cut from £300 to £295 is still £295 to them.
+   * Each customer type's bands for a change from today's price to `to` (see PriceBandsView). A rise splits the type's
+   * paying users: riseReactions' share lost drops to free (by the type's toFreeShare) or leaves, and of those who stay
+   * the bigger the rise against the type's threshold, the more grumble online or contact support. A cut splits the new
+   * users it could bring (maxCutGain of today's users): the further below the price customers expect against the
+   * type's threshold, raised to waveCurve, and the less dear the new price still is, the more join, paying as new
+   * users at the new price do; and turns some of
+   * the type's free users into payers. A bargain to casual users is small change to a business, so cutting to convert
+   * then rising back doesn't pay for an upmarket mix either.
    */
-  function waveTotal(state: GameState, to: number): WaveEffect {
+  function changeBands(state: GameState, to: number): PriceBandsView {
     const p = config.pricing;
-    const fair = fairMonthly(state.productType);
     const now = monthlyNow(state);
-    const total = noEffect();
-    if (to > now) {
-      const reactions = riseReactions(state, to);
-      const affected = Math.round(state.paidUsers * weightedReaction(reactions));
-      const toFree = reactions.map((r) => ({ ...r, reaction: r.reaction * config.customerTypes[r.id].toFreeShare }));
-      total.toFree = Math.min(affected, Math.round(state.paidUsers * weightedReaction(toFree)));
+    if (to === now) return { kind: "none", types: [], total: [], upgrade: 0 };
+    const rise = to > now;
+    const reactions = rise ? riseReactions(state, to) : [];
+    const below = rise ? 0 : Math.max(0, expectedPrice(state) - to);
+    const paidShare = rise ? 0 : paidShareAt(state, to);
+    const types = CUSTOMER_TYPE_IDS.map((id, i): TypeBands => {
+      const th = threshold(state, id);
+      const { name, toFreeShare } = config.customerTypes[id];
+      if (rise) {
+        const shares = riseBands(p, reactions[i]!.reaction, toFreeShare, to - now, th);
+        return { id, name, share: state.customerMix[id], bands: RISE_BANDS.map((b) => ({ id: b, share: shares[b] })), upgrade: 0 };
+      }
+      // A cut to a price still dear to the type counts for less, as a rise to one counts for more: £300 to £290 is
+      // still nearly ten times what a casual user thinks it's worth.
+      const size = (below / th) ** p.waveCurve / Math.max(1, to / th) ** p.dearness;
+      const join = p.maxCutGain > 0 ? Math.min(p.maxCutGain, p.cutGainStrength * size) / p.maxCutGain : 0;
+      const bands = { joinPaid: join * paidShare, joinFree: join * (1 - paidShare), notJoin: 1 - join };
+      const upgrade = Math.min(p.maxCutUpgrade, p.cutUpgradeStrength * size);
+      return { id, name, share: state.customerMix[id], bands: JOIN_BANDS.map((b) => ({ id: b, share: bands[b as keyof typeof bands] })), upgrade };
+    });
+    return withTotal(rise ? "rise" : "cut", types);
+  }
+
+  /** The types' bands weighted by their shares, and on a cut the share of free users upgraded. */
+  function withTotal(kind: PriceBandsView["kind"], types: TypeBands[]): PriceBandsView {
+    const ids = types[0]?.bands.map((b) => b.id) ?? [];
+    const total = ids.map((id) => ({ id, share: types.reduce((sum, t) => sum + t.share * (t.bands.find((b) => b.id === id)?.share ?? 0), 0) }));
+    return { kind, types, total, upgrade: types.reduce((sum, t) => sum + t.share * t.upgrade, 0) };
+  }
+
+  /** The share of a band in a view's total. */
+  const totalOf = (view: PriceBandsView, id: PriceBandId) => view.total.find((b) => b.id === id)?.share ?? 0;
+
+  /**
+   * The whole wave a change from today's price to `to` would cause, from today's users, from the bands (see
+   * changeBands). A rise's paying users who drop to free or leave go, those who contact support raise
+   * backlashTicketsPerUser tickets each, and those who grumble online send new users to rivals while it lasts. A cut
+   * brings its share of new users, paying as new users at the price do, and upgrades its share of free users.
+   */
+  function waveTotal(state: GameState, to: number): WaveEffect & { grumblers: number } {
+    const p = config.pricing;
+    const bands = changeBands(state, to);
+    const total = { ...noEffect(), grumblers: 0 };
+    if (bands.kind === "rise") {
+      const affected = Math.round(state.paidUsers * (totalOf(bands, "toFree") + totalOf(bands, "leave")));
+      total.toFree = Math.min(affected, Math.round(state.paidUsers * totalOf(bands, "toFree")));
       total.left = affected - total.toFree;
-      total.tickets = Math.round(affected * p.backlashTicketsPerUser);
-    } else if (to < now) {
-      // Each customer type feels a cut against its own threshold, as it does a rise: a bargain to casual users is small
-      // change to a business. So cutting to convert, then rising back, doesn't pay for an upmarket mix either.
-      const below = Math.max(0, Math.min(rememberedPrice(state), fair) - to);
-      const size = weightedReaction(byType(state, (th) => (below / th) ** p.waveCurve));
-      total.joined = Math.round(state.users * Math.min(p.maxCutGain, p.cutGainStrength * size));
-      total.joinedPaid = Math.round(total.joined * paidShareAt(state, to));
-      const free = state.users - state.paidUsers;
-      total.upgraded = Math.round(free * Math.min(p.maxCutUpgrade, p.cutUpgradeStrength * size));
+      total.tickets = Math.round(state.paidUsers * totalOf(bands, "support") * p.backlashTicketsPerUser);
+      total.grumblers = Math.round(state.paidUsers * totalOf(bands, "grumble"));
+    } else if (bands.kind === "cut") {
+      // Never more than the market has left to reach (#291), payers in proportion.
+      const joining = state.users * p.maxCutGain * (totalOf(bands, "joinPaid") + totalOf(bands, "joinFree"));
+      const room = Math.max(0, marketSize(config, state) - state.users);
+      const scale = joining > room ? room / joining : 1;
+      total.joined = Math.round(joining * scale);
+      total.joinedPaid = Math.min(total.joined, Math.round(state.users * p.maxCutGain * totalOf(bands, "joinPaid") * scale));
+      total.upgraded = Math.round((state.users - state.paidUsers) * bands.upgrade);
     }
     return total;
   }
 
+  /** Why a change to `to` starts no wave, or null if it does. */
+  function noWaveReason(state: GameState, to: number): string | null {
+    const now = monthlyNow(state);
+    if (to >= now) return null;
+    const expected = expectedPrice(state);
+    if (to < expected) return null;
+    const days = config.pricing.expectedPriceDays;
+    return `No wave: customers expect ${pounds(Math.round(expected * 100) / 100)}, and this is no lower. What they expect moves halfway to your price every ${days} days, so a rise takes a while to become the price a cut counts from.`;
+  }
+
   /** The wave planned day by day. Each number is spread over the shape on its own, so every total adds up exactly. */
-  function planDays(state: GameState, to: number): WaveEffect[] {
-    const total = waveTotal(state, to);
+  function planDays(state: GameState, to: number, total = waveTotal(state, to)): WaveEffect[] {
     const shape = waveShape(firstDayShare(state, to));
     const columns = EFFECT_KEYS.map((k) => [k, spread(total[k], shape)] as const);
     return shape.map((_, i) => {
@@ -413,14 +637,16 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
   function planWave(state: GameState, to: number): PriceWave {
     // On the payments app `to` is a usual month's cost, fee and transaction fee together.
     const rise = to > monthlyNow(state);
+    const total = waveTotal(state, to);
     return {
       direction: rise ? "rise" : "cut",
       from: state.price,
       to,
       firstDay: state.day + 1,
-      days: planDays(state, to),
+      days: planDays(state, to, total),
       done: noEffect(),
       leftMix: rise ? leftMix(state, to) : null,
+      grumblers: total.grumblers,
     };
   }
 
@@ -450,6 +676,7 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
     const users = state.users - total.left + total.joined;
     const left = lockDaysLeft(state);
     const reactions = riseReactions(state, toMonthly);
+    const penny = (n: number) => Math.round(n * 100) / 100;
     return {
       price: to,
       currentPrice: state.price,
@@ -470,8 +697,78 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
       locked: left > 0,
       lockDaysLeft: left,
       lockDays: config.pricing.lockDays,
+      bands: changeBands(state, toMonthly),
+      expectedPrice: penny(expectedPrice(state)),
+      expectedPriceDays: config.pricing.expectedPriceDays,
+      rememberedPrice: penny(rememberedPrice(state)),
+      priceMemoryDays: config.pricing.priceMemoryDays,
+      noWave: same ? null : noWaveReason(state, toMonthly),
     };
   }
+
+  /**
+   * The bands launch users split into at an opening price, each type's against its threshold (#286). Above the fair
+   * price, the share a rise from the fair price to it would lose don't join (or join free, by the type's toFreeShare).
+   * Of those who join, each type pays at odds of k × (threshold ÷ price) ^ paidShareSensitivity: a type that would put
+   * up with a dearer price is readier to pay, and every type more so the cheaper the price, but never all of them. k is
+   * set so that at the fair price the product's paid share (1 − freeShare) holds across its mix.
+   */
+  function launchBands(state: GameState, price: number, rate?: number): PriceBandsView {
+    const { price: fee, rate: toRate } = checkedPrice(state, price, rate);
+    const at = monthly(state.productType, fee, toRate);
+    const fair = fairMonthly(state);
+    const { freeShare } = config.productTypes[state.productType].pricing;
+    const mix = baseMix(state.productType);
+    const s = config.pricing.paidShareSensitivity;
+    const k = launchOdds(state, 1 - freeShare, mix);
+    const paying = (odds: number) => (Number.isFinite(odds) ? odds / (1 + odds) : 1);
+    const types = CUSTOMER_TYPE_IDS.map((id): TypeBands => {
+      const th = threshold(state, id);
+      const { name, toFreeShare } = config.customerTypes[id];
+      const lost = riseLost(config.pricing, fair, at, th);
+      const joinPaid = (1 - lost) * paying(k * (th / at) ** s);
+      const notJoin = lost * (1 - toFreeShare);
+      const bands = { joinPaid, joinFree: Math.max(0, 1 - joinPaid - notJoin), notJoin };
+      return { id, name, share: mix[id], bands: JOIN_BANDS.map((b) => ({ id: b, share: bands[b as keyof typeof bands] })), upgrade: 0 };
+    });
+    return withTotal("launch", types);
+  }
+
+  /**
+   * The k for launchBands: the odds scale at which the mix's paid share at the fair price is `paid`. Found by halving,
+   * as each type's share k·r ÷ (1 + k·r) rises with k. Infinite when everyone pays, 0 when nobody does.
+   */
+  function launchOdds(state: GameState, paid: number, mix: Record<CustomerTypeId, number>): number {
+    if (paid >= 1) return Infinity;
+    if (paid <= 0) return 0;
+    const fair = fairMonthly(state);
+    const s = config.pricing.paidShareSensitivity;
+    const ratios = CUSTOMER_TYPE_IDS.map((id) => [mix[id], (threshold(state, id) / fair) ** s] as const);
+    const share = (k: number) => ratios.reduce((sum, [m, r]) => sum + (m * k * r) / (1 + k * r), 0);
+    let lo = 0;
+    let hi = 1;
+    while (share(hi) < paid) hi *= 2;
+    for (let i = 0; i < 60; i++) {
+      const mid = (lo + hi) / 2;
+      if (share(mid) < paid) lo = mid;
+      else hi = mid;
+    }
+    return (lo + hi) / 2;
+  }
+
+  /**
+   * Today's share of new users that go to rivals instead, while a rise's backlash lasts: the more grumbling online
+   * against the users there are, the more (grumbleDivertStrength × grumblers ÷ users), at most maxGrumbleDivert.
+   */
+  function grumbleDivert(state: GameState, day: number): number {
+    const wave = state.priceWave;
+    if (!wave || wave.direction !== "rise" || !wave.grumblers || day < wave.firstDay || day >= wave.firstDay + wave.days.length) return 0;
+    const { grumbleDivertStrength, maxGrumbleDivert } = config.pricing;
+    return Math.min(maxGrumbleDivert, (grumbleDivertStrength * wave.grumblers) / Math.max(1, state.users));
+  }
+
+  /** The day's growth is multiplied by this: what's left after grumbling sends new users to rivals. */
+  const grumbleGrowth = (state: GameState, day: number) => 1 - grumbleDivert(state, day);
 
   /** The wave still under way after the last day played, or null. One whose first day is tomorrow counts. */
   function priceWave(state: GameState): PriceWaveView | null {
@@ -510,6 +807,9 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
     today.left = Math.min(plan.left, paidUsers);
     today.toFree = Math.min(plan.toFree, paidUsers - today.left);
     today.upgraded = Math.min(plan.upgraded, users - paidUsers);
+    // Nor does it bring more than the market has room for after the day's growth (#291).
+    today.joined = Math.min(plan.joined, Math.max(0, marketSize(config, state) - users));
+    today.joinedPaid = Math.min(plan.joinedPaid, today.joined);
     const done = addEffects(wave.done, today);
     const n = wave.days.length;
     const bursts: TicketBurst[] =
@@ -557,7 +857,7 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
     rate === undefined || rate === null ? pounds(price) : `${pounds(price)} + ${percent(rate)}`;
 
   /** The price against the fair price, in what a usual month costs: 1 at the fair price, 2 at double it. */
-  const priceRatio = (state: GameState) => monthlyNow(state) / fairMonthly(state.productType);
+  const priceRatio = (state: GameState) => monthlyNow(state) / fairMonthly(state);
 
   /**
    * A price's pull, ratio ^ −sensitivity for a ratio to the fair price. Below the fair price each customer type feels
@@ -567,7 +867,7 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
    */
   function pull(state: GameState, ratio: number, sensitivity: number): number {
     if (ratio >= 1) return ratio ** -sensitivity;
-    const fair = fairMonthly(state.productType);
+    const fair = fairMonthly(state);
     return weightedReaction(byType(state, (th) => ratio ** ((-sensitivity * fair) / th)));
   }
 
@@ -584,7 +884,7 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
   /** The same at a price customers would react to: what a usual month would cost. */
   function paidShareAt(state: GameState, monthlyPrice: number): number {
     const { freeShare } = config.productTypes[state.productType].pricing;
-    const ratio = monthlyPrice / fairMonthly(state.productType);
+    const ratio = monthlyPrice / fairMonthly(state);
     return Math.min(1, (1 - freeShare) * pull(state, ratio, config.pricing.paidShareSensitivity));
   }
 
@@ -716,13 +1016,13 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
     const inGame = (d: number | null) => (d !== null && (state.finalDay === null || d <= state.finalDay) ? d : null);
     return {
       fee: state.price,
-      fairFee: fairPrice(p),
+      fairFee: fairPrice(state),
       rate,
       fairRate: tx.fairRate,
       maxRate: tx.maxRate,
       volumePerPaidUser: tx.volumePerPaidUser,
       monthly: Math.round(monthlyNow(state) * 100) / 100,
-      fairMonthly: Math.round(fairMonthly(p) * 100) / 100,
+      fairMonthly: Math.round(fairMonthly(state) * 100) / 100,
       usualDayPayments,
       usualDayFees: Math.round((state.paidUsers * state.price) / config.billing.daysPerMonth),
       usualDayTransactionFees: Math.round(usualDayPayments * rate),
@@ -756,17 +1056,38 @@ export function createPricing(config: GameConfig, calendar: Calendar, support: S
       types: CUSTOMER_TYPE_IDS.map((id) => {
         const { name, blurb } = config.customerTypes[id];
         const share = state.customerMix[id];
-        const th = Math.round(threshold(state.productType, id) * 100) / 100;
+        const th = Math.round(threshold(state, id) * 100) / 100;
         return { id, name, blurb, share, users: Math.round(state.users * share), threshold: th, overThreshold: monthlyNow(state) > th };
       }),
       price: Math.round(monthlyNow(state) * 100) / 100,
-      fairPrice: Math.round(fairMonthly(state.productType) * 100) / 100,
+      fairPrice: Math.round(fairMonthly(state) * 100) / 100,
       includesRate: state.transactionRate !== null,
+    };
+  }
+
+  /**
+   * The fair price for the screens, with why it moved: today's, the product's own before inflation, how far inflation
+   * has lifted it in all, and the last pay review's inflation.
+   */
+  function fairPriceView(state: GameState): FairPriceView {
+    const last = state.pastPayReviews.at(-1);
+    return {
+      fairPrice: fairPrice(state),
+      baseFairPrice: config.productTypes[state.productType].pricing.fairPrice,
+      rise: fairRise(config, state) - 1,
+      lastInflation: last?.inflation ?? null,
     };
   }
 
   return {
     fairPrice,
+    fairPriceView,
+    openingPrice,
+    expectedPrice,
+    rememberedPrice,
+    launchBands,
+    grumbleDivert,
+    grumbleGrowth,
     baseMix,
     threshold,
     fairMonthly,

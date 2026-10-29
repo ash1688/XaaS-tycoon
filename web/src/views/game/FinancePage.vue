@@ -3,6 +3,7 @@ import { computed, watch } from "vue";
 import { formatCash } from "../../api";
 import { days, useGame } from "../../game";
 import CashChart from "../../components/CashChart.vue";
+import CostsFigure from "../../components/CostsFigure.vue";
 import SubTabs from "../../components/SubTabs.vue";
 import BalanceSheet from "../../panels/BalanceSheet.vue";
 import CapTablePanel from "../../panels/CapTablePanel.vue";
@@ -54,17 +55,15 @@ watch(
           <span class="label">Income a day</span>
           <span class="value pos" data-testid="finance-daily-income">{{ formatCash(game.company.dailyIncome) }}</span>
         </div>
-        <div class="stat">
-          <span class="label">Staff a day</span>
-          <span class="value">{{ formatCash(game.company.dailyStaffCost) }}</span>
+        <div class="stat" data-testid="finance-costs">
+          <span class="label">Costs a day</span>
+          <span class="value"><CostsFigure /></span>
+          <small>Hover for the breakdown</small>
         </div>
-        <div class="stat">
-          <span class="label">Infrastructure a month</span>
-          <span class="value">{{ formatCash(game.company.monthlyInfrastructureCost) }}</span>
-        </div>
-        <div v-if="game.company.loan?.remaining" class="stat">
-          <span class="label">Loan repayment a day</span>
-          <span class="value">{{ formatCash(game.company.loan.dailyRepayment) }}</span>
+        <div v-if="game.company.runway.oneOffsThisWeek > 0" class="stat" data-testid="finance-one-offs">
+          <span class="label">One-offs this week</span>
+          <span class="value">{{ formatCash(game.company.runway.oneOffsThisWeek) }}</span>
+          <small>Not in costs a day</small>
         </div>
         <div v-if="!game.over" class="stat" data-testid="finance-runway">
           <span class="label">Runway</span>
@@ -78,20 +77,23 @@ watch(
             }}
           </span>
           <small>
-            {{ game.company.runway.dailyNet < 0 ? "−" : "+" }}{{ formatCash(Math.abs(game.company.runway.dailyNet)) }} on a
-            usual day
+            {{ game.company.runway.dailyNet < 0 ? "−" : "+" }}{{ formatCash(Math.abs(game.company.runway.dailyNet)) }} a day
+            against the last 7 days' income
           </small>
         </div>
       </div>
       <p class="muted">
+        When cash goes below £0, the shortfall goes on your bank loan, or a short emergency loan if you have none, up to
+        {{ game.company.shortfall.limitDays }} days of costs ({{ formatCash(game.company.shortfall.limit) }}).
         <template v-if="game.company.rescue">
-          Below £0 again, the company goes into liquidation and the game ends: there's no second rescue.
+          Past that, the company goes into liquidation and the game ends: there's no second rescue.
         </template>
         <template v-else>
-          The first time cash goes below £0, a vulture VC rescues the company for most of its shares; the second time
-          is liquidation, and the game ends.
+          Past that, cash has run out: the first time, a vulture VC rescues the company for most of its shares; the
+          second time is liquidation, and the game ends.
         </template>
-        Runway is how long your cash lasts at today's income and costs.
+        Runway is how long your cash lasts at today's costs against your income averaged over the last 7 days.
+        One-offs, such as kit bought or severance, aren't in the daily costs.
       </p>
     </section>
     <SubTabs v-slot="{ current }" name="finance" label="Finance" :tabs="tabs" fallback="overview">

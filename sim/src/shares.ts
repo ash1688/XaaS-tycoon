@@ -3,6 +3,7 @@ import type { Conversion } from "./conversion.ts";
 import { cfoRollBonus } from "./executives.ts";
 import { count, pounds, type Finance } from "./finance.ts";
 import { loanOwed } from "./loan.ts";
+import { fairPriceOf } from "./pricing.ts";
 import {
   createNegotiation,
   type CounterOdds,
@@ -366,9 +367,9 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
     }
     // A paying user is worth less for paying less than the fair price, so a give-away price can't inflate it either.
     const users = Math.round(paidUsers);
-    // On the payments app, what a usual month costs a business at the fair fee and rate.
-    const { pricing: fairPricing, transactions: tx } = config.productTypes[state.productType];
-    const fair = fairPricing.fairPrice + (tx ? tx.fairRate * tx.volumePerPaidUser : 0);
+    // On the payments app, what a usual month costs a business at the fair fee and rate. The fee moves with inflation.
+    const { transactions: tx } = config.productTypes[state.productType];
+    const fair = fairPriceOf(config, state) + (tx ? tx.fairRate * tx.volumePerPaidUser : 0);
     const perUser = v.valuePerPayingUser * Math.min(1, monthlyPerUser === null ? 1 : monthlyPerUser / fair);
     drivers.push({
       id: "payingUsers",
@@ -846,6 +847,7 @@ export function createShares(config: GameConfig, finance: Finance, conversion: C
             text: `Grant withdrawn: ${down} hours down since its condition started on day ${window.fromDay}, over the ${grant.maxHoursDown} its ${grant.minUptime}% uptime condition allows. All ${pounds(grant.amount)} is paid back.`,
             cashDelta: -grant.amount,
             kind: "funding",
+            oneOff: true,
           },
         ],
       };

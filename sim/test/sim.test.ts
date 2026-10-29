@@ -4,6 +4,7 @@ import { settlingPay } from "./settlingPay.ts";
 import {
   createSim,
   defaultConfig,
+  DIFFICULTIES,
   GAME_STATE_VERSION,
   lawsuitOdds,
   MODEL_IDS,
@@ -126,6 +127,13 @@ function noWaves() {
     priceMemoryDays: 0,
     priceChurn: 0,
     maxPriceChurn: 0.5,
+    grumbleStrength: 0,
+    maxGrumble: 0.5,
+    supportStrength: 0,
+    maxSupport: 0.3,
+    grumbleDivertStrength: 0,
+    maxGrumbleDivert: 0.5,
+    expectedPriceDays: 30,
   };
 }
 
@@ -153,7 +161,8 @@ const config: GameConfig = {
   research: defaultConfig.research,
   csuite: defaultConfig.csuite,
   campaigns: defaultConfig.campaigns,
-  tiers: defaultConfig.tiers,
+  // Building at the features' own developer-days: tier 1's longer builds (#263) have their own tests (tiers.test.ts).
+  tiers: { ...defaultConfig.tiers, tier1BuildMultiplier: 1 },
   hardware: defaultConfig.hardware,
   drift: defaultConfig.drift,
   // Capacity far above any load here, so outages only happen where a test lowers it.
@@ -245,7 +254,7 @@ const config: GameConfig = {
   billing: { daysPerMonth: 30 },
   // Taken at the start: £17,900 at 10%, £19,690 over 179 days, £110 a day. The term is a day shorter for each day
   // later it's taken, so like the final day.
-  loan: { amount: 17_900, baseRate: 0.1, ratePerDay: 0.002, termDays: 179, termPerDay: 1, minTermDays: 1, minDays: 14 },
+  loan: { amount: 17_900, baseRate: 0.1, ratePerDay: 0.002, termDays: 179, termPerDay: 1, minTermDays: 1, minDays: 14, emergencyTermDays: 30 },
   shares: { min: 10_000, max: 100_000, default: 10_000 },
   valuation: defaultConfig.valuation,
   funding: defaultConfig.funding,
@@ -253,7 +262,9 @@ const config: GameConfig = {
   negotiation: defaultConfig.negotiation,
   // No pay reviews, so pay stays at the day rates: they have their own tests (payReview.test.ts).
   payReview: { ...defaultConfig.payReview, on: 0 },
-  rescue: defaultConfig.rescue,
+  // Cash runs out the moment it goes below £0, as the tests here were written for: shortfalls going on a loan first
+  // have their own tests, on the default limit.
+  rescue: { ...defaultConfig.rescue, limitDays: 0 },
   investors: defaultConfig.investors,
   // No price waves unless a test says otherwise, so a price change only has its ongoing effect on growth and payers.
   pricing: {
@@ -494,7 +505,7 @@ describe("launch", () => {
   it("starts on-prem's users trickling in on the day its first kit arrives, with the normal delivery time", () => {
     const state = setUp(defaults, fresh(defaults, "onprem", "video", true));
     // The kit on order needs an ops person once it arrives, though none yet.
-    expect(defaults.launch(state)).toMatchObject({ status: "upcoming", day: null, opsNeeded: 1 });
+    expect(defaults.launch(state)).toMatchObject({ status: "upcoming", day: null, opsNeeded: 0.5 });
     expect(defaults.opsNeededNow(state)).toBe(0);
     const waiting = playTo(defaults, state, 4);
     expect(waiting).toMatchObject({ users: 0, launchDay: null });
@@ -551,18 +562,24 @@ describe("launch", () => {
     }
   });
 
-  it("puts more of the arrivals on the free tier at a price set above the fair one before they come", () => {
+  it("has launch users react to a price set above the fair one before they come, through the bands", () => {
     const setUpWithPrice = (price?: number) => {
       const st = setUp(defaults, fresh(defaults, "iaas", "ecommerce"));
       return price ? defaults.applyAction(inPhase(st, "launch"), { type: "setPrice", price }) : st;
     };
-    // A shop's paid share is 70% at its £6 fair price; at twice that, half as many pay. A free user or two may start
-    // paying on the way, as on any day.
+    // A shop's paid share is 70% at its £6 fair price. A free user or two may start paying on the way, as on any day.
     const fair = playTo(defaults, setUpWithPrice(), 4);
-    const dear = playTo(defaults, setUpWithPrice(12), 4);
-    expect([fair.users, dear.users]).toEqual([3_000, 3_000]);
+    expect(fair.users).toBe(3_000);
     expect(Math.abs(fair.paidUsers - 2_100)).toBeLessThanOrEqual(5);
-    expect(Math.abs(dear.paidUsers - 1_050)).toBeLessThanOrEqual(5);
+    // At twice it, as the bands say: fewer join, and fewer of those who do pay.
+    const priced = setUpWithPrice(12);
+    const bands = defaults.launchBands(priced, 12);
+    const total = (id: string) => bands.total.find((b) => b.id === id)!.share;
+    const dear = playTo(defaults, priced, 4);
+    expect(Math.abs(dear.users - 3_000 * (1 - total("notJoin")))).toBeLessThanOrEqual(3);
+    expect(Math.abs(dear.paidUsers - 3_000 * total("joinPaid"))).toBeLessThanOrEqual(5);
+    expect(dear.users).toBeLessThan(2_000);
+    expect(dear.paidUsers / dear.users).toBeLessThan(0.5);
   });
 
   it("has no users, income, tickets, outages or hosting bills before the first users arrive, while staff and the loan are charged", () => {
@@ -805,7 +822,8 @@ describe("staff", () => {
   it("needs no more ops on IaaS's first VMs than on-prem, and a few on PaaS and SaaS, by default", () => {
     const s = createSim(smallestLaunch(withoutMvp));
     const first = (m: ModelId) => launched(s, s.newGame({ companyName: "Acme", productType: "social", model: m, seed: 1 }));
-    const needed = MODEL_IDS.map((m) => s.opsNeededNow(first(m)));
+    // In people: the ops work rounded up (#284).
+    const needed = MODEL_IDS.map((m) => Math.ceil(s.opsNeededNow(first(m))));
     expect(needed[1]).toBeLessThanOrEqual(needed[0]!);
     // Kit you rack yourself needs a bigger share of an ops person than a VM, and patching it takes more people.
     const { onprem, iaas } = defaultConfig.models;
@@ -938,14 +956,49 @@ describe("staff grades and lead times", () => {
     );
   });
 
-  it("moves people between pools keeping their grade, a mid unless told otherwise", () => {
+  it("retrains people into another pool keeping their grade, a mid unless told otherwise", () => {
     const state = team({ developers: { junior: 1, mid: 1, senior: 1 }, ops: { junior: 0, mid: 0, senior: 0 } });
     const mid = graded.applyAction(state, { type: "moveStaff", from: "developers", to: "ops" });
-    expect(mid.staff).toMatchObject({ developers: { junior: 1, mid: 0, senior: 1 }, ops: { junior: 0, mid: 1, senior: 0 } });
+    // They leave the old team at once and wait the grade's lead time to join the new one.
+    expect(mid.staff).toMatchObject({ developers: { junior: 1, mid: 0, senior: 1 }, ops: { junior: 0, mid: 0, senior: 0 } });
+    expect(pool(mid, "ops").hiring).toEqual([{ grade: "mid", count: 1, agency: false, arrivesOn: 8, daysLeft: 7, retraining: true }]);
     const senior = graded.applyAction(state, { type: "moveStaff", from: "developers", to: "ops", grade: "senior" });
-    expect(senior.staff.ops).toEqual({ junior: 0, mid: 0, senior: 1 });
+    expect(pool(senior, "ops").hiring).toEqual([{ grade: "senior", count: 1, agency: false, arrivesOn: 15, daysLeft: 14, retraining: true }]);
     // With no mid, a junior moves.
-    expect(graded.applyAction(mid, { type: "moveStaff", from: "developers", to: "ops" }).staff.ops).toEqual({ junior: 1, mid: 1, senior: 0 });
+    const junior = graded.applyAction(mid, { type: "moveStaff", from: "developers", to: "ops" });
+    expect(junior.staff.developers).toEqual({ junior: 0, mid: 0, senior: 1 });
+    expect(pool(junior, "ops").hiring.map((h) => [h.grade, h.arrivesOn])).toEqual([["mid", 8], ["junior", 4]]);
+  });
+
+  it("pays staff retraining the new team's rate, with no severance, until they join after the lead time (#258)", () => {
+    const state = team({ developers: { junior: 0, mid: 2, senior: 0 }, ops: { junior: 0, mid: 1, senior: 0 } });
+    const costBefore = graded.dailyStaffCost(state);
+    const moved = graded.applyAction(state, { type: "moveStaff", from: "developers", to: "ops" });
+    // No severance and no recruitment cost: the move itself costs nothing.
+    expect(moved.cash).toBe(state.cash);
+    // Paid ops' rate while retraining, not developers'.
+    const opsRate = pool(moved, "ops").grades.find((g) => g.grade === "mid")!.dayRate;
+    const devRate = pool(moved, "developers").grades.find((g) => g.grade === "mid")!.dayRate;
+    expect(graded.dailyStaffCost(moved)).toBe(costBefore - devRate + opsRate);
+    const day = graded.advance(moved);
+    expect(day.log[0]!.entries).toContainEqual({ text: "Ops pay, retraining (1 mid)", cashDelta: -opsRate, category: "staff" });
+    expect(day.state.staff.ops.mid).toBe(1);
+    // A retraining member of staff isn't a hire, so it can't be cancelled.
+    expect(() => graded.applyAction(day.state, { type: "cancelHire", pool: "ops", grade: "mid" })).toThrow(
+      expect.objectContaining({ code: "no_hires" }),
+    );
+    // On the day the lead time is up they join the team at the same grade.
+    const joined = graded.advance(moved, 7);
+    expect(joined.state.staff.ops.mid).toBe(2);
+    expect(joined.state.hiring).toEqual([]);
+    expect(joined.log.at(-1)!.entries).toContainEqual({
+      text: "1 mid ops person finished retraining and started work.",
+      cashDelta: 0,
+      kind: "staff",
+    });
+    // With no lead time (a teacher's config) they join at once.
+    const instant = createSim({ ...config, staffGrades: { ...config.staffGrades, mid: { ...config.staffGrades.mid, leadDays: 0 } } });
+    expect(instant.applyAction(state, { type: "moveStaff", from: "developers", to: "ops" }).staff.ops.mid).toBe(2);
   });
 
   it("makes a senior about twice a junior's work for about 1.7× the pay by default, arriving in 3, 7 and 14 days", () => {
@@ -1552,8 +1605,8 @@ describe("servers on IaaS", () => {
   it("starts a new IaaS game with the configured starter setup, ready for the first day", () => {
     const state = begin();
     expect(flat.servers(state)).toEqual([
-      { id: 1, type: "app", size: "massive", name: "App server", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, unitBoost: 1, apiu: false, monthlyCost: 0, paid: null, sellBack: null, rack: null, performance: null, wear: null, wearDaysLeft: null, wearWarning: false, risk: null, crashedDays: 0, overheatedDays: 0 },
-      { id: 2, type: "database", size: "massive", name: "Database", status: "ready", readyDay: 1, daysLeft: 0, units: 10_000, unitBoost: 1, apiu: false, monthlyCost: 0, paid: null, sellBack: null, rack: null, performance: null, wear: null, wearDaysLeft: null, wearWarning: false, risk: null, crashedDays: 0, overheatedDays: 0 },
+      { id: 1, type: "app", size: "massive", name: "App server", status: "ready", readyDay: 1, daysLeft: 0, leavesOn: null, units: 10_000, unitBoost: 1, apiu: false, monthlyCost: 0, paid: null, sellBack: null, rack: null, performance: null, wear: null, wearDaysLeft: null, wearWarning: false, risk: null, crashedDays: 0, overheatedDays: 0 },
+      { id: 2, type: "database", size: "massive", name: "Database", status: "ready", readyDay: 1, daysLeft: 0, leavesOn: null, units: 10_000, unitBoost: 1, apiu: false, monthlyCost: 0, paid: null, sellBack: null, rack: null, performance: null, wear: null, wearDaysLeft: null, wearWarning: false, risk: null, crashedDays: 0, overheatedDays: 0 },
     ]);
     expect(flat.units(state)).toMatchObject({ cu: { demand: 10, capacity: 10_000 }, dbu: { demand: 10, capacity: 10_000 } });
   });
@@ -1692,19 +1745,148 @@ describe("servers on IaaS", () => {
     expect(flat.advance(changedMind, 5).state.spend).toEqual(flat.advance(fleet(begin(), BIG_APP, BIG_DB), 5).state.spend);
   });
 
-  it("derives ops needed from the servers, ready or not, and cuts every tier when short", () => {
-    // 1 ops for each app server and database, 0.5 for each cache and load balancer, rounded up.
+  it("derives ops needed from the servers running, not those on order, and cuts every tier when short", () => {
+    // 1 ops for each app server and database, 0.5 for each cache and load balancer, not rounded up (#284).
     const state = begin();
     expect(flat.opsNeededNow(state)).toBe(2);
     expect(flat.opsNeeded("iaas")).toBe(2);
+    // Servers on order need no ops until they're ready (#259), but are counted for once they are.
     const cached = rent(state, "cache", "small");
-    expect(flat.opsNeededNow(cached)).toBe(3);
-    expect(flat.opsNeededNow(rent(cached, "loadBalancer", "small"))).toBe(3);
-    expect(flat.opsNeededNow(rent(rent(cached, "loadBalancer", "small"), "app", "small"))).toBe(4);
+    expect(flat.opsNeededNow(cached)).toBe(2);
+    expect(flat.opsNeededOnceReady(cached)).toBe(2.5);
+    const more = rent(rent(cached, "loadBalancer", "small"), "app", "small");
+    expect(flat.opsNeededOnceReady(more)).toBe(4);
+    expect(flat.opsNeededNow(flat.advance(more).state)).toBe(4);
     expect(flat.opsNeededNow(fleet(state))).toBe(0);
     // With 1 of the 2 ops needed, each tier keeps 40% + 60% × ½ = 70%.
     expect(flat.units(withStaff(state, { ops: 1 }))).toMatchObject({ cu: { capacity: 7_000 }, dbu: { capacity: 7_000 } });
     expect(flat.units(withStaff(state, { ops: 2 }))).toMatchObject({ cu: { capacity: 10_000 } });
+  });
+
+  it("slides the ops cut with the share of ops work missing, shows it and stops time when it starts (#259)", () => {
+    // Two app servers, a database and a cache: 3.5 ops of work, the one figure shown and cut against (#284).
+    const kit = fleet(begin(), ["app", "massive"], ["app", "massive"], ["database", "massive"], ["cache", "small"]);
+    expect(flat.opsNeededNow(kit)).toBe(3.5);
+    expect(flat.opsShortfall(withStaff(kit, { ops: 4 }))).toBeNull();
+    // 3 of the 3.5 ops of work: 40% + 60% × 3/3.5, 91.4%, rounded down so any cut shows.
+    expect(flat.opsShortfall(withStaff(kit, { ops: 3 }))).toEqual({ have: 3, needed: 3.5, capacityShare: 0.91 });
+    // Each person short cuts more.
+    const shares = [3, 2, 1, 0].map((ops) => flat.opsShortfall(withStaff(kit, { ops }))!.capacityShare);
+    expect(shares).toEqual([...shares].sort((a, b) => b - a));
+    expect(shares.at(-1)).toBe(config.capacity.unstaffedShare);
+    expect(flat.units(withStaff(kit, { ops: 3 }))!.opsCut).toBeCloseTo(0.09, 2);
+
+    // Ordering a server doesn't cut today's capacity; once it's ready the team is short, and time stops that day.
+    const ready = withStaff(fleet(begin(), BIG_APP, BIG_DB), { ops: 2 });
+    const ordered = rent(ready, "app", "massive");
+    expect(flat.opsShortfall(ordered)).toBeNull();
+    const tick = flat.tick(ordered);
+    expect(tick.pauses).toContainEqual({ kind: "alert", id: "ops-shortfall", text: "Short of ops: 2 of 3 needed, capacity cut to 80%" });
+    // It stays short without stopping again, until ops catch up.
+    expect(flat.tick(tick.state).pauses.map((p) => p.id)).not.toContain("ops-shortfall");
+  });
+
+  describe("cancelling a VM (#260)", () => {
+    // Every difficulty allowed, so a game can start on any.
+    const anyLevel = createSim({ ...flatConfig, allowedDifficulties: { easy: 1, normal: 1, hard: 1 } });
+    /** A massive app server, database and small cache, on a difficulty: 1,000 users need 10 CU and DBU. */
+    const kit = (difficulty?: string) =>
+      fleet(
+        withStaff(anyLevel.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 42, ...(difficulty ? { difficulty } : {}) }), { ops: 10 }),
+        BIG_APP,
+        BIG_DB,
+        ["cache", "small"],
+      );
+    const refusal = (state: GameState, action: Action) => {
+      try {
+        flat.applyAction(state, action);
+      } catch (e) {
+        return { code: (e as SimError).code, message: (e as SimError).message };
+      }
+      return null;
+    };
+    const ids = (state: GameState) => state.servers.map((s) => s.id);
+
+    it("waits for a replacement of the same kind on order, still serving and billed, then goes", () => {
+      const state = rent(kit(), "app", "small");
+      const replacement = state.servers.at(-1)!;
+      const waiting = flat.applyAction(state, { type: "cancelServer", id: 1 });
+      expect(flat.servers(waiting).find((s) => s.id === 1)).toMatchObject({ status: "ready", leavesOn: replacement.readyDay });
+      expect(flat.units(waiting)!.cu.capacity).toBe(flat.units(state)!.cu.capacity);
+      expect(refusal(waiting, { type: "cancelServer", id: 1 })?.code).toBe("already_leaving");
+      // It serves through the day the replacement is ready, then goes at the end of it.
+      const day = flat.advance(waiting, replacement.readyDay - waiting.day);
+      expect(ids(day.state)).not.toContain(1);
+      expect(day.log.at(-1)!.entries).toContainEqual({ text: "App server #1 (massive) cancelled: its replacement is ready.", cashDelta: 0 });
+      expect(outages(day.log)).toEqual([]);
+    });
+
+    it("refuses on Easy and Normal a cancel that leaves capacity below today's load, saying why", () => {
+      for (const difficulty of ["easy", "normal"]) {
+        const state = kit(difficulty);
+        expect(refusal(state, { type: "cancelServer", id: 1 }), difficulty).toEqual({
+          code: "cancel_unsafe",
+          message: "You can't cancel that server: without it, there'd be no compute (CU) left for today's load. Rent a replacement first, and the cancel will wait until it's ready.",
+        });
+        // Confirming doesn't help below Hard.
+        expect(refusal(state, { type: "cancelServer", id: 1, now: true })?.code, difficulty).toBe("cancel_unsafe");
+        // A cancel that leaves enough goes at once.
+        expect(ids(flat.applyAction(state, { type: "cancelServer", id: 3 }))).toEqual([1, 2]);
+      }
+    });
+
+    it("checks a waiting cancel against today's load as it goes: a smaller replacement keeps it waiting (#287)", () => {
+      for (const difficulty of ["easy", "normal"]) {
+        // 3,000 users need 30 CU: the massive server carries them, a small replacement can't.
+        const state = rent(withUsers(kit(difficulty), 3_000), "app", "small");
+        const replacement = state.servers.at(-1)!;
+        expect(flat.units(state)!.cu.capacity).toBeGreaterThan(30);
+        const waiting = flat.applyAction(state, { type: "cancelServer", id: 1 });
+        const day = flat.advance(waiting, replacement.readyDay - waiting.day);
+        // Still serving, waiting another day, saying why, with no outage.
+        expect(day.state.servers.find((s) => s.id === 1), difficulty).toMatchObject({ leavesOn: replacement.readyDay + 1 });
+        expect(day.log.at(-1)!.entries).toContainEqual({
+          text: expect.stringMatching(/^App server #1 \(massive\) isn't cancelled yet: without it, today's load would be \d+% of the compute \(CU\) left\. It keeps serving/),
+          cashDelta: 0,
+          kind: "danger",
+        });
+        expect(outages(day.log)).toEqual([]);
+        // Once more capacity arrives, it goes.
+        const more = rent(day.state, "app", "massive");
+        const later = flat.advance(more, more.servers.at(-1)!.readyDay - more.day);
+        expect(ids(later.state)).not.toContain(1);
+      }
+    });
+
+    it("warns on Hard as a waiting cancel goes short of today's load (#287)", () => {
+      const state = rent(withUsers(kit("hard"), 3_000), "app", "small");
+      const replacement = state.servers.at(-1)!;
+      const waiting = flat.applyAction(state, { type: "cancelServer", id: 1 });
+      const day = flat.advance(waiting, replacement.readyDay - waiting.day);
+      expect(ids(day.state)).not.toContain(1);
+      expect(day.log.at(-1)!.entries).toContainEqual({
+        text: expect.stringMatching(/^App server #1 \(massive\) cancelled: its replacement is ready\. Warning: without it, today's load would be \d+% of the compute \(CU\) left: expect an outage\.$/),
+        cashDelta: 0,
+        kind: "danger",
+      });
+    });
+
+    it("lets Hard cancel it once confirmed, and the outage is the student's", () => {
+      const state = kit("hard");
+      expect(refusal(state, { type: "cancelServer", id: 1 })).toEqual({
+        code: "confirm_cancel",
+        message: "Without that server, there'd be no compute (CU) left for today's load: expect an outage. To cancel it anyway, confirm it (`cancel 1 now`).",
+      });
+      const gone = flat.applyAction(state, { type: "cancelServer", id: 1, now: true });
+      expect(ids(gone)).toEqual([2, 3]);
+      expect(outages(flat.advance(gone).log).length).toBeGreaterThan(0);
+    });
+
+    it("says so in each difficulty's description", () => {
+      expect(DIFFICULTIES.easy.blurb).toMatch(/can't be cancelled or sold if that would leave you short of capacity/);
+      expect(DIFFICULTIES.normal.blurb).toMatch(/can't be cancelled or sold if that would leave you short of capacity/);
+      expect(DIFFICULTIES.hard.blurb).toMatch(/cancel or sell a server that leaves you short of capacity, once you confirm it/);
+    });
   });
 
   it("counts free users' demand as well as paying ones'", () => {
@@ -1753,8 +1935,8 @@ describe("servers on IaaS", () => {
     expect(code({ type: "rentServer", server: "mainframe" as ServerType, size: "small" })).toBe("unknown_server");
     expect(code({ type: "rentServer", server: "app", size: "huge" as ServerSize })).toBe("unknown_server");
     expect(code({ type: "cancelServer", id: 99 })).toBe("unknown_server");
-    rent(state, "app", "small");
-    flat.applyAction(state, { type: "cancelServer", id: 1 });
+    // Cancelling with a replacement on order (it waits for it) leaves the state it started from alone too.
+    flat.applyAction(rent(state, "app", "small"), { type: "cancelServer", id: 1 });
     expect(state).toEqual(copy);
   });
 
@@ -1811,7 +1993,7 @@ describe("servers on IaaS", () => {
       expect(s.newGame({ companyName: "Acme", productType: p, model: "iaas", seed: 1 }).servers).toEqual([]);
       const state = launched(s, s.newGame({ companyName: "Acme", productType: p, model: "iaas", seed: 1 }));
       expect(state.launchDay, p).toBe(2);
-      expect(s.opsNeededNow(state), p).toBe(1);
+      expect(s.opsNeededNow(state), p).toBe(0.4);
       expect(s.units(state)!.usersSupported, p).toBeGreaterThan(state.users * 1.5);
     }
     // One CU serves the same users whatever the size, and bigger VMs cost less per unit.
@@ -1877,6 +2059,26 @@ describe("servers on-prem", () => {
   };
   const BIG_DB: Kind = ["database", "massive"];
   const BIG_APP: Kind = ["app", "massive"];
+
+  it("sells with the same rules as cancelling: waits for a replacement, and refuses one that leaves it short (#260)", () => {
+    const state = fleet(begin(), BIG_APP, BIG_DB);
+    expect(code(() => sell(state, 1))).toBe("cancel_unsafe");
+    // `now` doesn't get round it below Hard (#287).
+    expect(code(() => own.applyAction(state, { type: "sellServer", id: 1, now: true }))).toBe("cancel_unsafe");
+    const ordered = buy(state, "app", "massive");
+    const arrives = ordered.servers.at(-1)!.readyDay;
+    const refund = own.servers(ordered).find((s) => s.id === 1)!.sellBack!;
+    const waiting = sell(ordered, 1);
+    // Refunded when it goes, not before.
+    expect(waiting.cash).toBe(ordered.cash);
+    expect(own.servers(waiting).find((s) => s.id === 1)!.leavesOn).toBe(arrives);
+    const played = own.advance(waiting, arrives - waiting.day);
+    expect(played.state.servers.map((s) => s.id)).not.toContain(1);
+    expect(played.log.at(-1)!.entries).toContainEqual(
+      expect.objectContaining({ text: expect.stringMatching(/^App server #1 \(massive\) sold back for £[\d,]+: its replacement is ready\.$/), cashDelta: refund }),
+    );
+    expect(outages(played.log)).toEqual([]);
+  });
 
   it("starts with the starter kit, bought on day 1 on top of the server room, ready for the first day", () => {
     const state = own.newGame({ companyName: "Acme", productType: "social", model: "onprem", seed: 42 });
@@ -1970,16 +2172,16 @@ describe("servers on-prem", () => {
   });
 
   it("derives ops needed from the kit that has arrived, and cuts every tier when short", () => {
-    // 1 ops for each app server and database, 0.5 for each cache and load balancer, rounded up.
+    // 1 ops for each app server and database, 0.5 for each cache and load balancer, not rounded up (#284).
     const state = begin();
     expect(own.opsNeededNow(state)).toBe(2);
     expect(own.opsNeeded("onprem")).toBe(2);
     const ordered = buy(buy(state, "cache", "small"), "app", "small");
     expect(own.opsNeededNow(ordered)).toBe(2);
     // Kit on order needs its ops once it arrives: shown ahead.
-    expect(own.opsNeededOnceReady(ordered)).toBe(4);
-    expect(own.opsNeededNow(own.advance(ordered, 10).state)).toBe(4);
-    expect(own.opsNeededNow(sell(own.advance(ordered, 10).state, 4))).toBe(3);
+    expect(own.opsNeededOnceReady(ordered)).toBe(3.5);
+    expect(own.opsNeededNow(own.advance(ordered, 10).state)).toBe(3.5);
+    expect(own.opsNeededNow(sell(own.advance(ordered, 10).state, 4))).toBe(2.5);
     // With 1 of the 2 ops needed, each tier keeps 40% + 60% × ½ = 70%.
     expect(own.units(withStaff(state, { ops: 1 }))).toMatchObject({ cu: { capacity: 7_000 }, dbu: { capacity: 7_000 } });
   });
@@ -2475,7 +2677,9 @@ describe("default PaaS and SaaS", () => {
   });
 
   it("needs a few fixed ops on PaaS and SaaS, no more than IaaS's first VMs", () => {
-    const iaasOps = s.opsNeededNow(setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 1 })));
+    // The first VMs need their ops once they're ready (#259).
+    // In people: the ops work rounded up (#284).
+    const iaasOps = Math.ceil(s.opsNeededOnceReady(setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 1 }))));
     for (const model of ["paas", "saas"] as const) {
       expect(s.opsNeeded(model)).toBeGreaterThan(0);
       expect(s.opsNeeded(model)).toBeLessThanOrEqual(iaasOps);
@@ -2630,6 +2834,7 @@ describe("rescue buyout and liquidation", () => {
       day: 52,
       amount: 700,
       losses: 20,
+      shortfalls: 0,
       shares: 30_000,
       share: 0.75,
       cuts: [],
@@ -2804,26 +3009,288 @@ describe("rescue buyout and liquidation", () => {
   });
 });
 
-describe("runway", () => {
-  const apply = (state: GameState, ...actions: Action[]) => actions.reduce((st, a) => sim.applyAction(st, a), state);
+describe("shortfalls onto the loan, and the vulture VC past 7 days", () => {
+  // The default limit: shortfalls can go onto a loan up to 7 days of daily costs before cash has run out.
+  const lenient = createSim({ ...config, rescue: { ...config.rescue, limitDays: 7 } });
+  // 1000 cash at 20 a day on IaaS: day 51 leaves exactly 0, day 52 goes £20 below.
+  const atZero = () => lenient.advance(start(), 50).state;
 
-  it("is a usual day's costs against income, and the days of cash that leaves", () => {
+  it("opens an emergency loan on a short term for a small shortfall with no loan, not a rescue", () => {
+    const { state, log } = lenient.advance(atZero());
+    // The rate a loan taken on day 52 would have: 10% plus 0.2 points for each of the 51 days later.
+    expect(state).toMatchObject({ day: 52, cash: 0, status: "playing", rescue: null, firstShortfallDay: 52 });
+    expect(state.loan).toEqual({
+      amount: 20,
+      day: 52,
+      rate: 0.202,
+      term: 30,
+      lastDay: 82,
+      dailyRepayment: 1,
+      total: 30,
+      repaid: 0,
+      interestPaid: 0,
+      paidOffDay: null,
+      emergency: true,
+      shortfall: 20,
+    });
+    const note = log[0]!.entries.find((e) => e.text.startsWith("Cash went"))!;
+    expect(note).toMatchObject({ cashDelta: 20 });
+    expect(note.text).toMatch(/Cash went £20 below £0 with no bank loan, so the bank opened an emergency loan for it at 20.2%: £1 a day for 30 days/);
+    // The limit is fixed at 7 days of the £20 daily costs on the day cash first went below £0: £140, £120 more than
+    // the £20 on the loan.
+    expect(note.text).toMatch(/Shortfalls can go £120 further \(7 days of costs, £140 in all\) before a vulture VC steps in/);
+    expect(lenient.shortfall(state)).toEqual({ limitDays: 7, limit: 140, owed: 20, room: 120, onto: "emergency loan" });
+    expect(state.shortfallLimit).toBe(140);
+    // Borrowed, not income, so the cash chart adds up.
+    expect(state.spendByDay.at(-1)).toMatchObject({ borrowed: 20, income: 0 });
+    // Repaid from the next day like any loan.
+    expect(lenient.advance(state).state.loan).toMatchObject({ repaid: 1 });
+  });
+
+  it("adds a shortfall to the bank loan being repaid: the same repayment a day, for longer", () => {
+    const rich = createSim({ ...config, startingCash: 100_000, rescue: { ...config.rescue, limitDays: 7 } });
+    const borrowed = rich.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, takeLoan: true });
+    // £50 against £130 a day (£20 of IaaS, £110 of repayment): £80 short.
+    const { state, log } = rich.advance({ ...borrowed, cash: 50 });
+    expect(state).toMatchObject({ cash: 0, rescue: null, pastLoans: [] });
+    // £80 at the loan's 10% adds £88 to repay, at £110 a day: a day longer.
+    expect(state.loan).toMatchObject({ amount: 17_980, total: 19_690 + 88, dailyRepayment: 110, term: 180, lastDay: 181, shortfall: 80 });
+    expect(state.loan!.emergency).toBeUndefined();
+    expect(log[0]!.entries.find((e) => e.text.startsWith("Cash went"))!.text).toMatch(/Cash went £80 below £0: the shortfall went on your bank loan, still £110 a day, now until day 181/);
+  });
+
+  it("stops time the first time cash goes below £0, saying how far it can still go", () => {
+    const first = lenient.tick(atZero());
+    expect(first.pauses).toEqual([
+      { kind: "alert", id: "shortfall", text: "Cash went below £0 and the shortfall went on your loan: £120 more and a vulture VC steps in" },
+    ]);
+    // Only the first time.
+    expect(lenient.tick(first.state).pauses.map((p) => p.id)).not.toContain("shortfall");
+  });
+
+  it("rescues only once shortfalls would go past 7 days of daily costs", () => {
+    let state = atZero();
+    while (state.status === "playing" && !state.rescue) {
+      const before = state;
+      state = lenient.advance(state).state;
+      if (!state.rescue) {
+        // Short of the limit, cash is never below £0: the shortfall is on the loan, within its 7 days.
+        expect(state.cash).toBeGreaterThanOrEqual(0);
+        const view = lenient.shortfall(state);
+        expect(view.owed).toBeLessThanOrEqual(view.limit);
+      } else {
+        // The day it fires, that day's shortfall was more than the room left.
+        expect(state.rescue.losses).toBeGreaterThan(lenient.shortfall(before).room);
+      }
+    }
+    expect(state.rescue!.day).toBeGreaterThan(52);
+    // The vulture VC's cash paid off what shortfalls put on the emergency loan, so the full room below £0 is back.
+    expect(state.rescue!.shortfalls).toBeGreaterThan(100);
+    expect(state.loan).toMatchObject({ emergency: true, paidOffDay: state.rescue!.day, shortfall: 0 });
+    expect(lenient.shortfall(state)).toMatchObject({ owed: 0, onto: null });
+    expect(lenient.shortfall(state).room).toBe(lenient.shortfall(state).limit);
+    expect(state.shortfallLimit).toBeNull();
+  });
+
+  it("adds a later shortfall to the emergency loan on its short term: the repayment rises, the term doesn't stretch", () => {
+    const first = lenient.advance(atZero()).state;
+    const { state, log } = lenient.advance(first);
+    // £21 more short (£20 of IaaS and the £1 repayment) at 20.2% adds £26, repaid over 30 days: £1 more a day.
+    expect(state.loan).toMatchObject({ emergency: true, amount: 41, total: 56, dailyRepayment: 2, shortfall: 41 });
+    expect(state.loan!.lastDay).toBeLessThanOrEqual(state.day + 30);
+    expect(log[0]!.entries.find((e) => e.text.startsWith("Cash went"))!.text).toMatch(
+      /the shortfall went on your emergency loan, and the bank still wants it back fast: now £2 a day, until day \d+/,
+    );
+    // Many shortfalls later, it still ends within 30 days of the latest.
+    let later = state;
+    for (let i = 0; i < 4 && !later.rescue; i++) later = lenient.advance(later).state;
+    if (!later.rescue) expect(later.loan!.lastDay).toBeLessThanOrEqual(later.day + 30);
+  });
+
+  it("fixes the room below £0 when cash first goes there: hiring doesn't raise it", () => {
+    const first = lenient.advance(atZero()).state;
+    const hired = withStaff(first, { developers: 3 });
+    expect(lenient.runway(hired).dailyCosts).toBeGreaterThan(lenient.runway(first).dailyCosts);
+    expect(lenient.shortfall(hired).limit).toBe(lenient.shortfall(first).limit);
+  });
+
+  it("has a rescue pay off what shortfalls put on a bank loan, which keeps the rest at the same repayment", () => {
+    const rich = createSim({ ...config, startingCash: 100_000, rescue: { ...config.rescue, limitDays: 7 } });
+    const borrowed = rich.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, takeLoan: true });
+    const topped = rich.advance({ ...borrowed, cash: 50 }).state;
+    expect(topped.loan).toMatchObject({ shortfall: 80, dailyRepayment: 110 });
+    // Far below £0 the next day: past the limit, so the vulture VC steps in.
+    const { state, log } = rich.advance({ ...topped, cash: -5_000 });
+    expect(state.rescue).toMatchObject({ shortfalls: 80 });
+    expect(state.loan).toMatchObject({ amount: 17_900, shortfall: 0, dailyRepayment: 110, paidOffDay: null });
+    expect(rich.shortfall(state)).toMatchObject({ owed: 0, onto: "bank loan" });
+    expect(log[0]!.entries.map((e) => e.text)).toContain("The vulture VC's cash paid off the shortfalls on your bank loan");
+    expect(log[0]!.entries.find((e) => e.kind === "rescue")!.text).toMatch(/£80 to pay off the shortfalls on the loan/);
+  });
+
+  it("goes into liquidation the second time cash runs out, past the limit again", () => {
+    const strictEnd = sim.advance(start(), 200).state;
+    const { state, log } = lenient.advance(start(), 400);
+    expect(state.status).toBe("liquidated");
+    expect(state.day).toBeGreaterThan(strictEnd.day);
+    expect(log.at(-1)!.entries.find((e) => e.kind === "liquidation")!.text).toMatch(/Cash ran out again, after the rescue buyout on day \d+/);
+  });
+
+  it("prices the buy-back on the vulture VC's stake now, after later rounds dilute it", () => {
+    // Rescued on day 52 for £700 and 75%: the price is twice the £700.
+    const rescued = sim.advance(start(), 51).state;
+    expect(sim.rescue(rescued)).toMatchObject({ vultureShare: 0.75, buyBackPrice: 1_400 });
+    // New shares for an angel halve its stake to 37.5%: the least it takes halves too.
+    const diluted = { ...rescued, shareholders: [...rescued.shareholders, { id: "angel" as const, shares: 40_000, day: 52 }] };
+    const view = sim.rescue(diluted)!;
+    expect(view).toMatchObject({ vultureShare: 0.375, buyBackPrice: 700 });
+    expect(view.priceDetail).toMatch(/2× the £700 it put in, scaled to its 75% stake now diluted to 37.5%/);
+    const bought = sim.applyAction({ ...diluted, cash: 1_000 }, { type: "buyBack" });
+    expect(bought.cash).toBe(300);
+  });
+
+  it("takes an emergency loan still owed at the end off the final cash", () => {
+    const short = createSim({ ...config, finalDay: 55, rescue: { ...config.rescue, limitDays: 7 } });
+    const { state, log } = short.advance(short.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 }), 60);
+    expect(state).toMatchObject({ day: 55, status: "finished" });
+    // Days 52–55 went £20, £21, £21 and £21 below £0 onto the emergency loan, repaid £1, £1 and £1 a day: the rest is
+    // owed, and comes off the cash as the game ends.
+    const settled = log.at(-1)!.entries.find((e) => e.text.startsWith("The game is over"))!;
+    expect(settled.text).toMatch(/still owed on your emergency loan comes off your cash/);
+    expect(state.cash).toBe(settled.cashDelta);
+    expect(short.loan(state)).toMatchObject({ remaining: 0, repaidInFull: true, paidOffDay: 55 });
+    expect(short.summarise(state)).toMatchObject({ cash: state.cash, loan: { remaining: 0 } });
+    expect(short.valuation(state).drivers.find((d) => d.id === "netCash")!.amount).toBe(state.cash);
+  });
+});
+
+describe("runway", () => {
+  const apply =(state: GameState, ...actions: Action[]) => actions.reduce((st, a) => sim.applyAction(st, a), state);
+
+  /** The daily costs by heading, leaving out the headings at £0. */
+  const headings = (state: GameState) =>
+    Object.fromEntries(sim.runway(state).costs.filter((h) => h.amount !== 0).map((h) => [h.id, h.amount]));
+  /** The state with these incomes recorded on its last days, the latest last. */
+  const withIncomes = (state: GameState, incomes: number[]): GameState => ({
+    ...state,
+    spendByDay: state.spendByDay.map((d) => {
+      const i = incomes.length - 1 - (state.day - d.day);
+      return i >= 0 && i < incomes.length ? { ...d, income: incomes[i]! } : d;
+    }),
+  });
+
+  it("is today's costs against income, and the days of cash that leaves", () => {
     // £20 a day on IaaS and nothing coming in: £1,000 lasts 50 days.
-    expect(sim.runway(start())).toEqual({ dailyIncome: 0, dailyCosts: 20, dailyNet: -20, days: 50 });
+    expect(sim.runway(start())).toMatchObject({ dailyIncome: 0, dailyCosts: 20, dailyNet: -20, days: 50, oneOffsThisWeek: 0 });
+    expect(headings(start())).toEqual({ hosting: 20 });
     const staffed = apply(start(), { type: "hire", pool: "developers", count: 2 }, { type: "hire", pool: "ops" });
     const runway = sim.runway(staffed);
     expect(runway).toMatchObject({ dailyCosts: 20 + 14 + 3, dailyNet: -37, days: 27 });
-    // The same as the day actually played costs.
-    expect(sim.advance(staffed).state.cash - staffed.cash).toBe(runway.dailyNet);
+    expect(headings(staffed)).toEqual({ hosting: 20, staff: 17 });
+    // The headings add up to the costs, and a day played costs the same.
+    expect(runway.costs.reduce((sum, h) => sum + h.amount, 0)).toBe(runway.dailyCosts);
+    expect(sim.advance(staffed).state.cash - staffed.cash).toBe(-runway.dailyCosts);
   });
 
-  it("counts loan repayments, and is null days when not losing money", () => {
+  it("lists every heading in order", () => {
+    expect(sim.runway(start()).costs.map((h) => h.label)).toEqual([
+      "Staff pay",
+      "Executive pay",
+      "Staff schemes",
+      "Hosting, rent and power",
+      "Add-ons and platform fees",
+      "Campaigns",
+      "Loan repayments",
+    ]);
+  });
+
+  it("counts loan repayments", () => {
     const rich = createSim({ ...config, startingCash: 100_000 });
     const borrowed = rich.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, takeLoan: true });
     expect(rich.runway(borrowed)).toMatchObject({ dailyCosts: 20 + 110, dailyNet: -130 });
-    const paying = { ...start(), users: 10_000, paidUsers: 10_000 };
-    expect(sim.runway(paying).dailyIncome).toBeGreaterThan(20);
-    expect(sim.runway(paying).days).toBeNull();
+    expect(rich.runway(borrowed).costs.find((h) => h.id === "loan")!.amount).toBe(110);
+  });
+
+  it("counts executive pay, but none during the board's pay holiday", () => {
+    const shortlisted = start();
+    const c = shortlisted.csuite.shortlists.cto[0]!;
+    const hired = (n: number): GameState => ({
+      ...shortlisted,
+      csuite: {
+        ...shortlisted.csuite,
+        hired: (["cto", "cfo", "legalCounsel"] as const)
+          .slice(0, n)
+          .map((role) => ({ role, name: c.name, strength: c.strength, salary: 50, equity: 0, shares: 0, day: 1 })),
+      },
+    });
+    // Appointing executives puts the costs up, never down.
+    expect([0, 1, 2, 3].map((n) => sim.runway(hired(n)).dailyCosts)).toEqual([20, 70, 120, 170]);
+    expect(headings(hired(3))).toEqual({ hosting: 20, executives: 150 });
+    const holiday = { ...hired(3), csuite: { ...hired(3).csuite, payHolidaySince: 1 } };
+    expect(sim.runway(holiday)).toMatchObject({ dailyCosts: 20, payHoliday: true });
+    expect(sim.advance(hired(3)).state.cash - hired(3).cash).toBe(-170);
+  });
+
+  it("counts staff schemes and campaigns", () => {
+    const staffed = apply(start(), { type: "hire", pool: "developers", count: 2 });
+    const schemes = { ...staffed, staffSchemes: { ...staffed.staffSchemes, pension: 3, health: 3 } };
+    expect(headings(schemes).schemes).toBeGreaterThan(0);
+    expect(sim.advance(schemes).state.cash - schemes.cash).toBe(-sim.runway(schemes).dailyCosts);
+    const campaign = {
+      ...{ id: 1, customerType: "casual" as const, budget: 700, days: 7, startDay: 2, endDay: 8, stopped: false },
+      ...{ holiday: null, grade: "mid" as const, spent: 0, earned: 0, users: 0, marketAdded: 0, quote: null },
+    };
+    const marketing = { ...staffed, campaigns: [campaign] };
+    expect(headings(marketing)).toMatchObject({ campaigns: 100 });
+    expect(sim.advance(marketing).state.spendByDay.at(-1)!.campaigns).toBe(100);
+    // Once it has run its days, it costs nothing.
+    expect(headings({ ...marketing, day: 8 }).campaigns).toBeUndefined();
+  });
+
+  it("uses income averaged over the last 7 days, and is null days only when that covers the costs", () => {
+    const week = sim.advance(start(), 8).state;
+    const cash = week.cash;
+    expect(sim.runway(week).dailyCosts).toBe(20);
+    // £70 over the week is £10 a day: losing £10 a day.
+    expect(sim.runway(withIncomes(week, [0, 0, 0, 0, 0, 0, 70]))).toMatchObject({
+      dailyIncome: 10,
+      dailyNet: -10,
+      days: Math.floor(cash / 10),
+    });
+    // A payday of £140 a week covers £20 a day exactly: not losing money, whichever day it fell on.
+    for (const incomes of [[140, 0, 0, 0, 0, 0, 0], [0, 0, 0, 140, 0, 0, 0]]) {
+      expect(sim.runway(withIncomes(week, incomes))).toMatchObject({ dailyIncome: 20, dailyNet: 0, days: null });
+    }
+    // Income from before the last 7 days doesn't count.
+    expect(sim.runway(withIncomes(week, [1_000, 0, 0, 0, 0, 0, 0, 0]))).toMatchObject({ dailyIncome: 0, days: Math.floor(cash / 20) });
+    // Never "not losing money" while the net is negative.
+    for (let income = 0; income <= 200; income += 7) {
+      const r = sim.runway(withIncomes(week, Array(7).fill(income)));
+      expect(r.days === null, `£${income} a day`).toBe(r.dailyNet >= 0);
+    }
+  });
+
+  it("averages over the days played so far in the first week", () => {
+    const day2 = withIncomes(sim.advance(start(), 1).state, [0, 30]);
+    expect(day2.day).toBe(2);
+    expect(sim.runway(day2).dailyIncome).toBe(15);
+  });
+
+  it("keeps one-offs apart, as this week's", () => {
+    // Severance of 10 days' pay.
+    const s = createSim({ ...config, severance: { days: 10 } });
+    const begin = s.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42 });
+    const staffed = s.advance(s.applyAction(begin, { type: "hire", pool: "developers", count: 2 }), 10).state;
+    const before = s.runway(staffed);
+    const letGo = s.applyAction(staffed, { type: "letGo", pool: "developers", count: 1 });
+    const severance = staffed.cash - letGo.cash;
+    expect(severance).toBeGreaterThan(0);
+    // The severance is a one-off: the costs fall by the pay, and the severance shows apart.
+    expect(s.runway(letGo)).toMatchObject({ dailyCosts: before.dailyCosts - 7, oneOffsThisWeek: severance });
+    expect(letGo.spendByDay.at(-1)!.oneOffs).toBe(severance);
+    // Still this week's six days on, gone after seven.
+    expect(s.runway(s.advance(letGo, 6).state).oneOffsThisWeek).toBe(severance);
+    expect(s.runway(s.advance(letGo, 7).state).oneOffsThisWeek).toBe(0);
   });
 });
 
@@ -2875,6 +3342,9 @@ describe("bank loan", () => {
         paidUsers: 0,
         satisfaction: 100,
         hoursDown: 0,
+        // No one-offs, and the daily costs it ended on: £20 of IaaS and £110 of loan repayment.
+        oneOffs: 0,
+        costs: 130,
       },
     ]);
     expect(state.income).toBe(0);
@@ -3045,19 +3515,33 @@ describe("bank loan", () => {
       expect(state.interestPaid).toBe(1_900);
     });
 
-    it("runs past the final day of a short game, ending with some still to repay", () => {
+    it("runs past the final day of a short game, so what's still owed comes off the cash as it ends", () => {
       const short = termed(30);
-      const { state } = short.advance(
-        short.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, takeLoan: true }),
-        29,
-      );
+      const begun = short.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, takeLoan: true });
+      const before = short.advance(begun, 28).state;
+      const { state, log } = short.advance(before);
       expect(state.status).toBe("finished");
-      expect(short.summarise(state).loan).toMatchObject({
-        loans: 1,
-        repaid: 29 * 165,
-        remaining: 19_800 - 29 * 165,
-        fullyRepaid: false,
-      });
+      const settled = log.at(-1)!.entries.find((e) => e.text.startsWith("The game is over"))!;
+      expect(settled).toMatchObject({ category: "debt", interest: 0 });
+      expect(settled.text).toMatch(/still owed on your bank loan comes off your cash/);
+      const payoff = -settled.cashDelta;
+      expect(payoff).toBeGreaterThan(0);
+      // The money borrowed not yet paid back: less than the repayments left, as the interest still to come is waived.
+      expect(payoff).toBeLessThan(19_800 - 29 * 165);
+      // Nothing is left owing, so the valuation's net cash is just the cash.
+      expect(short.summarise(state).loan).toMatchObject({ loans: 1, repaid: 29 * 165 + payoff, remaining: 0, fullyRepaid: true });
+      expect(short.valuation(state).drivers.find((d) => d.id === "netCash")!.amount).toBe(Math.round(state.cash));
+      expect(state.cash).toBe(before.cash - 20 - 165 - payoff);
+    });
+
+    it("settles what's still owed when the teacher ends the game", () => {
+      const short = termed(30);
+      const begun = short.newGame({ companyName: "Acme", productType: "ecommerce", model: "iaas", seed: 42, takeLoan: true });
+      const state = short.advance(begun, 10).state;
+      const { payoff } = short.loan(state)!;
+      const ended = short.endGame(state);
+      expect(ended).toMatchObject({ status: "finished", cash: state.cash - payoff });
+      expect(short.loan(ended)).toMatchObject({ remaining: 0, repaidInFull: true, paidOffDay: state.day });
     });
 
     it("is lent until the last days of the game's own length", () => {
@@ -3420,6 +3904,9 @@ describe("game end and summary", () => {
       paidUsers: 0,
       satisfaction: 100,
       hoursDown: 0,
+      // The upfront bill is a one-off, apart from the £20 a day of daily costs.
+      oneOffs: 100,
+      costs: 20,
       cash: 99_900,
     });
     expect(days.at(-1)!.cash).toBe(cash);
@@ -3559,6 +4046,7 @@ describe("game end and summary", () => {
         principalRepaid: 17_900,
         interestSaved: 0,
         remaining: 0,
+        settledAtEnd: 0,
         fullyRepaid: true,
       });
       expect(summary.spend.debt).toBe(state.loan!.total);
@@ -3763,7 +4251,7 @@ describe("default config", () => {
 
   it("liquidates a company that hires far more than it needs", () => {
     const start = sim180.newGame({ companyName: "Acme", productType: "social", model: "iaas", seed: 7 });
-    const state = sim180.advance(withStaff(start, { developers: 12, ops: 2 }), defaultConfig.finalDay - 1).state;
+    const state = sim180.advance(withStaff(start, { developers: 16, ops: 2 }), defaultConfig.finalDay - 1).state;
     expect(state.status).toBe("liquidated");
     expect(state.day).toBeLessThan(defaultConfig.finalDay);
   });
@@ -4447,7 +4935,8 @@ describe("migration with servers", () => {
             database: sizes(1_000, 1_800, 3_400, 6_400),
             cache: sizes(300, 550, 1_000, 1_900),
           },
-          managed: { ...paas.servers!.managed!, units: { database: sizes(15, 30, 60, 120), cache: sizes(15, 30, 60, 120) } },
+          // No autoscaling: these sums predate it, and it would change the instances during a move.
+          managed: { ...paas.servers!.managed!, units: { database: sizes(15, 30, 60, 120), cache: sizes(15, 30, 60, 120) }, autoscaling: undefined },
           starter: [
             { type: "app", size: "medium", count: 1 },
             { type: "database", size: "small", count: 1 },
@@ -4577,8 +5066,8 @@ describe("migration with servers", () => {
       ["Database", "massive", 4, 4 * 3_300, 4 * 110, 4],
       ["Load balancer", "medium", 1, 900, 30, 4],
     ]);
-    // 3 app servers and 4 databases at 0.6 ops each, and a load balancer at 0.3: 4.5, so 5.
-    expect(onprem).toMatchObject({ setupUpfront: 21_750, setupMonthly: 725, deliveryDays: 4, opsNeeded: 5 });
+    // 3 app servers and 4 databases at 0.6 ops each, and a load balancer at 0.3: 4.5.
+    expect(onprem).toMatchObject({ setupUpfront: 21_750, setupMonthly: 725, deliveryDays: 4, opsNeeded: 4.5 });
     // 58U of kit: the server room's medium rack takes the 3 app servers (24U), and a large one (42U) the rest. Cabling
     // for 8 servers and 2 racks at £50.
     expect(onprem.racks).toEqual([
@@ -4737,7 +5226,9 @@ describe("migration with servers", () => {
     expect(quote.setup.length).toBeGreaterThan(0);
     expect(quote.exitPenalty).toBe(calm.models.saas.exitPenalty);
     const moving = s.applyAction(bought, migrate("iaas"));
-    expect(counted(s.applyAction(moving, { type: "moveStaff", to: "ops" }))).toMatchObject({ developers: 2, ops: 101 });
+    const moved = s.applyAction(moving, { type: "moveStaff", to: "ops" });
+    expect(counted(moved)).toMatchObject({ developers: 2, ops: 100 });
+    expect(moved.hiring).toMatchObject([{ pool: "ops", retraining: true }]);
   });
 
   it("is deterministic, and resumes identically after a JSON round trip", () => {
@@ -5687,16 +6178,23 @@ describe("the beta's new events", () => {
     }
   });
 
-  it("lead into the rescue buyout when one empties the cash, not straight to the end", () => {
+  it("lead onto an emergency loan when one empties the cash, or past the limit into the rescue buyout, not straight to the end", () => {
     const fraud = { ...event("fraud"), encounter: undefined, schedule: { type: "fixed" as const, days: [6] } };
-    const s = settlingPay(createSim({ ...roomyDefaults, events: [fraud] }));
-    const start = setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 7 }));
-    // Just less cash than the fraud takes, the day before it.
-    const before = s.advance(start, 4).state;
-    const { state, log } = s.advance({ ...before, cash: 1_000 }, 1);
-    expect(log.at(-1)!.entries.some((e) => e.text.startsWith("Theft or fraud: Money clawed back"))).toBe(true);
-    expect(state.status).toBe("playing");
-    expect(state.rescue).toMatchObject({ day: 6 });
+    for (const limitDays of [7, 0]) {
+      const s = settlingPay(createSim({ ...roomyDefaults, events: [fraud], rescue: { ...roomyDefaults.rescue, limitDays } }));
+      const start = setUp(s, s.newGame({ companyName: "Acme", productType: "social", model: "saas", seed: 7 }));
+      // Just less cash than the fraud takes, the day before it.
+      const before = s.advance(start, 4).state;
+      const { state, log } = s.advance({ ...before, cash: 1_000 }, 1);
+      expect(log.at(-1)!.entries.some((e) => e.text.startsWith("Theft or fraud: Money clawed back"))).toBe(true);
+      expect(state.status).toBe("playing");
+      if (limitDays) {
+        // Within 7 days of costs, the shortfall goes on an emergency loan, and cash is back at £0.
+        expect(state).toMatchObject({ cash: 0, rescue: null, loan: { emergency: true, day: 6 } });
+      } else {
+        expect(state.rescue).toMatchObject({ day: 6 });
+      }
+    }
   });
 
   it("each fire in some games, with a lawsuit only ever soon after a breach", () => {
@@ -6614,16 +7112,20 @@ describe("free-to-paid conversion", () => {
     expect(converted(70)).toBeGreaterThan(converted(30));
   });
 
-  it("falls with a price above the fair price, and isn't raised by a price below it", () => {
+  it("falls with a price above the fair price, and rises at or below it, up to the cap (#251)", () => {
     const state = begin();
     const dear = s.applyAction(state, setPrice(60));
     expect(multiplier(s, dear, "price")).toBeCloseTo(0.25, 10);
     expect(s.conversion(dear).drivers[3]).toMatchObject({ effect: "hurting", value: 2 });
     expect(s.advance(dear).state.conversionsToday).toBeLessThan(s.advance(state).state.conversionsToday);
-    // A cheap price brings its upgrades once, through the price wave, not every day here as well.
+    // At the fair price it neither helps nor hurts; a little below it helps, and far below it is capped at 30% more.
+    expect(multiplier(s, state, "price")).toBe(1);
+    const under = s.applyAction(state, setPrice(28.5));
+    expect(multiplier(s, under, "price")).toBeCloseTo(0.95 ** -2, 10);
     const cheap = s.applyAction(state, setPrice(15));
-    expect(multiplier(s, cheap, "price")).toBe(1);
-    expect(s.conversion(cheap).rate).toBe(s.conversion(state).rate);
+    expect(multiplier(s, cheap, "price")).toBeCloseTo(1.3, 10);
+    expect(s.conversion(cheap).drivers[3]).toMatchObject({ effect: "helping" });
+    expect(s.conversion(cheap).rate).toBeCloseTo(s.conversion(state).rate * 1.3, 10);
     // The effect is tunable: at 0 a high price makes no difference.
     const flat = converting({ priceSensitivity: 0 });
     expect(multiplier(flat, flat.applyAction(begin(flat), setPrice(60)), "price")).toBe(1);
@@ -6652,10 +7154,9 @@ describe("free-to-paid conversion", () => {
         const joinedPaid = done.joinedPaid - doneBefore.joinedPaid;
         // Paying users rise by the wave's upgrades and new payers plus the day's conversions, and nothing more.
         expect(next.paidUsers - before.paidUsers).toBe(upgraded + joinedPaid + next.conversionsToday);
-        // Conversions come from the free users the wave left, at the usual rate: the cut doesn't raise it.
+        // Conversions come from the free users the wave left, at the day's rate, which the cheaper price raises.
         const freeAfterWave = next.users - (next.paidUsers - next.conversionsToday);
         expect(next.conversionsToday).toBe(Math.round(freeAfterWave * sm.conversion(before).rate));
-        expect(sm.conversion(before).drivers[3]!.multiplier).toBe(1);
         // Each has its own log line.
         expect(log[0]!.entries.some((e) => e.kind === "price")).toBe(true);
         expect(conversionLog(log)).toHaveLength(1);
@@ -6734,34 +7235,58 @@ describe("alpha patch: pricing exploits and balance", () => {
       expect(gained(s, dear, 288)).toBeLessThan(fromFair / 5);
     });
 
-    it("counts a cut only below the lowest price customers remember", () => {
-      // Up to £45 and back to £30 two weeks later: undoing a rise brings no wave.
-      const risen = s.advance(s.applyAction(begin(), setPrice(45)), 14).state;
-      expect(s.pricePreview(risen, 30).total).toMatchObject({ joined: 0, joinedPaid: 0, upgraded: 0 });
-      // Below £30 it counts for the part below: a cut to £25 brings about what £30 to £25 would, not £45 to £25.
-      expect(gained(s, risen, 25)).toBeGreaterThan(0);
-      expect(gained(s, risen, 25)).toBeLessThanOrEqual(gained(s, begin(), 25));
-      // Down to £20, back up to £30 and down to £20 again: customers remember £20, so the second cut brings nothing.
-      const cycle = (sm: Sim) => {
-        const down = sm.advance(sm.applyAction(begin(sm), setPrice(20)), 14).state;
-        return sm.advance(sm.applyAction(down, setPrice(30)), 14).state;
-      };
-      expect(gained(s, cycle(s), 20)).toBe(0);
-      // The memory is config: with none, every cut counts from today's price, as far as the fair price.
-      const forgetful = priced({ priceMemoryDays: 0 });
-      expect(gained(forgetful, cycle(forgetful), 20)).toBeGreaterThan(0);
+    it("moves the price customers expect halfway to the price every 14 days from the launch (#291)", () => {
+      // Launched on day 1 at £30, up to £45 from day 2: what they expect steps halfway on days 15, 29 and 43.
+      const risen = s.applyAction(begin(), setPrice(45));
+      const at = (days: number) => s.advance(risen, days).state;
+      expect(s.pricePreview(at(7), 20).expectedPrice).toBe(30);
+      expect(s.pricePreview(at(14), 20)).toMatchObject({ expectedPrice: 37.5, expectedPriceDays: 14 });
+      expect(s.pricePreview(at(28), 20).expectedPrice).toBe(41.25);
+      expect(s.pricePreview(at(42), 20).expectedPrice).toBe(43.13);
+      // Cutting back to £30 before the first step brings no wave, and the preview says why.
+      expect(s.pricePreview(at(7), 30)).toMatchObject({ total: { joined: 0, joinedPaid: 0, upgraded: 0 } });
+      expect(s.pricePreview(at(7), 30).noWave).toMatch(/^No wave: customers expect £30, and this is no lower\. What they expect moves halfway to your price every 14 days/);
+      // A step on, it counts from £37.50: some wave, but less than from a £45 they'd come to expect.
+      expect(gained(s, at(14), 30)).toBeGreaterThan(0);
+      expect(gained(s, at(14), 30)).toBeLessThan(gained(s, at(70), 30));
+      expect(s.pricePreview(at(14), 30).noWave).toBeNull();
+      // The rise is still measured from the lowest price of the last 60 days.
+      expect(s.pricePreview(at(30), 50)).toMatchObject({ rememberedPrice: 30, priceMemoryDays: 60 });
     });
 
-    it("brings no wave from a cut back to the fair price, however long the price was dear", () => {
-      // £45 for well past the price memory, so £45 is all customers remember: the cut back to £30 is still no bargain.
-      const dear = s.advance(s.applyAction(begin(), setPrice(45)), defaultConfig.pricing.priceMemoryDays + 10).state;
-      expect(s.pricePreview(dear, 30).total).toMatchObject({ joined: 0, joinedPaid: 0, upgraded: 0 });
-      // A cut below the fair price counts only for the part below it: £45 to £25 brings what £30 to £25 would.
-      const fromFair = s.pricePreview(begin(), 25).total;
-      const fromDear = s.pricePreview(dear, 25).total;
-      expect(fromDear.joined / dear.users).toBeCloseTo(fromFair.joined / begin().users, 2);
-      const free = (state: GameState) => state.users - state.paidUsers;
-      expect(fromDear.upgraded / free(dear)).toBeCloseTo(fromFair.upgraded / free(begin()), 2);
+    it("lets an old high price fade, so cut after cut doesn't count from it (#291)", () => {
+      // £45 for 10 weeks, then down to £20: four weeks on, customers expect much nearer £20 than £45.
+      const dear = s.advance(s.applyAction(begin(), setPrice(45)), 70).state;
+      expect(s.pricePreview(dear, 20).expectedPrice).toBeGreaterThan(44);
+      const cut = s.advance(s.applyAction(dear, setPrice(20)), 28).state;
+      expect(s.pricePreview(cut, 16).expectedPrice).toBeLessThan(27);
+      // So a further cut to £16 brings well under half what it would have counted for from £45.
+      const users = (st: GameState) => ({ ...st, users: 1_000, paidUsers: 600 });
+      expect(gained(s, users(cut), 16)).toBeLessThan(gained(s, users(dear), 16) / 2);
+    });
+
+    it("never has a cut's wave push users past the market's size (#291)", () => {
+      const market = s.config.productTypes.ecommerce.growth.marketSize;
+      const dear = s.advance(s.applyAction(begin(), setPrice(45)), 70).state;
+      const full = { ...dear, users: market - 10, paidUsers: Math.round((market - 10) * 0.6) };
+      const preview = s.pricePreview(full, 10);
+      expect(preview.total.joined).toBeLessThanOrEqual(10);
+      expect(preview.users).toBeLessThanOrEqual(market);
+      let state = s.applyAction(full, setPrice(10));
+      for (let i = 0; i < defaultConfig.pricing.waveDays + 1; i++) {
+        state = s.advance(state).state;
+        expect(state.users).toBeLessThanOrEqual(market);
+      }
+      // With room to spare, the same cut brings far more.
+      expect(s.pricePreview({ ...dear, users: 1_000, paidUsers: 600 }, 10).total.joined).toBeGreaterThan(10);
+    });
+
+    it("counts a cut back from a price that has held as a discount, the more so the further below it", () => {
+      // £45 held well past 30 days: customers expect it, so a cut back to the fair price brings a wave (#251).
+      const dear = s.advance(s.applyAction(begin(), setPrice(45)), 40).state;
+      expect(gained(s, dear, 30)).toBeGreaterThan(0);
+      // A cut to £25 counts from £45, so it brings more than one from the fair price.
+      expect(gained(s, dear, 25)).toBeGreaterThan(gained(s, begin(), 25));
     });
 
     it("earns no more from rising and cutting back to the fair price than from holding it", () => {
@@ -6785,6 +7310,12 @@ describe("alpha patch: pricing exploits and balance", () => {
       // Rising and cutting back each lock comes out no better.
       const quick = play(Array.from({ length: 12 }, (_, i) => [1 + 14 * i, i % 2 ? 30 : 45] as [number, number]), 170);
       expect(quick.earned).toBeLessThan(held.earned);
+      // Nor does cutting back as soon as each rise has held long enough to be expected, so the cut counts as a
+      // discount: the rise is measured from the lowest price remembered, and loses more than the cut wins back.
+      const expected = defaultConfig.pricing.expectedPriceDays;
+      const settled = play(Array.from({ length: 5 }, (_, i) => [1 + (expected + 1) * i, i % 2 ? 30 : 45] as [number, number]), 170);
+      expect(settled.earned).toBeLessThan(held.earned);
+      expect(settled.paidUsers).toBeLessThan(held.paidUsers);
     });
   });
 
@@ -6877,7 +7408,9 @@ describe("alpha patch: pricing exploits and balance", () => {
         earned += income(played.log);
       }
       const steady = s.advance(begin(), 56);
-      expect(state.paidUsers).toBeLessThan(100);
+      // A fortnight at £1,000 moves what customers expect halfway to it (#291), so each cut back brings a wave; it
+      // never wins back what the rise lost.
+      expect(state.paidUsers).toBeLessThan(steady.state.paidUsers * 0.7);
       expect(earned).toBeLessThan(income(steady.log) / 2);
     });
   });
@@ -7287,5 +7820,68 @@ describe("ticks and pauses", () => {
   it("refuses a game that has ended", () => {
     const ended = s.endGame(begin("career"));
     expect(() => s.tick(ended)).toThrow(expect.objectContaining({ code: "finished" }));
+  });
+});
+
+describe("one ops-needed figure (#284)", () => {
+  const s = createSim(smallestLaunch(withoutMvp));
+  const game = (model: ModelId) => launched(s, s.newGame({ companyName: "Acme", productType: "social", model, seed: 1 }));
+  const withOps = (state: GameState, junior: number, mid: number): GameState => ({
+    ...state,
+    staff: { ...state.staff, ops: { junior, mid, senior: 0 } },
+    agency: { ...state.agency, ops: { junior: 0, mid: 0, senior: 0 } },
+  });
+  const opsOutput = (state: GameState) => s.staff(state).find((p) => p.pool === "ops")!.output;
+
+  for (const model of ["onprem", "iaas", "paas"] as const) {
+    it(`never gives more capacity for less ops cover on ${model}, and shows the line whenever there's a cut`, () => {
+      const base = game(model);
+      const teams = [];
+      for (let mid = 0; mid <= 4; mid++) for (let junior = 0; junior <= 4; junior++) teams.push(withOps(base, junior, mid));
+      const rows = teams
+        .map((t) => ({ output: opsOutput(t), cu: s.units(t)!.cu.capacity, short: s.opsShortfall(t) }))
+        .sort((a, b) => a.output - b.output);
+      for (let i = 1; i < rows.length; i++) expect(rows[i]!.cu, model).toBeGreaterThanOrEqual(rows[i - 1]!.cu);
+      const full = rows.at(-1)!.cu;
+      for (const r of rows) {
+        // Short of the one figure exactly when capacity is cut, and the line says the cut.
+        expect(r.short !== null, `${model} at ${r.output}`).toBe(r.output < s.opsNeededNow(base));
+        expect(r.cu < full, `${model} at ${r.output}`).toBe(r.short !== null);
+        if (r.short) expect(r.short.capacityShare).toBeLessThan(1);
+      }
+    });
+  }
+
+  it("shows no capacity cut line on SaaS, where the provider carries the load", () => {
+    const saas = withOps(game("saas"), 0, 0);
+    expect(s.opsNeededNow(saas)).toBeGreaterThan(0);
+    expect(s.opsShortfall(saas)).toBeNull();
+  });
+
+  it("counts a CISO in the ops needed, the same for the cut, the danger meter and the IPO's audit", () => {
+    const base = game("onprem");
+    const ciso = { role: "ciso" as const, name: "Sam", strength: 1, salary: 200, equity: 0, shares: 0, day: 1 };
+    const withCiso: GameState = { ...base, csuite: { ...base.csuite, hired: [ciso] } };
+    const needed = s.opsNeededNow(withCiso);
+    expect(needed).toBeLessThan(s.opsNeededNow(base));
+    // Ops just covering the figure the CISO brings down: no cut, the audit passes and the meter isn't raised for it.
+    const between = withOps(withCiso, 0, Math.ceil(needed));
+    if (opsOutput(between) < s.opsNeededNow(base)) {
+      expect(s.opsShortfall(between)).toBeNull();
+      expect(s.ipo(between).conditions.find((c) => c.id === "security")!.met).toBe(true);
+    }
+    const audit = s.ipo(withOps(withCiso, 0, 0)).conditions.find((c) => c.id === "security")!;
+    expect(audit.now).toBe(`Ops staff doing 0 of the ${Math.round(needed * 10) / 10} needed`);
+    expect(s.opsShortfall(withOps(withCiso, 0, 0))!.needed).toBe(needed);
+  });
+
+  it("leaves servers waiting to be sold out of the ops needed once kit on order arrives", () => {
+    const base = game("onprem");
+    const ordered = s.applyAction(base, { type: "buyServer", server: "app", size: "small" } as Action);
+    const before = s.opsNeededOnceReady(ordered);
+    const selling = s.applyAction(ordered, { type: "sellServer", id: ordered.servers.find((x) => x.type === "app" && x.readyDay <= ordered.day)!.id });
+    expect(s.opsNeededOnceReady(selling)).toBeLessThan(before);
+    // Still serving until its replacement arrives, so still needing its ops today.
+    expect(s.opsNeededNow(selling)).toBe(s.opsNeededNow(ordered));
   });
 });

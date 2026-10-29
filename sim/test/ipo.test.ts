@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { renderSummary } from "../scripts/textPlay.ts";
 import { createSim, CSUITE_ROLES, defaultConfig, SimError, type CsuiteRole, type GameConfig, type GameState, type Sim } from "../src/index.ts";
 import { withFullCsuite } from "./executives.ts";
 import { allOpen } from "./phases.ts";
@@ -42,7 +43,7 @@ const refusal = (fn: () => unknown) => {
 
 /**
  * The company made comfortably over every condition, in Scale so the IPO is open: 2,000 users (1,000 paying £60 a month), 90% satisfaction, and on
- * every day played no downtime, steady costs and £1,000 of income.
+ * every day played no downtime, steady daily costs of £160 and £1,000 of income.
  */
 const makeReady = (played: GameState): GameState => ({
   // The full C-suite is hired.
@@ -65,6 +66,8 @@ const makeReady = (played: GameState): GameState => ({
     paidUsers: 1_000,
     satisfaction: 90,
     hoursDown: 0,
+    oneOffs: 0,
+    costs: 160,
   })),
 });
 
@@ -115,7 +118,7 @@ describe("the readiness checklist", () => {
       // The minimum paying customer base is part of users and revenue.
       ["usersAndRevenue", { ...state, paidUsers: 499 }],
       ["uptime", lastDays(state, 3, { hoursDown: 3 })],
-      ["costs", lastDays(state, 2, { infrastructure: 5_000 })],
+      ["costs", lastDays(state, 2, { costs: 5_000 })],
       ...CSUITE_ROLES.map((role): [string, GameState] => ["csuite", withoutRole(state, role)]),
     ];
     for (const [id, s] of broken) {
@@ -170,18 +173,53 @@ describe("the readiness checklist", () => {
     expect(sim.ipo(state).conditions[0]!.comfort).toBe(1);
   });
 
-  it("sets aside the costliest day, so a single one-off charge doesn't spoil predictable costs", () => {
+  it("measures the daily costs, so one-offs don't count, and sets aside the costliest day", () => {
     const state = ready();
-    // A fraud bill (charged as infrastructure) and a severance payment (staff), each one day of the record.
-    for (const spike of [{ infrastructure: 4_000 }, { staff: 6_000 }]) {
-      const once = lastDays(state, 1, spike);
-      expect(met(sim, once).costs).toBe(true);
-      expect(sim.ipo(once).conditions.find((c) => c.id === "costs")!.needed).toMatch(/your costliest day set aside/);
-      const twice = { ...once, spendByDay: once.spendByDay.map((d) => (d.day === state.day - 10 ? { ...d, ...spike } : d)) };
-      expect(met(sim, twice).costs).toBe(false);
+    // A fraud bill (charged as infrastructure) and a severance payment (staff) on most days: one-offs, not daily costs.
+    for (const spike of [{ infrastructure: 4_000, oneOffs: 3_950 }, { staff: 6_000, oneOffs: 5_900 }]) {
+      expect(met(sim, lastDays(state, RECORD - 1, spike)).costs).toBe(true);
     }
+    // Daily costs that jumped for a day are set aside once, but not twice.
+    const once = lastDays(state, 1, { costs: 4_000 });
+    expect(met(sim, once).costs).toBe(true);
+    expect(sim.ipo(once).conditions.find((c) => c.id === "costs")!.needed).toMatch(/your costliest day set aside/);
+    const twice = { ...once, spendByDay: once.spendByDay.map((d) => (d.day === state.day - 10 ? { ...d, costs: 4_000 } : d)) };
+    expect(met(sim, twice).costs).toBe(false);
     const strict = createSim({ ...quiet, ipo: { ...quiet.ipo, costDaysSetAside: 0 } });
-    expect(met(strict, lastDays(state, 1, { infrastructure: 4_000 })).costs).toBe(false);
+    expect(met(strict, once).costs).toBe(false);
+  });
+
+  it("shows the same costs figure as the costs line", () => {
+    for (const model of ["saas", "iaas"]) {
+      const state = ready(sim, model);
+      const line = sim.ipo(state).conditions.find((c) => c.id === "costs")!;
+      const costs = sim.runway(state).dailyCosts;
+      expect(costs).toBeGreaterThan(0);
+      expect(line.now).toMatch(new RegExp(`^£${Math.round(costs).toLocaleString("en-GB")} a day, varying by`));
+    }
+  });
+
+  it("records each day's daily costs as the costs line had them at its end", () => {
+    const start = begin(sim, "iaas");
+    const { state } = sim.advance(start, 3);
+    expect(state.spendByDay.at(-1)!.costs).toBe(sim.runway(state).dailyCosts);
+  });
+
+  it("holds predictable costs back 14 days after the last C-suite hire, and says so (#292)", () => {
+    const state = ready();
+    expect(met(sim, state).costs).toBe(true);
+    // An executive hired today: their pay starts tomorrow, so costs haven't settled at the new level.
+    const hired = { ...state, csuite: { ...state.csuite, hired: state.csuite.hired.map((e, i) => (i === 0 ? { ...e, day: state.day } : e)) } };
+    const ipo = sim.ipo(hired);
+    const costs = ipo.conditions.find((c) => c.id === "costs")!;
+    expect(costs.met).toBe(false);
+    expect(costs.needed).toMatch(/holding 14 days at their new level after your last C-suite hire/);
+    expect(costs.now).toMatch(new RegExp(`your last C-suite hire was on day ${state.day}, so costs must hold at the new level until day ${state.day + 14} before you can apply`));
+    expect(ipo.refusal).toMatch(/predictable costs/);
+    expect(refusal(() => sim.applyAction(hired, { type: "applyForIpo" }))).toBe("ipo_not_ready");
+    // 14 days on, it's met again.
+    const later = { ...hired, csuite: { ...hired.csuite, hired: hired.csuite.hired.map((e, i) => (i === 0 ? { ...e, day: state.day - 14 } : e)) } };
+    expect(met(sim, later).costs).toBe(true);
   });
 
   it("audits security: on IaaS the OS is yours to patch, on SaaS the provider's", () => {
@@ -344,6 +382,18 @@ describe("the float and the opening bell", () => {
     expect(ring(state, 0.2)).toEqual(ring(state, 0.2));
   });
 
+  it("freezes what it's scored on at approval: cutting costs or shedding users before the bell changes nothing (#292)", () => {
+    const state = approved();
+    const offer = s.ipo(state).offer!;
+    expect(state.ipo.scored).toMatchObject({ valuation: offer.valuation, offerPrice: offer.offerPrice });
+    // Between approval and the bell: costs cut and users gone. The offer and the first day are as they were.
+    const changed: GameState = { ...lastDays(state, RECORD, { staff: 0, satisfaction: 40 }), users: 1_010, paidUsers: 505 };
+    expect(s.ipo(changed).offer).toMatchObject({ valuation: offer.valuation, offerPrice: offer.offerPrice });
+    const r = ring(changed, 0.25).ipo.result!;
+    const same = ring(state, 0.25).ipo.result!;
+    expect(r).toMatchObject({ valuation: same.valuation, offerPrice: same.offerPrice, comfort: same.comfort, prices: same.prices, reasons: same.reasons });
+  });
+
   it("swings further on a small float than a large one, and rises more for a comfortably ready company", () => {
     const comfy = approved();
     const moves = (state: GameState, float: number) =>
@@ -371,6 +421,14 @@ describe("the float and the opening bell", () => {
     expect(s.ipo(floated)).toMatchObject({ status: "floated", canApply: false });
     expect(s.summarise(floated)).toMatchObject({ ending: "ipo", ipo: floated.ipo.result });
     expect(() => s.advance(floated)).toThrow(new RegExp(`Acme floated on day ${floated.day}`));
+    // With no friends and family, angel, VC or vulture money, it's flagged as a bootstrapped float (#265).
+    expect(floated.investors.angel).toBeNull();
+    expect(s.summarise(floated).bootstrapped).toBe(true);
+    expect(JSON.parse(renderSummary(s, floated))).toMatchObject({ achievement: "Floated without outside investors", bootstrapped: true });
+    const backed = { ...floated, investors: { ...floated.investors, angel: { investor: "Ada Hart" } as GameState["investors"]["angel"] } };
+    expect(s.summarise(backed).bootstrapped).toBe(false);
+    expect(JSON.parse(renderSummary(s, backed)).achievement).toBeUndefined();
+    expect(s.summarise(approved()).bootstrapped).toBe(false);
     expect(refusal(() => ring(floated, 0.25))).toBe("finished");
     expect(refusal(() => s.applyAction(floated, { type: "hire", pool: "ops" }))).toBe("finished");
   });

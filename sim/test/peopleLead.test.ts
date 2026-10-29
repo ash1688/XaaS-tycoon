@@ -144,4 +144,31 @@ describe("a head of people (stubbed through the config)", () => {
     const record = offer(leaning, final, review.minOffer).pastPayReviews.at(-1)!;
     expect(record.tribunal!.chances).toEqual(withLean.chances);
   });
+
+  it("leans half as far as it did, and picks at its quoted odds across seeds, schemes and all (#293)", () => {
+    expect(lead.headOfPeople.tribunalLean).toBe(0.075);
+    // A head of people, two offers at the least, then a final one at the least in cash with the discount scheme on top.
+    const start = untilReview(headed, begin(headed));
+    const { minOffer } = start.payReview!;
+    const atFinal = offer(headed, offer(headed, start, minOffer), minOffer);
+    const schemes = { discount: 1 };
+    const odds = headed.payOfferPreview(atFinal, minOffer, schemes).tribunal!;
+    // The student's lowball is no longer the likeliest pick.
+    expect(odds.chances.student).toBeLessThan(0.5);
+    expect(odds.chances.student).toBeLessThan(odds.chances.middle + odds.chances.staff);
+    const seeds = 3_000;
+    const picks = { student: 0, middle: 0, staff: 0 };
+    for (let seed = 0; seed < seeds; seed++) {
+      const settled = headed.applyAction({ ...atFinal, payReviewRng: seed * 7919 + 1 }, { type: "offerPayRise", rise: minOffer, schemes });
+      const record = settled.pastPayReviews.at(-1)!;
+      expect(record.tribunal!.chances).toEqual(odds.chances);
+      expect(record.rise).toBe(odds.cash[record.tribunal!.pick]);
+      picks[record.tribunal!.pick]++;
+    }
+    // Within about three standard errors of each quoted chance.
+    for (const p of ["student", "middle", "staff"] as const) {
+      const chance = odds.chances[p];
+      expect(Math.abs(picks[p] / seeds - chance), p).toBeLessThan(3 * Math.sqrt((chance * (1 - chance)) / seeds) + 0.005);
+    }
+  });
 });

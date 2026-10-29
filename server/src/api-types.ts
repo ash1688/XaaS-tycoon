@@ -49,12 +49,18 @@ import type {
   PayReviewView,
   StaffSchemeView,
   PricePreview,
+  CampaignQuote,
+  PriceBandsView,
+  FairPriceView,
   PaymentsView,
   PriceWaveView,
   ModelId,
+  OpsShortfallView,
   ProductTypeId,
   ProviderView,
+  AutoscaleView,
   RunwayView,
+  ShortfallView,
   ServerOption,
   ServerView,
   SharesConfig,
@@ -256,6 +262,11 @@ export interface CompanyView {
    * as opsNeeded where nothing is on order.
    */
   opsNeededOnceReady: number;
+  /**
+   * Too few ops for the servers running, cutting capacity: the ops team's work, the people needed and the capacity
+   * left. Null when ops cover it.
+   */
+  opsShortfall: OpsShortfallView | null;
   /** What the current headcount costs per day. */
   dailyStaffCost: number;
   /**
@@ -306,6 +317,8 @@ export interface CompanyView {
   price: number;
   /** The monthly price users think the product is worth. Above it growth slows and fewer new users pay. */
   fairPrice: number;
+  /** The fair price with why it moved: the product's own, and how far pay reviews' inflation has lifted it (#251). */
+  fairPriceView: FairPriceView;
   /** What paying users pay per day at today's paid users and price: paid users × price ÷ 30. */
   dailyIncome: number;
   /** Everything paying users have paid so far. */
@@ -400,6 +413,8 @@ export interface CompanyView {
    * that bill. Null on other models.
    */
   provider: ProviderView | null;
+  /** PaaS autoscaling's instances, minimum (set by hand) and maximum, basic or managed; null off PaaS. */
+  autoscale: AutoscaleView | null;
   /** Percentage of time up across every day played. */
   uptime: number;
   outageDays: number;
@@ -422,11 +437,16 @@ export interface CompanyView {
    */
   loanQuote: LoanQuote | null;
   /**
-   * What a usual day does to cash at today's figures: income, running costs (staff, infrastructure, add-ons, a
-   * migration's second bill and loan repayments) and the difference, with the days of cash left at that rate, or null
-   * when the company isn't losing money.
+   * The daily costs (every daily outgoing, by heading) against income averaged over the last 7 days, the difference,
+   * the days of cash left at that rate (null when that income covers the costs), and this week's one-offs, kept apart.
    */
   runway: RunwayView;
+  /**
+   * How far cash can go below £0 before it has run out: shortfalls go onto the loan (an emergency loan with none) up
+   * to limitDays of the daily costs, with what they owe now and the room left; past that, the vulture VC's rescue, or
+   * after one, liquidation.
+   */
+  shortfall: ShortfallView;
   /**
    * What the company is worth today: the valuation, shares in issue, share price, and the drivers pushing it up or
    * down, in pounds, adding up to it.
@@ -543,6 +563,13 @@ export type MigrationQuoteView = MigrationQuote;
  * Changes nothing.
  */
 export type PricePreviewView = PricePreview;
+export type { PriceBandsView, FairPriceView };
+
+/**
+ * GET .../campaign-quote?type=&budget=&days=: what a campaign started now would bring over its whole run, as a range of
+ * users and of cost per user, or that the market is almost full. Changes nothing.
+ */
+export type CampaignQuoteView = CampaignQuote;
 
 /**
  * GET .../counter-odds?funder=&amount=&share=&days=: what countering a funder's open offer with those terms would do,

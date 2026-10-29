@@ -40,6 +40,9 @@ const sim = createSim({
   calendar: { ...defaultConfig.calendar, holidays: [] },
   // Add-ons cost only their per-user price, so buying one fits in the starting cash.
   addons: { ...defaultConfig.addons, setupFeePerDevDay: 0 },
+  // Cash runs out the moment it goes below £0, as the rescue tests here were written for, unless a test says
+  // otherwise: shortfalls going on a loan first have their own test.
+  rescue: { ...defaultConfig.rescue, limitDays: 0 },
   servers: {
     ...defaultConfig.servers,
     types: {
@@ -534,12 +537,16 @@ describe("staff actions", () => {
     for (const count of [0, 1.5, 1000]) expect((await act({ type: "hire", pool: "ops", count })).statusCode).toBe(400);
   });
 
-  it("shows the runway: a usual day's income and costs, and the days of cash they leave", async () => {
+  it("shows the runway: the daily costs by heading against the last 7 days' income, and the days of cash they leave", async () => {
     const { url, act } = await setup();
     await act({ type: "hire", pool: "developers", count: 2 });
     const company = (await app.inject({ method: "GET", url })).json<CompanyView>();
     // £25 a day of IaaS and £20 of developers against £1,000: 22 days, as a day played costs.
-    expect(company.runway).toEqual({ dailyIncome: 0, dailyCosts: 45, dailyNet: -45, days: 22 });
+    expect(company.runway).toMatchObject({ dailyIncome: 0, dailyCosts: 45, dailyNet: -45, days: 22, payHoliday: false });
+    expect(company.runway.costs.filter((h) => h.amount > 0).map((h) => [h.label, h.amount])).toEqual([
+      ["Staff pay", 20],
+      ["Hosting, rent and power", 25],
+    ]);
     expect(company.opsNeededOnceReady).toBe(company.opsNeeded);
     const played = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
     expect(played.company.cash).toBe(1000 - 45);
@@ -1096,9 +1103,9 @@ describe("servers on IaaS", () => {
     expect(rented.statusCode).toBe(200);
     expect(rented.json<CompanyView>().servers.at(-1)).toMatchObject({ id: 3, type: "app", size: "large", status: "pending" });
     const balanced = (await act({ type: "rentServer", server: "loadBalancer", size: "small" })).json<CompanyView>();
-    // Pending: nothing changes until they're ready, and ops needed counts them already.
+    // Pending: nothing changes until they're ready, and they need no ops until then (#259), though the order says so.
     expect(balanced.units!.cu.capacity).toBe(15 * defaultConfig.capacity.unstaffedShare);
-    expect(balanced.opsNeeded).toBe(2);
+    expect(balanced).toMatchObject({ opsNeeded: 1, opsNeededOnceReady: 1.75 });
     expect((await app.inject({ method: "GET", url })).json<CompanyView>().servers).toHaveLength(4);
 
     const next = (await app.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
@@ -1107,6 +1114,8 @@ describe("servers on IaaS", () => {
       cu: { capacity: (15 + 20) * defaultConfig.capacity.unstaffedShare },
       loadBalancer: { appServers: 2, loadBalancers: 1, needed: true, coverage: 2, counted: 2, uncovered: 0 },
     });
+    // With no ops at all, the shortfall cuts every tier to 40%.
+    expect(next.company.opsShortfall).toEqual({ have: 0, needed: 1.75, capacityShare: defaultConfig.capacity.unstaffedShare });
     // Billed from the day after renting: a large app server is £800 a month and a small load balancer £200.
     expect(next.log[0]!.entries).toContainEqual({
       text: "App server (large) rent: 1 × £800 a month",
@@ -1231,16 +1240,22 @@ describe("servers on-prem", () => {
     expect(company.servers.at(-1)).toMatchObject({ status: "pending", daysLeft: 3 });
   });
 
-  it("sells kit back for its share, but not kit still on order", async () => {
+  it("sells kit back for its share once a replacement is ready, but not kit still on order (#260)", async () => {
     const { company: before, act, get } = await setup();
-    await act({ type: "buyServer", server: "cache", size: "small" });
+    // Its only database: selling it would leave nothing for today's load.
+    expect((await act({ type: "sellServer", id: 2 })).json()).toMatchObject({ error: "cancel_unsafe" });
+    await act({ type: "buyServer", server: "database", size: "large" });
     const onOrder = await act({ type: "sellServer", id: 3 });
     expect(onOrder.statusCode).toBe(400);
     expect(onOrder.json()).toMatchObject({ error: "on_order" });
+    // With a replacement on order, the sale waits for it: still serving, and refunded when it goes.
     const sold = await act({ type: "sellServer", id: 2 });
     expect(sold.statusCode).toBe(200);
-    expect(sold.json<CompanyView>().cash).toBe(before.cash - onprem.purchase!.price.cache.small - onprem.purchase!.cablingCost + sellBack(onprem.purchase!.price.database.large));
-    expect((await get()).servers.map((s) => s.id)).toEqual([1, 3]);
+    const bought = before.cash - onprem.purchase!.price.database.large - onprem.purchase!.cablingCost;
+    expect(sold.json<CompanyView>().cash).toBe(bought);
+    const servers = (await get()).servers;
+    expect(servers.map((s) => s.id)).toEqual([1, 2, 3]);
+    expect(servers.find((s) => s.id === 2)!.leavesOn).toBe(servers.find((s) => s.id === 3)!.readyDay);
   });
 
   it("validates the body, and only buys and sells on-prem", async () => {
@@ -1522,6 +1537,30 @@ describe("ledger, rescue buyout and liquidation", () => {
     });
     const [row] = await testDb.db.select().from(companies).where(eq(companies.id, company.id));
     expect(row!.status).toBe("liquidated");
+  });
+
+  it("puts a small shortfall on an emergency loan, with the room left before a rescue", async () => {
+    const lenient = createSim({ ...sim.config, rescue: defaultConfig.rescue });
+    const lenientApp = await buildApp({ db: testDb.db, teacherPassword: PASSWORD, sessionSecret: "x".repeat(32), sim: lenient });
+    try {
+      const code = await newCode();
+      const created = await lenientApp.inject({
+        method: "POST",
+        url: `/api/codes/${code}/companies`,
+        payload: { name: "Acme", productType: "ecommerce", model: "iaas" },
+      });
+      const company = created.json<CompanyView>();
+      const url = `/api/codes/${code}/companies/${company.id}`;
+      await setCash(company.id, 10);
+      const body = (await lenientApp.inject({ method: "POST", url: `${url}/continue` })).json<ContinueResult>();
+      // £10 against the £25 a day: £15 short, on an emergency loan, and cash back at £0.
+      expect(body.company).toMatchObject({ day: 2, cash: 0, status: "active", rescue: null, loan: { emergency: true, amount: 15, term: 30 } });
+      expect(body.company.shortfall).toMatchObject({ limitDays: 7, owed: 15 });
+      expect(body.company.shortfall.room).toBe(body.company.shortfall.limit - 15);
+      expect(body.log[0]!.entries.map((e) => e.text)).toContainEqual(expect.stringMatching(/^Cash went £15 below £0 with no bank loan, so the bank opened an emergency loan/));
+    } finally {
+      await lenientApp.close();
+    }
   });
 
   it("keeps going at exactly zero cash", async () => {
@@ -2063,6 +2102,7 @@ describe("the IPO", () => {
     "ipo.products.ecommerce.payingUsers": 0,
     "ipo.minTradingDays": 0,
     "ipo.recordDays": 2,
+    "ipo.costsHoldDays": 0,
     "ipo.minUptime": 0,
     "ipo.minSatisfaction": 0,
     "ipo.maxCostSwing": 5,
@@ -2712,6 +2752,8 @@ describe("features", () => {
   }
   // The cheapest feature, so builds finish in a few days.
   const [cheapest] = defaultConfig.productTypes.ecommerce.features.toSorted((a, b) => a.devDays - b.devDays);
+  // Its developer-days to build: tier 1's are multiplied (#263).
+  const cheapestDays = (cheapest!.tier ?? 1) === 1 ? cheapest!.devDays * defaultConfig.tiers.tier1BuildMultiplier : cheapest!.devDays;
   const statusOf = (company: CompanyView, id = cheapest!.id) => company.features.find((f) => f.id === id)!;
 
   it("lists the product's features from config, none started", async () => {
@@ -2726,7 +2768,7 @@ describe("features", () => {
     const building: ActionBody = { type: "buildFeature", feature: cheapest!.id };
     const started = await act(building);
     expect(started.statusCode).toBe(200);
-    const daysNeeded = Math.ceil(cheapest!.devDays / 3);
+    const daysNeeded = Math.ceil(cheapestDays / 3);
     expect(statusOf(started.json<CompanyView>())).toMatchObject({ status: "building", progress: 0, daysLeft: daysNeeded });
 
     let body: ContinueResult | undefined;
@@ -2740,7 +2782,7 @@ describe("features", () => {
     // Kept across reloads, and can't be built twice.
     expect(statusOf((await app.inject({ method: "GET", url })).json<CompanyView>())).toMatchObject({
       status: "built",
-      progress: cheapest!.devDays,
+      progress: cheapestDays,
     });
     const again = await act(building);
     expect(again.statusCode).toBe(400);
@@ -3552,7 +3594,7 @@ describe("meta", () => {
       ["marketers", 6],
     ]);
     // On-prem's and IaaS's from their starter servers; PaaS's and SaaS's a small fixed number.
-    expect(meta.models.map((m) => m.opsNeeded)).toEqual([2, 1, 1, 1]);
+    expect(meta.models.map((m) => m.opsNeeded)).toEqual([1.2, 1, 1, 1]);
   });
 
   it("includes each model's upfront and monthly costs", async () => {

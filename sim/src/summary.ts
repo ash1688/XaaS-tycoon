@@ -3,7 +3,49 @@ import { profitCosts } from "./finance.ts";
 import { vcLadder } from "./investors.ts";
 import { isOpen } from "./loan.ts";
 import type { Infrastructure } from "./infrastructure.ts";
-import type { DaySpend, GameEnding, GameState, IpoResult, Rescue, Spend } from "./state.ts";
+import type { Shares } from "./shares.ts";
+import type { DaySpend, GameEnding, GameState, IpoResult, Rescue, Shareholder, Spend } from "./state.ts";
+
+/** One shareholder at the end, for the breakdown under the headline: what they put in, and what it's worth now. */
+export interface ShareholderSummary {
+  id: Shareholder["id"];
+  /**
+   * "You", "Friends and family", "Northgate Ventures (VC)" … as on the cap table; "Vulture VC (bought back)" for a
+   * vulture whose shares the company bought back.
+   */
+  name: string;
+  /**
+   * Cash they put in: the founder's seed money (the starting cash on the game's difficulty, before any loan), each
+   * funder's investment (a VC's first tranche, and its second once paid), the vulture's rescue, the float's cash
+   * raised. 0 for the C-suite and the staff share scheme, whose shares were pay.
+   */
+  putIn: number;
+  shares: number;
+  /** Their share of the company, 0–1. The rows' stakes add up to 1: a bought-back vulture's is 0. */
+  stake: number;
+  /** Stake × what the company is worth now, to the pound; for a bought-back vulture, what the buy-back paid it. */
+  worth: number;
+  /** Worth ÷ put in: null when they put nothing in. */
+  multiple: number | null;
+}
+
+/**
+ * The end screen's headline and shareholder breakdown (#264): "raised £X, now worth £Y", and who owns that. The
+ * student's score is the founder row's worth.
+ */
+export interface CapTableSummary {
+  /** Outside cash put in for shares: friends and family, the angel, the VCs, the vulture and the float. */
+  raised: number;
+  /**
+   * What the company is worth: the market value at the first day's close if it floated, otherwise the valuation, less
+   * any debt still owed (the valuation already counts it). 0 once liquidated.
+   */
+  worth: number;
+  /** The debt still owed when the game ended, taken off: 0 if none was. */
+  debt: number;
+  /** Every shareholder, the founder first, and a vulture bought back (holding nothing) last. */
+  shareholders: ShareholderSummary[];
+}
 
 /** What was spent and earned on one day, and the cash left at the end of it. */
 export interface SummaryDay extends DaySpend {
@@ -46,11 +88,16 @@ export interface LoanSummary {
   interestPaid: number;
   /** Of the repaid, the amount borrowed being paid back: not a cost, as borrowing it wasn't income. */
   principalRepaid: number;
-  /** Interest saved by paying loans off early. */
+  /** Interest saved by paying loans off early, not counting the interest waived on one settled as the game ended. */
   interestSaved: number;
-  /** Still to repay on the latest loan: 0 once repaid. A loan's term can run past the final day. */
+  /** Still to repay on the latest loan: 0 once repaid, or once the game has ended and settled it. */
   remaining: number;
-  /** Every loan repaid in full. False on a game that ended while one was still being repaid. */
+  /**
+   * What was still owed on the loan when the game ended (its term can run past the final day), taken off the cash
+   * then: 0 if nothing was.
+   */
+  settledAtEnd: number;
+  /** Every loan repaid in full, one settled as the game ended included. False only while the game is still played. */
   fullyRepaid: boolean;
 }
 
@@ -75,6 +122,11 @@ export interface GameSummary {
   finalDay: number | null;
   /** The float and the first day of trading, if the game ended in an IPO. */
   ipo: IpoResult | null;
+  /**
+   * It floated without outside investors (#265): no friends and family, angel, VC or vulture money taken. The grant and
+   * the bank loan aren't shares, so they don't count.
+   */
+  bootstrapped: boolean;
   cash: number;
   users: number;
   /** Of the users, those paying. The rest are free. */
@@ -110,10 +162,62 @@ export interface GameSummary {
   days: SummaryDay[];
   /** Income and costs on each day, and added up so far, day 1 first. The last day's totals are income and costs. */
   incomeVsCosts: IncomeCostDay[];
+  /** The money raised, what the company is worth, and each shareholder's part of it. */
+  capTable: CapTableSummary;
+  /** The student's score: what their own shares are worth (the founder row). No bonus for floating; £0 if liquidated. */
+  score: number;
 }
 
 /** The end-of-game summary, also shown as a summary so far. */
-export function createSummary(config: GameConfig, infra: Infrastructure) {
+export function createSummary(config: GameConfig, infra: Infrastructure, shares: Shares) {
+  /** What each shareholder put in, by their cap table row: see ShareholderSummary.putIn. */
+  function putIn(state: GameState, h: Shareholder): number {
+    switch (h.id) {
+      case "student":
+        return config.startingCash;
+      case "friendsAndFamily":
+        return state.funding.friendsAndFamily?.status === "accepted" ? state.funding.friendsAndFamily.amount : 0;
+      case "angel":
+        return state.investors.angel?.amount ?? 0;
+      case "vc":
+        // A deal's amount is the whole round, both tranches: the second counts only once it's paid.
+        return state.investors.vc.deals
+          .filter((d) => d.investor === h.investor)
+          .reduce((sum, d) => sum + d.amount - (d.tranche && d.tranche.paidDay === null ? d.tranche.amount : 0), 0);
+      case "vulture":
+        return state.rescue?.amount ?? 0;
+      case "public":
+        return state.ipo.result?.cashRaised ?? 0;
+      case "staffScheme":
+      case "executive":
+        return 0;
+    }
+  }
+
+  function capTableSummary(state: GameState): CapTableSummary {
+    const table = shares.capTable(state);
+    const floated = state.ipo.result;
+    // The market value at the close doesn't know the loan settled after it; the valuation counts it already.
+    const debt = state.loan?.settledAtEnd ?? 0;
+    const value = state.status === "liquidated" ? 0 : floated ? floated.marketValue - debt : shares.valuation(state).valuation;
+    const worth = Math.max(0, Math.round(value));
+    const rows = state.shareholders.map((h, i): ShareholderSummary => {
+      const row = table.rows[i]!;
+      const cash = putIn(state, h);
+      const each = Math.round((worth * h.shares) / table.sharesInIssue);
+      return { id: h.id, name: row.name, putIn: cash, shares: h.shares, stake: h.shares / table.sharesInIssue, worth: each, multiple: cash > 0 ? Math.round((100 * each) / cash) / 100 : null };
+    });
+    // A vulture bought back holds nothing, but it put cash in and got the buy-back price out.
+    const boughtBack = state.rescue?.boughtBack;
+    if (state.rescue && boughtBack) {
+      const { amount } = state.rescue;
+      const multiple = amount > 0 ? Math.round((100 * boughtBack.price) / amount) / 100 : null;
+      rows.push({ id: "vulture", name: "Vulture VC (bought back)", putIn: amount, shares: 0, stake: 0, worth: boughtBack.price, multiple });
+    }
+    const raised = rows.filter((r) => r.id !== "student").reduce((sum, r) => sum + r.putIn, 0);
+    return { raised, worth, debt, shareholders: rows };
+  }
+
   function summarise(state: GameState): GameSummary {
     const total = (s: Spend) => SPEND_CATEGORIES.reduce((sum, c) => sum + s[c], 0);
     // Only charges, income, borrowing and funding move cash, so the cash after each day is today's cash plus
@@ -143,6 +247,7 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
       ? played.reduce((sum, d) => sum + d.satisfaction, 0) / played.length
       : state.satisfaction;
     const costs = profitCosts(state.spend, state.interestPaid);
+    const table = capTableSummary(state);
     const ending =
       state.status === "playing" ? null
       : state.status === "liquidated" ? "liquidation"
@@ -160,6 +265,12 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
       vcRounds: vcLadder(state).length,
       finalDay: state.finalDay,
       ipo: state.ipo.result,
+      bootstrapped:
+        state.ipo.result !== null &&
+        state.funding.friendsAndFamily?.status !== "accepted" &&
+        !state.investors.angel &&
+        !state.investors.vc.deals.length &&
+        !state.rescue,
       cash: state.cash,
       users: state.users,
       paidUsers: state.paidUsers,
@@ -178,6 +289,8 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
       rescue: state.rescue,
       days,
       incomeVsCosts,
+      capTable: table,
+      score: table.shareholders.find((r) => r.id === "student")?.worth ?? 0,
     };
   }
 
@@ -195,8 +308,9 @@ export function createSummary(config: GameConfig, infra: Infrastructure) {
       repaid,
       interestPaid,
       principalRepaid: repaid - interestPaid,
-      interestSaved: sum((l) => (l.paidOffDay === null ? 0 : l.total - l.repaid)),
+      interestSaved: sum((l) => (l.paidOffDay === null || l.settledAtEnd ? 0 : l.total - l.repaid)),
       remaining: total - repaid,
+      settledAtEnd: loan.settledAtEnd ?? 0,
       fullyRepaid: !isOpen(loan),
     };
   }

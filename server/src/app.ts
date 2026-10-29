@@ -91,6 +91,8 @@ import type {
   PlayEventView,
   PlaySnapshot,
   PricePreviewView,
+  CampaignQuoteView,
+  PriceBandsView,
   SummaryView,
   TeacherCodeView,
   TeacherGamesView,
@@ -382,6 +384,7 @@ export async function buildApp(opts: AppOptions) {
       staff,
       opsNeeded: sim.opsNeededNow(state),
       opsNeededOnceReady: sim.opsNeededOnceReady(state),
+      opsShortfall: sim.opsShortfall(state),
       dailyStaffCost: sim.dailyStaffCost(state),
       launch: sim.launch(state),
       phase: sim.phase(state),
@@ -397,6 +400,7 @@ export async function buildApp(opts: AppOptions) {
       freeUsers: state.users - state.paidUsers,
       price: state.price,
       fairPrice: sim.fairPrice(state),
+      fairPriceView: sim.fairPriceView(state),
       dailyIncome: sim.dailyIncome(state),
       income: state.income,
       priceWave: sim.priceWave(state),
@@ -422,6 +426,7 @@ export async function buildApp(opts: AppOptions) {
       racks: sim.racks(state),
       powerAndCooling: sim.powerAndCooling(state.model),
       provider: sim.provider(state),
+      autoscale: sim.autoscale(state),
       uptime: sim.uptime(state),
       outageDays: state.outageDays,
       monthlyInfrastructureCost: sim.monthlyInfrastructureCost(state),
@@ -430,6 +435,7 @@ export async function buildApp(opts: AppOptions) {
       interestPaid: state.interestPaid,
       loan: sim.loan(state),
       loanQuote: sim.loanQuote(state),
+      shortfall: sim.shortfall(state),
       runway: sim.runway(state),
       valuation: sim.valuation(state),
       capTable: sim.capTable(state),
@@ -709,6 +715,45 @@ export async function buildApp(opts: AppOptions) {
     },
   );
 
+  // How launch users would split at an opening price, for the Launch dialog's chart. Changes nothing.
+  app.get<{ Params: { code: string; id: string }; Querystring: { price: number; rate?: number } }>(
+    "/api/codes/:code/companies/:id/launch-bands",
+    {
+      schema: {
+        querystring: {
+          type: "object",
+          required: ["price"],
+          properties: { price: { type: "number", minimum: 0 }, rate: { type: "number", minimum: 0 } },
+        },
+      },
+    },
+    async (req, reply) => {
+      const row = await findCompany(req.params.code, req.params.id);
+      if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      return simOf(row).launchBands(row.state, req.query.price, req.query.rate) satisfies PriceBandsView;
+    },
+  );
+
+  // What a campaign would bring over its whole run, for the Marketing page's quote. Changes nothing.
+  app.get<{ Params: { code: string; id: string }; Querystring: { type: string; budget: number; days: number } }>(
+    "/api/codes/:code/companies/:id/campaign-quote",
+    {
+      schema: {
+        querystring: {
+          type: "object",
+          required: ["type", "budget", "days"],
+          // The sim checks the budget and length against the game's limits.
+          properties: { type: { enum: [...CUSTOMER_TYPE_IDS] }, budget: { type: "number" }, days: { type: "number" } },
+        },
+      },
+    },
+    async (req, reply) => {
+      const row = await findCompany(req.params.code, req.params.id);
+      if (!row) return sendError(reply, 404, "unknown_company", "That company wasn't found.");
+      return simOf(row).campaignQuote(row.state, req.query.type, req.query.budget, req.query.days) satisfies CampaignQuoteView;
+    },
+  );
+
   // What a counter to a funder's offer would do, for the negotiation modal's live odds. Changes nothing.
   app.get<{
     Params: { code: string; id: string };
@@ -817,6 +862,7 @@ export async function buildApp(opts: AppOptions) {
                 "buyRack",
                 "sellRack",
                 "setInstances",
+                "setAutoscaleMax",
                 "setManagedService",
                 "takeLoan",
                 "acceptFunding",
@@ -873,8 +919,9 @@ export async function buildApp(opts: AppOptions) {
             from: { enum: [...STAFF_POOLS] },
             // startMigration: the model to move to.
             model: { enum: [...MODEL_IDS] },
-            // setPrice: the monthly price, and on the payments app the share of each payment taken, set together. The
-            // sim checks them against the game's highest, refuses a rate on other products, and a £0 price without one.
+            // setPrice, and launch's opening price (the fair price if left out): the monthly price, and on the payments
+            // app the share of each payment taken, set together. The sim checks them against the game's highest,
+            // refuses a rate on other products, and a £0 price without one.
             price: { type: "number", minimum: 0 },
             rate: { type: "number", minimum: 0 },
             // rentServer and buyServer: the type and size of server. The sim checks the model rents or buys them.
@@ -885,6 +932,9 @@ export async function buildApp(opts: AppOptions) {
             // cancelServer, sellServer and switchServer: one of the company's servers, by id; sellRack, one of its racks.
             // The sim checks it's theirs.
             id: { type: "integer", minimum: 1 },
+            // cancelServer and sellServer: go ahead now, rather than wait for a replacement on order, or on Hard,
+            // despite leaving capacity short of today's load (#260).
+            now: { type: "boolean" },
             // buyServer: the rack to install it in, by id. Left out, it goes in the first with room.
             rack: { type: "integer", minimum: 1 },
             // switchServer: whether the app server gives CU or APIU.
@@ -893,6 +943,9 @@ export async function buildApp(opts: AppOptions) {
             // can be none). The sim checks it against the platform's most.
             // hire, letGo and cancelHire: how many people at once, one if left out. Capped so a typo can't hire thousands.
             count: { type: "integer", minimum: 0, maximum: 999 },
+            // setAutoscaleMax: the most PaaS instances bursts can reach (#261). The sim checks it's within the minimum
+            // and the platform's most.
+            max: { type: "integer", minimum: 1, maximum: 999 },
             // setManagedService: a managed service on PaaS and its size, or null to turn the cache off.
             service: { enum: [...MANAGED_SERVICES] },
             // acceptFunding, declineFunding, counterFunding and autoNegotiateFunding: friends and family or the grant.
@@ -924,6 +977,7 @@ export async function buildApp(opts: AppOptions) {
             { if: { properties: { type: { enum: ["cancelServer", "sellServer", "sellRack"] } } }, then: { required: ["id"] } },
             { if: { properties: { type: { const: "buyRack" } } }, then: { required: ["size"] } },
             { if: { properties: { type: { const: "setInstances" } } }, then: { required: ["count"] } },
+            { if: { properties: { type: { const: "setAutoscaleMax" } } }, then: { required: ["max"] } },
             { if: { properties: { type: { enum: ["acceptFunding", "declineFunding"] } } }, then: { required: ["funder"] } },
             { if: { properties: { type: { enum: ["counterFunding", "autoNegotiateFunding"] } } }, then: { required: ["funder", "terms"] } },
             { if: { properties: { type: { enum: ["counterInvestor", "autoNegotiateInvestor"] } } }, then: { required: ["terms"] } },

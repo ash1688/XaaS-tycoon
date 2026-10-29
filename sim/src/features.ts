@@ -33,6 +33,12 @@ export function createFeatures(config: GameConfig, finance: Finance) {
   const setupFee = (state: GameState, f: FeatureConfig) =>
     Math.round(risen(f.devDays * config.addons.setupFeePerDevDay, state.addonPriceRise * state.priceLevel));
 
+  /**
+   * The developer-days a feature takes to build: its devDays, × tiers.tier1BuildMultiplier in tier 1, which opens at
+   * Launch without research (#263), so early features aren't cheap. An add-on's set-up fee goes by its devDays alone.
+   */
+  const buildDays = (f: FeatureConfig) => Math.round(f.devDays * (featureTier(f) === 1 ? config.tiers.tier1BuildMultiplier : 1));
+
   const isActive = (state: GameState, id: string) => {
     const status = state.features[id]?.status;
     return status === "built" || status === "addon";
@@ -64,7 +70,7 @@ export function createFeatures(config: GameConfig, finance: Finance) {
       );
     }
     const feature = featureList(state).find((f) => f.id === id);
-    if (!feature) throw new SimError("unknown_feature", "Pick a feature from your product's list.");
+    if (!feature) unknownFeature(id);
     refuseLocked(state, feature);
     if (state.mvp.doneDay === null) {
       throw new SimError("mvp_first", `Your developers are building the MVP. ${feature.name} can be started once it's done.`);
@@ -79,12 +85,22 @@ export function createFeatures(config: GameConfig, finance: Finance) {
     return { ...state, features: { ...state.features, [id]: { status: "building", progress: 0 } } };
   }
 
+  /** Refuses an id that isn't one of the product's features, pointing a model benefit's id at `benefit`. */
+  function unknownFeature(id: string): never {
+    const benefit = config.tiers.benefits.find((b) => b.id.toLowerCase() === id.toLowerCase());
+    if (benefit) {
+      const model = { onprem: "on-prem", iaas: "IaaS", paas: "PaaS", saas: "SaaS" }[benefit.model];
+      throw new SimError("unknown_feature", `${benefit.name} is a ${model} model benefit, not a feature: buy it as a benefit.`);
+    }
+    throw new SimError("unknown_feature", "Pick a feature from your product's list.");
+  }
+
   function buyAddon(state: GameState, id: string): GameState {
     if (state.model !== "saas") {
       throw new SimError("not_saas", "Add-ons are only sold on SaaS. On your model, your developers build features.");
     }
     const feature = featureList(state).find((f) => f.id === id);
-    if (!feature) throw new SimError("unknown_feature", "Pick a feature from your product's list.");
+    if (!feature) unknownFeature(id);
     if (isActive(state, id)) throw new SimError("addon_active", `${feature.name} is already active.`);
     refuseLocked(state, feature);
     const needed = config.addons.minConfigDevelopers;
@@ -123,12 +139,13 @@ export function createFeatures(config: GameConfig, finance: Finance) {
           : `${feature.name}: no developers, so no progress today.`;
       return { features: state.features, entries: [{ text, cashDelta: 0, kind: "feature" }] };
     }
-    const progress = Math.min(feature.devDays, Math.round((state.features[feature.id]!.progress + work) * 100) / 100);
-    const built = progress === feature.devDays;
+    const total = buildDays(feature);
+    const progress = Math.min(total, Math.round((state.features[feature.id]!.progress + work) * 100) / 100);
+    const built = progress === total;
     const percent = Math.round(100 * (feature.growthMultiplier - 1));
     const text = built
       ? `Feature built: ${feature.name}. Growth up ${percent}% from now on.`
-      : `Building ${feature.name}: ${+progress.toFixed(1)} of ${feature.devDays} developer-days done.`;
+      : `Building ${feature.name}: ${+progress.toFixed(1)} of ${total} developer-days done.`;
     return {
       features: { ...state.features, [feature.id]: { status: built ? "built" : "building", progress } },
       entries: [{ text, cashDelta: 0, kind: "feature" }],
@@ -139,9 +156,10 @@ export function createFeatures(config: GameConfig, finance: Finance) {
     return featureList(state).map((f) => {
       const { status, progress } = state.features[f.id] ?? { status: "notStarted" as const, progress: 0 };
       const work = featureOutput(state);
-      const daysLeft = status === "building" && work > 0 && state.model !== "saas" ? Math.ceil((f.devDays - progress) / work) : null;
+      const daysLeft = status === "building" && work > 0 && state.model !== "saas" ? Math.ceil((buildDays(f) - progress) / work) : null;
       return {
         ...f,
+        devDays: buildDays(f),
         status,
         progress,
         daysLeft,
@@ -177,7 +195,7 @@ export function createFeatures(config: GameConfig, finance: Finance) {
 
   /** The add-ons a migration to this model would leave behind: all of them when leaving SaaS, none otherwise. */
   const addonsLeftBehind = (state: GameState, to: ModelId) =>
-    state.model === "saas" && to !== "saas" ? activeAddons(state) : [];
+    state.model === "saas" && to !== "saas" ? activeAddons(state).map((f) => ({ ...f, devDays: buildDays(f) })) : [];
 
   /** Each active add-on's per-user price on the given users, billed like the model's per-user fee, after price rises. */
   function addonEntries(state: GameState, days = 1): LogEntry[] {

@@ -167,11 +167,20 @@ describe("runScript", () => {
     expect(turn.state.staff.ops).toEqual({ junior: 0, mid: 1, senior: 0 });
   });
 
-  it("says why each command after the game ends isn't run", () => {
-    const turn = runScript(sim, start(), "end; letgo ops; valuation", who);
-    expect(turn.lines).toContain("not run: the game is over");
-    expect(turn.lines.indexOf("> letgo ops")).toBeGreaterThan(-1);
-    expect(turn.lines.at(-1)).toBe("not run: the game is over");
+  it("says why each command after the game ends isn't run, and still shows what changes nothing", () => {
+    const turn = runScript(sim, start(), "end; letgo ops; valuation; payhistory; look", who);
+    expect(turn.lines[turn.lines.indexOf("> letgo ops") + 1]).toBe("not run: the game is over");
+    // Read-only views still work once it's over (#266): the brief asks for payhistory at the end.
+    expect(turn.lines[turn.lines.indexOf("> valuation") + 1]).toMatch(/^valuation £/);
+    expect(turn.lines[turn.lines.indexOf("> payhistory") + 1]).toMatch(/^pay history|no pay reviews/);
+    expect(turn.lines[turn.lines.indexOf("> look") + 1]).toMatch(/^== Test Co .*ENDED BY TEACHER/);
+  });
+
+  it("runs look inside a batch (#266)", () => {
+    const turn = runScript(sim, start(), "look", who);
+    expect(turn.lines[0]).toBe("> look");
+    expect(turn.lines[1]).toMatch(/^== Test Co /);
+    expect(turn.lines.join("\n")).toMatch(/^commands \(join several with ';'\):/m);
   });
 });
 
@@ -215,6 +224,34 @@ describe("advanceUntil", () => {
     expect(renderStatus(s, turn.state)).toMatch(
       /event today: Viral growth\. Runtime and scaling is the provider's job on PaaS\. [\d,]+ new free users signed up\. They're staying\./,
     );
+  });
+
+  it("doesn't stop for a viral wave of a nearly full market's last few users (#289)", () => {
+    const viral = defaultConfig.events.find((e) => e.id === "viralGrowth")!;
+    // A small market the servers can carry whole, so nothing but the wave happens.
+    const social = defaultConfig.productTypes.social;
+    const small = { ...social, growth: { ...social.growth, marketSize: 2_000 } };
+    const s = createSim({
+      ...defaultConfig,
+      mvp: NO_MVP,
+      launch: AUTO_LAUNCH,
+      finalDay: 40,
+      payReview: { ...defaultConfig.payReview, on: 0 },
+      productTypes: { ...defaultConfig.productTypes, social: small },
+      events: [{ ...viral, encounter: undefined, schedule: { type: "fixed", days: [10] } }],
+    });
+    const begun = s.newGame({ companyName: "Test Co", productType: "social", model: "paas", seed: 3, takeLoan: true });
+    let state = runScript(s, begun, "instances 3; managed database medium", who).state;
+    let turn = advanceUntil(s, state, 30, who);
+    while (turn.state.day < 9) turn = advanceUntil(s, turn.state, 1, who);
+    // The market all but full on the eve of the wave: room for 9 more.
+    const market = small.growth.marketSize;
+    const paid = Math.round((market - 9) * 0.3);
+    state = { ...turn.state, users: market - 9, paidUsers: paid };
+    const wave = advanceUntil(s, state, 1, who);
+    expect(wave.state.day).toBe(10);
+    expect(wave.lines.join("\n")).toMatch(/day 10: Viral growth: .* ([0-9]) new free users? signed up\.|Your market is already full/);
+    expect(wave.lines.at(-1)).not.toMatch(/Viral growth/);
   });
 
   it("shows the danger meter, and stops when a new risk makes it climb faster", () => {
@@ -347,9 +384,10 @@ describe("rendering", () => {
     const build = start();
     const status = renderStatus(sim, build).split("\n");
     expect(status[1]).toBe(
-      "phase: Build (from day 1) | next: Launch, when you press Launch | open: Deployment model, Funding: the bank loan, friends and family and grants, Developers, Servers or racks",
+      "phase: Build (from day 1) | next: Launch, when you press Launch | open: Deployment model, Funding: the bank loan, friends and family and grants, Developers, Instances" +
+        " | the CFO opens early once you take outside money (friends and family, or a grant)",
     );
-    expect(renderStatus(sim, build)).toMatch(/^price £5\/month \(fair £5\) \| set from Launch$/m);
+    expect(renderStatus(sim, build)).toMatch(/^price £5\/month \(fair £5\) \| set at Launch$/m);
     const commands = renderCommands(sim, build);
     expect(commands).toMatch(/^ {2}hire <developers> /m);
     expect(commands).not.toMatch(/^ {2}(price|preview|build|addon|benefit|buyapi|ipo|apply) /m);
@@ -360,11 +398,13 @@ describe("rendering", () => {
     expect(refused.rows[0]).toMatchObject({ type: "hire", ok: false, error: "not_yet" });
 
     const launch = inPhase(build, "launch", 5);
-    expect(renderStatus(sim, launch).split("\n")[1]).toMatch(/^phase: Launch \(from day 5\) \| next: Grow, when your first angel investor approaches \| open: .*, Price, Ops staff, Support staff, Moderators$/);
+    expect(renderStatus(sim, launch).split("\n")[1]).toMatch(/^phase: Launch \(from day 5\) \| next: Grow, when your first angel investor approaches \| open: .*, Price, Ops staff, Support staff, Moderators, Tier 1 features \| the CFO opens early/);
     expect(renderStatus(sim, launch)).toMatch(/^price £5\/month \(fair £5\) \| can change$/m);
     expect(renderCommands(sim, launch)).toMatch(/^ {2}hire <developers\|ops\|support\|moderators> /m);
     expect(renderCommands(sim, launch)).toMatch(/^ {2}price </m);
-    expect(renderCommands(sim, launch)).not.toMatch(/^ {2}(build|buyapi|ipo) /m);
+    // Tier 1 features open at Launch (#263); research, benefits, the API and the IPO wait.
+    expect(renderCommands(sim, launch)).toMatch(/^ {2}build <notifications> /m);
+    expect(renderCommands(sim, launch)).not.toMatch(/^ {2}(unlock|benefit|buyapi|ipo) /m);
 
     const grow = inPhase(build, "grow");
     expect(renderCommands(sim, grow)).toMatch(/^ {2}hire <developers\|ops\|support\|moderators\|researchers\|marketers> /m);
@@ -422,6 +462,48 @@ describe("the paid API", () => {
     expect(renderStatus(sim, sim.advance(state).state)).toMatch(/APIU [\d.]+\/20 /);
   });
 
+  it("warns an order will need more ops, and shows an ops shortfall once it bites (#259)", () => {
+    // An IaaS shop with no servers yet, and no ops: its first server will need one.
+    const noOps = shop("iaas");
+    const ordered = run({ ...noOps, staff: { ...noOps.staff, ops: { junior: 0, mid: 0, senior: 0 } } }, "rent app large");
+    expect(ordered.lines[0]).toBe("rentServer: done. OPS: once it's ready you'll need 0.2 ops staff, and yours do the work of 0: hire ops (or retrain someone) before then, or capacity is cut.");
+    // Not short today: the server isn't running yet.
+    expect(renderStatus(sim, ordered.state)).not.toMatch(/^ops: /m);
+    const turn = run(ordered.state, "next 7");
+    expect(turn.lines.at(-1)).toMatch(/Short of ops: [\d.]+ of [\d.]+ needed, capacity cut to \d+%/);
+    const status = renderStatus(sim, turn.state);
+    expect(status).toMatch(/^ops: [\d.]+ of [\d.]+ needed, capacity cut to \d+% \(hire ops, or retrain someone into ops\)$/m);
+    expect(status).toMatch(/^capacity: .* \| every tier CUT to \d+% for missing ops$/m);
+  });
+
+  it("cancels with `cancel N now` on Hard only, and shows a cancel waiting for its replacement (#260)", () => {
+    expect(parseCommand("cancel 3 now")).toMatchObject({ action: { type: "cancelServer", id: 3, now: true } });
+    expect(parseCommand("sell 3")).toMatchObject({ action: { type: "sellServer", id: 3 } });
+    expect(() => parseCommand("cancel 3 later")).toThrow(/cancel <server id> now/);
+    const anyLevel = createSim({ ...defaultConfig, mvp: NO_MVP, launch: AUTO_LAUNCH, allowedDifficulties: { easy: 1, normal: 1, hard: 1 } });
+    const go = (s: GameState, text: string) => runCommand(anyLevel, s, parseCommand(text), who);
+    const setUp = (difficulty: string) => {
+      const state = inPhase(anyLevel.newGame({ companyName: "Shop Co", productType: "ecommerce", model: "iaas", seed: 3, takeLoan: true, difficulty }), "grow");
+      const rented = go(go(state, "rent app large").state, "rent database large").state;
+      // Live, with users on the servers.
+      return advanceUntil(anyLevel, rented, 5, who).state;
+    };
+    const normal = setUp("normal");
+    const app = normal.servers.find((s) => s.type === "app")!.id;
+    expect(go(normal, `cancel ${app}`).lines[0]).toMatch(/^cancelServer refused: You can't cancel that server: without it, there'd be no compute \(CU\) left for today's load/);
+    expect(go(normal, `cancel ${app} now`).lines[0]).toMatch(/^cancelServer refused: You can't cancel/);
+    // With a replacement on order it waits, and the status says so.
+    const waiting = go(go(normal, "rent app large").state, `cancel ${app}`).state;
+    expect(renderStatus(anyLevel, waiting)).toMatch(new RegExp(`#${app} large app .*\\(CANCELLING: goes at the end of day \\d+, when its replacement is ready; still serving and billed\\)`));
+    expect(renderCommands(anyLevel, waiting)).toMatch(/cancel <server id> \[now\]/);
+
+    const hard = setUp("hard");
+    expect(go(hard, `cancel ${app}`).lines[0]).toMatch(new RegExp(`cancelServer refused: Without that server, .*: expect an outage\\. To cancel it anyway, confirm it \\(\`cancel ${app} now\`\\)\\.`));
+    const gone = go(hard, `cancel ${app} now`);
+    expect(gone.lines[0]).toBe("cancelServer: done");
+    expect(gone.state.servers.map((s) => s.id)).not.toContain(app);
+  });
+
   it("stops time when calls start being dropped", () => {
     let state = run(shop("iaas"), "rent app large").state;
     state = run(state, "rent database large").state;
@@ -429,6 +511,20 @@ describe("the paid API", () => {
     const turn = run(state, "next 7");
     expect(turn.lines.at(-1)).toMatch(/API calls are being dropped/);
     expect(turn.lines.some((l) => /Shop API: [\d,]+ calls dropped/.test(l))).toBe(true);
+  });
+
+  it("shows PaaS autoscaling's instances, minimum and maximum, and sets the maximum (#261)", () => {
+    expect(parseCommand("autoscale max 30")).toMatchObject({ action: { type: "setAutoscaleMax", max: 30 } });
+    expect(() => parseCommand("autoscale 30")).toThrow(/autoscale max <n>/);
+    const paas = run(shop("paas"), "instances 15").state;
+    expect(renderStatus(sim, paas)).toMatch(/^basic autoscaling: instances 15 \(min 15, max 20, following today's instances until you set it\) \| baseline 1\.25× yesterday's demand/m);
+    const scaling = { ...paas, benefits: [...paas.benefits, "paasAutoscaling"] };
+    expect(renderStatus(sim, scaling)).toMatch(/^managed autoscaling: instances 15 \(min 15, max 20, following today's instances until you set it\) \| baseline 1\.5× yesterday's demand/m);
+    expect(renderCommands(sim, scaling)).toMatch(/autoscale max <n>/);
+    const capped = run(scaling, "autoscale max 18");
+    expect(capped.lines[0]).toBe("setAutoscaleMax: done");
+    expect(renderStatus(sim, capped.state)).toMatch(/^managed autoscaling: instances 15 \(min 15, max 18\)/m);
+    expect(run(scaling, "autoscale max 10").lines[0]).toMatch(/^setAutoscaleMax refused: Set a maximum between your minimum of 15/);
   });
 
   it("shows API instances on PaaS and the provider's fee on SaaS", () => {
@@ -863,6 +959,27 @@ describe("rescue buyout and liquidation", () => {
     expect(parseCommand("buyback")).toEqual({ kind: "action", action: { type: "buyBack" }, times: 1 });
   });
 
+  it("stops time the first time cash goes below £0, with the shortfall on the loan and the room left", () => {
+    let turn = advanceUntil(sim, broke(), 40, who);
+    while (turn.state.firstShortfallDay === null) turn = advanceUntil(sim, turn.state, 40, who);
+    const day = turn.state.firstShortfallDay;
+    const short = sim.shortfall(turn.state);
+    expect(turn.state).toMatchObject({ day, cash: 0, rescue: null });
+    expect(turn.lines.at(-1)).toBe(
+      `stopped on day ${day}: Cash went below £0 and the shortfall went on your loan: £${short.room.toLocaleString("en-GB")} more and a vulture VC steps in`,
+    );
+    expect(turn.lines.join("\n")).toMatch(/the shortfall went on your bank loan, still £[\d,]+ a day, now until day \d+/);
+    expect(renderStatus(sim, turn.state)).toContain(
+      `below £0: £${short.owed.toLocaleString("en-GB")} of shortfalls on your bank loan; the next goes on your bank loan, £${short.room.toLocaleString("en-GB")} more (of 7 days of costs, £${short.limit.toLocaleString("en-GB")}) and the vulture VC steps in`,
+    );
+    // Once the loan's repaid, the next shortfall opens an emergency loan (#288).
+    const repaid = { ...turn.state, loan: { ...turn.state.loan!, paidOffDay: day } };
+    expect(renderStatus(sim, repaid)).toMatch(/^below £0: no shortfalls owed; the next goes on a new emergency loan, £[\d,]+ more \(of 7 days of costs, £[\d,]+\) and the vulture VC steps in$/m);
+    // An emergency loan says so.
+    const emergency = { ...turn.state, loan: { ...turn.state.loan!, emergency: true as const } };
+    expect(renderStatus(sim, emergency)).toMatch(/^loan \(emergency\): £[\d,]+ left/m);
+  });
+
   it("stops time on the rescue, shows the cash, share taken and cuts, and offers the buy-back at its price", () => {
     expect(run(start(), "rescue").lines[0]).toMatch(/no rescue yet/);
     let turn = advanceUntil(sim, broke(), 40, who);
@@ -972,8 +1089,10 @@ describe("moderators", () => {
     while (!/reports unhandled/.test(turn.lines.at(-1)!) && turn.state.day < 30) turn = run(turn.state, "next 30");
     expect(turn.lines.at(-1)).toMatch(/^stopped on day \d+: .*reports unhandled \(\d+\)/);
     expect(turn.lines.some((l) => /reports on user content are waiting for a moderator/.test(l))).toBe(true);
+    // A move retrains: they join the moderators after a mid's lead time, shown under staff with their start day.
     const staffed = run(turn.state, "move moderators developers");
-    expect(staffed.rows[0]).toMatchObject({ ok: true, moderators: 1 });
+    expect(staffed.rows[0]).toMatchObject({ ok: true, moderators: 0 });
+    expect(renderStatus(sim, staffed.state)).toMatch(/moderators 0 .*\| retraining, paid already: 1 mid start day \d+ \(7d\)/);
   });
 });
 
@@ -1123,7 +1242,7 @@ describe("tiers, model benefits and the hardware slider (#123)", () => {
     expect(renderStatus(sim, available)).toMatch(/photos locked \(unlock for 15 RP\)/);
     expect(renderCommands(sim, available)).not.toMatch(/^ {2}benefit /m);
     expect(renderCommands(sim, available)).toMatch(
-      /^ {2}unlock <photos\|managedMonitoring\|hardwareEfficiency1\|reservedInstances> {3}\(research points; you have 20\) photos 15 RP \(feature\), managedMonitoring 15 RP \(model benefit\), /m,
+      /^ {2}unlock <photos\|managedMonitoring\|hardwareEfficiency1\|reservedInstances> {3}\(research points; you have 20\) photos 15 RP \(feature\), managedMonitoring 15 RP \(PaaS benefit\), hardwareEfficiency1 15 RP \(on-prem benefit, not your model\), /m,
     );
     const open = run(available, "unlock managedmonitoring").state;
     expect(open.researchPoints).toBe(5);
@@ -1174,14 +1293,39 @@ describe("campaigns (#115) and marketers (#180)", () => {
     const state = { ...unstaffed, staff: { ...unstaffed.staff, marketers: { junior: 0, mid: 1, senior: 1 } } };
     expect(renderStatus(sim, state)).toMatch(/^marketers: 2, 2 free \(1 mid, 1 senior; a new campaign gets the senior\)/m);
     expect(renderStatus(sim, state)).toMatch(/^campaigns: 0\/2 running, market \d+% full$/m);
-    expect(renderCommands(sim, state)).toMatch(/^ {2}campaign <casual\|enthusiasts\|professionals\|businesses> <budget £100–1000000> <days 7–90> {3}\(spent evenly from tomorrow; brings users of that type: casual £\d\.\d\d a user now, /m);
+    expect(renderCommands(sim, state)).toMatch(/^ {2}campaign <casual\|enthusiasts\|professionals\|businesses> <budget £100–1000000> <days 7–90> {3}\(spent evenly from tomorrow; brings users of that type\. £1,000 over 14 days: casual £\d\.\d\d–£\d\.\d\d a user \([\d,]+–[\d,]+ users\), /m);
+    expect(renderCommands(sim, state)).not.toMatch(/∞/);
     const started = run(state, "campaign businesses 1600 10");
     expect(started.rows[0]).toMatchObject({ type: "startCampaign", ok: true });
     expect(renderCommands(sim, started.state)).toMatch(/^ {2}stopcampaign <1> /m);
     const played = run(started.state, "next 2").state;
     const users = sim.campaigns(played).campaigns[0]!.users;
     expect(users).toBeGreaterThan(0);
-    expect(renderStatus(sim, played)).toMatch(new RegExp(String.raw`^ {2}#1 businesses \(senior marketer\) £\d+/£1600, day \d+/10, ${users} users at £\d+\.\d\d running$`, "m"));
+    expect(renderStatus(sim, played)).toMatch(new RegExp(String.raw`^ {2}#1 businesses \(senior marketer\) £\d+/£1600, day \d+/10, ${users} users at £\d+\.\d\d, quoted £\d+\.\d\d–£\d+\.\d\d running$`, "m"));
+    expect(run(played, "campaigns").lines).toEqual(["campaigns: 1 started", expect.stringMatching(/^ {2}#1 businesses .* quoted £[\d.]+–£[\d.]+ running$/)]);
+  });
+
+  it("quotes a campaign over its whole run, and lists every campaign past and present", () => {
+    const base = grownUp();
+    const state = { ...base, staff: { ...base.staff, marketers: { junior: 0, mid: 4, senior: 0 } } };
+    expect(parseCommand("campaignquote casual £2,000 14")).toEqual({ kind: "campaignQuote", customerType: "casual", budget: 2_000, days: 14 });
+    expect(run(state, "campaignquote casual 2000 14").lines).toEqual([
+      expect.stringMatching(/^campaign quote: casual, £2,000 over 14 days: £\d\.\d\d–£\d\.\d\d a user \([\d,]+–[\d,]+ users\)$/),
+    ]);
+    expect(run(state, "campaigns").lines).toEqual(["campaigns: none started yet."]);
+    let played = state;
+    for (const t of ["casual", "enthusiasts", "professionals", "businesses"]) played = run(played, `campaign ${t} 500 7`).state;
+    played = sim.advance(played, 8).state;
+    played = run(played, "campaign casual 500 7").state;
+    // Look shows the last three finished; "campaigns" lists all five, first to last.
+    expect(renderStatus(sim, played)).toMatch(/^ {2}\(1 older: "campaigns" lists them all\)$/m);
+    const lines = run(played, "campaigns").lines;
+    expect(lines[0]).toBe("campaigns: 5 started");
+    expect(lines.slice(1).map((l) => l.match(/#(\d) (\w+)/)!.slice(1).join(" "))).toEqual(["1 casual", "2 enthusiasts", "3 professionals", "4 businesses", "5 casual"]);
+    expect(lines[1]).toMatch(/finished$/);
+    // A market almost full says so, with an estimate, not a cost per user.
+    const full = { ...played, users: Math.round(sim.campaigns(played).market.size * 0.95) };
+    expect(run(full, "campaignquote casual 1000 14").lines[0]).toMatch(/^campaign quote: casual, £1,000 over 14 days: market almost full: about [\d,]+ users? for £1,000$/);
   });
 });
 
@@ -1202,13 +1346,206 @@ describe("launch", () => {
     expect(renderCommands(button, state)).not.toMatch(/^ {2}launch /m);
     let done = state;
     while (!done.mvp.doneDay) done = play(done, "next 1").state;
-    expect(renderCommands(button, done)).toMatch(/^ {2}launch {3}\(go live/m);
+    expect(renderCommands(button, done)).toMatch(/^ {2}launch \[price\] {3}\(go live/m);
     expect(renderStatus(button, done)).toMatch(
-      /launch: ready \(ready: type launch\); launching now would be short: No app server: no users can be served; No database: no users can be served/,
+      /launch: ready \(type launch\); launching now would be short: No app server: no users can be served; No database: no users can be served/,
     );
     const launched = play(done, "launch").state;
     expect(launched.launchDay).toBe(done.day + 1);
     expect(renderStatus(button, launched)).toMatch(new RegExp(`launch: launching, go-live day ${done.day + 1}`));
     expect(play(launched, "next 1").state.users).toBeGreaterThan(0);
+  });
+});
+
+describe("costs", () => {
+  it("shows the status line's costs by heading, the last 7 days' income and runway", () => {
+    const state = sim.advance(launchPhase(), 5).state;
+    const r = sim.runway(state);
+    const money = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
+    expect(renderStatus(sim, state)).toContain(`income ${money(r.dailyIncome)}/day (last 7 days) | costs ${money(r.dailyCosts)}/day`);
+    const lines = run(state, "costs").lines;
+    expect(lines[0]).toBe(`== Daily costs: ${money(r.dailyCosts)} a day`);
+    for (const h of r.costs) expect(lines).toContain(`  ${h.label}: ${money(h.amount)}`);
+    // The loan taken at the start is one of them.
+    expect(lines).toContain(`  Loan repayments: ${money(sim.loan(state)!.dailyRepayment)}`);
+    expect(lines).toContain(`Income averaged over the last 7 days: ${money(r.dailyIncome)} a day.`);
+    expect(lines.join("\n")).toMatch(r.days === null ? /Not losing money/ : new RegExp(`cash lasts about ${r.days} days?`));
+    expect(renderCommands(sim, state)).toMatch(/ {2}costs {3}\(the daily costs by heading/);
+  });
+
+  it("shows the executives' pay, and notes the board's pay holiday", () => {
+    const state = sim.advance(launchPhase(), 2).state;
+    const c = state.csuite.shortlists.cto[0]!;
+    const hired = { ...state, csuite: { ...state.csuite, hired: [{ role: "cto" as const, name: c.name, strength: c.strength, salary: 300, equity: 0, shares: 0, day: 1 }] } };
+    expect(run(hired, "costs").lines).toContain("  Executive pay: £300");
+    expect(sim.runway(hired).dailyCosts - sim.runway(state).dailyCosts).toBe(300);
+    const holiday = { ...hired, csuite: { ...hired.csuite, payHolidaySince: 2 } };
+    expect(run(holiday, "costs").lines).toContain("  Executive pay: £0 (the board's pay holiday: none while it lasts)");
+  });
+
+  it("puts one-offs on their own line, not in costs", () => {
+    // Over a week on, the upfront bill of day 1 is no longer this week's.
+    const state = sim.advance(launchPhase(), 8).state;
+    expect(sim.runway(state).oneOffsThisWeek).toBe(0);
+    expect(renderStatus(sim, state)).not.toMatch(/one-offs this week/);
+    // A day's record with a one-off on it: it shows apart, and the costs don't change.
+    const last = state.spendByDay.at(-1)!;
+    const charged = { ...state, spendByDay: [...state.spendByDay.slice(0, -1), { ...last, oneOffs: 2_500 }] };
+    expect(sim.runway(charged).dailyCosts).toBe(sim.runway(state).dailyCosts);
+    expect(renderStatus(sim, charged)).toContain("one-offs this week £2,500 (not in costs: see `costs`)");
+    expect(run(charged, "costs").lines.at(-1)).toBe("One-offs this week (kit bought, severance, fees, events; not in daily costs): £2,500.");
+  });
+});
+
+describe("prices: the opening price and the bands", () => {
+  // A game whose MVP is done, waiting for Launch to be pressed.
+  const manual = createSim({ ...defaultConfig, mvp: NO_MVP, finalDay: 40, payReview: { ...defaultConfig.payReview, on: 0 } });
+  const waiting = () =>
+    inPhase(manual.advance(manual.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 })).state, "launch");
+  const play = (state: GameState, text: string) => {
+    const command = parseCommand(text);
+    return command.kind === "next" ? advanceUntil(manual, state, command.days, who) : runCommand(manual, state, command, who);
+  };
+
+  it("reads launch with an opening price, and launchpreview", () => {
+    expect(parseCommand("launch")).toMatchObject({ action: { type: "launch" } });
+    expect(parseCommand("launch 7.5")).toMatchObject({ action: { type: "launch", price: 7.5 } });
+    expect(parseCommand("launchpreview 7.5")).toEqual({ kind: "launchPreview", price: 7.5 });
+  });
+
+  it("launches at the opening price, then refuses a price change until go-live and locks it after", () => {
+    const state = waiting();
+    expect(renderCommands(manual, state)).toMatch(/ {2}launch \[price\] {3}\(go live at an opening price, the fair £5 if none/);
+    const preview = play(state, "launchpreview 12").lines.join("\n");
+    expect(preview).toMatch(/^bands \(of launch users\):/);
+    expect(preview).toMatch(/ {2}casual \(\d+(\.\d)?%\): join paying [\d.]+%, join free [\d.]+%, don't join [\d.]+%/);
+    const launched = play(state, "launch 6").state;
+    expect(launched.price).toBe(6);
+    expect(renderStatus(manual, launched)).toMatch(/price £6\/month \(fair £5\) \| opening price, holds until go-live and 14 days after/);
+    expect(play(launched, "price 7").lines[0]).toMatch(/setPrice refused: Your opening price of £6 holds until go-live on day \d+, and for 14 days after\./);
+  });
+
+  it("prints a preview's bands per customer type and in all, and what customers expect and what a rise counts from", () => {
+    let state = sim.advance(launchPhase(), 15).state;
+    state = { ...state, priceLockedUntil: 0 };
+    const rise = run(state, `preview ${state.price * 1.4}`).lines.join("\n");
+    expect(rise).toMatch(/customers expect £[\d.]+, moving halfway to your price every 14 days \(a cut counts from it\); a rise counts from £[\d.]+, the lowest price of the last 60 days/);
+    expect(rise).toMatch(/bands \(of paying users\):\n {2}casual \([\d.]+%\): accept [\d.]+%, grumble online [\d.]+%, contact support [\d.]+%, drop to free [\d.]+%, leave [\d.]+%/);
+    expect(rise).toMatch(/\n {2}all: accept [\d.]+%/);
+    const cut = run(state, `preview ${state.price * 0.6}`).lines.join("\n");
+    expect(cut).toMatch(/bands \(of the new users it could bring\):/);
+    expect(cut).toMatch(/% of free users start paying/);
+  });
+});
+
+describe("text sweep (#266)", () => {
+  it("shows no blank agency rate for researchers and marketers, who are permanent hires only", () => {
+    const text = renderStatus(sim, allOpen(start()));
+    expect(text).toMatch(/^ {2}researchers 0 .*\/day, no agency \| severance/m);
+    expect(text).toMatch(/^ {2}marketers 0 .*\/day, no agency \| severance/m);
+    expect(text).not.toMatch(/agency \/day/);
+  });
+
+  it("names the model each benefit to unlock is for", () => {
+    const state = { ...allOpen(start()), tiers: [{ tier: 2 as const, day: 1 }], researchPoints: 20 };
+    expect(renderStatus(sim, state)).toMatch(/research: .*can unlock photos 15 RP \(feature\), managedMonitoring 15 RP \(PaaS benefit\), .*\(on-prem benefit, not your model\)/);
+  });
+
+  it("points a model benefit's id at benefit rather than asking for a feature", () => {
+    const saas = inPhase(sim.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 }), "launch");
+    expect(run(saas, "addon premiumSupport").lines).toEqual([
+      "buyAddon refused: Premium support plan is a SaaS model benefit, not a feature: buy it as a benefit.",
+    ]);
+  });
+
+  it("shows the uptime the IPO judges: the last 30 days since launch", () => {
+    const state = run(start(), "next 1").state;
+    const down = { ...state, downtimeHours: 50, spendByDay: state.spendByDay.map((d) => ({ ...d, hoursDown: 0 })) };
+    expect(renderStatus(sim, down)).toMatch(/uptime 100\.0% over the last 30 days \(what the IPO judges\)/);
+  });
+});
+
+describe("student traps (#289)", () => {
+  const iaas = (): GameState => inPhase(sim.newGame({ companyName: "Test Co", productType: "social", model: "iaas", seed: 3 }), "launch");
+
+  it("says on the capacity line itself when app servers sit idle for want of a load balancer, in good grammar", () => {
+    let state = iaas();
+    state = runScript(sim, state, "rent app small; rent app small; rent database medium", who).state;
+    state = run(state, "next 1").state;
+    const text = renderStatus(sim, state);
+    expect(text).toMatch(/^capacity: CU [\d,]+\/[\d,]+( \([\d.]+%\))?, 1 app server idle: no load balancer \| DBU/m);
+    expect(text).toMatch(/no load balancer: traffic reaches only 1 of your 2 app servers, so the other adds no capacity/);
+    expect(text).not.toMatch(/1 app server add no/);
+  });
+
+  it("lists hires still to start as costs ahead, with the runway once they've started", () => {
+    const state = run(launchPhase(), "hire developers 2").state;
+    const runway = sim.runway(state);
+    expect(runway.startingSoon).toBeGreaterThan(0);
+    expect(runway.dailyCosts).toBe(sim.runway(launchPhase()).dailyCosts);
+    expect(renderStatus(sim, state)).toMatch(/^starting soon: hires add £[\d,]+\/day once they start \(not in costs yet; then (runway \d+ days|income still covers costs)\)$/m);
+    // Once they've started, they're in the costs and nothing is starting soon.
+    const started = run(state, "next 14").state;
+    expect(sim.runway(started).startingSoon).toBe(0);
+    expect(renderStatus(sim, started)).not.toMatch(/^starting soon/m);
+  });
+
+  it("cancels a hire still to start, for nothing, and letgo points at it", () => {
+    const hired = run(launchPhase(), "hire developers senior").state;
+    expect(renderCommands(sim, hired)).toMatch(/cancelhire <[a-z|]+> \[agency\] \[junior\|mid\|senior\] \[n\]/);
+    expect(run(hired, "letgo developers senior").lines.at(-1)).toMatch(/You have no senior developers to let go\. You have 1 still to start: cancel the hire instead, which costs nothing\./);
+    const cancelled = run(hired, "cancelhire developers senior");
+    expect(cancelled.state.hiring).toEqual(launchPhase().hiring);
+    expect(cancelled.state.cash).toBe(hired.cash);
+  });
+
+  it("says the same payers lost day after day once, for the run of days", () => {
+    // Far above what customers think it's worth: a few payers leave every day.
+    let state = runScript(sim, start(), "instances 2; managed database small; next 20", who).state;
+    expect(state.paidUsers).toBeGreaterThan(0);
+    state = { ...state, price: state.price * 3, priceChanges: [] };
+    const turns: string[][] = [];
+    for (let i = 0; i < 3 && state.status === "playing"; i++) {
+      const turn = run(state, "next 7");
+      turns.push(turn.lines.filter((l) => /Paying users lost/.test(l)));
+      state = turn.state;
+    }
+    expect(turns.flat().length).toBeGreaterThan(0);
+    // Within a turn, the same line on back-to-back days is one line for the run: "days 22–25: ... each day".
+    for (const lines of turns) {
+      const parsed = lines.map((l) => {
+        const m = l.match(/^ +days? (\d+)(?:–(\d+))?: (.*)$/)!;
+        return { from: Number(m[1]), to: Number(m[2] ?? m[1]), text: m[3]!.replace("Paying users lost each day: ", "Paying users lost: ") };
+      });
+      for (let i = 1; i < parsed.length; i++) {
+        if (parsed[i]!.text === parsed[i - 1]!.text) expect(parsed[i]!.from).toBeGreaterThan(parsed[i - 1]!.to + 1);
+      }
+    }
+  });
+
+  it("says when add-ons can't be bought for want of developers, not only that they're idle", () => {
+    const saas = inPhase(sim.newGame({ companyName: "Test Co", productType: "social", model: "saas", seed: 3 }), "launch");
+    const one = run(saas, "letgo developers").state;
+    const idle = sim.staff(one).find((p) => p.pool === "developers")!.idle!;
+    expect(idle).toMatch(/Setting up an add-on needs the work of 2 developers, and yours do the work of 1: no add-on can be bought until you hire more/);
+    expect(sim.staff(saas).find((p) => p.pool === "developers")!.idle).not.toMatch(/no add-on can be bought/);
+  });
+
+  it("warns at Launch when capacity looks short and the grant's uptime is at risk, and how long kit takes", () => {
+    const ready = (model: "iaas" | "onprem") => {
+      const s = createSim({ ...defaultConfig, mvp: NO_MVP, payReview: { ...defaultConfig.payReview, on: 0 } });
+      let state = s.newGame({ companyName: "Test Co", productType: "social", model, seed: 3, takeLoan: model === "onprem" });
+      state = s.applyAction(state, { type: "acceptFunding", funder: "grant" });
+      const kind = model === "onprem" ? "buyServer" : "rentServer";
+      state = s.applyAction(state, { type: kind, server: "app", size: "small" } as never);
+      state = s.applyAction(state, { type: kind, server: "database", size: "small" } as never);
+      return { s, state: inPhase(s.advance(state, model === "onprem" ? 5 : 2).state, "launch") };
+    };
+    for (const [model, days] of [["iaas", "1 day"], ["onprem", "4 days"]] as const) {
+      const { s, state } = ready(model);
+      const missing = s.launch(state).missing.join("\n");
+      expect(missing, model).toMatch(new RegExp(String.raw`^Capacity looks short for your launch: your servers serve about [\d,]+ users\. Your grant's uptime clock starts when the 3-day ramp ends, allowing [\d,.]+ hours down, and new kit takes ${days} to arrive`, "m"));
+      expect(renderStatus(s, state)).toMatch(/launching now would be short: .*Capacity looks short for your launch/);
+    }
   });
 });

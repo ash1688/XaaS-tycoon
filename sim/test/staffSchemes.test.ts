@@ -227,12 +227,45 @@ describe("levels only go up", () => {
   });
 });
 
+describe("the least you can offer, in cash (#293)", () => {
+  const open = untilReview(plain, begin());
+  const { minOffer } = open.payReview!;
+  const levels = { pension: 2, deathInService: 1, shareSave: 1 };
+
+  it("refuses cash below the least however much the schemes are worth, in an offer and in its odds", () => {
+    const below = round(minOffer - 0.01);
+    // Worth more than the least to staff with the schemes, but the cash is short of it.
+    expect(round(below + plain.payOfferPreview(open, minOffer, levels).schemeValue)).toBeGreaterThan(minOffer);
+    expect(refusal(() => offer(plain, open, below, levels))).toBe("offer_too_low");
+    expect(refusal(() => plain.payOfferPreview(open, below, levels))).toBe("offer_too_low");
+    expect(refusal(() => plain.applyAction(open, { type: "autoNegotiatePay", rise: below, schemes: levels }))).toBe("offer_too_low");
+    try {
+      offer(plain, open, below, levels);
+    } catch (e) {
+      expect((e as Error).message).toMatch(/^The least you can offer in cash is [\d.]+%: .* Schemes come on top of it, not in place of it\./);
+    }
+    // At the least in cash, the schemes come on top.
+    const preview = plain.payOfferPreview(open, minOffer, levels);
+    expect(preview.rise).toBe(minOffer);
+    expect(preview.value).toBeGreaterThan(minOffer);
+    // In text play, payodds refuses it too.
+    const pct = (n: number) => (n * 100).toFixed(1);
+    expect(runScript(plain, open, `payodds ${pct(below)} pension=2 death=on shares=1`, { player: "test" }).lines.at(-1)).toMatch(/least you can offer in cash/);
+  });
+
+  it("costs about twice as much as before for what staff see in it", () => {
+    const { schemes } = defaultConfig.payReview;
+    expect([schemes.pension.wageShare, schemes.deathInService.wageShare]).toEqual([0.008, 0.002]);
+    expect([schemes.health.perPerson, schemes.discount.perPerson, schemes.shareSave.perPerson]).toEqual([0.6, 0.1, 0.04]);
+  });
+});
+
 describe("staff's counter", () => {
   const open = untilReview(plain, begin());
   const { minOffer } = open.payReview!;
+  // The least in cash, with schemes on top (#293), still short of where staff walk away.
   const levels = { pension: 1, discount: 1 };
-  const worth = plain.payOfferPreview(open, minOffer, levels).schemeValue;
-  const cash = Math.max(0, round(minOffer - worth));
+  const cash = minOffer;
   const countered = offer(plain, open, cash, levels);
   const review = plain.payReview(countered)!;
 
@@ -276,13 +309,13 @@ describe("staff's counter", () => {
 
   it("keeps the schemes after auto-negotiating, as in the playtest: pension, health and share save", () => {
     const playtest = { pension: 1, health: 1, shareSave: 1 };
-    const w = plain.payOfferPreview(open, minOffer, playtest).schemeValue;
-    const auto = plain.applyAction(open, { type: "autoNegotiatePay", rise: Math.max(0, round(minOffer - w)), schemes: playtest });
-    const last = plain.payReview(auto)!;
-    expect(last.counter!.schemesText).toBe("Pension top-up to level 1, Health cash plan to level 1, Share save to level 1");
-    const settled = plain.applyAction(auto, { type: "acceptPayCounter" });
+    // From the least in cash (#293): the schemes on top may settle it at once, or staff counter keeping them.
+    const auto = plain.applyAction(open, { type: "autoNegotiatePay", rise: minOffer, schemes: playtest });
+    const last = plain.payReview(auto);
+    if (last) expect(last.counter!.schemesText).toBe("Pension top-up to level 1, Health cash plan to level 1, Share save to level 1");
+    const settled = last ? plain.applyAction(auto, { type: "acceptPayCounter" }) : auto;
     expect(settled.staffSchemes).toEqual({ pension: 1, health: 1, deathInService: 0, discount: 0, shareSave: 1 });
-    expect(settled.pastPayReviews.at(-1)).toMatchObject({ outcome: "counterAccepted", rise: last.counter!.cash });
+    expect(settled.pastPayReviews.at(-1)!.rise).toBeGreaterThanOrEqual(minOffer);
     expect(settled.pastPayReviews.at(-1)!.shareSaveShares).toBeGreaterThan(0);
   });
 });
@@ -368,8 +401,7 @@ describe("the tribunal", () => {
   const { minOffer } = open.payReview!;
   const atFinal = offer(plain, offer(plain, open, minOffer), minOffer);
   const levels = { pension: 1, deathInService: 1 };
-  const worth = plain.payOfferPreview(atFinal, minOffer, levels).schemeValue;
-  const cash = Math.max(0, round(minOffer - worth));
+  const cash = minOffer;
 
   it("applies the offer's schemes whatever it picks, with each pick's cash on top", () => {
     const odds = plain.payOfferPreview(atFinal, cash, levels).tribunal!;
@@ -400,7 +432,7 @@ describe("text play and the bots", () => {
     expect(renderCommands(plain, open)).toMatch(/\[pension=0-3\] \[health=0-3\] \[death=on\] \[discount=on\]/);
     const pay = runScript(plain, open, "pay", who).lines.join("\n");
     expect(pay).toMatch(/staff schemes \(levels only go up; staff count 70% of a scheme's worth\)/);
-    expect(pay).toMatch(/pension: Pension top-up, level 0 of 3 \(£0\/day now\); each level costs 0\.4% of pay and is worth 0\.53% to staff/);
+    expect(pay).toMatch(/pension: Pension top-up, level 0 of 3 \(£0\/day now\); each level costs 0\.8% of pay and is worth 0\.53% to staff/);
     expect(pay).toMatch(/death: Death in service, off/);
     const odds = runScript(plain, open, `payodds ${pct(minOffer)} pension=2 death=on`, who).lines.join("\n");
     expect(odds).toMatch(/worth [\d.]+% to staff: the cash \+ [\d.]+% for the schemes raised/);

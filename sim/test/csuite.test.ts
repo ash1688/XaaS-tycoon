@@ -247,7 +247,9 @@ describe("pay and equity", () => {
     while (state.rescue === null && state.day < 30) state = sim.advance(state).state;
     expect(state.rescue).not.toBeNull();
     expect(state.csuite.hired.map((e) => e.role)).toEqual(["headOfOps"]);
-    expect(sim.advance(state).log[0]!.entries.some((e) => e.text.startsWith("Head of ops pay"))).toBe(true);
+    // Still on the payroll: paid again once the board's pay holiday ends with cash back.
+    const recovered = sim.advance({ ...state, cash: 100_000 }).state;
+    expect(sim.advance(recovered).log[0]!.entries.some((e) => e.text.startsWith("Head of ops pay"))).toBe(true);
   });
 });
 
@@ -268,36 +270,76 @@ describe("the board's pay holiday", () => {
     expect(payLines(first.log)).toHaveLength(2);
     expect(first.state.csuite.payHolidaySince).toBe(first.state.day);
     expect(first.log[0]!.entries.map((e) => e.text)).toContain(
-      `Cash is low: your C-suite will forgo their £${pay(low).toLocaleString("en-GB")} a day of pay from tomorrow until the company has 21 days of running costs in the bank.`,
+      `Cash is low: your C-suite will forgo their £${pay(low).toLocaleString("en-GB")} a day of pay from tomorrow until the company has 21 days of running costs in the bank. What they forgo is owed, and paid back once cash recovers.`,
     );
-    expect(sim.csuite(first.state).payHoliday).toEqual({ since: first.state.day, startDays: 7, endDays: 21 });
+    expect(sim.csuite(first.state).payHoliday).toEqual({ since: first.state.day, startDays: 7, endDays: 21, backPayDays: 14, walkoutDays: 30, walkoutEvery: 7, owed: 0 });
     expect(sim.runway(first.state).dailyCosts).toBe(sim.runway(low).dailyCosts - pay(low));
     const next = sim.advance(first.state);
     expect(payLines(next.log)).toEqual([]);
     expect(next.state.csuite.payHolidaySince).toBe(first.state.day);
+    // The day's skipped pay is owed (#290).
+    expect(sim.csuite(next.state).payHoliday.owed).toBe(pay(low));
   });
 
-  it("ends once cash is back above 21 days, and pay isn't owed for the days missed", () => {
+  it("ends once cash is back above 21 days, then pays back pay in instalments as cash recovers, never under the 7-day line", () => {
     const on = sim.advance(withCash(5)).state;
-    // Between the two thresholds the holiday goes on.
-    const between = sim.advance({ ...on, cash: Math.round(14 * sim.runway(withCash(0)).dailyCosts) });
+    const costs = sim.runway(withCash(0)).dailyCosts;
+    // Between the two thresholds the holiday goes on, the pay skipped is owed, and no back pay is paid.
+    const between = sim.advance({ ...on, cash: Math.round(14 * costs) });
     expect(between.state.csuite.payHolidaySince).toBe(on.csuite.payHolidaySince);
-    const recovered = sim.advance({ ...between.state, cash: Math.round(30 * sim.runway(withCash(0)).dailyCosts) });
+    expect(between.state.csuite.payOwed).toBe(pay(on));
+    expect(between.log[0]!.entries.some((e) => e.text.startsWith("Back pay"))).toBe(false);
+    // A long holiday's worth owed, and cash back above 21 days: it ends, and pays a fourteenth of the cash above 7 days.
+    const owedBefore = 60 * pay(on);
+    const recovered = sim.advance({ ...between.state, cash: Math.round(25 * costs), csuite: { ...between.state.csuite, payOwed: owedBefore } });
     expect(recovered.state.csuite.payHolidaySince).toBeNull();
-    expect(recovered.log[0]!.entries.map((e) => e.text)).toContain(
-      `Cash has recovered: your C-suite's £${pay(on).toLocaleString("en-GB")} a day of pay starts again tomorrow.`,
-    );
-    const paidAgain = sim.advance(recovered.state);
-    expect(payLines(paidAgain.log).map((e) => e.cashDelta)).toEqual(recovered.state.csuite.hired.map((e) => -e.salary));
+    const texts = recovered.log[0]!.entries.map((e) => e.text);
+    expect(texts).toContain(`Cash has recovered: your C-suite's £${pay(on).toLocaleString("en-GB")} a day of pay starts again tomorrow.`);
+    const instalment = (log: typeof recovered.log) => -(log[0]!.entries.find((e) => e.text.startsWith("Back pay: paid "))?.cashDelta ?? 0);
+    const first = instalment(recovered.log);
+    const line = 7 * sim.runway(recovered.state).dailyCosts;
+    expect(first).toBeGreaterThan(0);
+    expect(first).toBe(Math.floor((recovered.state.cash + first - line) / 14));
+    expect(recovered.log[0]!.entries.find((e) => e.text.startsWith("Back pay: paid "))).toMatchObject({
+      text: `Back pay: paid £${first.toLocaleString("en-GB")} to the C-suite, £${(owedBefore + pay(on) - first).toLocaleString("en-GB")} still owed`,
+      category: "staff",
+    });
+    expect(sim.csuite(recovered.state).payHoliday.owed).toBe(owedBefore + pay(on) - first);
+    // Day after day it pays down what's owed, never taking cash under the 7-day line or starting another holiday. The
+    // company makes what a day costs, so only the back pay moves cash.
+    let state = recovered.state;
+    for (let i = 0; i < 20; i++) {
+      const day = sim.advance({ ...state, cash: state.cash + sim.runway(state).dailyCosts });
+      const paid = instalment(day.log);
+      expect(day.state.cash).toBeGreaterThanOrEqual(7 * sim.runway(day.state).dailyCosts - 1);
+      expect(day.state.csuite.payHolidaySince ?? null).toBeNull();
+      expect(day.state.csuite.payOwed).toBe(state.csuite.payOwed! - paid);
+      state = day.state;
+    }
+    expect(state.csuite.payOwed).toBeLessThan(recovered.state.csuite.payOwed!);
+    // With plenty of cash it's all paid, and the line says so.
+    const rich = sim.advance({ ...state, cash: 10_000 * costs });
+    expect(rich.log[0]!.entries.map((e) => e.text)).toContain(`Back pay: paid £${state.csuite.payOwed!.toLocaleString("en-GB")} to the C-suite, all of it now`);
+    expect(rich.state.csuite.payOwed).toBe(0);
+  });
+
+  it("takes the back pay still owed off the cash when the game ends, so a pay holiday saves nothing (#290)", () => {
+    const on = sim.advance(withCash(5)).state;
+    const later = sim.advance(on, 3).state;
+    const owed = later.csuite.payOwed!;
+    expect(owed).toBe(3 * pay(on));
+    const ended = sim.endGame(later);
+    expect(ended.cash).toBe(later.cash - owed);
+    expect(ended.csuite.payOwed).toBe(0);
   });
 
   it("doesn't start between the thresholds, without executives, or when turned off", () => {
     expect(sim.advance(withCash(14)).state.csuite.payHolidaySince ?? null).toBeNull();
     const nobody = { ...begin(), cash: 100 };
     expect(sim.advance(nobody).state.csuite.payHolidaySince ?? null).toBeNull();
-    const off = createSim({ ...quiet, csuite: { ...quiet.csuite, payHoliday: { startDays: 0, endDays: 0 } } });
+    const off = createSim({ ...quiet, csuite: { ...quiet.csuite, payHoliday: { startDays: 0, endDays: 0, backPayDays: 14, walkoutDays: 30, walkoutEvery: 7 } } });
     expect(off.advance(withCash(5, off)).state.csuite.payHolidaySince ?? null).toBeNull();
-    expect(off.csuite(begin(off)).payHoliday).toEqual({ since: null, startDays: 0, endDays: 0 });
+    expect(off.csuite(begin(off)).payHoliday).toEqual({ since: null, startDays: 0, endDays: 0, backPayDays: 14, walkoutDays: 30, walkoutEvery: 7, owed: 0 });
   });
 
   it("shows in text play", () => {
@@ -307,6 +349,150 @@ describe("the board's pay holiday", () => {
       new RegExp(`pay holiday: since day ${on.day}, cash is low, so no executive is paid until cash is back above 21 days`),
     );
     expect(runScript(sim, begin(), "csuite", who).lines.join("\n")).toMatch(/pay holiday: if cash falls below 7 days of running costs/);
+  });
+});
+
+describe("walkouts on a long pay holiday", () => {
+  /** Two executives, the head of ops hired a day before the head of support, with cash this many days of costs. */
+  const board = (days: number): GameState => {
+    const hired = hire(sim, hire(sim, opened(), "headOfOps", 0), "headOfSupport", 0);
+    const staggered = { ...hired, csuite: { ...hired.csuite, hired: hired.csuite.hired.map((e, i) => (i === 0 ? { ...e, day: e.day - 1 } : e)) } };
+    return { ...staggered, cash: Math.round(days * sim.runway(staggered).dailyCosts) };
+  };
+  const costs = sim.runway(board(0)).dailyCosts;
+  /** Plays days on the holiday, cash held at 10 days of costs so it neither ends nor runs out. */
+  const onHoliday = (state: GameState, days: number) => {
+    const logs: { day: number; unpaid: number; texts: string[]; state: GameState }[] = [];
+    for (let i = 0; i < days; i++) {
+      const { state: next, log } = sim.advance({ ...state, cash: Math.round(10 * costs) });
+      logs.push({ day: next.day, unpaid: next.day - (next.csuite.payHolidaySince ?? next.day), texts: log[0]!.entries.map((e) => e.text), state: next });
+      state = next;
+    }
+    return logs;
+  };
+  const resignedOn = (logs: ReturnType<typeof onHoliday>) => logs.filter((l) => l.texts.some((t) => / has resigned after /.test(t)));
+
+  it("warns at 25 days unpaid, then from the 31st the most recent hire resigns, and one more every 7 days", () => {
+    const start = sim.advance(board(5)).state;
+    expect(start.csuite.payHolidaySince).toBe(start.day);
+    const logs = onHoliday(start, 40);
+    // No walkout up to 30 days unpaid.
+    expect(resignedOn(logs).map((l) => l.unpaid)).toEqual([31, 38]);
+    expect(logs.find((l) => l.unpaid === 25)!.texts).toContain(
+      "The C-suite has gone 25 days unpaid; from day 30 one will resign each week until they're paid.",
+    );
+    // The head of support, hired last, goes first; then the head of ops.
+    const first = resignedOn(logs)[0]!;
+    const support = start.csuite.hired.find((e) => e.role === "headOfSupport")!;
+    expect(first.texts.find((t) => t.includes("has resigned"))).toMatch(
+      new RegExp(`^${support.name}, your head of support, has resigned after 31 days without pay\\. £[\\d,]+ back pay is now owed to the bank\\.$`),
+    );
+    expect(first.state.csuite.hired.map((e) => e.role)).toEqual(["headOfOps"]);
+    expect(resignedOn(logs)[1]!.state.csuite.hired).toEqual([]);
+    // Their shares stay on the cap table, and the role opens again with its shortlist, so it can be filled again.
+    expect(first.state.shareholders.filter((h) => h.id === "executive")).toEqual(start.shareholders.filter((h) => h.id === "executive"));
+    const role = sim.csuite(first.state).roles.find((r) => r.role === "headOfSupport")!;
+    expect(role.executive).toBeNull();
+    expect(role.shortlist.length).toBe(start.csuite.shortlists.headOfSupport.length);
+    // Their equity still counts against the cap.
+    expect(sim.csuite(first.state).equityUsed).toBe(sim.csuite(start).equityUsed);
+  });
+
+  it("moves the resigner's back pay onto the loan, not out of cash, and off what's owed", () => {
+    const start = sim.advance(board(5)).state;
+    const logs = onHoliday(start, 31);
+    const before = logs.at(-2)!.state;
+    const after = logs.at(-1)!;
+    const left = after.state.csuite.resigned!.at(-1)!;
+    const owedBefore = before.csuite.payOwed! + sim.csuite(before).dailyPay;
+    // Their share of what's owed, by salary.
+    expect(left.backPay).toBe(Math.round((owedBefore * left.salary) / sim.csuite(before).dailyPay));
+    expect(after.state.csuite.payOwed).toBe(owedBefore - left.backPay);
+    // No loan before: the bank opened an emergency loan for it, on its 30-day term. It isn't a shortfall.
+    expect(after.state.loan).toMatchObject({ amount: left.backPay, emergency: true, term: 30 });
+    expect(sim.shortfall(after.state).owed).toBe(0);
+    expect(after.texts).toContain(`Back pay to ${left.name} on resigning`);
+    expect(after.texts.some((t) => t.startsWith(`The bank paid it: £${left.backPay.toLocaleString("en-GB")} went on a new emergency loan`))).toBe(true);
+    // Cash moved only by the day itself: the bank's money paid the back pay.
+    const { log } = sim.advance({ ...before, cash: Math.round(10 * costs) });
+    const walkoutCash = log[0]!.entries.filter((e) => e.text.startsWith("Back pay to") || e.text.startsWith("The bank paid it")).reduce((sum, e) => sum + e.cashDelta, 0);
+    expect(walkoutCash).toBe(0);
+  });
+
+  it("stops once the holiday ends, and counts afresh from the next one", () => {
+    const start = sim.advance(board(5)).state;
+    const logs = onHoliday(start, 28);
+    // Cash back: the holiday ends before anyone resigns, and stays ended.
+    let state = sim.advance({ ...logs.at(-1)!.state, cash: Math.round(100 * costs) }).state;
+    expect(state.csuite.payHolidaySince ?? null).toBeNull();
+    for (let i = 0; i < 20; i++) state = sim.advance({ ...state, cash: Math.round(100 * costs) }).state;
+    expect(state.csuite.resigned ?? []).toEqual([]);
+    // A new holiday starts its own count: nobody resigns until it too has gone 31 days.
+    const again = sim.advance({ ...state, cash: Math.round(5 * costs) }).state;
+    expect(again.csuite.payHolidaySince).toBe(again.day);
+    expect(resignedOn(onHoliday(again, 30))).toEqual([]);
+  });
+});
+
+describe("appointing an executive", () => {
+  it("shows what their pay does to the runway, and says the pay holiday will start when it puts cash under the line", () => {
+    const state = { ...opened(), cash: 500 };
+    const role = sim.csuite(state).roles.find((r) => r.role === "headOfOps")!;
+    const c = role.shortlist[0]!;
+    expect(c.runway).toMatch(new RegExp(`^With their pay \\(£${c.salary.toLocaleString("en-GB")} a day\\), runway falls to \\d+ days?, and the pay holiday will start: cash is under 7 days of running costs\\.$`));
+    // Plenty of cash: just the runway.
+    const rich = sim.csuite({ ...state, cash: 1_000_000 }).roles.find((r) => r.role === "headOfOps")!.shortlist[0]!;
+    expect(rich.runway).toMatch(/^With their pay \(£[\d,]+ a day\), (runway falls to \d+ days|cash still grows)\.$/);
+    // Advisory only: the hire goes ahead, and text play says so.
+    const turn = runScript(sim, state, `appoint ${c.id.toLowerCase()}`, { player: "test" });
+    expect(turn.lines).toContain(`hireExecutive: done. ${c.runway}`);
+    expect(turn.state.csuite.hired.map((e) => e.role)).toEqual(["headOfOps"]);
+  });
+});
+
+describe("no appointments on a pay holiday", () => {
+  const message = "The C-suite is on a pay holiday: no new executives until they're paid. Get cash back above 21 days of running costs first, and the holiday ends.";
+  const onHoliday = () => {
+    const hired = hire(sim, opened(), "headOfOps", 0);
+    const low = { ...hired, cash: Math.round(5 * sim.runway(hired).dailyCosts) };
+    return sim.advance(low).state;
+  };
+  const candidate = (state: GameState) => sim.csuite(state).roles.find((r) => r.role === "headOfSupport")!.shortlist[0]!.id;
+
+  it("refuses to appoint while the pay holiday is on, saying why, and allows it once it ends", () => {
+    const state = onHoliday();
+    expect(state.csuite.payHolidaySince).toBe(state.day);
+    expect(() => sim.applyAction(state, { type: "hireExecutive", role: "headOfSupport", candidate: candidate(state) })).toThrow(
+      expect.objectContaining({ code: "pay_holiday", message }),
+    );
+    expect(sim.csuite(state).appointBlocked).toBe(message);
+    expect(runScript(sim, state, "csuite", { player: "test" }).lines.join("\n")).toContain(`appoint: refused for now. ${message}`);
+    // Cash back: the holiday ends, and appointing is open again.
+    const recovered = sim.advance({ ...state, cash: Math.round(100 * sim.runway(state).dailyCosts) }).state;
+    expect(recovered.csuite.payHolidaySince ?? null).toBeNull();
+    expect(sim.csuite(recovered).appointBlocked).toBeNull();
+    const hired = sim.applyAction(recovered, { type: "hireExecutive", role: "headOfSupport", candidate: candidate(recovered) });
+    expect(hired.csuite.hired.map((e) => e.role)).toEqual(["headOfOps", "headOfSupport"]);
+  });
+
+  it("ends the holiday as cash recovers even after the whole board has walked out, so the roles can be filled again", () => {
+    const state = onHoliday();
+    // Everyone has resigned: the holiday is still on.
+    const empty: GameState = { ...state, csuite: { ...state.csuite, hired: [], payOwed: 0 } };
+    const still = sim.advance({ ...empty, cash: Math.round(10 * sim.runway(state).dailyCosts) }).state;
+    expect(still.csuite.payHolidaySince).toBe(state.day);
+    const recovered = sim.advance({ ...still, cash: 1_000_000 });
+    expect(recovered.state.csuite.payHolidaySince ?? null).toBeNull();
+    expect(recovered.log[0]!.entries.map((e) => e.text)).toContain("Cash has recovered: the pay holiday is over, and you can appoint executives again.");
+    expect(sim.applyAction(recovered.state, { type: "hireExecutive", role: "headOfSupport", candidate: candidate(recovered.state) }).csuite.hired).toHaveLength(1);
+  });
+
+  it("leaves staff hiring alone on a pay holiday", () => {
+    const state = onHoliday();
+    const hired = sim.applyAction(state, { type: "hire", pool: "developers" });
+    expect(hired.hiring.length + hired.staff.developers.junior + hired.staff.developers.mid + hired.staff.developers.senior).toBeGreaterThan(
+      state.hiring.length + state.staff.developers.junior + state.staff.developers.mid + state.staff.developers.senior,
+    );
   });
 });
 
@@ -486,7 +672,9 @@ describe("each role's effect, through its seam", () => {
     });
     // On IaaS with more servers than one ops person can patch alone.
     let state = withServers(s, seriesAApproached(begin(s, "iaas")));
-    while (s.opsNeededNow(state) <= 1) state = s.applyAction(state, { type: "rentServer", server: "app", size: "small" });
+    // Servers on order need no ops until they're ready (#259), so they're rented, then a day is played.
+    while (s.opsNeededOnceReady(state) <= 1) state = s.applyAction(state, { type: "rentServer", server: "app", size: "small" });
+    state = s.advance(state).state;
     const ops = s.staff(state).find((p) => p.pool === "ops")!.output;
     expect(ops).toBeLessThan(s.opsNeededNow(state));
     expect(ops).toBeGreaterThanOrEqual(s.opsNeededNow(state) * 0.5);

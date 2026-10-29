@@ -49,6 +49,9 @@ const borrowedIn = (entries: LogEntry[]) =>
  */
 const raisedIn = (entries: LogEntry[]) =>
   entries.reduce((sum, e) => sum + ((e.kind === "funding" || e.kind === "rescue") && !e.category ? e.cashDelta : 0), 0);
+/** The one-off outgoings in some entries: those marked so, and with `between` (charged between days) every charge. */
+const oneOffsIn = (entries: LogEntry[], between = false) =>
+  entries.reduce((sum, e) => sum + (e.cashDelta < 0 && (e.oneOff || (between && e.category)) ? -e.cashDelta : 0), 0);
 /** The interest in some entries' loan repayments. */
 const interestOf = (entries: LogEntry[]) => entries.reduce((sum, e) => sum + (e.interest ?? 0), 0);
 
@@ -57,6 +60,12 @@ const interestOf = (entries: LogEntry[]) => entries.reduce((sum, e) => sum + (e.
  * above £0 and its entries.
  */
 export type RescueHook = (state: GameState) => { state: GameState; entries: LogEntry[] };
+
+/**
+ * What happens first when cash goes below £0, given the state with the day settled: the shortfall goes onto a loan,
+ * with cash back at £0 and its entries. Null when that would take it past the limit: cash has run out.
+ */
+export type ShortfallHook = (state: GameState) => { state: GameState; entries: LogEntry[] } | null;
 
 /**
  * Where the customers stood at the end of a day, kept with its spend for the summary, and its hours down (the last of
@@ -75,15 +84,16 @@ export function createFinance(config: GameConfig) {
    * The ledger. Applies a day's entries to cash, adds each charge to its category's running total and the day's
    * spend, and income to its own total, apart from the costs, so profit is income − profitCosts. Money borrowed or
    * raised from funders is cash but neither, kept on the day so the cash chart adds up. If cash has gone below zero,
-   * the first time `rescue` rescues the company, and after that it's liquidation and the game ends. Then ends it if
-   * this was the final day. Returns the entries with any notice of the rescue or end added. Liquidation on the final
-   * day counts as liquidation.
+   * `cover` first puts the shortfall on a loan; past its limit cash has run out, and the first time `rescue` rescues
+   * the company, and after that it's liquidation and the game ends. Then ends it if this was the final day. Returns
+   * the entries with any notice of the loan, rescue or end added. Liquidation on the final day counts as liquidation.
    */
   function settle(
     state: GameState,
     day: number,
     entries: LogEntry[],
     rescue?: RescueHook,
+    cover?: ShortfallHook,
   ): { state: GameState; entries: LogEntry[] } {
     const daySpend = noSpend();
     let dayIncome = 0;
@@ -117,11 +127,17 @@ export function createFinance(config: GameConfig) {
           borrowed: borrowedIn(entries),
           raised: raisedIn(entries),
           interest: interestOf(entries),
+          oneOffs: oneOffsIn(entries),
+          costs: 0,
           ...customersAt(state),
         },
       ],
     };
-    if (cash < 0 && rescue && !state.rescue) {
+    const covered = cash < 0 && cover ? cover(settled) : null;
+    if (covered) {
+      settled = covered.state;
+      entries = [...entries, ...covered.entries];
+    } else if (cash < 0 && rescue && !state.rescue) {
       const rescued = rescue(settled);
       settled = rescued.state;
       entries = [...entries, ...rescued.entries];
@@ -142,8 +158,8 @@ export function createFinance(config: GameConfig) {
   }
 
   /**
-   * Charges (or refunds) made between days, such as buying a server, and money borrowed or raised then: applied to cash and
-   * spend at once, and counted in the day just played, so the cost and cash charts still add up. Never ends the game:
+   * Charges (or refunds) made between days, such as buying a server, all of them one-offs, and money borrowed or raised
+   * then: applied to cash and spend at once, and counted in the day just played, so the cost and cash charts still add up. Never ends the game:
    * an action that would leave cash below zero is refused before it gets here.
    */
   function chargeNow(state: GameState, entries: LogEntry[]): GameState {
@@ -154,6 +170,7 @@ export function createFinance(config: GameConfig) {
     const borrowed = borrowedIn(entries);
     const raised = raisedIn(entries);
     const interest = interestOf(entries);
+    const oneOffs = oneOffsIn(entries, true);
     const last = state.spendByDay.at(-1);
     const spendByDay =
       last?.day === state.day
@@ -165,9 +182,10 @@ export function createFinance(config: GameConfig) {
               borrowed: last.borrowed + borrowed,
               raised: last.raised + raised,
               interest: last.interest + interest,
+              oneOffs: last.oneOffs + oneOffs,
             },
           ]
-        : [...state.spendByDay, { day: state.day, ...daySpend, income: 0, feeIncome: 0, transactionIncome: 0, borrowed, raised, interest, ...customersAt(state) }];
+        : [...state.spendByDay, { day: state.day, ...daySpend, income: 0, feeIncome: 0, transactionIncome: 0, borrowed, raised, interest, oneOffs, costs: 0, ...customersAt(state) }];
     const cash = state.cash + entries.reduce((sum, e) => sum + e.cashDelta, 0);
     return { ...state, cash, spend, spendByDay, interestPaid: state.interestPaid + interest };
   }

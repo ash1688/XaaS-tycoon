@@ -37,7 +37,7 @@ import {
  * The game-state version. Saves from any other version are refused rather than upgraded: round two made a clean
  * break, so bump this whenever the shape of GameState changes.
  */
-export const GAME_STATE_VERSION = 54;
+export const GAME_STATE_VERSION = 68;
 
 /**
  * The four phases a game's jobs open in, in order, each opened by a milestone: Build from day 1, Launch when Launch is
@@ -79,6 +79,17 @@ export interface Csuite {
   hired: Executive[];
   /** The day the board's pay holiday began, while it lasts: no executive is paid. Left out or null, they're paid. */
   payHolidaySince?: number | null;
+  /** Pay skipped on the board's pay holiday and not yet paid back (#290). Left out, none. */
+  payOwed?: number;
+  /** Executives who walked out after too long unpaid on a pay holiday, in order. Left out, none. */
+  resigned?: ResignedExecutive[];
+}
+
+/** An executive who resigned after too long unpaid: their shares stay theirs, and the bank paid their back pay. */
+export interface ResignedExecutive extends Executive {
+  leftDay: number;
+  /** Their back pay, owed to the bank on the loan once they'd gone. */
+  backPay: number;
 }
 
 /** Headcount in one pool, by grade. */
@@ -93,6 +104,11 @@ export interface Hire {
   agency: boolean;
   /** The first day they work and are paid: the day hired plus their grade's lead time, or the agency's. */
   arrivesOn: number;
+  /**
+   * Permanent staff moved from another team, retraining until arrivesOn: unlike a hire they're paid the new team's rate
+   * from the day they move (see staff.ts moveStaff).
+   */
+  retraining?: boolean;
 }
 
 /** Money spent in each category. */
@@ -126,6 +142,13 @@ export interface DaySpend extends Spend {
   satisfaction: number;
   /** Hours the service was down on the day, for the IPO's uptime record. */
   hoursDown: number;
+  /**
+   * Of the day's charges, the one-offs: kit bought, severance, a tribunal fee, an event's bill, a grant paid back.
+   * Kept apart from the daily costs, for "one-offs this week".
+   */
+  oneOffs: number;
+  /** The daily costs at the end of the day (RunwayView.dailyCosts), for the IPO's predictable costs. */
+  costs: number;
 }
 
 /**
@@ -152,6 +175,12 @@ export interface Loan {
   interestPaid: number;
   /** The day it was paid off early, or null: the interest it would still have charged was saved. */
   paidOffDay: number | null;
+  /** An emergency loan, opened by the bank when cash went below £0 with no loan being repaid. */
+  emergency?: true;
+  /** Of the amount, the shortfalls added to it when cash went below £0. None for a loan the student took. */
+  shortfall?: number;
+  /** What was still owed when the game ended, paid off from cash then (paidOffDay is that day). */
+  settledAtEnd?: number;
 }
 
 /**
@@ -447,6 +476,8 @@ export interface Rescue {
   amount: number;
   /** Of it, what took cash below £0. */
   losses: number;
+  /** Of it, the shortfalls it paid off on the loan (#288). */
+  shortfalls: number;
   /** The new shares it got for it, and its share of the company then, 0–1. */
   shares: number;
   share: number;
@@ -539,6 +570,8 @@ export interface PriceWave {
    * × the share of its lost payers who leave rather than go free. Casual users leave first. Null for a cut.
    */
   leftMix: Record<CustomerTypeId, number> | null;
+  /** For a rise, the paying users who grumble online, sending new users to rivals while it lasts. 0 for a cut. */
+  grumblers: number;
 }
 
 /**
@@ -574,6 +607,11 @@ export interface Server {
   overheatedUntil?: number;
   /** Crashed: it gives nothing on every day up to and including this one, while ops fix it. */
   crashedUntil?: number;
+  /**
+   * Cancelled or sold, waiting for its replacement (#260): it still serves and is billed, and goes at the end of this
+   * day, the day the replacement is ready. Left out otherwise.
+   */
+  leavesOn?: number;
 }
 
 /** A tier that became available, and the day it did. Tier 1 is available from the start, so isn't listed. */
@@ -705,6 +743,20 @@ export interface IpoState {
   /** After a cold market, the first day the company can apply again. 0 before any. */
   retryDay: number;
   result: IpoResult | null;
+  /** What the IPO scored at approval, frozen for the float and the first day (#292); null until approved. */
+  scored: IpoScored | null;
+}
+
+/** The IPO's scored figures, taken as it's approved: what the offer and the first day of trading use (#292). */
+export interface IpoScored {
+  /** The conditions' and signals' comfort averaged, 0–1. */
+  comfort: number;
+  valuation: number;
+  offerPrice: number;
+  /** Paying-user growth, as the valuation measured it. */
+  growth: number;
+  /** Each graded condition and signal, for the first day's reasons. */
+  graded: { label: string; now: string; comfort: number }[];
 }
 
 /**
@@ -737,6 +789,8 @@ export interface Campaign {
   users: number;
   /** What it has added to the product's market size (brand awareness), to the fraction: it stays after it ends. */
   marketAdded: number;
+  /** The cost per user it was quoted when started (see Campaigns.quote), low to high: null if it might bring no-one. */
+  quote: { low: number; high: number } | null;
 }
 
 /** Plain, JSON-serialisable game state. The server stores it as-is. */
@@ -846,7 +900,7 @@ export interface GameState {
   staff: Record<StaffPool, GradeCounts>;
   /** Agency staff on the team, by pool and grade: apart from the permanent staff above, and doing half their work. */
   agency: Record<StaffPool, GradeCounts>;
-  /** Hires waiting to start, in the order they were made. */
+  /** Hires waiting to start, and staff retraining into a new team, in the order they were made. */
   hiring: Hire[];
   /**
    * The day the company launched: its first users arrived at the end of it, the first day of the launch ramp. Null until
@@ -967,6 +1021,10 @@ export interface GameState {
   investors: Investors;
   /** The rescue buyout, once cash has run out once; null before. */
   rescue: Rescue | null;
+  /** The first day cash went below £0 and the shortfall went on a loan, which stops the clock; null before. */
+  firstShortfallDay: number | null;
+  /** How far shortfalls can take cash below £0, fixed the first time it went there (#288); null before. */
+  shortfallLimit: number | null;
   /** Applications to float, and the IPO once the bell has been rung. */
   ipo: IpoState;
   /** Loans repaid before the latest was taken, oldest first, for the summary. */
@@ -982,6 +1040,12 @@ export interface GameState {
   dangerMeter: number;
   /** The random events that could fire next, lowest threshold first. Kept from the student. */
   encounterList: Encounter[];
+  /**
+   * PaaS autoscaling (#261): `min`, the app instances last set by hand, which the baseline never goes below; `max`, the
+   * most instances bursts can reach, set with `autoscale max N` (left out, maxFactor × today's instances); and
+   * `maxHitDay`, the first day demand went over the maximum, when time stopped. Left out until one is set.
+   */
+  autoscale?: { min?: number; max?: number; maxHitDay?: number };
   /** The risks that made the meter climb faster on the day just played. */
   dangerRisks: DangerRisk[];
   /** Its own seeded RNG, so rolling encounters doesn't change the day-to-day randomness of load and growth. */
@@ -1112,7 +1176,7 @@ export type Action =
   /** Rents a VM of a type and size, on IaaS. Billed monthly from the next day played, and ready the next day. */
   | { type: "rentServer"; server: ServerType; size: ServerSize }
   /** Cancels a rented VM, ready or not. Its rent stops: you pay only for the days you had it. */
-  | { type: "cancelServer"; id: number }
+  | { type: "cancelServer"; id: number; now?: boolean }
   /**
    * Buys a server of a type and size, on-prem. Its price is charged at once (infrastructure), with its cabling. It's on
    * order until it arrives after the delivery time, adding no capacity until then. An order can't be cancelled. It's
@@ -1120,7 +1184,7 @@ export type Action =
    */
   | { type: "buyServer"; server: ServerType; size: ServerSize; rack?: number }
   /** Sells back a bought server that has arrived, refunding the configured share of what it cost, at once. */
-  | { type: "sellServer"; id: number }
+  | { type: "sellServer"; id: number; now?: boolean }
   /** Buys a rack, on-prem: its price and cabling are charged at once, and it's installed at once. */
   | { type: "buyRack"; size: RackSize }
   /** Sells back an empty rack, refunding the configured share of what it cost, at once. */
@@ -1130,6 +1194,7 @@ export type Action =
    * next day played, and billed monthly a day's share at a time from then.
    */
   | { type: "setInstances"; count: number }
+  | { type: "setAutoscaleMax"; max: number }
   /**
    * Sets the size of a managed service on PaaS, at once, like an instance count. The cache can be turned off with
    * a null size; the database can't.
@@ -1194,7 +1259,7 @@ export type Action =
    * Presses Launch once the MVP is done: the company goes live on the next day played, and its first users arrive at
    * the end of it. It can launch short of servers or ops (see LaunchView.missing).
    */
-  | { type: "launch" }
+  | { type: "launch"; price?: number; rate?: number }
   /** Buys the product's paid API, charged at once. Calls start arriving from the next day played. */
   | { type: "buyApi" }
   /**
@@ -1272,6 +1337,11 @@ export interface LogEntry {
   category?: SpendCategory;
   /** Of a loan repayment (debt), the interest in it. */
   interest?: number;
+  /**
+   * A one-off outgoing, not one of the daily costs: an event's bill, an outage's extra VMs, a migration's upfront
+   * cost or exit penalty, a withdrawn grant paid back. Every charge made between days is one too.
+   */
+  oneOff?: boolean;
   /**
    * On the payments app's income, which stream it is, kept apart on Finance: "fees" the monthly fee, "transactions"
    * the share of its users' payments. Other income (other products' price, API calls) has none.

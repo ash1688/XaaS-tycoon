@@ -57,6 +57,39 @@ const biggest = computed(() =>
         bought back on day {{ summary.rescue.boughtBack.day }} for {{ formatCash(summary.rescue.boughtBack.price) }}</template>.
     </p>
 
+    <div class="score" data-testid="summary-score-block">
+      <p class="score-headline" data-testid="summary-worth">
+        The company raised <strong>{{ formatCash(summary.capTable.raised) }}</strong> and is now worth
+        <strong>{{ formatCash(summary.capTable.worth) }}</strong><template v-if="summary.capTable.debt">,
+          after {{ formatCash(summary.capTable.debt) }} of debt still owed</template>.
+      </p>
+      <p class="score-line">
+        Your score: <strong data-testid="summary-score">{{ formatCash(summary.score) }}</strong>
+        <span class="muted">, what your own shares are worth</span>
+      </p>
+      <table class="compare" data-testid="summary-shareholders">
+        <caption class="muted">Who owns the company</caption>
+        <thead>
+          <tr>
+            <th scope="col">Shareholder</th>
+            <th scope="col">Put in</th>
+            <th scope="col">Stake</th>
+            <th scope="col">Worth now</th>
+            <th scope="col">Multiple</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(r, i) in summary.capTable.shareholders" :key="`${r.id}-${i}`" :data-shareholder="r.id">
+            <th scope="row">{{ r.name }}<small v-if="r.id === 'student'" class="muted"> · seed money</small></th>
+            <td>{{ formatCash(r.putIn) }}</td>
+            <td>{{ formatShare(r.stake) }}</td>
+            <td>{{ formatCash(r.worth) }}</td>
+            <td>{{ r.multiple === null ? "—" : `${r.multiple}×` }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
     <div :class="['summary-headline', loss ? 'loss' : 'profit']" data-testid="summary-headline">
       <span class="headline-label" data-testid="summary-result">{{ loss ? "Loss" : "Profit" }}</span>
       <span class="headline-value" data-testid="summary-profit">{{ signed(summary.profit) }}</span>
@@ -65,6 +98,10 @@ const biggest = computed(() =>
         − costs <strong data-testid="summary-costs">{{ formatCash(summary.costs) }}</strong>
       </span>
     </div>
+
+    <p v-if="summary.bootstrapped" class="features-note" data-testid="summary-bootstrapped">
+      Floated without outside investors: no friends and family, angel or VC money along the way.
+    </p>
 
     <div v-if="summary.ipo" class="stats ipo-stats" data-testid="summary-ipo">
       <div class="stat">
@@ -131,7 +168,10 @@ const biggest = computed(() =>
           <span class="value" data-testid="summary-loan">{{ formatCash(loan.amount) }}</span>
           <small data-testid="summary-loan-status">
             {{ loan.day === 1 ? "first taken at the start" : `first taken on day ${loan.day}` }} ·
-            {{ loan.fullyRepaid ? "repaid in full" : `${formatCash(loan.remaining)} still owed` }} ·
+            <template v-if="loan.settledAtEnd">
+              <span data-testid="summary-loan-settled">{{ formatCash(loan.settledAtEnd) }} still owed at the end, taken off the cash</span> ·
+            </template>
+            <template v-else>{{ loan.fullyRepaid ? "repaid in full" : `${formatCash(loan.remaining)} still owed` }} ·</template>
             <span data-testid="summary-loan-interest">{{ formatCash(loan.interestPaid) }} interest</span>
             <template v-if="loan.interestSaved">
               · <span data-testid="summary-loan-saved">{{ formatCash(loan.interestSaved) }} saved by paying early</span>

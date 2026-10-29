@@ -23,15 +23,31 @@ A permanent, scripted practice game every student has, which can be restarted at
 _Avoid_: Tutorial mode, practice game
 
 **Difficulty**:
-Easy, Normal or Hard: a set of numbers the student picks from those the teacher allows. Never changes which systems exist.
+Easy, Normal or Hard: a set of numbers the student picks from those the teacher allows. Never changes which systems exist. On Hard, tier 4 also opens on a revenue milestone, so a company can float without outside investors, and a dangerous cancel can go ahead once confirmed (see **Cancelling**).
 _Avoid_: Mode, level
+
+**Cancelling**:
+Taking a ready server out of service: cancelling a rented VM, or selling back bought kit. With a replacement of the same kind on order it waits for it, still serving and billed, and goes at the end of the day the replacement is ready, checked against today's load as it goes: if the replacement is smaller and what's left wouldn't carry the load, Easy and Normal keep it waiting, a day at a time, and Hard lets it go with a warning. Otherwise, if what's left wouldn't carry today's load, Easy and Normal refuse it and Hard asks the student to confirm (`cancel N now`), and the outage is theirs. A server still being set up can always be cancelled at once.
+_Avoid_: Decommission, retire (in the student's words)
+
+**Predictable costs**:
+The IPO condition that daily costs over the record vary by no more than the limit, the costliest day set aside. It also needs costs to have held 14 days at their new level after the last C-suite hire, so hiring the board the day before applying can't slip past it; the checklist says until which day.
+_Avoid_: Cost stability, steady costs
+
+**Scored at approval**:
+What the IPO's offer and first day of trading are scored on (the comfort, the valuation, the offer price and growth) is frozen the day the IPO is approved. Cutting costs or anything else between approval and the opening bell changes nothing.
+_Avoid_: Locked-in figures, snapshot
+
+**Bootstrapped float**:
+A float with no outside investors' money along the way: no friends and family, angel, VC or vulture. The grant and the bank loan aren't shares, so they don't count. The end screen flags it: "Floated without outside investors".
+_Avoid_: Solo IPO, self-funded
 
 **Career**:
 The longest game length: the student founds the company at 18 and runs it until they retire at 65.
 _Avoid_: Lifetime mode, 65 years
 
 **Phase**:
-One of the four stages a game's jobs open in: Build (to the MVP), Launch (to the first angel approach), Grow (to the Series A approach) and Scale (to the end). Jobs not yet open are hidden.
+One of the four stages a game's jobs open in: Build (to the MVP), Launch (to the first angel approach), Grow (to the Series A approach) and Scale (to the end). Jobs not yet open are hidden, and a phase lists only the jobs that apply to the company's product and model.
 _Avoid_: Stage, era, act
 
 **Checklist**:
@@ -51,7 +67,7 @@ One step of the timed flow: a day, or a week in a career. A week is seven days s
 _Avoid_: Turn, round
 
 **Drift**:
-The slow change in the world over a long game (until IPO or a career). At each **year's end** (every 365 days), running prices rise by a fresh random 2–6% and servers and VMs added from then give about 10% more units for the money; kit already owned keeps its units. The student's own price and pay never drift: pay rises only in pay reviews. Servers age through the hardware slider's wear, whose lifespan scales with the game length. A 180-day or 1-year game never reaches a year's end.
+The slow change in the world over a long game (until IPO or a career). At each **year's end** (every 365 days), running prices rise by a fresh random 2–6% and servers and VMs added from then give about 10% more units for the money; kit already owned keeps its units. The student's own price and pay never drift: pay rises only in pay reviews, and the student's price changes only when they change it (the **fair price** moves by a quarter of each pay review's inflation instead). Servers age through the hardware slider's wear, whose lifespan scales with the game length. A 180-day or 1-year game never reaches a year's end.
 _Avoid_: Eras, ageing
 
 **Year's end**:
@@ -81,12 +97,23 @@ The company's senior leaders. The student is the CEO; the others (CFO, CTO and s
 _Avoid_: Executives, leadership team, management
 
 **Pay holiday**:
-When cash falls below about 7 days of running costs, the whole C-suite forgoes its pay until cash is back above about 21 days. Pay missed isn't owed later. It keeps a small company that has hired the full C-suite from running out of cash.
-_Avoid_: Pay freeze, deferred pay (nothing is paid back)
+When cash falls below about 7 days of running costs, the whole C-suite forgoes its pay until cash is back above about 21 days. Both lines use the same figure: running costs with the C-suite's pay, without Campaign spend. Pay missed is owed as **back pay**, paid in instalments once the holiday ends: each day, the cash above 7 days of costs spread over 14 days, so paying never takes cash back under the line that starts a holiday. Whatever's left when the game ends comes off the final cash: it eases cash when it's short, but saves nothing. It keeps a small company that has hired the full C-suite from running out of cash.
+_Avoid_: Pay freeze, deferred pay
+
+**Walkout**:
+An executive resigning after the pay holiday has run more than 30 days in a row: the most recently hired first, then one more every 7 days while it lasts (warned at 25 days). Their share of the back pay is due at once, and the bank pays it onto the loan (the bank loan, or the emergency loan on its 30-day term), not from cash, without counting as a shortfall. Their shares stay theirs and their equity still counts against the cap; the role opens again with its shortlist. Ending the holiday resets the count. No executive can be appointed while the holiday is on, so a walkout can't be filled straight back: the board shrinks until cash is back above 21 days of costs.
+_Avoid_: Quitting, firing
 
 **Staff**:
 The developers, ops, support, moderators, researchers and marketers hired and let go in bulk, as permanent or agency staff (researchers and marketers permanent only). Not the C-suite.
 _Avoid_: Employees, workers
+
+**Ops needed**:
+The one figure for the ops a company needs, in mids of work to a hundredth, not rounded up to people: the model's fixed number plus each running server's share, less a CISO's patching cut. The capacity cut, the shortfall line, the danger meter's patching risk, the IPO's security audit and the staff and order lines all use it. Looking ahead to kit on order, servers waiting to be cancelled or sold are left out.
+
+**Ops shortfall**:
+Too few ops staff for the ops needed, on a model with servers. Every tier's capacity is cut in step with the share of ops work missing, down to 40% with no ops at all, so one short in a big team cuts less than one short in a small one; less cover never gives more capacity. Servers on order need no ops until they're ready. Shown as "ops: 1 of 1.2 needed, capacity cut to 90%" (rounded down, so any cut shows), and time stops the day it starts. SaaS has no shortfall line: the provider carries the load whatever the ops.
+_Avoid_: Understaffed, unpatched (that's the danger meter's risk)
 
 **Grade**:
 Junior, mid or senior: sets a member of staff's pay, output and how long they take to arrive.
@@ -95,6 +122,10 @@ _Avoid_: Level, skill level, seniority
 **Agency staff**:
 Temporary staff who cost 1.25× and do half the work of permanent staff, arrive the next day, and can be let go with no severance.
 _Avoid_: Contractors, temps (contract users are customers)
+
+**Retraining**:
+Moving a permanent member of staff into another team (`move`). They leave their old team at once and join the new one after their grade's lead time, the same wait as a hire, keeping their grade. They're paid the new team's rate while they retrain, with no severance and no recruitment cost: cheaper than letting someone go and hiring, but not instant.
+_Avoid_: Transfer, reassign, redeploy
 
 **Permanent staff**:
 Staff employed directly, who are paid severance when let go.
@@ -113,7 +144,7 @@ What researchers earn each day, more for higher grades. They bank with no cap, t
 _Avoid_: Science, research credits, XP
 
 **Pay review**:
-Staff coming to the student about pay before quarters 2, 3 and 4 of a game (a game counts as one year of four equal quarters). Until IPO and a career have 365-day years instead: quarters 2, 3 and 4 in the first, then every quarter. The clock holds until it's settled. Each review rolls its own inflation, from 2% to 6%; the student offers a rise from inflation less a point, and staff, who open at inflation plus four points, accept an offer near a fair rise for how the company is doing or counter with a roll. The agreed rise lifts every staff pool's day rate, new hires and agency staff included, and compounds with each review. The C-suite is left out.
+Staff coming to the student about pay: the first 30 days into the Grow phase, then every quarter after (a game counts as one year of four equal quarters, so 45 days apart in a 180-day game; until IPO and a career have 365-day years instead). With Grow from day 30, a 180-day game's reviews fall on days 60, 105 and 150; a game that never reaches Grow has none. The clock holds until it's settled. Each review rolls its own inflation, from 2% to 6%; the student offers a rise from inflation less a point, and staff, who open at inflation plus four points, accept an offer near a fair rise for how the company is doing or counter with a roll. The agreed rise lifts every staff pool's day rate, new hires and agency staff included, and compounds with each review. The C-suite is left out.
 _Avoid_: Pay rise round, wage negotiation, salary review
 
 **People-lead modifier**:
@@ -141,6 +172,10 @@ The record of every pay review settled, on the People page and in text play: eac
 
 ### Infrastructure
 
+**Autoscaling (PaaS)**:
+On for every PaaS company. Each night the platform sets the app instances to a **baseline** of 1.25× yesterday's CU demand (**basic autoscaling**), or 1.5× with the Managed autoscaling benefit (**managed autoscaling**), never below the instances the student set by hand (their **minimum**, never reset). During a day **burst instances** cover a spike over the baseline at about twice an instance's price, up to a **maximum** the student sets (about 3× today's instances until they do); demand over it is an outage, and time stops the first time. The **autoscaler failure** event stops bursts for a day, more often on spike days, which is what the minimum insures against.
+_Avoid_: Auto-scaling, elastic scaling
+
 **Rack**:
 A small, medium or large frame that holds on-prem servers, measured in rack units. Only on-prem companies have them.
 _Avoid_: Cabinet, server room
@@ -154,7 +189,7 @@ One slot in a rack. Each server size takes a set number of them.
 _Avoid_: SU, slot
 
 **Tier**:
-A level of benefits, 1 to 4. Tier 1 is open from the start; each later tier becomes available once its condition is met, in order, and stays available. Each holds product features and model benefits, each with a stable id. Tier 1's items are unlocked from the start; above tier 1, each item in an available tier is unlocked with its own RP price, in any order.
+A level of benefits, 1 to 4. Tier 1 is open from the start; each later tier becomes available once its condition is met, in order, and stays available. Each holds product features and model benefits, each with a stable id. Tier 1's items are unlocked from the start, and its features can be built from Launch, taking longer than their developer-days alone; above tier 1, each item in an available tier is unlocked with its own RP price, in any order, once research opens in Grow.
 _Avoid_: Level, plan (there are no pricing plans)
 
 **Unlock**:
@@ -187,6 +222,10 @@ _Avoid_: Competitor, AI company, opponent
 Marketing aimed at one customer type, with a budget and a length, that brings in extra new users of that type. Its budget is spent evenly over its days, and each pound brings fewer users as the market fills up and when another campaign targets the same type at once; one started just before a holiday brings more. Each user it brings in also grows the product's market for good (brand awareness), up to a cap, so its users are extra rather than ones who'd have joined anyway. Each needs a free marketer to run it, so headcount decides how many run at once and the marketer's grade how well each does. Campaigns open once the first angel investor approaches, and never before launch.
 _Avoid_: Advert, marketing spend, ad
 
+**Campaign quote**:
+What a campaign would bring over its whole run, shown before it starts: a range of users and of cost per user ("£5.20–£7.10 a user"). It plays the run forward day by day, as the market fills with the campaign's users, everyone else's growth and the type's other campaigns; the low end assumes slow growth and the high end fast. With the market almost full it says so, with an estimate of the users, instead of a price. The quote stays with the campaign, and its end message compares the result with it.
+_Avoid_: Estimate, forecast, £ a user now
+
 **Transaction fee**:
 The payments app's percentage of every transaction its business customers process, charged on top of their monthly fee.
 _Avoid_: Commission, cut, take rate
@@ -206,6 +245,26 @@ _Avoid_: Acquisition mix, inflow
 **Price threshold**:
 The price at which a customer type starts to react badly.
 _Avoid_: Pain point, willingness to pay
+
+**Fair price**:
+The monthly price users think the product is worth, which each customer type's price threshold is a multiple of. It starts at the product's own and rises by a quarter of each pay review's inflation, compounding. The student's price never moves by itself.
+_Avoid_: Market price, list price
+
+**Opening price**:
+The price set as Launch is pressed (the fair price if none is given). Launch users react to it, and it holds until the usual price lock after go-live.
+_Avoid_: Launch price, starting price
+
+**Price bands**:
+How each customer type splits over a price. A rise splits paying users into accept, grumble online, contact support, drop to free and leave; a cut splits the new users it could bring, and the opening price the launch users, into join paying, join free and don't join. The bands slide with the size of the change against the type's price threshold.
+_Avoid_: Segments, buckets
+
+**Grumbling online**:
+Paying users who stay through a rise but complain about it publicly. While the backlash lasts, they send a share of new users to the rival that's the best value for each customer type.
+_Avoid_: Bad reviews, word of mouth (word of mouth is a cut's wave)
+
+**Expected price**:
+The price customers expect: the opening price at first, then every 14 days from the launch it moves halfway to the price in effect that day. A cut is measured from it, so cutting back soon after a rise is less of a bargain, and an old high price fades instead of making cut after cut look big. A rise is still measured from the lowest price of the last 60 days. No wave brings more users than the market has room for.
+_Avoid_: Reference price, anchor
 
 **Price reaction**:
 How many users leave or go free after a price change: each customer type's reaction weighted by its share of users. Contract users are left out.
@@ -248,8 +307,8 @@ What the company is worth: the formula's figure until the first investor after f
 _Avoid_: Company value, worth, market value (market value is only after the IPO)
 
 **Seed money**:
-The bank loan the student can take at the start. It's debt, not outside investment, so it doesn't unlock the CFO.
-_Avoid_: Starting loan, startup loan
+The founder's own cash: the starting cash on the game's difficulty, before any bank loan. The shareholder breakdown shows it as what the founder put in. A bank loan taken at the start is debt, not seed money or outside investment, so it doesn't unlock the CFO.
+_Avoid_: Starting loan, startup loan (for the loan, say the bank loan)
 
 **Funding round**:
 A sale of new shares to an investor or funder in exchange for cash.
@@ -278,12 +337,36 @@ _Avoid_: Main investor
 One part of a VC round's cash. The first is paid on signing; the second only when the round's target is hit.
 _Avoid_: Instalment, payment
 
+**Daily costs**:
+Every daily outgoing at today's numbers: staff and executive pay, staff schemes, hosting, rent and power, add-ons and platform fees, Campaign spend and loan repayments. One figure for the costs line, runway, the IPO's predictable costs and the shortfall limit.
+_Avoid_: Burn, running costs, overheads
+
+**One-offs**:
+Outgoings that aren't daily costs: kit bought, severance, a tribunal fee, an event's bill, a grant paid back. Shown apart as "one-offs this week".
+_Avoid_: Capital costs, extras
+
+**Shortfall**:
+How far cash went below £0 on a day. It goes onto the bank loan being repaid (same repayment a day, a longer term), or onto the emergency loan being repaid (a higher repayment, the same short term), or onto a new emergency loan with neither, until what shortfalls owe would pass the shortfall limit: then the company has run out of cash.
+_Avoid_: Overdraft, deficit
+
+**Shortfall limit**:
+How far shortfalls can take cash below £0: 7 days of the daily costs on the day cash first went there, fixed from then so hiring doesn't raise it. A rescue buyout pays off what shortfalls owe and the limit is fixed afresh the next time.
+_Avoid_: Overdraft limit, credit limit
+
+**Emergency loan**:
+The loan the bank opens for a shortfall when no loan is being repaid: at the rate a loan taken that day would have, over a short term (30 days). Shown as "loan (emergency)".
+_Avoid_: Overdraft, payday loan
+
+**Run out of cash**:
+Going further below £0 than the shortfall limit allows. The first time is a rescue buyout; after one, liquidation.
+_Avoid_: Going bust, bankrupt
+
 **Rescue buyout**:
-What happens the first time the company runs out of cash: a vulture VC puts in cash for a large share of the company and forces cost cuts.
+What happens the first time the company runs out of cash: a vulture VC puts in cash for a large share of the company and forces cost cuts. Its cash covers the losses and pays off the shortfalls on the loan, so the full shortfall limit is back.
 _Avoid_: Bailout, rescue
 
 **Vulture VC**:
-The investor behind a rescue buyout. Separate from the funding ladder; the student can buy its shares back at a price it sets.
+The investor behind a rescue buyout. Separate from the funding ladder; the student can buy its shares back at a price it sets, which follows its stake as later rounds dilute it.
 
 **Liquidation**:
 The end of a game: the company runs out of cash after it has already had a rescue buyout.
@@ -294,7 +377,11 @@ What the company is worth on the stock market after the IPO: share price × shar
 _Avoid_: Market cap, valuation (valuation is before the IPO)
 
 **Score**:
-The student's share of the company × its valuation, or × its market value at the close of the first day if the game ended in an IPO.
+What the student's own shares are worth at the end: their share of the company × its valuation, or × its market value at the close of the first day if the game ended in an IPO, less any debt still owed. There's no bonus for floating, and a liquidated company scores £0. The end screen shows it under the headline "raised £X, now worth £Y" and the shareholder breakdown.
+
+**Shareholder breakdown**:
+The end screen's table of everyone who owns the company: the founder (with their seed money, the starting cash), friends and family, the angel, each VC, the vulture (still listed, holding nothing, once bought back, with the buy-back price as its worth), the C-suite, the staff share scheme and the public float. A VC's put in counts both tranches of a merged round, the second once paid. Each row gives what they put in, their stake, its worth and their multiple; the stakes add up to 100%, and the founder row's worth is the score.
+_Avoid_: Cap table (in the student's words)
 
 **Ownership floor**:
 The lowest share of the company a VC will let itself fall to before the IPO; dilution below it is borne by everyone else.

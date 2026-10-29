@@ -68,7 +68,8 @@ export type VcLean = (typeof VC_LEANS)[number];
 
 /**
  * A difficulty's numbers: multipliers on the preset's own numbers, so a teacher's preset is just as much easier or
- * harder. A difficulty only changes numbers, never which systems a game has. Normal is all 1s: the preset as it is.
+ * harder, and how far it trusts the student with a dangerous cancel. A difficulty never changes which systems a game
+ * has. Normal is all 1s: the preset as it is.
  */
 export interface DifficultyNumbers {
   name: string;
@@ -80,24 +81,48 @@ export interface DifficultyNumbers {
   dangerRise: number;
   /** Multiplies each customer type's price threshold: above 1, customers put up with dearer prices. */
   priceThreshold: number;
+  /**
+   * Tier 4 also opens on a revenue milestone (tiers.tier4), not only on an angel's money or IPO readiness: so a company
+   * can float without outside investors (#265).
+   */
+  tier4Revenue: boolean;
+  /**
+   * Whether a cancel or sale that would leave capacity below today's load can go ahead once confirmed (Hard), rather
+   * than being refused (#260).
+   */
+  confirmRiskyCancels: boolean;
 }
 
 /** The built-in difficulties. Not on the config page: the teacher picks which are allowed, not what they do. */
 export const DIFFICULTIES: Record<DifficultyId, DifficultyNumbers> = {
   easy: {
     name: "Easy",
-    blurb: "More starting cash, fewer random events, and customers put up with dearer prices.",
+    blurb:
+      "More starting cash, fewer random events, and customers put up with dearer prices. A server can't be cancelled or sold if that would leave you short of capacity.",
     startingCash: 1.5,
     dangerRise: 0.75,
     priceThreshold: 1.15,
+    tier4Revenue: false,
+    confirmRiskyCancels: false,
   },
-  normal: { name: "Normal", blurb: "The game as designed.", startingCash: 1, dangerRise: 1, priceThreshold: 1 },
+  normal: {
+    name: "Normal",
+    blurb: "The game as designed. A server can't be cancelled or sold if that would leave you short of capacity.",
+    startingCash: 1,
+    dangerRise: 1,
+    priceThreshold: 1,
+    tier4Revenue: false,
+    confirmRiskyCancels: false,
+  },
   hard: {
     name: "Hard",
-    blurb: "Less starting cash, more random events, and customers are quicker to leave over price.",
+    blurb:
+      "Less starting cash, more random events, and customers are quicker to leave over price. Tier 4 also opens on revenue, so you can float without outside investors. You can cancel or sell a server that leaves you short of capacity, once you confirm it: the outage is yours.",
     startingCash: 0.8,
     dangerRise: 1.33,
     priceThreshold: 0.9,
+    tier4Revenue: true,
+    confirmRiskyCancels: true,
   },
 };
 
@@ -267,6 +292,14 @@ export interface ManagedServersConfig {
   instanceSize: ServerSize;
   /** The most app instances a company can run. */
   maxInstances: number;
+  /**
+   * Basic autoscaling, on for every company on the platform. Each night the app instances are set to a baseline: the
+   * day's CU demand plus `headroom` (0.25 = 1.25×), never fewer than the instances the student set by hand, their
+   * minimum. During a day, burst instances cover CU demand over the baseline, each billed at `burstPremium` × an
+   * instance's day rate, up to a maximum the student sets (`maxFactor` × today's instances until they do). Demand over
+   * the maximum is an outage. The Managed autoscaling benefit raises the headroom. Left out, nothing autoscales.
+   */
+  autoscaling?: { headroom: number; burstPremium: number; maxFactor: number };
   /**
    * Units each size of managed database and cache gives, in place of a server's. A managed service scales up further
    * than one server of the same size, since you only ever run one.
@@ -746,8 +779,29 @@ export interface PricingConfig {
    * tier. The rest leave altogether. A rise's wave uses each customer type's own share instead (toFreeShare).
    */
   dropToFreeShare: number;
-  /** Support tickets each affected user raises over a rise's backlash: complaints, cancellations, refund requests. */
+  /** Support tickets each paying user who contacts support over a rise raises: complaints, cancellations, refunds. */
   backlashTicketsPerUser: number;
+  /**
+   * Of the paying users who stay through a rise, the share who grumble online: grumbleStrength × (rise ÷ the type's
+   * threshold)^waveCurve, at most maxGrumble. The same for contacting support, with supportStrength and maxSupport.
+   * The rest accept it.
+   */
+  grumbleStrength: number;
+  maxGrumble: number;
+  supportStrength: number;
+  maxSupport: number;
+  /**
+   * While a rise's backlash lasts, the share of new users who go to the rival that's the best value for their type
+   * instead: grumbleDivertStrength × grumblers ÷ users, at most maxGrumbleDivert.
+   */
+  grumbleDivertStrength: number;
+  maxGrumbleDivert: number;
+  /**
+   * Every this many days from the launch, the price customers expect moves halfway to the price in effect (#291). A cut
+   * is measured from the price they expect, so cutting back from a rise they don't expect yet is less of a bargain,
+   * and an old high price fades instead of making every later cut look big.
+   */
+  expectedPriceDays: number;
   /** New users a cut brings at d = 1, as a share of today's users, before the cap: cutGainStrength × d^waveCurve. */
   cutGainStrength: number;
   /** The most new users one cut can bring, as a share of today's users. */
@@ -758,9 +812,8 @@ export interface PricingConfig {
   maxCutUpgrade: number;
   /**
    * Days customers remember a lower price. A rise is measured from the lowest price in that time, less what the rises
-   * since have lost, so a run of small rises loses as many payers as one rise to the same price. A cut only counts for
-   * how far it goes below both that price and the fair price, so undoing a rise, cycling up and back down, or coming
-   * back to the fair price after any time above it brings no new wave.
+   * since have lost, so a run of small rises loses as many payers as one rise to the same price, and rising then
+   * cutting back over and over loses overall.
    */
   priceMemoryDays: number;
   /**
@@ -854,8 +907,12 @@ export interface ConversionConfig {
   uptimeEffect: number;
   /** How much 100% satisfaction raises conversion, with goodSatisfaction as the neutral line. */
   satisfactionEffect: number;
-  /** How strongly a price above the fair price puts free users off paying. 0 for no effect. */
+  /**
+   * How strongly the price moves conversion, as (price ÷ fair price) to minus this: above the fair price it puts free
+   * users off paying, at or below it it helps, up to maxPriceBoost more (0.3 = 30%). 0 for no effect.
+   */
   priceSensitivity: number;
+  maxPriceBoost: number;
   /** The highest daily conversion rate, whatever the multipliers (0.05 = 5% of free users a day). */
   maxRate: number;
 }
@@ -945,6 +1002,11 @@ export interface EventOutcome {
    * that day, and at least `min`. Capacity faces them from the next day.
    */
   freeUsers?: { share: number; min: number };
+  /**
+   * The platform's autoscaler fails (#261): no burst instances while it's on, so the instances running carry the day
+   * alone. Only hits a company with managed autoscaling on.
+   */
+  autoscalerFails?: boolean;
 }
 
 /** How an event hits one model. */
@@ -992,6 +1054,12 @@ export interface EncounterOdds {
   follows?: string[];
   /** With `follows`: only within this many days of the last time one of them fired. Left out, any time after. */
   followsWithinDays?: number;
+  /**
+   * Weighted towards spike days (paydays, holidays that bring load, an event's extra load): once the meter reaches its
+   * threshold it waits for one, for up to about this many days' rise of the meter, then fires anyway. Left out, it
+   * fires as soon as the meter reaches it.
+   */
+  spikeWaitDays?: number;
 }
 
 /**
@@ -1041,7 +1109,8 @@ export interface EventConfig {
    * the student hears `text` that day, with time to get ready. Risky days fill the meter faster, so it can come sooner.
    * Left out, the event is a surprise.
    */
-  warning?: { days: number; text: string };
+  /** text, or the model's own wording where `byModel` has one (a provider's platform has no servers of yours). */
+  warning?: { days: number; text: string; byModel?: Partial<Record<ModelId, string>> };
   /** Fixed days it fires on as well, outside the encounter system. */
   schedule?: EventSchedule;
   /** Days it lasts, from the day it fires. */
@@ -1126,7 +1195,13 @@ export interface CsuiteConfig {
    * The board's pay holiday: when cash falls below startDays of running costs (C-suite pay included), every executive
    * forgoes their pay, for good, until cash is back above endDays of them. startDays 0 turns it off.
    */
-  payHoliday: { startDays: number; endDays: number };
+  /**
+   * The board's pay holiday: it starts below startDays of running costs and ends above endDays. Once it's over, the back
+   * pay owed is paid a little each day: the cash above startDays of running costs spread over backPayDays. Once it has
+   * gone on more than walkoutDays in a row the most recently hired executive resigns, then another every walkoutEvery
+   * days while it lasts, their back pay going onto the loan.
+   */
+  payHoliday: { startDays: number; endDays: number; backPayDays: number; walkoutDays: number; walkoutEvery: number };
   roles: Record<CsuiteRole, CsuiteRoleConfig>;
 }
 
@@ -1162,6 +1237,15 @@ export interface CampaignsConfig {
   marketPerUser: number;
   /** The most campaigns can add to the market, all told, as a share of the product's base market size (0.5: +50%). */
   marketGrowthCap: number;
+  /**
+   * A campaign's quote plays its run forward with the company's other users growing at today's pace × low (its
+   * cheapest end: growth runs slow, the market fills slowly) and × high (its dearest).
+   */
+  quotePace: { low: number; high: number };
+  /** Each end of a quote is widened by this share of its users, for chance: events and noise (0.05 = 5%). */
+  quoteMargin: number;
+  /** The share of the market taken at which a quote says the market is almost full (0.9 = 90%). */
+  almostFull: number;
 }
 
 export interface OptimisationConfig {
@@ -1192,8 +1276,8 @@ export interface ModelBenefitEffects {
    */
   autoscaling?: { pricePerUnit: number; most: number };
   /**
-   * The platform sets the app instance count each night to the day's CU demand plus `headroom` (0.25 = a quarter
-   * more), within the platform's limits: the student no longer has to.
+   * Managed autoscaling on PaaS (#261): the nightly baseline is the day's CU demand plus this `headroom` (0.5 = 1.5×),
+   * in place of basic autoscaling's (ManagedServersConfig.autoscaling). Bursts and the maximum work the same.
    */
   managedAutoscaling?: { headroom: number };
   /** Hours down in any outage are multiplied by this, rounded up (0.5 = half as long). */
@@ -1243,8 +1327,17 @@ export interface TiersConfig {
   tier2: { marketShare: number };
   /** Tier 3 opens once the last `days` days played averaged this much income a day and this uptime %. */
   tier3: { dailyIncome: number; uptime: number; days: number };
-  /** Tier 4 opens on an angel deal taken or every IPO condition met. It has no numbers of its own. */
+  /**
+   * Tier 4 opens on an angel deal taken or every IPO condition met. On a difficulty with tier4Revenue (Hard), it also
+   * opens once the last `days` days played averaged this much income a day: the bootstrapped route to a float.
+   */
+  tier4: { dailyIncome: number; days: number };
   benefits: ModelBenefitConfig[];
+  /**
+   * Tier 1 features open at Launch with no research, so they take this × their developer-days to build (2: twice as
+   * long). A SaaS add-on's set-up fee isn't affected.
+   */
+  tier1BuildMultiplier: number;
 }
 
 /**
@@ -1373,6 +1466,12 @@ export interface LoanConfig {
   minTermDays: number;
   /** The bank won't lend with fewer days than this left in the game. */
   minDays: number;
+  /**
+   * The term of an emergency loan: what the bank lends when cash goes below £0 with no loan being repaid, at the rate
+   * a loan taken that day would have, repaid fast. A later shortfall onto it is repaid over this many days too, on top
+   * of the daily repayment, so the term never stretches.
+   */
+  emergencyTermDays: number;
 }
 
 /**
@@ -1469,7 +1568,8 @@ export interface IpoProductConfig {
  * minTradingDays since the launch; users and revenue, with a minimum paying customer base; an uptime record;
  * predictable costs; a security audit; and the full C-suite, every role hired. No investor's money is needed, though
  * Series A must approach to open the last C-suite roles. Records are measured over the last recordDays days played;
- * predictable costs leaves out the record's costDaysSetAside costliest days.
+ * predictable costs measures the daily costs each day ended on (the costs line's figure, without one-offs), leaving out the
+ * record's costDaysSetAside costliest days.
  *
  * Each condition but the full C-suite (yes or no) also has a comfort, 0–1: how far over it the company is, reaching 1
  * at comfortMargin over (0.25 = 25% over a "more than" threshold, or a quarter of the way from it to perfect). The
@@ -1495,10 +1595,15 @@ export interface IpoConfig {
   minUptime: number;
   /** Average satisfaction % over recordDays the market starts to take comfort from: not a condition to float. */
   minSatisfaction: number;
-  /** The most daily running costs over recordDays may vary: their standard deviation ÷ their mean. */
+  /** The most the daily costs over recordDays may vary: their standard deviation ÷ their mean. */
   maxCostSwing: number;
-  /** The costliest days of the record left out of the costs' swing, so a single one-off charge doesn't fail it. */
+  /** The costliest days of the record left out of the costs' swing, so a single costly day doesn't fail it. */
   costDaysSetAside: number;
+  /**
+   * Days costs must hold at their new level after the last C-suite hire before the company can apply (#292): the
+   * predictable-costs condition isn't met until then.
+   */
+  costsHoldDays: number;
   comfortMargin: number;
   coldChance: { min: number; max: number };
   coldDelayDays: number;
@@ -1568,6 +1673,8 @@ export interface PayReviewConfig {
   /** Days into the Grow phase the first review's rise starts: none before. Each later one is a quarter after the last. */
   growDays: number;
   inflation: { min: number; max: number };
+  /** The share of each review's inflation that lifts the product's fair price, compounding (0.25 = a quarter). */
+  fairPriceShare: number;
   /** The least offer is inflation less this (0.01 = one point), never below 0. */
   minOfferBelow: number;
   /** The most staff ask is inflation plus this. */
@@ -1657,18 +1764,25 @@ export interface StaffSchemeConfig {
 
 /**
  * The rescue buyout: the first time cash runs out, a vulture VC rescues the company instead of the game ending. The
- * second time is liquidation, and the game ends.
+ * second time is liquidation, and the game ends. Cash running out means going past limitDays of daily costs below £0:
+ * short of that, each shortfall goes onto the bank loan, or an emergency loan with none (see LoanConfig).
  *
  * - Cost cuts first: hires still to start are cancelled, and staffCut of each team is let go (rounded up), the dearest
  *   grades first. Ops are only cut as far as the servers' ops needed allows.
- * - Cash: the losses (what took cash below £0), plus breathingDays of what the company is losing a day after the
+ * - Cash: the losses (what took cash below £0) and the shortfalls still owed on the loan, which it pays off, plus breathingDays of what the company is losing a day after the
  *   cuts, counting at least minCover of its running costs a day.
  * - Shares: enough new shares for the vulture VC to own `share` of the company.
  * - Buy-back: the student can buy all its shares back with the company's cash, at its price: its share of today's
  *   valuation less net cash (the business without the cash that pays for them) × buyBackPremium, but never less than
- *   minReturn × the cash it put in.
+ *   minReturn × the cash it put in, scaled down as later rounds dilute its stake.
  */
 export interface RescueConfig {
+  /**
+   * Days of daily costs that shortfalls can put on the loans before cash has run out: past it, the vulture VC steps in
+   * (or, after a rescue, liquidation). Fixed at the daily costs on the day cash first goes below £0, and again after
+   * a rescue.
+   */
+  limitDays: number;
   breathingDays: number;
   minCover: number;
   share: number;
@@ -1924,7 +2038,7 @@ export const defaultConfig: GameConfig = {
     // A safety net for the full C-suite the IPO needs (#232): without it a small market (payments on SaaS) can't carry
     // all 11 salaries and careful play is rescued or liquidated. At 7 and 21 days, none is, and executives miss about
     // 7% of their pay days across careful play.
-    payHoliday: { startDays: 7, endDays: 21 },
+    payHoliday: { startDays: 7, endDays: 21, backPayDays: 14, walkoutDays: 30, walkoutEvery: 7 },
     roles: {
       headOfDevelopment: {
         name: "Head of development",
@@ -2008,6 +2122,9 @@ export const defaultConfig: GameConfig = {
     holidayBonus: 1.5,
     marketPerUser: 5,
     marketGrowthCap: 0.3,
+    quotePace: { low: 0, high: 1.5 },
+    quoteMargin: 0.05,
+    almostFull: 0.9,
   },
   // Conditions and benefits signed off for #123. In the balance pass (#181) tier 2 became a share of the product's market,
   // so the payments app (a 4,000-user market) can reach it and social and video don't open it at launch. RP prices
@@ -2015,6 +2132,9 @@ export const defaultConfig: GameConfig = {
   tiers: {
     tier2: { marketShare: 0.35 },
     tier3: { dailyIncome: 2_000, uptime: 99, days: 30 },
+    tier1BuildMultiplier: 2,
+    // Hard only (#265): about 75% of the IPO's revenue a day, so tier 4's features can help a bootstrapped company to it.
+    tier4: { dailyIncome: 2_500, days: 30 },
     benefits: [
       {
         id: "hardwareEfficiency1",
@@ -2077,10 +2197,12 @@ export const defaultConfig: GameConfig = {
         tier: 3,
         rpPrice: 50,
         name: "Managed autoscaling",
-        blurb: "The platform sets your instance count each night to the day's demand plus a quarter.",
+        blurb:
+          "Raises autoscaling's baseline from 1.25× to 1.5× yesterday's demand, so fewer spikes need burst instances at twice the price.",
         setupFee: 1_000,
         monthlyFee: 300,
-        effects: { managedAutoscaling: { headroom: 0.25 } },
+        // A placeholder: 1.5× yesterday's demand, over basic autoscaling's 1.25×.
+        effects: { managedAutoscaling: { headroom: 0.5 } },
       },
       {
         id: "cdn",
@@ -2228,6 +2350,9 @@ export const defaultConfig: GameConfig = {
         managed: {
           instanceSize: "medium",
           maxInstances: 20,
+          // Placeholders: basic autoscaling keeps 1.25× yesterday's demand, a burst instance costs about twice a
+          // normal one, and the maximum is three times the instances until it's set.
+          autoscaling: { headroom: 0.25, burstPremium: 2, maxFactor: 3 },
           units: {
             database: { small: 10, medium: 25, large: 50, massive: 100 },
             cache: { small: 10, medium: 25, large: 50, massive: 100 },
@@ -2837,7 +2962,7 @@ export const defaultConfig: GameConfig = {
   billing: { daysPerMonth: 30 },
   // Enough for on-prem to buy kit ahead of demand from the start, or to see an IaaS, PaaS or SaaS company through a
   // tight start, for about £3,500 of interest. See LoanConfig for the interest formula.
-  loan: { amount: 35_000, baseRate: 0.1, ratePerDay: 0.002, termDays: 120, termPerDay: 0.5, minTermDays: 60, minDays: 14 },
+  loan: { amount: 35_000, baseRate: 0.1, ratePerDay: 0.002, termDays: 120, termPerDay: 0.5, minTermDays: 60, minDays: 14, emergencyTermDays: 30 },
   shares: { min: 10_000, max: 100_000, default: 10_000 },
   // A new company with no revenue is worth the £50k minimum, so friends and family's £15k on day 1 buys about 23% of
   // it; a steady company making £500 a day with 2,000 paying users and £20k in the bank is worth about £150k, and the
@@ -2891,6 +3016,7 @@ export const defaultConfig: GameConfig = {
     minSatisfaction: 70,
     maxCostSwing: 0.25,
     costDaysSetAside: 1,
+    costsHoldDays: 14,
     comfortMargin: 0.25,
     coldChance: { min: 0.05, max: 0.3 },
     coldDelayDays: 30,
@@ -2926,6 +3052,8 @@ export const defaultConfig: GameConfig = {
     // About a month into Grow (#236), so a student isn't settling pay before they've launched and grown.
     growDays: 30,
     inflation: { min: 0.02, max: 0.06 },
+    // The fair price lifts by a quarter of each review's inflation: all of it outran what students could charge.
+    fairPriceShare: 0.25,
     minOfferBelow: 0.01,
     maxAskAbove: 0.04,
     fairRise: { days: 30, growthWeight: 0.02, maxGrowthAdjust: 0.02, profitBonus: 0.005, tightCashDays: 30, tightCashCut: 0.01 },
@@ -2944,20 +3072,21 @@ export const defaultConfig: GameConfig = {
     // Placeholders from the design (#189). Without a head of people the student deals with staff directly: staff take
     // a point off the roll on their counters, and count a scheme at about 70% of its value, as they want cash. A head of
     // people (#108) adds two points to the roll, takes half a point off staff's walk-away figure, has schemes counted at
-    // full value and leans the tribunal a little the student's way. Each scheme costs a different amount for what staff see in it, against the cash rise it stands in for (at a
-    // mean day rate of about £105): the pension about 0.76 of it, the health plan about 0.82, death in service about
-    // 0.57 and the discount scheme about 0.27. Cheaper than cash per point, but paid on every head for good, and the
-    // per-person ones cost more on a lower-paid team.
+    // full value and leans the tribunal a little the student's way (halved in #293: at 0.15 it won a pay cut 66-78% of
+    // the time). Each scheme costs a different amount for what staff see in it, against the cash rise it stands in for
+    // (at a mean day rate of about £105). Doubled in #293, as at about a third of cash they were the cheap way to
+    // settle: the pension now about 1.5 of it, the health plan about 1.6, death in service about 1.1 and the discount
+    // scheme about 0.55. Paid on every head for good, and the per-person ones cost more on a lower-paid team.
     peopleLead: {
       none: { rollBonus: -1, walkAwaySoftening: 0, schemeValuation: 0.7, tribunalLean: 0 },
-      headOfPeople: { rollBonus: 2, walkAwaySoftening: 0.005, schemeValuation: 1, tribunalLean: 0.15 },
+      headOfPeople: { rollBonus: 2, walkAwaySoftening: 0.005, schemeValuation: 1, tribunalLean: 0.075 },
     },
     schemes: {
       pension: {
         name: "Pension top-up",
         blurb: "The company pays more into staff pensions: a share of their pay on top.",
         maxLevel: 3,
-        wageShare: 0.004,
+        wageShare: 0.008,
         perPerson: 0,
         staffValue: 0.0075,
       },
@@ -2966,14 +3095,14 @@ export const defaultConfig: GameConfig = {
         blurb: "Eye tests, dental work and physio paid back: a flat sum per person.",
         maxLevel: 3,
         wageShare: 0,
-        perPerson: 0.3,
+        perPerson: 0.6,
         staffValue: 0.005,
       },
       deathInService: {
         name: "Death in service",
         blurb: "A payout to someone's family if they die while employed: cheap, and staff barely notice it.",
         maxLevel: 1,
-        wageShare: 0.001,
+        wageShare: 0.002,
         perPerson: 0,
         staffValue: 0.0025,
       },
@@ -2982,7 +3111,7 @@ export const defaultConfig: GameConfig = {
         blurb: "Staff discounts at shops and restaurants, like a Blue Light Card: very cheap per person.",
         maxLevel: 1,
         wageShare: 0,
-        perPerson: 0.05,
+        perPerson: 0.1,
         staffValue: 0.0025,
       },
       // The cheapest in cash and the most to staff: it's paid for in ownership, 1% of the company a level.
@@ -2991,7 +3120,7 @@ export const defaultConfig: GameConfig = {
         blurb: "Staff save from their pay to buy company shares cheaply: new shares for the staff share scheme, diluting you.",
         maxLevel: 3,
         wageShare: 0,
-        perPerson: 0.02,
+        perPerson: 0.04,
         staffValue: 0.01,
       },
     },
@@ -2999,7 +3128,7 @@ export const defaultConfig: GameConfig = {
   },
   // Placeholders from the design: about 30 days of breathing space for about 75% of the company. Buying it back costs
   // at least twice what the vulture VC put in.
-  rescue: { breathingDays: 30, minCover: 0.25, share: 0.75, staffCut: 0.25, buyBackPremium: 1.5, minReturn: 2 },
+  rescue: { limitDays: 7, breathingDays: 30, minCover: 0.25, share: 0.75, staffCut: 0.25, buyBackPremium: 1.5, minReturn: 2 },
   // The angel approaches about three weeks after launch on sensible play, once income has averaged £500 a day for a
   // fortnight: a company worth about £60-130k, so a fifth of it costs the angel about £15-35k. Sensible play makes its
   // short-term target in 70 of 72 harness games, with a median 14 days to spare: 1.75 times that income and, net of
@@ -3093,7 +3222,17 @@ export const defaultConfig: GameConfig = {
     dearness: 1,
     maxRiseShare: 0.9,
     dropToFreeShare: 0.4,
-    backlashTicketsPerUser: 1,
+    // A 25% rise on a fair price: about 79% accept, 7% grumble online, 4.5% contact support and 10% stop paying.
+    // Doubling it: 80% stop paying, and most of the rest grumble.
+    backlashTicketsPerUser: 2,
+    grumbleStrength: 0.6,
+    maxGrumble: 0.5,
+    supportStrength: 0.4,
+    maxSupport: 0.3,
+    // 5% of users grumbling sends 15% of new users to rivals while the backlash lasts.
+    grumbleDivertStrength: 3,
+    maxGrumbleDivert: 0.5,
+    expectedPriceDays: 14,
     // A 12.5% cut (£20 to £17.50) brings about 3% more users and turns about 2% of free users into payers.
     cutGainStrength: 0.6,
     maxCutGain: 0.5,
@@ -3136,6 +3275,8 @@ export const defaultConfig: GameConfig = {
     uptimeEffect: 0.25,
     satisfactionEffect: 0.25,
     priceSensitivity: 2,
+    // Placeholder (#251): at or below the fair price, up to 30% more free users start paying.
+    maxPriceBoost: 0.3,
     maxRate: 0.05,
   },
   // A 20-day feature costs £2,000 to set up: all four on day 1 would take half the starting cash.
@@ -3297,6 +3438,10 @@ export const defaultConfig: GameConfig = {
       warning: {
         days: 7,
         text: "A big news site has been asking about your product. If they feature it, expect a flood of visitors within about a week: more than your servers can carry unless you add capacity first.",
+        byModel: {
+          paas: "A big news site has been asking about your product. If they feature it, expect a flood of visitors within about a week: the platform will scale up for it, and bill you for every unit over your setup unless you add instances first.",
+          saas: "A big news site has been asking about your product. If they feature it, expect a flood of visitors within about a week. Your SaaS provider carries the load, so there's nothing to add.",
+        },
       },
       days: 2,
       // Triple the CU and DBU demand: more than a sensible setup carries, so only a model that scales stays up.
@@ -3382,6 +3527,22 @@ export const defaultConfig: GameConfig = {
           priceRise: { percent: 25, addons: true },
           detail:
             "You can't control what the provider charges, add-ons included. Leaving means a migration, and your add-ons stay behind.",
+        },
+      },
+    },
+    {
+      id: "autoscalerFailure",
+      name: "Autoscaler failure",
+      description: "The platform's autoscaler stopped adding instances for a day.",
+      layer: "runtime",
+      // Weighted towards spike days, when it hurts: it waits up to a week's rise of the meter for one. A placeholder.
+      encounter: { chance: 0.3, spikeWaitDays: 7 },
+      days: 1,
+      effects: {
+        paas: {
+          autoscalerFails: true,
+          detail:
+            "The platform runs the autoscaler, and it failed: no burst instances were added today, so the instances you had carried the load alone. The minimum you set by hand is your insurance against this.",
         },
       },
     },

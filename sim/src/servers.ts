@@ -9,6 +9,7 @@ import {
   type ServerType,
 } from "./config.ts";
 import { powerSaving, rentSaving } from "./benefits.ts";
+import { patchingNeed } from "./executives.ts";
 import { count, pounds, priceRiseOn, risen, type Finance } from "./finance.ts";
 import { crashedOn, hardwareRisk, hasSlider, overheatedOn, performanceOf, unitFactor, wearDaysLeft, wearShare } from "./hardware.ts";
 import { demandPerUser } from "./optimisation.ts";
@@ -40,6 +41,11 @@ export interface ServerView {
   readyDay: number;
   /** Days until it's ready or, bought, arrives: 0 once it has. */
   daysLeft: number;
+  /**
+   * Cancelled or sold and waiting for its replacement: the day it goes, at the end of, still serving and billed until
+   * then (#260). Null otherwise.
+   */
+  leavesOn: number | null;
   /** CU, DBU, CH or APIU; for a load balancer, the app servers it can serve. More on kit added after a year's end. */
   units: number;
   /** Its units as a multiple of the config's: above 1 on kit added after a year's end (drift). */
@@ -522,27 +528,46 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
       .reduce((sum, s) => sum + serverMonthlyCost(state, state.model, s), 0);
 
   /**
-   * Ops staff some servers need on a model: the model's fixed number (the few PaaS and SaaS need to keep the service
-   * running), plus the total of each server's share, rounded up. Managed services have no share: the provider runs
-   * them.
+   * Ops staff some servers need on a model, in mids of work to a hundredth: the model's fixed number (the few PaaS and
+   * SaaS need to keep the service running), plus the total of each server's share. Managed services have no share: the
+   * provider runs them. Not rounded up to people (#284), so it's the figure the capacity cut is measured against.
    */
   function opsFor(model: ModelId, servers: Pick<Server, "type">[]): number {
-    const fixed = config.models[model].opsNeeded ?? 0;
-    const perServer = modelServers(model)?.opsPerServer;
-    if (!perServer) return fixed;
-    // Shares like 0.1 don't add up exactly, so the total is rounded to a millionth before rounding up.
-    return fixed + Math.ceil(Math.round(servers.reduce((sum, s) => sum + (perServer[s.type] ?? 0), 0) * 1e6) / 1e6);
+    return Math.round(opsWorkFor(model, servers) * 100) / 100;
   }
 
   /**
-   * Ops the company needs now: the model's fixed number, plus on a model with servers their shares (rented ones ready
-   * or not, bought ones once they've arrived).
+   * The ops work some servers need on a model, in mids, before rounding up to people: the model's fixed number plus
+   * each server's share. What the capacity cut for missing ops is measured against, so being a little short cuts a
+   * little (#259).
    */
-  const opsNeeded = (state: GameState) =>
-    opsFor(state.model, state.servers.filter((s) => inService(state.model, s, state.day)));
+  function opsWorkFor(model: ModelId, servers: Pick<Server, "type">[]): number {
+    const fixed = config.models[model].opsNeeded ?? 0;
+    const perServer = modelServers(model)?.opsPerServer;
+    if (!perServer) return fixed;
+    // Shares like 0.1 don't add up exactly, so the total is rounded to a millionth.
+    return fixed + Math.round(servers.reduce((sum, s) => sum + (perServer[s.type] ?? 0), 0) * 1e6) / 1e6;
+  }
 
-  /** Ops the company will need once every server it has is in service: on-prem, kit on order included. */
-  const opsNeededOnceReady = (state: GameState) => opsFor(state.model, state.servers);
+  /** Servers running today: ready ones, rented or bought. Ones on order need no ops yet (#259). */
+  const running = (state: GameState) => state.servers.filter((s) => s.readyDay <= state.day);
+
+  /** Some servers' ops work on the company's model, less a CISO's patching cut, to a hundredth. */
+  const opsWithCiso = (state: GameState, servers: Pick<Server, "type">[]) =>
+    Math.round(opsWorkFor(state.model, servers) * patchingNeed(config, state) * 100) / 100;
+
+  /**
+   * Ops the company needs now, in mids of work: the model's fixed number, plus on a model with servers the shares of
+   * those running, less a CISO's patching cut. Servers on order, rented or bought, don't count until they're ready. The
+   * one figure (#284) for the capacity cut, the shortfall line, the danger meter's patching and the IPO's audit.
+   */
+  const opsNeeded = (state: GameState) => opsWithCiso(state, running(state));
+
+  /**
+   * Ops the company will need once every server it has is in service: kit on order included, and servers waiting to
+   * be cancelled or sold left out, as they'll be gone (#284).
+   */
+  const opsNeededOnceReady = (state: GameState) => opsWithCiso(state, state.servers.filter((s) => s.leavesOn === undefined));
 
   /** Ops a model needs to start with: its fixed number, plus its starter setup's. */
   const modelOpsNeeded = (model: ModelId) => opsFor(model, starter(model, 0).servers);
@@ -608,11 +633,115 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
     return server;
   }
 
-  function cancelServer(state: GameState, id: number): GameState {
+  /**
+   * How a cancel or sale is checked (#260): `shortBy` says what losing servers would do to today's load, from the
+   * state before to the state without them ("today's load would be 130% of the compute (CU) left"), or null if capacity
+   * still covers it; `confirm` is whether the difficulty lets a dangerous one go ahead once the student says `now`.
+   */
+  interface RetireRules {
+    shortBy: (before: GameState, without: GameState) => string | null;
+    confirm: boolean;
+  }
+
+  /**
+   * The day a replacement of the same kind on order is ready, for a server being cancelled or sold: the earliest one
+   * not already taken by another server waiting to go. Null with none on order.
+   */
+  function replacementDay(state: GameState, server: Server): number | null {
+    const coming = state.servers
+      .filter((s) => s.type === server.type && s.readyDay > state.day)
+      .sort((a, b) => a.readyDay - b.readyDay);
+    const taken = state.servers.filter((s) => s.type === server.type && s.leavesOn !== undefined).length;
+    return coming[taken]?.readyDay ?? null;
+  }
+
+  /**
+   * Takes a ready server out of service, cancelled or sold (#260):
+   * - with a replacement of the same kind on order, it waits for it, still serving and billed, and goes at the end of
+   *   the day the replacement is ready (unless `now`);
+   * - otherwise, if what's left wouldn't carry today's load, it's refused, or on a difficulty that allows it, goes only
+   *   with `now`: the outage is the student's;
+   * - otherwise it goes at once.
+   */
+  function retire(state: GameState, server: Server, now: boolean, rules: RetireRules, go: (s: GameState) => GameState): GameState {
+    const verb = buys(state.model) ? "sell" : "cancel";
+    if (server.leavesOn !== undefined && !now) {
+      throw new SimError("already_leaving", `That server already goes at the end of day ${server.leavesOn}, once its replacement is ready.`, {
+        leavesOn: server.leavesOn,
+      });
+    }
+    const replaced = replacementDay(state, server);
+    if (replaced !== null && !now) {
+      return { ...state, servers: state.servers.map((s) => (s.id === server.id ? { ...s, leavesOn: replaced } : s)) };
+    }
+    const without = { ...state, servers: state.servers.filter((s) => s.id !== server.id) };
+    const short = rules.shortBy(state, without);
+    if (short && !rules.confirm) {
+      throw new SimError(
+        "cancel_unsafe",
+        `You can't ${verb} that server: without it, ${short}. ${buys(state.model) ? "Buy" : "Rent"} a replacement first, and the ${verb === "sell" ? "sale" : "cancel"} will wait until it's ready.`,
+      );
+    }
+    if (short && !now) {
+      throw new SimError(
+        "confirm_cancel",
+        `Without that server, ${short}: expect an outage. To ${verb} it anyway, confirm it (\`${verb} ${server.id} now\`).`,
+        { id: server.id },
+      );
+    }
+    return go(state);
+  }
+
+  function cancelServer(state: GameState, id: number, now: boolean, rules: RetireRules): GameState {
     refuseManaged(state);
-    ownServer(state, id);
+    const server = ownServer(state, id);
     if (buys(state.model)) throw new SimError("not_rented", "You own that server, so there's no rent to cancel: sell it back instead.");
-    return { ...state, servers: state.servers.filter((s) => s.id !== id) };
+    const gone = (s: GameState) => ({ ...s, servers: s.servers.filter((x) => x.id !== id) });
+    // One still being set up serves nothing yet, so cancelling it changes nothing.
+    if (server.readyDay > state.day) return gone(state);
+    return retire(state, server, now, rules, gone);
+  }
+
+  /**
+   * Servers cancelled or sold that go at the end of `day`, the day their replacements are ready: rented ones simply
+   * stop, bought ones are sold back, refunded then. Each is checked against today's load as it goes (#287), as a
+   * replacement can be smaller: on Easy and Normal one that would leave capacity short keeps serving and waits another
+   * day, saying why; on Hard it goes, with a warning.
+   */
+  function leaveDay(state: GameState, day: number, rules: RetireRules): { state: GameState; entries: LogEntry[] } {
+    const leaving = state.servers.filter((s) => s.leavesOn !== undefined && s.leavesOn <= day);
+    if (!leaving.length) return { state, entries: [] };
+    const sold = buys(state.model);
+    let next = state;
+    const entries: LogEntry[] = [];
+    for (const s of leaving) {
+      const which = `${nameOf(s.type)} #${s.id} (${s.size})`;
+      const without = { ...next, servers: next.servers.filter((x) => x.id !== s.id) };
+      const short = rules.shortBy(next, without);
+      if (short && !rules.confirm) {
+        next = { ...next, servers: next.servers.map((x) => (x.id === s.id ? { ...x, leavesOn: day + 1 } : x)) };
+        entries.push({
+          text: `${which} isn't ${sold ? "sold" : "cancelled"} yet: without it, ${short}. It keeps serving, and goes once what's left can carry the load.`,
+          cashDelta: 0,
+          kind: "danger",
+        });
+        continue;
+      }
+      next = without;
+      const warning = short ? ` Warning: without it, ${short}: expect an outage.` : "";
+      if (!sold) {
+        entries.push({ text: `${which} cancelled: its replacement is ready.${warning}`, cashDelta: 0, ...(short && { kind: "danger" as const }) });
+        continue;
+      }
+      const refund = sellBackValue(state.model, s);
+      entries.push({
+        text: `${which} sold back for ${pounds(refund)}: its replacement is ready.${warning}`,
+        cashDelta: refund,
+        category: "infrastructure",
+        ...(short && { kind: "danger" as const }),
+      });
+    }
+    return { state: next, entries };
   }
 
   /** Buys a server: charged at once, and on order until it arrives after the model's readyDays. */
@@ -661,7 +790,7 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
    * Sells a bought server back at the configured share of what it cost, refunded at once. Kit still on order can't
    * be: an order can't be cancelled, so it has to arrive first.
    */
-  function sellServer(state: GameState, id: number): GameState {
+  function sellServer(state: GameState, id: number, now: boolean, rules: RetireRules): GameState {
     if (!buys(state.model)) {
       throw new SimError("not_for_sale", `You don't own servers on ${config.models[state.model].name}, so there's nothing to sell.`);
     }
@@ -674,10 +803,12 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
         { daysLeft },
       );
     }
-    const refund = sellBackValue(state.model, server);
-    const sold = { ...state, servers: state.servers.filter((s) => s.id !== id) };
-    const text = `Sold back ${plural(1, server.size, server.type)} for ${pounds(refund)}`;
-    return finance.chargeNow(sold, [{ text, cashDelta: refund, category: "infrastructure" }]);
+    return retire(state, server, now, rules, (s) => {
+      const refund = sellBackValue(s.model, server);
+      const sold = { ...s, servers: s.servers.filter((x) => x.id !== id) };
+      const text = `Sold back ${plural(1, server.size, server.type)} for ${pounds(refund)}`;
+      return finance.chargeNow(sold, [{ text, cashDelta: refund, category: "infrastructure" }]);
+    });
   }
 
   /** The name of a server on a managed platform: "App instance", "Managed database". */
@@ -915,6 +1046,7 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
       status: s.readyDay <= state.day ? "ready" : "pending",
       readyDay: s.readyDay,
       daysLeft: Math.max(0, s.readyDay - state.day),
+      leavesOn: s.leavesOn ?? null,
       units: shownUnits(unitsOn(state.model, s)),
       unitBoost: s.unitBoost ?? 1,
       apiu: !!s.apiu,
@@ -979,6 +1111,7 @@ export function createServers(config: GameConfig, finance: Finance, racks: Racks
     modelOpsNeeded,
     rentServer,
     cancelServer,
+    leaveDay,
     buyServer,
     sellServer,
     leaveEntries,

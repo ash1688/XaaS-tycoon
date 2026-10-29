@@ -9,8 +9,15 @@ import type { MvpView } from "./mvp.ts";
 import type { MigrationView } from "./migration.ts";
 import type { ServerView, UnitsView } from "./servers.ts";
 import type { FundingView } from "./shares.ts";
+import type { ShortfallView } from "./loan.ts";
+import type { OpsShortfallView } from "./infrastructure.ts";
+import { pounds } from "./finance.ts";
 import { quarterName } from "./payReview.ts";
 import type { DayLog, GameState } from "./state.ts";
+
+/** An ops shortfall in a few words: "1 of 2 needed, capacity cut to 70%". */
+export const opsShortText = (s: OpsShortfallView) =>
+  `${Math.round(s.have * 100) / 100} of ${s.needed} needed, capacity cut to ${Math.round(s.capacityShare * 100)}%`;
 
 /** With this many days of cash left or fewer, time pauses once: a loan or cost cuts can still help. */
 export const LOW_CASH_DAYS = 5;
@@ -56,7 +63,12 @@ export interface PauseViews {
   calendar(state: GameState): CalendarView;
   ipo(state: GameState): IpoView;
   danger(state: GameState): DangerView;
+  shortfall(state: GameState): ShortfallView;
+  opsShortfall(state: GameState): OpsShortfallView | null;
 }
+
+/** A wave of new users stops time only if it brings at least this share of the users there were: 1%. */
+const WAVE_PAUSE_SHARE = 0.01;
 
 export function createPauses(config: GameConfig, views: PauseViews) {
   /** % of capacity in use on the tier that runs out first, or null with no limit (SaaS). */
@@ -83,16 +95,30 @@ export function createPauses(config: GameConfig, views: PauseViews) {
       add("payReview", "pay-review", `Pay review for ${quarterName(after.payReview)}: your staff want to talk about pay`);
     }
 
+    // The first time cash went below £0: the shortfall went on a loan, with how much further it can go.
+    if (after.firstShortfallDay !== null && before.firstShortfallDay === null) {
+      const { room } = views.shortfall(after);
+      const next = after.rescue ? "the company goes into liquidation" : "a vulture VC steps in";
+      add("alert", "shortfall", `Cash went below £0 and the shortfall went on your loan: ${pounds(room)} more and ${next}`);
+    }
+    // An executive walked out after too long unpaid on the pay holiday.
+    const resigned = after.csuite.resigned ?? [];
+    if (resigned.length > (before.csuite.resigned ?? []).length) {
+      const e = resigned.at(-1)!;
+      add("alert", `resigned-${e.role}`, `${e.name} resigned after too long without pay: ${pounds(e.backPay)} back pay went onto the loan`);
+    }
     // Cash ran out and a vulture VC rescued the company: it now owns most of it, and the next cash-out is liquidation.
     if (after.rescue && !before.rescue) {
       add("alert", "rescue", `Cash ran out: a vulture VC rescued the company for ${Math.round(after.rescue.share * 100)}% of it`);
     }
 
     // An event that hurt, found the company short of ops or brought a wave of users to carry, on its first day only.
-    // One with nothing to do is just shown.
+    // One with nothing to do is just shown, as is a wave too small to matter: a nearly full market's last few users
+    // (#289), under WAVE_PAUSE_SHARE of the users there were.
     const yesterday = new Set(views.events(before).map((e) => e.id));
     for (const e of views.events(after)) {
-      if ((e.hit || e.shortOfOps || e.newUsers > 0) && !yesterday.has(e.id)) add("event", `event-${e.id}`, e.name);
+      const wave = e.newUsers > 0 && e.newUsers >= WAVE_PAUSE_SHARE * before.users;
+      if ((e.hit || e.shortOfOps || wave) && !yesterday.has(e.id)) add("event", `event-${e.id}`, e.name);
     }
     if (after.outageDays > before.outageDays && !reasons.some((r) => r.kind === "event")) {
       add("event", "outage", "Outage: the service went down");
@@ -114,6 +140,15 @@ export function createPauses(config: GameConfig, views: PauseViews) {
     if (warned && views.danger(before).warning?.event !== warned.event) add("alert", `warning-${warned.event}`, `Warning: ${warned.name} may be coming`);
 
     // Alerts: things getting worse that a decision can fix.
+    // Too few ops for the servers running, on the day it starts to cut capacity (#259).
+    const opsShort = views.opsShortfall(after);
+    if (opsShort && !views.opsShortfall(before)) {
+      add("alert", "ops-shortfall", `Short of ops: ${opsShortText(opsShort)}`);
+    }
+    // The first time demand went over PaaS autoscaling's maximum (#261).
+    if (after.autoscale?.maxHitDay !== undefined && before.autoscale?.maxHitDay === undefined) {
+      add("alert", "autoscale-max", "Demand went over your autoscaling maximum: raise the maximum, or set more instances by hand");
+    }
     const use = capacityUse(after);
     const useBefore = capacityUse(before);
     if (use !== null && use > 100 && (useBefore === null || useBefore <= 100)) add("alert", "capacity", `Over capacity: ${use}% in use`);

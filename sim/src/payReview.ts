@@ -305,7 +305,7 @@ export function createPayReview(
     const text =
       `Pay review for ${quarterName(review)}: your staff want to talk about pay, with the rise from day ${review.startDay}. ` +
       `Inflation is ${risePercent(inflation)}, and they're asking for ${risePercent(maxAsk)}. ` +
-      `Make them an offer from ${risePercent(minOffer)}: the day can't go on until it's settled.` +
+      `Make them an offer from ${risePercent(minOffer)} in cash, with any schemes on top: the day can't go on until it's settled.` +
       (lead.headOfPeople ? "" : " You're dealing with staff directly: with no head of people, they're stricter and want cash.");
     return { state: { ...state, payReview: review, payReviewRng: rng2 }, entries: [{ text, cashDelta: 0, kind: "staff" }] };
   }
@@ -345,10 +345,11 @@ export function createPayReview(
     // like every rise, so staff's counters move in the same steps.
     const value = roundRise(cash + worth);
     const withSchemes = worth > 0 ? ", with schemes as staff value them," : "";
-    if (value < review.minOffer) {
+    // The least applies to the cash (#293): schemes come on top of it, not in place of it.
+    if (cash < review.minOffer) {
       throw new SimError(
         "offer_too_low",
-        `The least you can offer${withSchemes} is ${risePercent(review.minOffer)}: inflation (${risePercent(review.inflation)}) less a point. Less would be an insult.`,
+        `The least you can offer in cash is ${risePercent(review.minOffer)}: inflation (${risePercent(review.inflation)}) less a point. Schemes come on top of it, not in place of it. Less would be an insult.`,
         { minOffer: review.minOffer },
       );
     }

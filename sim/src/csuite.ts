@@ -84,6 +84,8 @@ export interface CandidateView {
   /** Their ask with the cap empty. */
   baseEquity: number;
   effects: ExecutiveEffectView[];
+  /** What hiring them would do to the runway, in words: advisory, never a refusal. Empty when it can't be said. */
+  runway: string;
 }
 
 export interface ExecutiveView {
@@ -114,6 +116,8 @@ export interface CsuiteRoleView {
 /** The C-suite for the C-suite page: every role, and the equity cap. */
 export interface CsuiteView {
   roles: CsuiteRoleView[];
+  /** Why no executive can be appointed now (a pay holiday), or null. */
+  appointBlocked: string | null;
   /** The most the C-suite's equity can come to, what it has taken and what's left (0.1 = 10%). */
   equityCap: number;
   equityUsed: number;
@@ -122,9 +126,9 @@ export interface CsuiteView {
   dailyPay: number;
   /**
    * The board's pay holiday: the day it began while cash is low (no executive is paid), or null; and the days of
-   * running costs in the bank it starts below and ends above.
+   * running costs in the bank it starts below and ends above. Pay skipped is owed: `owed` is still to pay back (#290).
    */
-  payHoliday: { since: number | null; startDays: number; endDays: number };
+  payHoliday: { since: number | null; startDays: number; endDays: number; backPayDays: number; walkoutDays: number; walkoutEvery: number; owed: number };
 }
 
 /** The C-suite's shortlists for a new game: each role's candidates drawn from their ranges on the game's seed. */
@@ -206,7 +210,9 @@ export function createCsuite(config: GameConfig) {
   const isOpen = (state: GameState, role: CsuiteRole) => openDay(state, role) !== null;
 
   /** The share of the company the C-suite has taken in equity so far, at the shares it took on each hiring day. */
-  const equityUsed = (state: GameState) => state.csuite.hired.reduce((sum, e) => sum + e.equity, 0);
+  // Executives who resigned keep their shares, so their equity still counts against the cap.
+  const equityUsed = (state: GameState) =>
+    [...state.csuite.hired, ...(state.csuite.resigned ?? [])].reduce((sum, e) => sum + e.equity, 0);
 
   /** A candidate's ask now: their base ask × the share of the cap still unused, to a hundredth of a percent. */
   function askNow(state: GameState, candidate: Candidate): number {
@@ -276,7 +282,8 @@ export function createCsuite(config: GameConfig) {
     }
   }
 
-  function csuiteView(state: GameState): CsuiteView {
+  /** `runwayNote` says what hiring a candidate would do to the runway (see Sim's csuite view). */
+  function csuiteView(state: GameState, runwayNote: (role: CsuiteRole, candidateId: string) => string = () => ""): CsuiteView {
     const roles = CSUITE_ROLES.map((role): CsuiteRoleView => {
       const executive = executiveIn(state, role);
       const day = openDay(state, role);
@@ -304,6 +311,7 @@ export function createCsuite(config: GameConfig) {
                   newShares: equity > 0 ? newSharesFor(state, equity) : 0,
                   baseEquity: c.equity,
                   effects: effects(role, c.strength),
+                  runway: runwayNote(role, c.id),
                 };
               }),
       };
@@ -312,11 +320,12 @@ export function createCsuite(config: GameConfig) {
     const { equityCap } = config.csuite;
     return {
       roles,
+      appointBlocked: appointBlocked(state),
       equityCap,
       equityUsed: Math.round(used * 10_000) / 10_000,
       equityLeft: Math.round(Math.max(0, equityCap - used) * 10_000) / 10_000,
       dailyPay: dailyPay(state),
-      payHoliday: { since: state.csuite.payHolidaySince ?? null, ...config.csuite.payHoliday },
+      payHoliday: { since: state.csuite.payHolidaySince ?? null, ...config.csuite.payHoliday, owed: state.csuite.payOwed ?? 0 },
     };
   }
 
@@ -331,6 +340,8 @@ export function createCsuite(config: GameConfig) {
       throw new SimError("role_filled", `${filled.name} is your ${roleName(role)}: the C-suite is hired for good, so the role can't be filled again.`);
     }
     if (!isOpen(state, role)) throw new SimError("role_not_open", `You can't hire a ${roleName(role)} yet. ${STAGE_TEXT[STAGES[role]]}`);
+    const blocked = appointBlocked(state);
+    if (blocked) throw new SimError("pay_holiday", blocked);
     const candidate = state.csuite.shortlists[role].find((c) => c.id === candidateId);
     if (!candidate) throw new SimError("unknown_candidate", `Pick a candidate from the ${roleName(role)} shortlist.`);
     const equity = askNow(state, candidate);
@@ -354,6 +365,16 @@ export function createCsuite(config: GameConfig) {
     return { ...state, shareholders, tiers, csuite: { ...state.csuite, hired: [...state.csuite.hired, executive] } };
   }
 
+  /**
+   * Why no executive can be appointed now, or null: not while the board is on a pay holiday, on any difficulty, so a
+   * walkout can't be filled straight back. Staff hiring is unaffected.
+   */
+  function appointBlocked(state: GameState): string | null {
+    if (!onPayHoliday(state)) return null;
+    const { endDays } = config.csuite.payHoliday;
+    return `The C-suite is on a pay holiday: no new executives until they're paid. Get cash back above ${endDays} days of running costs first, and the holiday ends.`;
+  }
+
   /** What the executives cost a day: their salaries, fixed for good. */
   const dailyPay = (state: GameState) => state.csuite.hired.reduce((sum, e) => sum + e.salary, 0);
 
@@ -365,27 +386,118 @@ export function createCsuite(config: GameConfig) {
 
   const onPayHoliday = (state: GameState) => (state.csuite.payHolidaySince ?? null) !== null;
 
+  /** Charges applied to cash and spend between days: Finance's chargeNow. */
+  type Charge = (state: GameState, entries: LogEntry[]) => GameState;
+
+  /** Pays the C-suite back pay still owed, all of it or `most`, from cash. */
+  function payBack(state: GameState, charge: Charge, most: number, text: (paid: number, left: number) => string) {
+    const owed = state.csuite.payOwed ?? 0;
+    const paid = Math.min(owed, Math.max(0, Math.floor(most)));
+    if (paid <= 0) return { state, entries: [] };
+    const entries: LogEntry[] = [{ text: text(paid, owed - paid), cashDelta: -paid, category: "staff" }];
+    return { state: charge({ ...state, csuite: { ...state.csuite, payOwed: owed - paid } }, entries), entries };
+  }
+
   /**
-   * After a day: the board starts a pay holiday when cash falls below startDays of `dailyCosts` (running costs with
-   * their pay), and ends it once cash is back above endDays of them.
+   * After a day: the pay skipped today on the board's pay holiday is owed (#290). The board starts a pay holiday when
+   * cash falls below startDays of `dailyCosts`, and ends it once cash is back above endDays of the same figure: running
+   * costs with the executives' pay, without Campaign spend. Off the holiday, back pay owed is paid in instalments as
+   * cash recovers: each day the cash above startDays of them spread over backPayDays, so paying it never takes cash
+   * below the line that starts another. Once the game has ended, what's still owed comes off cash.
    */
-  function payHolidayDay(state: GameState, dailyCosts: number): { state: GameState; entries: LogEntry[] } {
-    const { startDays, endDays } = config.csuite.payHoliday;
-    if (startDays <= 0 || state.csuite.hired.length === 0 || dailyCosts <= 0) return { state, entries: [] };
+  function payHolidayDay(state: GameState, dailyCosts: number, charge: Charge): { state: GameState; entries: LogEntry[] } {
+    const { startDays, endDays, backPayDays } = config.csuite.payHoliday;
     const pay = dailyPay(state);
+    const skipped: GameState = onPayHoliday(state)
+      ? { ...state, csuite: { ...state.csuite, payOwed: (state.csuite.payOwed ?? 0) + pay } }
+      : state;
+    // A company in liquidation pays no one; one that finished settles what it owes.
+    if (state.status === "liquidated") return { state: skipped, entries: [] };
+    if (state.status !== "playing") return settleBackPay(skipped, charge);
+    // With nobody hired a holiday can't start, but one that's on still ends as cash recovers: otherwise a board that
+    // walked out could never be appointed again.
+    if (startDays <= 0 || dailyCosts <= 0 || (state.csuite.hired.length === 0 && !onPayHoliday(state))) return { state: skipped, entries: [] };
     if (!onPayHoliday(state) && state.cash < startDays * dailyCosts) {
       return {
-        state: { ...state, csuite: { ...state.csuite, payHolidaySince: state.day } },
-        entries: [{ text: `Cash is low: your C-suite will forgo their ${pounds(pay)} a day of pay from tomorrow until the company has ${endDays} days of running costs in the bank.`, cashDelta: 0, kind: "staff" }],
+        state: { ...skipped, csuite: { ...skipped.csuite, payHolidaySince: state.day } },
+        entries: [{ text: `Cash is low: your C-suite will forgo their ${pounds(pay)} a day of pay from tomorrow until the company has ${endDays} days of running costs in the bank. What they forgo is owed, and paid back once cash recovers.`, cashDelta: 0, kind: "staff" }],
       };
     }
-    if (onPayHoliday(state) && state.cash >= endDays * dailyCosts) {
-      return {
-        state: { ...state, csuite: { ...state.csuite, payHolidaySince: null } },
-        entries: [{ text: `Cash has recovered: your C-suite's ${pounds(pay)} a day of pay starts again tomorrow.`, cashDelta: 0, kind: "staff" }],
-      };
+    const ended = onPayHoliday(state) && state.cash >= endDays * dailyCosts;
+    if (onPayHoliday(state) && !ended) return { state: skipped, entries: [] };
+    const off: GameState = ended ? { ...skipped, csuite: { ...skipped.csuite, payHolidaySince: null } } : skipped;
+    const back = payBack(off, charge, (state.cash - startDays * dailyCosts) / Math.max(1, backPayDays), (paid, left) =>
+      `Back pay: paid ${pounds(paid)} to the C-suite, ${left > 0 ? `${pounds(left)} still owed` : "all of it now"}`,
+    );
+    const entries: LogEntry[] = ended
+      ? [
+          {
+            text: pay > 0
+              ? `Cash has recovered: your C-suite's ${pounds(pay)} a day of pay starts again tomorrow.`
+              : "Cash has recovered: the pay holiday is over, and you can appoint executives again.",
+            cashDelta: 0,
+            kind: "staff",
+          },
+        ]
+      : [];
+    return { state: back.state, entries: [...entries, ...back.entries] };
+  }
+
+  /** "your CFO", "your head of ops". */
+  const yourRole = (role: CsuiteRole) => {
+    const name = roleName(role);
+    return `your ${/^[A-Z]{2}/.test(name) ? name : name[0]!.toLowerCase() + name.slice(1)}`;
+  };
+
+  /**
+   * After a day on the board's pay holiday: once it has gone more than walkoutDays unpaid in a row, the most recently
+   * hired executive resigns, then one more every walkoutEvery days while it lasts. Ending the holiday resets the count.
+   * A resigner's share of the back pay owed (by their salary) is due at once: `backPay` is its charge, for the bank to
+   * pay onto the loan. Their shares stay theirs; their effects go with them, and the role opens again with the same
+   * shortlist, so it can always be filled (they're back on it, their back pay settled). Five days before the first, a
+   * warning.
+   */
+  function walkoutDay(state: GameState): { state: GameState; entries: LogEntry[]; backPay: LogEntry | null } {
+    const { walkoutDays, walkoutEvery } = config.csuite.payHoliday;
+    const since = state.csuite.payHolidaySince ?? null;
+    const hired = state.csuite.hired;
+    const none = { state, entries: [], backPay: null };
+    if (since === null || walkoutDays <= 0 || hired.length === 0 || state.status !== "playing") return none;
+    const unpaid = state.day - since;
+    const every = Math.max(1, Math.round(walkoutEvery));
+    if (unpaid === walkoutDays - 5) {
+      const when = every === 7 ? "each week" : `every ${every} days`;
+      const text = `The C-suite has gone ${unpaid} days unpaid; from day ${walkoutDays} one will resign ${when} until they're paid.`;
+      return { state, entries: [{ text, cashDelta: 0, kind: "staff" }], backPay: null };
     }
-    return { state, entries: [] };
+    if (unpaid <= walkoutDays || (unpaid - walkoutDays - 1) % every !== 0) return none;
+    // The most recently hired goes first: the latest in the list on a tie.
+    const leaver = hired.reduce((last, e) => (e.day >= last.day ? e : last));
+    const owed = state.csuite.payOwed ?? 0;
+    const pay = dailyPay(state);
+    const backPay = pay > 0 ? Math.min(owed, Math.round((owed * leaver.salary) / pay)) : 0;
+    const csuite = {
+      ...state.csuite,
+      hired: hired.filter((e) => e !== leaver),
+      resigned: [...(state.csuite.resigned ?? []), { ...leaver, leftDay: state.day, backPay }],
+      payOwed: owed - backPay,
+    };
+    return {
+      state: { ...state, csuite },
+      entries: [
+        {
+          text: `${leaver.name}, ${yourRole(leaver.role)}, has resigned after ${unpaid} days without pay. ${pounds(backPay)} back pay is now owed to the bank.`,
+          cashDelta: 0,
+          kind: "staff",
+        },
+      ],
+      backPay: backPay > 0 ? { text: `Back pay to ${leaver.name} on resigning`, cashDelta: -backPay, category: "staff" } : null,
+    };
+  }
+
+  /** Once the game has ended, the back pay still owed to the C-suite comes off cash. */
+  function settleBackPay(state: GameState, charge: Charge): { state: GameState; entries: LogEntry[] } {
+    return payBack(state, charge, Infinity, (paid) => `The game is over: the ${pounds(paid)} of back pay owed to your C-suite comes off your cash`);
   }
 
   /** A line for each role that opened over a day: the shortlist is ready. */
@@ -404,7 +516,7 @@ export function createCsuite(config: GameConfig) {
   const hiredText = (e: Executive) =>
     `${e.name} joined as ${roleName(e.role)} for ${pounds(e.salary)} a day${e.shares ? ` and ${count.format(e.shares)} new shares (${percent(e.equity)})` : ""}.`;
 
-  return { openDay, isOpen, equityUsed, askNow, csuiteView, hire, dailyPay, payEntries, payHolidayDay, openedEntries, hiredText };
+  return { openDay, isOpen, equityUsed, askNow, csuiteView, hire, dailyPay, payEntries, payHolidayDay, walkoutDay, settleBackPay, openedEntries, hiredText };
 }
 
 export type CsuiteModule = ReturnType<typeof createCsuite>;

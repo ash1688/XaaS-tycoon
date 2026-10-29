@@ -31,13 +31,22 @@ async function hire(role: CsuiteRole, candidate: string) {
     <p v-if="csuite.payHoliday.since !== null" class="pay-holiday" role="status" data-testid="csuite-pay-holiday">
       <strong>Pay holiday since day {{ csuite.payHoliday.since }}.</strong> Cash is low, so your C-suite is forgoing its
       {{ formatCash(csuite.dailyPay) }} a day of pay until you have {{ csuite.payHoliday.endDays }} days of running
-      costs in the bank.
+      costs in the bank. It's owed: {{ formatCash(csuite.payHoliday.owed) }} of back pay so far.
+    </p>
+    <p v-else-if="csuite.payHoliday.owed > 0" class="pay-holiday" data-testid="csuite-back-pay">
+      {{ formatCash(csuite.payHoliday.owed) }} of back pay still owed from the pay holiday: paid a little each day as cash
+      recovers, from the cash above {{ csuite.payHoliday.startDays }} days of running costs spread over
+      {{ csuite.payHoliday.backPayDays }} days. Anything left when the game ends comes off your cash.
     </p>
     <p v-else-if="csuite.dailyPay" data-testid="csuite-pay">C-suite pay: {{ formatCash(csuite.dailyPay) }} a day.</p>
     <p v-if="csuite.payHoliday.startDays > 0 && csuite.payHoliday.since === null" class="muted" data-testid="csuite-pay-holiday-rule">
       If cash falls below {{ csuite.payHoliday.startDays }} days of running costs, the board forgoes its pay until
-      there are {{ csuite.payHoliday.endDays }} days' worth in the bank. Pay it misses isn't owed later.
+      there are {{ csuite.payHoliday.endDays }} days' worth in the bank (running costs with C-suite pay, leaving out
+      Campaigns). What it misses is owed, and paid back once cash recovers. After
+      {{ csuite.payHoliday.walkoutDays }} days unpaid in a row, one executive resigns every
+      {{ csuite.payHoliday.walkoutEvery }} days until they're paid, and the bank pays their back pay onto your loan. No new executives can be appointed while it's on.
     </p>
+    <p v-if="csuite.appointBlocked" class="pay-holiday" data-testid="csuite-appoint-blocked">{{ csuite.appointBlocked }}</p>
     <div v-for="r in open" :key="r.role" class="role" :data-testid="`csuite-${r.role}`">
       <h3>{{ r.name }}</h3>
       <p class="muted">{{ r.blurb }}</p>
@@ -67,7 +76,10 @@ async function hire(role: CsuiteRole, candidate: string) {
             <tr v-for="c in r.shortlist" :key="c.id" :data-testid="`candidate-${c.id}`">
               <th scope="row">{{ c.name }}</th>
               <td>{{ Math.round(c.strength * 100) }}%</td>
-              <td>{{ formatCash(c.salary) }} a day</td>
+              <td>
+                {{ formatCash(c.salary) }} a day
+                <small v-if="c.runway" class="muted runway-note" data-testid="candidate-runway">{{ c.runway }}</small>
+              </td>
               <td>
                 {{ c.equity ? formatShare(c.equity) : "None" }}
                 <span v-if="c.newShares" class="muted">({{ c.newShares.toLocaleString("en-GB") }} new shares)</span>
@@ -79,7 +91,13 @@ async function hire(role: CsuiteRole, candidate: string) {
                 <span v-else class="muted">No effect on the business</span>
               </td>
               <td class="hire">
-                <button type="button" :disabled="game.busy || game.over" data-testid="hire-executive" @click="hire(r.role, c.id)">
+                <button
+                  type="button"
+                  :disabled="game.busy || game.over || !!csuite.appointBlocked"
+                  :title="csuite.appointBlocked ?? undefined"
+                  data-testid="hire-executive"
+                  @click="hire(r.role, c.id)"
+                >
                   Hire
                 </button>
               </td>
@@ -108,6 +126,9 @@ async function hire(role: CsuiteRole, candidate: string) {
 .effects {
   margin: 0;
   padding-left: 1.1rem;
+}
+.runway-note {
+  display: block;
 }
 .shortlist td.hire {
   white-space: nowrap;

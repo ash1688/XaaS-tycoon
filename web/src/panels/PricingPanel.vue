@@ -4,6 +4,7 @@ import type { PricePreviewView } from "@xaas/server/api-types";
 import { api, formatCash, formatCount, formatPrice, formatRate } from "../api";
 import { days, useGame } from "../game";
 import AppModal from "../components/AppModal.vue";
+import BandChart from "../components/BandChart.vue";
 import WaveChart from "../components/WaveChart.vue";
 
 // Pricing: what each paying user pays a month, and what that brings in a day. The price is changed in a modal, with
@@ -36,6 +37,21 @@ const priceNote = computed(() => {
   return ratio > 1 ? `${percent}% above the fair price.` : `${percent}% below the fair price.`;
 });
 const lockDaysLeft = computed(() => game.company?.priceLockDaysLeft ?? 0);
+// From IPO approval to the bell the price can't change at all (#257).
+const ipoLocked = computed(() => game.company?.ipo.status === "approved");
+// The fair price moves with a quarter of each pay review's inflation (#251): why, in words, once it has.
+const fairMoved = computed(() => {
+  const f = game.company?.fairPriceView;
+  if (!f || f.rise <= 0) return "";
+  const last = f.lastInflation === null ? "" : `; the last pay review's inflation was ${formatRate(f.lastInflation)}`;
+  return `Up ${formatRate(Math.round(f.rise * 10_000) / 10_000)} from ${formatPrice(f.baseFairPrice)}, by a quarter of each pay review's inflation${last}`;
+});
+// At or below the fair price, more free users start paying each day.
+const atOrBelowFair = computed(() => {
+  const c = game.company;
+  if (!c) return false;
+  return c.payments ? c.payments.monthly <= c.payments.fairMonthly : c.price <= c.fairPrice;
+});
 
 // The live preview: what the draft price would do, fetched from the sim a moment after the student stops typing.
 // Only the latest request's answer is shown, so a slow one can't overwrite a newer one.
@@ -213,6 +229,10 @@ async function save() {
     formError.value = `The highest price you can set is ${formatCash(maxPrice.value)} a month.`;
     return;
   }
+  if (ipoLocked.value) {
+    formError.value = "Your price is locked from your IPO's approval until the opening bell.";
+    return;
+  }
   if (lockDaysLeft.value) {
     formError.value = `Your price is locked for ${days(lockDaysLeft.value)} more.`;
     return;
@@ -230,14 +250,14 @@ async function save() {
     <div class="row-between panel-head">
       <h2 id="pricing-heading">Price</h2>
       <button type="button" :disabled="game.busy || game.over" aria-haspopup="dialog" @click="openModal">
-        {{ lockDaysLeft ? "Preview a price" : "Change price" }}
+        {{ lockDaysLeft || ipoLocked ? "Preview a price" : "Change price" }}
       </button>
     </div>
     <div v-if="payments" class="stats">
       <div class="stat">
         <span class="label">Monthly fee</span>
         <span class="value" data-testid="price">{{ formatPrice(payments.fee) }}</span>
-        <small>Fair {{ formatPrice(payments.fairFee) }}</small>
+        <small data-testid="fair-price-moved">Fair {{ formatPrice(payments.fairFee) }}{{ fairMoved ? ` · ${fairMoved}` : "" }}</small>
       </div>
       <div class="stat">
         <span class="label">Transaction fee</span>
@@ -260,7 +280,7 @@ async function save() {
         <div class="stat">
           <span class="label">Fair price</span>
           <span class="value" data-testid="fair-price">{{ formatPrice(game.company.fairPrice) }}</span>
-          <small>What users think it's worth</small>
+          <small data-testid="fair-price-moved">{{ fairMoved || "What users think it's worth" }}</small>
         </div>
       </template>
       <div class="stat">
@@ -270,8 +290,8 @@ async function save() {
       </div>
       <div class="stat">
         <span class="label">Price lock</span>
-        <span class="value" data-testid="price-lock">{{ lockDaysLeft ? days(lockDaysLeft) : "Unlocked" }}</span>
-        <small>{{ lockDaysLeft ? "until you can change it again" : "You can change it now" }}</small>
+        <span class="value" data-testid="price-lock">{{ ipoLocked ? "Until the bell" : lockDaysLeft ? days(lockDaysLeft) : "Unlocked" }}</span>
+        <small>{{ ipoLocked ? "Locked from your IPO's approval" : lockDaysLeft ? "until you can change it again" : "You can change it now" }}</small>
       </div>
     </div>
     <div
@@ -296,6 +316,9 @@ async function save() {
       Each paying user pays a day's share of the monthly price: {{ formatPrice(game.company.price) }} a month is
       {{ formatPrice(Math.round((game.company.price / 30) * 100) / 100) }} a day. Free users pay nothing. Charge more than
       the fair price and fewer people sign up, and fewer of those who do will pay.
+    </p>
+    <p v-if="atOrBelowFair" class="muted" data-testid="price-conversion-note">
+      At or below the fair price, more of your free users start paying each day.
     </p>
   </section>
 
@@ -348,8 +371,13 @@ async function save() {
       </p>
       <p v-else :id="`${id}-hint`" class="muted price-hint" data-testid="fair-price-hint">
         Fair price for {{ game.productName(game.company!.productType).toLowerCase() }}:
-        <strong>{{ formatPrice(game.company!.fairPrice) }}</strong> a month. You can charge up to
-        {{ formatCash(maxPrice) }}.
+        <strong>{{ formatPrice(game.company!.fairPrice) }}</strong> a month<template v-if="fairMoved">
+          ({{ fairMoved.charAt(0).toLowerCase() + fairMoved.slice(1) }})</template
+        >. You can charge up to {{ formatCash(maxPrice) }}.
+      </p>
+      <p v-if="ipoLocked" class="price-locked" data-testid="price-ipo-locked-note">
+        <span class="badge">Locked</span> Your IPO is approved, so your price is locked until the opening bell: investors
+        are buying the company as it stands.
       </p>
       <p v-if="lockDaysLeft" class="price-locked" data-testid="price-locked-note">
         <span class="badge">Locked</span> You changed your price recently, so it's locked for
@@ -413,7 +441,15 @@ async function save() {
               </div>
             </template>
           </div>
+          <p v-if="preview.noWave" class="muted" data-testid="price-no-wave">{{ preview.noWave }}</p>
           <WaveChart :days="preview.days" :direction="preview.direction === 'rise' ? 'rise' : 'cut'" />
+          <BandChart :bands="preview.bands" />
+          <p class="muted" data-testid="price-expected">
+            Customers expect {{ formatPrice(preview.expectedPrice) }}: a cut counts from it, and it moves halfway to your
+            price every {{ preview.expectedPriceDays }} days. A rise counts from {{ formatPrice(preview.rememberedPrice) }},
+            the lowest price of the last {{ preview.priceMemoryDays }} days.
+            <template v-if="preview.direction === 'rise'">Those who grumble online send new users to your rivals while the backlash lasts.</template>
+          </p>
           <p v-if="preview.direction === 'rise'" class="muted" data-testid="preview-reaction">
             Price reaction: {{ sharePercent(preview.reaction) }} of paying users. That's each customer type's reaction
             weighted by its share of users:
@@ -459,7 +495,7 @@ async function save() {
       <p v-if="formError || game.error" class="error" role="alert">{{ formError || game.error }}</p>
       <p class="muted">The new price applies from the next day you play.</p>
       <div class="confirm-buttons">
-        <button type="submit" :disabled="game.busy || lockDaysLeft > 0" data-testid="save-price">Set price</button>
+        <button type="submit" :disabled="game.busy || lockDaysLeft > 0 || ipoLocked" data-testid="save-price">Set price</button>
         <button type="button" class="ghost" @click="open = false">Cancel</button>
       </div>
     </form>

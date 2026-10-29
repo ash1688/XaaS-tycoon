@@ -4,6 +4,7 @@ import { mvpDoneBy, mvpStatus } from "./mvp.ts";
 import type { Pricing } from "./pricing.ts";
 import type { Servers, UnitsView } from "./servers.ts";
 import { staffOutput } from "./staff.ts";
+import { CUSTOMER_TYPE_IDS, type CustomerTypeId } from "./config.ts";
 import { SimError, type GameState, type LogEntry } from "./state.ts";
 
 /** Where the company is with its launch, for the Home card. */
@@ -104,6 +105,22 @@ export function createLaunch(
       if (u.cu.capacity <= 0) list.push("No app server: no users can be served");
       if (u.dbu.capacity <= 0) list.push("No database: no users can be served");
     } else if (!setUp(state)) list.push("No capacity: no users can be served");
+    // The grant's uptime clock starts when the ramp ends: kit too small for the launch then breaks it before more can
+    // arrive (#289). On a model whose servers the student sizes (not a managed platform, which autoscales).
+    const kit = config.models[state.model].servers;
+    const grant = state.funding.grant;
+    if (kit && !kit.managed && grant?.status === "accepted" && list.length === 0) {
+      const supported = Math.floor(servers.usersSupported(servers.capacityOn(state, state.day + 1 + rampDays, 1), state));
+      if (supported < launchUsers(state)) {
+        const ready = kit.readyDays ?? 0;
+        const wait = ready <= 0 ? "arrives at once" : `takes ${ready} day${ready === 1 ? "" : "s"} to arrive`;
+        list.push(
+          `Capacity looks short for your launch: your servers serve about ${count.format(supported)} users. Your grant's uptime ` +
+            `clock starts when the ${rampDays}-day ramp ends, allowing ${count.format(grant.maxHoursDown)} hours down, and new kit ` +
+            `${wait}: add servers before you launch, or risk paying the grant back`,
+        );
+      }
+    }
     const needed = servers.opsNeeded(state);
     const ops = staffOutput(config, state, "ops");
     if (needed > 0 && ops < needed) {
@@ -115,30 +132,42 @@ export function createLaunch(
   }
 
   /**
-   * Presses Launch: the company goes live on the next day played, its first users arriving at the end of it. Only once
-   * the MVP is done, and only once. It can go ahead short of servers or ops (see missing).
+   * Presses Launch with the opening price (the fair price with none): the company goes live on the next day played,
+   * its first users arriving at the end of it, and the price holds from now until the usual lock after go-live. Only
+   * once the MVP is done, and only once. It can go ahead short of servers or ops (see missing).
    */
-  function launch(state: GameState): GameState {
+  function launch(state: GameState, price?: number, rate?: number): GameState {
     if (state.launchDay !== null) throw new SimError("already_launched", "You've already launched.");
     if (!mvpDoneBy(state.mvp, state.day)) throw new SimError("mvp_first", "Your MVP isn't done yet: you can launch once it is.");
-    return { ...state, launchDay: state.day + 1 };
+    const launchDay = state.day + 1;
+    return { ...pricing.openingPrice(state, launchDay, price, rate), launchDay };
   }
 
   /**
-   * A ramp day's arrivals, if `day` is one: its share of the launch total, split paid and free like any new users,
-   * logged. An auto launch's first ramp day is kept as go-live.
+   * A ramp day's arrivals, if `day` is one: its share of the launch users, each customer type reacting to the opening
+   * price through the bands (see Pricing.launchBands): joining paying, joining free or not joining. Logged, with who
+   * the joiners were for the customer mix. An auto launch's first ramp day is kept as go-live.
    */
-  function arrive(state: GameState, day: number): { state: GameState; entries: LogEntry[] } {
+  function arrive(state: GameState, day: number): { state: GameState; entries: LogEntry[]; joined: Record<CustomerTypeId, number> | null } {
     const k = rampDayOn(state, day);
-    if (k === 0) return { state, entries: [] };
-    const users = arrivedBy(state, k) - arrivedBy(state, k - 1);
-    const paidUsers = Math.round(users * pricing.paidShareOfNew(state));
+    if (k === 0) return { state, entries: [], joined: null };
+    const coming = arrivedBy(state, k) - arrivedBy(state, k - 1);
+    const bands = pricing.launchBands(state, state.price, state.transactionRate ?? undefined);
+    const share = (t: (typeof bands.types)[number], id: string) => t.bands.find((b) => b.id === id)?.share ?? 0;
+    const joined = Object.fromEntries(
+      bands.types.map((t) => [t.id, coming * t.share * (1 - share(t, "notJoin"))]),
+    ) as Record<CustomerTypeId, number>;
+    const users = Math.round(CUSTOMER_TYPE_IDS.reduce((sum, t) => sum + joined[t], 0));
+    const paidUsers = Math.min(users, Math.round(bands.types.reduce((sum, t) => sum + coming * t.share * share(t, "joinPaid"), 0)));
+    const stayedAway = coming - users;
     const when = rampDays === 1 ? "Launch day" : `Launch, day ${k} of ${rampDays}`;
     const done = k === rampDays && rampDays > 1 ? " That's everyone: normal growth takes over from tomorrow." : "";
-    const text = `${when}: ${count.format(users)} new users arrived, ${count.format(paidUsers)} of them paying.${done}`;
+    const away = stayedAway > 0 ? ` ${count.format(stayedAway)} more looked but didn't join at your price.` : "";
+    const text = `${when}: ${count.format(users)} new users arrived, ${count.format(paidUsers)} of them paying.${away}${done}`;
     return {
       state: { ...state, launchDay: state.launchDay ?? day, users: state.users + users, paidUsers: state.paidUsers + paidUsers },
       entries: [{ text, cashDelta: 0, kind: "launch" }],
+      joined,
     };
   }
 

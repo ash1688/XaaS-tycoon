@@ -164,7 +164,12 @@ export function createEvents(config: GameConfig) {
     const { id, name, description, layer } = event;
     const needed = event.effects[model]?.opsNeeded;
     const result = outcomeFor(event, model, shortOfOps, unpatched);
-    const wave = result.freeUsers ? `${count.format(newUsers)} new free users signed up. ` : "";
+    // The wave only fills the room left in the market: a full market brings nobody, so say why rather than "0".
+    const wave = !result.freeUsers
+      ? ""
+      : newUsers > 0
+        ? `${count.format(newUsers)} new free users signed up. `
+        : "Your market is already full, so nobody new signed up. ";
     const detail = wave + lastingNote(result, productType) + result.detail;
     // What it cost, so it's clear from the explanation alone, not only from the bill.
     const cost = result.cost ? ` It cost ${pounds(result.cost.amount)}: ${result.cost.text[0]!.toLowerCase()}${result.cost.text.slice(1)}.` : "";
@@ -234,7 +239,7 @@ export function createEvents(config: GameConfig) {
   function costEntries(today: EventToday[]): LogEntry[] {
     return today.flatMap(({ event, outcome }): LogEntry[] =>
       outcome.cost
-        ? [{ text: `${event.name}: ${outcome.cost.text}`, cashDelta: -outcome.cost.amount, category: "infrastructure" }]
+        ? [{ text: `${event.name}: ${outcome.cost.text}`, cashDelta: -outcome.cost.amount, category: "infrastructure", oneOff: true }]
         : [],
     );
   }

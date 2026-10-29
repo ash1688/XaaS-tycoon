@@ -74,7 +74,9 @@ const opened = (state: GameState, tier: TierNumber): GameState => {
 function withHistory(state: GameState, days: number, income: number, hoursDown = 0): GameState {
   const last = state.spendByDay.at(-1)!;
   const history = Array.from({ length: days }, (_, i) => ({ ...last, day: state.day - days + i + 1, income, hoursDown }));
-  return { ...state, spendByDay: [...state.spendByDay, ...history] };
+  // In place of the days played they cover, so each day is counted once.
+  const before = state.spendByDay.filter((d) => d.day <= state.day - days);
+  return { ...state, spendByDay: [...before, ...history] };
 }
 
 const tier = (state: GameState, n: TierNumber, s: Sim = sim) => s.tiers(state).find((t) => t.tier === n)!;
@@ -181,8 +183,42 @@ describe("tiers", () => {
     const poor = withHistory({ ...base, users: 8_000 }, 30, 1_500);
     expect(sim.advance(poor).state.tiers.map((t) => t.tier)).toEqual([2]);
     const flaky = withHistory({ ...base, users: 8_000 }, 30, 2_500, 1);
-    expect(tier(flaky, 3).conditions[1]).toMatchObject({ value: 95.83, met: false });
+    expect(tier(flaky, 3).conditions[1]).toMatchObject({ value: 95.8, met: false });
     expect(sim.advance(flaky).state.tiers.map((t) => t.tier)).toEqual([2]);
+  });
+
+  it("measure tier 3's uptime as the status and the IPO do: since launch while under 30 days, never 0% (#285)", () => {
+    // Launched on day 10, played to day 20 with 2 hours down on each of the last 5 days: 11 days since launch.
+    const base = sim.advance(begin("saas"), 3).state;
+    const last = base.spendByDay.at(-1)!;
+    const spendByDay = Array.from({ length: 20 }, (_, i) => ({ ...last, day: i + 1, hoursDown: i >= 15 ? 2 : 0 }));
+    const early: GameState = { ...base, day: 20, launchDay: 10, spendByDay };
+    const expected = 100 * (1 - 10 / (11 * 24));
+    const uptime = tier(early, 3).conditions[1]!;
+    expect(uptime).toMatchObject({ value: Math.round(expected * 10) / 10, met: false });
+    expect(sim.recordUptime(early)).toBeCloseTo(expected, 10);
+    // Before launch there's no record: 100%, not 0%.
+    expect(tier({ ...early, launchDay: null }, 3).conditions[1]!.value).toBe(100);
+    expect(tier({ ...early, spendByDay: spendByDay.map((d) => ({ ...d, hoursDown: 0 })) }, 3).conditions[1]).toMatchObject({ value: 100, met: true });
+  });
+
+  it("show the same uptime in tier 3, the status and the IPO check on every day of a real game (#285)", () => {
+    // A company that never scales has outages early on, under 30 days into trading.
+    const full = createSim(defaultConfig);
+    const noScaling = STRATEGIES.find((s) => s.id === "no-scaling")!;
+    let state = full.newGame({ companyName: "Tiered Co", productType: "social", model: "iaas", seed: 1 });
+    const seen: number[] = [];
+    for (let i = 0; i < 60; i++) {
+      state = full.tick(playDay(full, state, noScaling)).state;
+      const record = Math.round(full.recordUptime(state) * 10) / 10;
+      expect(tier(state, 3, full).conditions[1]!.value).toBe(record);
+      if (state.launchDay === null) continue;
+      expect(record).toBeGreaterThan(0);
+      const ipo = full.ipo(state).conditions.find((c) => c.id === "uptime")!;
+      expect(ipo.now.startsWith(`${record}%`)).toBe(true);
+      seen.push(record);
+    }
+    expect(Math.min(...seen)).toBeLessThan(99);
   });
 
   it("open tier 4 once an angel investor's money is taken, after tiers 2 and 3", () => {
@@ -193,6 +229,37 @@ describe("tiers", () => {
     expect(tier(state, 4).conditions[0]).toMatchObject({ met: true });
     const ready = withHistory({ ...state, users: 15_000 }, 30, 3_000);
     expect(sim.advance(ready).state.tiers.map((t) => t.tier)).toEqual([2, 3, 4]);
+  });
+
+  it("open tier 4 on Hard on a revenue milestone too, with no investor, but not on Easy or Normal (#265)", () => {
+    const any = createSim({ ...quiet, allowedDifficulties: { easy: 1, normal: 1, hard: 1 } });
+    const { tier4 } = tierConfig;
+    expect(tier4).toEqual({ dailyIncome: 2_500, days: 30 });
+    const at = (difficulty: "easy" | "normal" | "hard", income: number) => {
+      const state = any.newGame({ companyName: "Tiered Co", productType: "ecommerce", model: "saas", seed: 7, difficulty });
+      // Tiers 2 and 3 already reached, so only tier 4's condition is in question.
+      return withHistory({ ...state, tiers: [{ tier: 2, day: 1 }, { tier: 3, day: 1 }] }, tier4.days, income);
+    };
+    const hard = at("hard", tier4.dailyIncome);
+    expect(hard.investors.angel).toBeNull();
+    expect(tier(hard, 4, any).conditions).toEqual([
+      expect.objectContaining({ label: "An angel investor's money taken", met: false }),
+      expect.objectContaining({ label: "Every IPO condition met", met: false }),
+      { label: `Income a day, last ${tier4.days} days`, value: tier4.dailyIncome, target: tier4.dailyIncome, unit: "pounds", met: true },
+    ]);
+    // The day played joins the window, so a margin over the target carries it.
+    expect(any.advance(at("hard", tier4.dailyIncome + 200)).state.tiers.map((t) => t.tier)).toContain(4);
+    // Short of it, it stays shut.
+    expect(any.advance(at("hard", tier4.dailyIncome - 100)).state.tiers.map((t) => t.tier)).not.toContain(4);
+    // Easy and Normal are unchanged: no revenue route.
+    for (const d of ["easy", "normal"] as const) {
+      expect(tier(at(d, tier4.dailyIncome), 4, any).conditions).toHaveLength(2);
+      expect(any.advance(at(d, 10 * tier4.dailyIncome)).state.tiers.map((t) => t.tier)).not.toContain(4);
+    }
+    // The refusal for a locked tier 4 item says so on Hard.
+    expect(() => any.applyAction(inPhase(at("hard", 0), "grow"), { type: "buyAddon", feature: "recommendations" })).toThrow(
+      /or once your last 30 days average £2,500 a day in income/,
+    );
   });
 
   it("are kept through a migration, with the product features built", () => {
@@ -327,22 +394,125 @@ describe("model benefits", () => {
   };
 
   it("managed monitoring halves PaaS outages", () => {
-    const busy = paasWith(Math.round((sim.managed(paasWith(0))!.instanceUnits * 1.5) / defaultConfig.productTypes.ecommerce.demand.cuPerUser));
+    // A maximum of the one instance, so autoscaling can't burst past the outage.
+    const busy = act(
+      paasWith(Math.round((sim.managed(paasWith(0))!.instanceUnits * 1.5) / defaultConfig.productTypes.ecommerce.demand.cuPerUser)),
+      { type: "setAutoscaleMax", max: 1 },
+    );
     const hours = sim.advance(busy).state.downtimeHours - busy.downtimeHours;
     expect(hours).toBeGreaterThan(1);
     const watched = act(busy, { type: "buyBenefit", benefit: "managedMonitoring" });
     expect(sim.advance(watched).state.downtimeHours - busy.downtimeHours).toBe(Math.ceil(hours / 2));
   });
 
-  it("managed autoscaling sets tomorrow's PaaS instances to the day's demand plus a quarter", () => {
+  describe("PaaS autoscaling (#261)", () => {
     const { instanceUnits } = sim.managed(paasWith(0))!;
-    const busy = paasWith(Math.round((instanceUnits * 3) / defaultConfig.productTypes.ecommerce.demand.cuPerUser));
-    const day = sim.advance(act(busy, { type: "buyBenefit", benefit: "paasAutoscaling" }));
-    const wanted = Math.ceil((day.state.demand.cu * 1.25) / instanceUnits);
-    expect(sim.managed(day.state)!.instances).toBe(wanted);
-    expect(texts(day.log)).toContain(`Managed autoscaling: 1 → ${wanted} app instances for tomorrow.`);
-    // Without it, the count stays where the student set it.
-    expect(sim.managed(sim.advance(busy).state)!.instances).toBe(1);
+    /** A PaaS shop whose users need about `n` instances' CU. */
+    const needing = (n: number) => paasWith(Math.round((instanceUnits * n) / defaultConfig.productTypes.ecommerce.demand.cuPerUser));
+    const autoscaled = (state: GameState, ...actions: Action[]) => act(state, { type: "buyBenefit", benefit: "paasAutoscaling" }, ...actions);
+    const instances = (state: GameState) => sim.managed(state)!.instances;
+    const outages = (log: DayLog[]) => log.flatMap((d) => d.entries.filter((e) => e.kind === "outage"));
+    const bursts = (log: DayLog[]) => log.flatMap((d) => d.entries.filter((e) => e.text.startsWith("Autoscaling: ")));
+
+    it("keeps a baseline of 1.5× yesterday's demand with Managed autoscaling, never below the instances set by hand", () => {
+      // Set by hand to 8, more than the baseline of about 1.5 × 3: kept as the minimum overnight, not reset.
+      const high = sim.advance(autoscaled(needing(3), { type: "setInstances", count: 8 }));
+      expect(instances(high.state)).toBe(8);
+      expect(sim.autoscale(high.state)).toMatchObject({ instances: 8, min: 8 });
+      // Set to 2, under it: the platform raises it to the baseline for tomorrow.
+      const low = sim.advance(act(high.state, { type: "setInstances", count: 2 }));
+      const wanted = Math.ceil((low.state.demand.cu * 1.5) / instanceUnits);
+      expect(wanted).toBeGreaterThan(2);
+      expect(instances(low.state)).toBe(wanted);
+      expect(texts(low.log)).toContain(`Managed autoscaling: 2 → ${wanted} app instances for tomorrow.`);
+      expect(sim.autoscale(low.state)).toMatchObject({ min: 2 });
+      expect(sim.autoscale(low.state)).toMatchObject({ managed: true, baseline: 1.5 });
+    });
+
+    it("autoscales every PaaS company: without the benefit, basic autoscaling keeps 1.25× yesterday's demand", () => {
+      const basic = sim.advance(act(needing(3), { type: "setInstances", count: 2 }));
+      const wanted = Math.ceil((basic.state.demand.cu * 1.25) / instanceUnits);
+      expect(wanted).toBeGreaterThan(2);
+      expect(wanted).toBeLessThan(Math.ceil((basic.state.demand.cu * 1.5) / instanceUnits) + 1);
+      expect(instances(basic.state)).toBe(wanted);
+      expect(texts(basic.log)).toContain(`Autoscaling: 2 → ${wanted} app instances for tomorrow.`);
+      expect(sim.autoscale(basic.state)).toMatchObject({ min: 2, managed: false, baseline: 1.25 });
+      // Bursts and the maximum work the same as with the benefit.
+      const capped = sim.tick(act(needing(3), { type: "setAutoscaleMax", max: 2 }));
+      expect(bursts(capped.log)[0]!.text).toMatch(/^Autoscaling: 1 burst instance for a spike/);
+      expect(outages(capped.log)[0]!.text).toMatch(/over your autoscaling maximum of 2 instances/);
+    });
+
+    it("adds burst instances for a spike at the premium, up to the maximum; over it is an outage that stops time once", () => {
+      const view = sim.autoscale(autoscaled(needing(0)))!;
+      // An instance's day rate × 2.
+      expect(view.burstDayCost).toBeCloseTo((sim.managed(needing(0))!.instanceMonthlyCost / 30) * 2, 2);
+      // The maximum follows today's instances (3×) until it's set.
+      expect(view).toMatchObject({ instances: 1, min: 1, max: 3, maxSet: false });
+      expect(sim.autoscale(autoscaled(needing(0), { type: "setAutoscaleMax", max: 10 }))).toMatchObject({ max: 10, maxSet: true });
+
+      // 1 instance for about 3 instances' demand, with room for 9 more: bursts cover it, at a price, with no outage.
+      const roomy = sim.advance(autoscaled(needing(3), { type: "setAutoscaleMax", max: 10 }));
+      expect(bursts(roomy.log)).toHaveLength(1);
+      expect(bursts(roomy.log)[0]!.text).toMatch(/^Autoscaling: [23] burst instances for a spike over your 1, at £[\d.]+ each for the day$/);
+      expect(bursts(roomy.log)[0]!.cashDelta).toBeLessThan(0);
+      expect(outages(roomy.log)).toEqual([]);
+
+      // A maximum of 2: one burst instance, the rest is an outage, and time stops the first time.
+      const capped = autoscaled(needing(3), { type: "setAutoscaleMax", max: 2 });
+      const tick = sim.tick(capped);
+      expect(bursts(tick.log)[0]!.text).toMatch(/^Autoscaling: 1 burst instance for a spike/);
+      expect(outages(tick.log)[0]!.text).toMatch(/over your autoscaling maximum of 2 instances/);
+      expect(tick.pauses.map((p) => p.id)).toContain("autoscale-max");
+      expect(tick.state.autoscale?.maxHitDay).toBe(tick.state.day);
+      // Hit again later, it doesn't stop again.
+      const again = sim.tick(act(tick.state, { type: "setInstances", count: 1 }, { type: "setAutoscaleMax", max: 2 }));
+      expect(again.pauses.map((p) => p.id)).not.toContain("autoscale-max");
+    });
+
+    it("refuses a maximum below the minimum or over the platform's most", () => {
+      const state = autoscaled(needing(0), { type: "setInstances", count: 4 });
+      expect(refusal(() => act(state, { type: "setAutoscaleMax", max: 3 }))).toBe("bad_instances");
+      expect(refusal(() => act(state, { type: "setAutoscaleMax", max: 999 }))).toBe("bad_instances");
+      expect(sim.autoscale(act(needing(0), { type: "setAutoscaleMax", max: 5 }))).toMatchObject({ max: 5, managed: false });
+      // A minimum set over the maximum lifts the maximum with it.
+      expect(sim.autoscale(act(state, { type: "setAutoscaleMax", max: 6 }, { type: "setInstances", count: 9 }))).toMatchObject({ min: 9, max: 9 });
+    });
+
+    it("can fail for a day, adding no burst instances, and waits for a spike day to do it", () => {
+      const failure = defaultConfig.events.find((e) => e.id === "autoscalerFailure")!;
+      expect(failure.encounter).toMatchObject({ spikeWaitDays: 7 });
+      // Firing on the next day played: no bursts, so the spike goes down.
+      const withFailure = createSim({ ...quiet, events: [failure] });
+      const state = autoscaled(needing(3), { type: "setAutoscaleMax", max: 10 });
+      const failing = withFailure.advance({ ...state, schedule: [...state.schedule, { event: "autoscalerFailure", day: state.day + 1 }] });
+      expect(bursts(failing.log)).toEqual([]);
+      expect(outages(failing.log).length).toBeGreaterThan(0);
+
+      // As an encounter: due on a quiet day it waits; with a traffic spike on, or once the wait is up, it fires.
+      const spike = defaultConfig.events.find((e) => e.id === "trafficSpike")!;
+      const encounterSim = createSim({ ...quiet, events: [failure, { ...spike, encounter: undefined, warning: undefined }] });
+      /** Due: the meter at `meter` against a threshold of 10, with a traffic spike on the next day if `spiky`. */
+      const due = (meter: number, spiky = false) => {
+        const state = autoscaled(needing(1));
+        const schedule = spiky ? [...state.schedule, { event: "trafficSpike", day: state.day + 1 }] : state.schedule;
+        return { ...state, schedule, encounterList: [{ event: "autoscalerFailure", threshold: 10 }], dangerMeter: meter };
+      };
+      const fired = (state: GameState) => encounterSim.advance(state).state.schedule.some((e) => e.event === "autoscalerFailure");
+      expect(fired(due(10))).toBe(false);
+      expect(fired(due(10 + 7 * quiet.encounters.dailyRise))).toBe(true);
+      expect(fired(due(10, true))).toBe(true);
+      // Basic autoscaling can fail too; with no autoscaling on the platform there's no autoscaler to fail.
+      const plain = { ...needing(1), encounterList: [{ event: "autoscalerFailure", threshold: 10 }], dangerMeter: 100 };
+      expect(fired(plain)).toBe(true);
+      const paas = quiet.models.paas;
+      const unscaled = createSim({
+        ...quiet,
+        events: [failure],
+        models: { ...quiet.models, paas: { ...paas, servers: { ...paas.servers!, managed: { ...paas.servers!.managed!, autoscaling: undefined } } } },
+      });
+      expect(unscaled.advance(plain).state.schedule.some((e) => e.event === "autoscalerFailure")).toBe(false);
+    });
   });
 
   it("a CDN takes a quarter off PaaS CU demand", () => {
@@ -557,6 +727,93 @@ describe("the hardware slider", () => {
       texts(sim.advance(set(running, p), 60).log).filter((t) => t.startsWith("Crash:") || t.startsWith("Overheating:")).length;
     expect(incidents(1)).toBe(0);
     expect(incidents(1.5)).toBeGreaterThan(3);
+  });
+});
+
+describe("tier 1 at Launch, and the phase gaps (#263)", () => {
+  /** A day in, its MVP (of none) done, in the Launch phase: no angel yet. */
+  const launched = (model: ModelId = "iaas", productType: ProductTypeId = "ecommerce") => {
+    const state = inPhase(sim.advance(begin(model, productType)).state, "launch");
+    expect(state.mvp.doneDay).not.toBeNull();
+    return state;
+  };
+  const wishlists = defaultConfig.productTypes.ecommerce.features.find((f) => f.id === "wishlists")!;
+
+  it("opens tier 1 features at Launch, with no research points, but research and the tiers above wait for Grow", () => {
+    const state = launched();
+    expect(sim.phase(state).open).toMatchObject({ features: true, research: false, researchers: false });
+    expect(wishlists.tier).toBe(1);
+    const view = sim.features(state).find((f) => f.id === "wishlists")!;
+    expect(view).toMatchObject({ tier: 1, rpPrice: 0, unlocked: true });
+    expect(sim.applyAction(state, { type: "buildFeature", feature: "wishlists" }).features.wishlists).toEqual({ status: "building", progress: 0 });
+    // A tier 2 feature needs research, which opens in Grow: the refusal says so, even once the tier is available.
+    const tier2 = { ...state, tiers: [{ tier: 2 as TierNumber, day: state.day }] };
+    expect(() => sim.applyAction(tier2, { type: "buildFeature", feature: "reviews" })).toThrow(/research opens in the Grow phase/);
+    expect(refusal(() => sim.applyAction({ ...tier2, researchPoints: 1_000 }, { type: "unlockItem", item: "reviews" }))).toBe("not_yet");
+    expect(sim.phase(inPhase(state, "grow")).open.research).toBe(true);
+  });
+
+  it("builds tier 1 features at tier1BuildMultiplier × their developer-days, but leaves an add-on's set-up fee alone", () => {
+    expect(tierConfig.tier1BuildMultiplier).toBe(2);
+    const state = launched();
+    expect(sim.features(state).find((f) => f.id === "wishlists")!.devDays).toBe(2 * wishlists.devDays);
+    expect(sim.features(state).find((f) => f.id === "reviews")!.devDays).toBe(defaultConfig.productTypes.ecommerce.features.find((f) => f.id === "reviews")!.devDays);
+    // Two developers, a developer-day a day each, take 2 × 10 ÷ 2 = 10 days, not 5.
+    let building = sim.applyAction({ ...state, optimisationShare: 0 }, { type: "buildFeature", feature: "wishlists" });
+    const output = sim.staff(building).find((p) => p.pool === "developers")!.output;
+    const days = Math.ceil((2 * wishlists.devDays) / output);
+    building = sim.advance(building, days - 1).state;
+    expect(building.features.wishlists!.status).toBe("building");
+    expect(sim.advance(building).state.features.wishlists!.status).toBe("built");
+    const saas = launched("saas");
+    expect(sim.features(saas).find((f) => f.id === "wishlists")!.addonSetupFee).toBe(wishlists.devDays * defaultConfig.addons.setupFeePerDevDay);
+  });
+
+  it("lists in the phase's open jobs only what applies to the product and model", () => {
+    const opens = (state: GameState) => Object.fromEntries(sim.phase(state).phases.map((p) => [p.id, p.opens]));
+    // E-commerce has no user content, so no moderators; on SaaS there are no servers to run.
+    const shop = opens(launched("saas", "ecommerce"));
+    expect(shop.launch).toEqual(["Price", "Ops staff", "Support staff", "Tier 1 add-ons"]);
+    expect(shop.build).toEqual(["Deployment model", "Funding: the bank loan, friends and family and grants", "Developers"]);
+    expect(shop.grow).toContain("The paid API");
+    // Social has user content, and no paid API.
+    const social = opens(launched("iaas", "social"));
+    expect(social.launch).toEqual(["Price", "Ops staff", "Support staff", "Moderators", "Tier 1 features"]);
+    expect(social.build).toContain("Servers");
+    expect(social.grow).not.toContain("The paid API");
+    expect(opens(launched("onprem")).build).toContain("Servers and racks");
+    expect(opens(launched("paas")).build).toContain("Instances");
+    // The log line for a new phase is filtered the same way.
+    const before = launched("iaas", "social");
+    const { log } = sim.advance({ ...before, investors: { ...before.investors, firstApproachDay: before.day } });
+    expect(texts(log)).toContain(
+      "A new phase: Grow. Now open: Researchers, Marketers, Research: tiers 2 to 4, Campaigns, The CFO, CTO and head of people.",
+    );
+  });
+
+  it("says when outside money opens the CFO, and leaves the CFO out of Grow's list once it has", () => {
+    const state = launched();
+    expect(sim.phase(state).phases.find((p) => p.id === "grow")!.opens).toContain("The CFO, CTO and head of people");
+    const ff = { status: "accepted" as const, day: state.day, amount: 10_000, shares: 100, valuation: 100_000 };
+    const funded = { ...state, funding: { ...state.funding, friendsAndFamily: ff } };
+    const phases = sim.phase(funded).phases;
+    expect(phases.find((p) => p.id === "launch")!.opens).toContain(`The CFO (outside money opened it on day ${state.day})`);
+    expect(phases.find((p) => p.id === "grow")!.opens).toContain("The CTO and head of people");
+  });
+
+  it("warns when developers have nothing to build and optimisation is at its cap, suggesting moving them", () => {
+    const state = launched();
+    expect(sim.optimisation(state).atCap).toBe(false);
+    const built = { ...state, features: { ...state.features, wishlists: { status: "built" as const, progress: 20 } } };
+    // Every tier 1 feature built, but optimisation still has gains to make: the usual note, not the warning.
+    expect(sim.staff(built).find((p) => p.pool === "developers")!.idle).toMatch(/^Every feature unlocked so far is built/);
+    const capped = { ...built, optimisationDays: 1_000, optimisationShare: 1 };
+    expect(sim.optimisation(capped).atCap).toBe(true);
+    expect(sim.staff(capped).find((p) => p.pool === "developers")!.idle).toMatch(
+      /^Your developers have nothing to do: every feature unlocked so far is built, and optimisation is at its cap \(saving [\d.]+% of at most \d+%\)\. Move some to another team, where they retrain and keep their grade, or let them go to save their pay\.$/,
+    );
+    // With a feature still to build, they aren't idle.
+    expect(sim.staff({ ...capped, features: {} }).find((p) => p.pool === "developers")!.idle).toBeNull();
   });
 });
 

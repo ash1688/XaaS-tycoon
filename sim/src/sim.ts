@@ -1,7 +1,7 @@
 import { createApi, type ApiView } from "./api.ts";
-import { createBenefits, managedAutoscaling, type BenefitView } from "./benefits.ts";
+import { createBenefits, type BenefitView } from "./benefits.ts";
 import { createCalendar, isIsoDate, type CalendarView } from "./calendar.ts";
-import { createCampaigns, type CampaignsView } from "./campaigns.ts";
+import { createCampaigns, type CampaignQuote, type CampaignsView } from "./campaigns.ts";
 import {
   allowedDifficulties,
   allowedGameLengths,
@@ -14,6 +14,7 @@ import {
   withDifficulty,
   type DifficultyId,
   type GameConfig,
+  type CsuiteRole,
   type ModelId,
   type ServerCount,
 } from "./config.ts";
@@ -26,24 +27,24 @@ import { createFeatures, type FeatureView } from "./features.ts";
 import { createFinance, noSpend, pounds } from "./finance.ts";
 import { hardwareDay, setPerformance } from "./hardware.ts";
 import { createDrift, type DriftView } from "./drift.ts";
-import { createInfrastructure, type ProviderView } from "./infrastructure.ts";
+import { createInfrastructure, type AutoscaleView, type OpsShortfallView, type ProviderView } from "./infrastructure.ts";
 import { createInvestors, type InvestorsView } from "./investors.ts";
 import { createIpo, type IpoView } from "./ipo.ts";
 import { createLaunch, type LaunchView } from "./launch.ts";
-import { createLoan, type LoanQuote, type LoanView } from "./loan.ts";
+import { createLoan, type LoanQuote, type LoanView, type ShortfallView } from "./loan.ts";
 import { mvpDay, mvpStatus, startingMvp, type MvpView } from "./mvp.ts";
 import { researchDay, researchView, type ResearchView } from "./research.ts";
 import { createMigration, type MigrationQuote, type MigrationView } from "./migration.ts";
-import { optimisationDay, optimisationView, type OptimisationView } from "./optimisation.ts";
+import { optimisationAtCap, optimisationDay, optimisationView, type OptimisationView } from "./optimisation.ts";
 import { createCustomerMix } from "./mix.ts";
 import { isNameAllowed } from "./nameFilter.ts";
 import type { CounterOdds, Terms } from "./negotiation.ts";
 import { createPauses, type TickResult } from "./pauses.ts";
-import { actionJob, advancePhase, checkJobOpen, phaseView, startingPhase, type PhaseView } from "./phases.ts";
+import { actionJob, advancePhase, checkJobOpen, jobOpen, phaseView, startingPhase, type PhaseView } from "./phases.ts";
 import { payHistory, type PayHistoryView } from "./payHistory.ts";
 import { createPayReview, type PayOfferPreview, type PayReviewView } from "./payReview.ts";
 import { schemeEntries, schemeViews, type SchemeLevels, type StaffSchemeView } from "./staffSchemes.ts";
-import { createPricing, type CustomerMixView, type PaymentsView, type PricePreview, type PriceWaveView } from "./pricing.ts";
+import { createPricing, type CustomerMixView, type FairPriceView, type PaymentsView, type PriceBandsView, type PricePreview, type PriceWaveView } from "./pricing.ts";
 import { createRacks, type RacksView } from "./racks.ts";
 import { createRescue, type RescueView } from "./rescue.ts";
 import { createRivals, type MarketView } from "./rivals.ts";
@@ -79,14 +80,14 @@ export type { BenefitView } from "./benefits.ts";
 export type { HardwareRisk } from "./hardware.ts";
 export type { TierConditionView, TierItemKind, TierItemView, TierStatusView } from "./tiers.ts";
 export type { CalendarView, GameDate, HolidayView } from "./calendar.ts";
-export type { CampaignTypeView, CampaignView, CampaignsView } from "./campaigns.ts";
+export type { CampaignQuote, CampaignTypeView, CampaignView, CampaignsView } from "./campaigns.ts";
 export { dayOfDate, gameDate } from "./calendar.ts";
 export type { ConversionDriver, ConversionDriverId, ConversionView } from "./conversion.ts";
 export type { CandidateView, CsuiteRoleView, CsuiteView, ExecutiveEffectView, ExecutiveView } from "./csuite.ts";
 export type { DangerRiskView, DangerView } from "./encounters.ts";
 export type { EventView, FeatureGapView } from "./events.ts";
 export type { FeatureStatus, FeatureView } from "./features.ts";
-export type { ProviderView } from "./infrastructure.ts";
+export type { AutoscaleView, OpsShortfallView, ProviderView } from "./infrastructure.ts";
 export type { AngelView, InvestorOffer, InvestorsView, VcApproachView, VcOfferView, VcRoundView, VcView } from "./investors.ts";
 export { seriesApproachDay, twoRoundGame, vcLadder, type VcRung } from "./investors.ts";
 export type { FloatPreview, IpoCondition, IpoConditionId, IpoOffer, IpoStatus, IpoView } from "./ipo.ts";
@@ -95,9 +96,9 @@ export type { MvpView } from "./mvp.ts";
 export { JOB_PHASES, JOBS, PHASE_NAMES, phaseReached, type Job, type PhaseStepView, type PhaseView } from "./phases.ts";
 export type { ResearchView } from "./research.ts";
 export type { OptimisationView } from "./optimisation.ts";
-export type { LoanQuote, LoanView } from "./loan.ts";
+export type { LoanQuote, LoanView, ShortfallView } from "./loan.ts";
 export type { LostAddon, MigrationQuote, MigrationView, SetupRack } from "./migration.ts";
-export { LOW_CASH_DAYS, type PauseKind, type PauseReason, type TickResult } from "./pauses.ts";
+export { LOW_CASH_DAYS, opsShortText, type PauseKind, type PauseReason, type TickResult } from "./pauses.ts";
 export type { NewUserFactor } from "./mix.ts";
 export type { RackOption, RackView, RacksView } from "./racks.ts";
 export type { CounterOdds, NegotiationRound, RollResult, TermSpec, Terms } from "./negotiation.ts";
@@ -111,7 +112,20 @@ export type { DriftView } from "./drift.ts";
 export type { RescueView } from "./rescue.ts";
 export type { TicketOutlook } from "./support.ts";
 export type { MarketCompanyView, MarketView, TypeContestView } from "./rivals.ts";
-export type { CustomerMixView, CustomerTypeView, PaymentsView, PricePreview, PriceWaveView, TypeReaction } from "./pricing.ts";
+export type {
+  CustomerMixView,
+  CustomerTypeView,
+  FairPriceView,
+  PaymentsView,
+  PriceBand,
+  PriceBandId,
+  PriceBandsView,
+  PricePreview,
+  PriceWaveView,
+  TypeBands,
+  TypeReaction,
+} from "./pricing.ts";
+export { PRICE_BAND_NAMES } from "./pricing.ts";
 export { percent } from "./pricing.ts";
 export { weightedReaction } from "./pricing.ts";
 export type {
@@ -140,7 +154,7 @@ export type {
 export type { GradeView, HireView, StaffPoolView } from "./staff.ts";
 export type { ModerationView } from "./moderation.ts";
 export { hasContent, lawsuitOdds } from "./moderation.ts";
-export type { GameSummary, IncomeCostDay, LoanSummary, PeakUsers, SummaryDay } from "./summary.ts";
+export type { CapTableSummary, GameSummary, IncomeCostDay, LoanSummary, PeakUsers, ShareholderSummary, SummaryDay } from "./summary.ts";
 export { interestIn, profitCosts } from "./finance.ts";
 export {
   FUNDER_IDS,
@@ -221,10 +235,24 @@ export {
   type WaveEffect,
 } from "./state.ts";
 
+/** The headings the daily costs are broken down by. */
+export type CostHeadingId = "staff" | "executives" | "schemes" | "hosting" | "fees" | "campaigns" | "loan";
+
+/** One heading of the daily costs: what it comes to a day at today's numbers. */
+export interface CostHeading {
+  id: CostHeadingId;
+  label: string;
+  amount: number;
+}
+
 /**
- * What a usual day does to cash at today's users, price, API calls, staff, servers and loan, leaving out one-offs such as events
- * and a migration's first-day charges: income, running costs and the difference. days is how many more days cash lasts
- * at that rate before going below £0, or null when the company isn't losing money.
+ * The daily costs and runway, one figure for the costs line, runway, the IPO's predictable costs and the rescue.
+ * dailyCosts is every daily outgoing at today's numbers: staff pay, executive pay (none during the board's pay
+ * holiday), staff schemes, hosting, rent and power, add-ons and platform fees, campaign spend and loan repayments.
+ * One-offs (kit bought, severance, a tribunal fee, an event's bill, a grant paid back) are left out, and added up
+ * apart over the last 7 days. dailyIncome is the income averaged over the last 7 days played, so runway reacts to
+ * what the student controls without jumping on paydays. days is how many more days cash lasts at that rate before
+ * going below £0, or null when that income covers today's costs.
  */
 export interface RunwayView {
   dailyIncome: number;
@@ -232,7 +260,34 @@ export interface RunwayView {
   /** dailyIncome − dailyCosts: below 0, the company is burning cash. */
   dailyNet: number;
   days: number | null;
+  /** dailyCosts by heading, every heading in order, adding up to it. */
+  costs: CostHeading[];
+  /** Whether the board is on a pay holiday, so executive pay is left out. */
+  payHoliday: boolean;
+  /** The one-offs charged over the last 7 days, today's included: not in dailyCosts. */
+  oneOffsThisWeek: number;
+  /**
+   * Staff hired but not started yet, a day's pay once they are (#289): not in dailyCosts or days, as they aren't paid
+   * yet, but shown so the costs ahead aren't a surprise. Staff retraining are paid already, so not here.
+   */
+  startingSoon: number;
+  /** Days cash lasts once they've started, at that higher cost: null when income covers it. */
+  daysOnceStarted: number | null;
 }
+
+/** The days runway averages income over, and one-offs are added up over. */
+export const RUNWAY_DAYS = 7;
+
+/** Each heading's name, in the order the breakdown lists them. */
+const COST_HEADINGS: Record<CostHeadingId, string> = {
+  staff: "Staff pay",
+  executives: "Executive pay",
+  schemes: "Staff schemes",
+  hosting: "Hosting, rent and power",
+  fees: "Add-ons and platform fees",
+  campaigns: "Campaigns",
+  loan: "Loan repayments",
+};
 
 export interface Sim {
   readonly config: GameConfig;
@@ -280,8 +335,10 @@ export interface Sim {
    * Managed services need none.
    */
   opsNeededNow(state: GameState): number;
-  /** Ops staff the company will need once every server it has is in service: on-prem, kit on order included. */
+  /** Ops staff the company will need once every server it has is in service, kit on order included. */
   opsNeededOnceReady(state: GameState): number;
+  /** Too few ops for the servers running: who's there, who's needed and the capacity left. Null when ops cover it. */
+  opsShortfall(state: GameState): OpsShortfallView | null;
   /** What the staff on the team cost per day. Hires still to start cost nothing. */
   dailyStaffCost(state: GameState): number;
   /**
@@ -303,6 +360,13 @@ export interface Sim {
    * the payments app, the fair monthly fee: see payments for the fair rate.
    */
   fairPrice(state: GameState): number;
+  /** The fair price with why it moved: the product's own, how far inflation has lifted it, and the last review's. */
+  fairPriceView(state: GameState): FairPriceView;
+  /**
+   * How launch users would split at an opening price, before pressing Launch: each customer type's share joining
+   * paying, joining free and not joining, and all of them together. Rejects the prices setPrice does.
+   */
+  launchBands(state: GameState, price: number, rate?: number): PriceBandsView;
   /**
    * What changing the price would do if nothing else changed: income a day once the wave settles, paying users
    * leaving and dropping to free, new users and upgrades on a cut, and the wave day by day. Changes nothing, and works
@@ -359,6 +423,8 @@ export interface Sim {
   powerAndCooling(model: ModelId): number;
   /** On SaaS: capacity is the provider's, so what you pay for it is the per-user bill. Null on any other model. */
   provider(state: GameState): ProviderView | null;
+  /** PaaS autoscaling's instances, minimum and maximum, with managed autoscaling on; null otherwise (#261). */
+  autoscale(state: GameState): AutoscaleView | null;
   /** Tickets the support staff can clear in a day: their output in mids × tickets each. */
   dailyClearance(state: GameState): number;
   /** Tickets today's users would raise in a day before any burst: paid and free users × their rates. */
@@ -375,6 +441,8 @@ export interface Sim {
   conversion(state: GameState): ConversionView;
   /** Share of time up across every day played, as a percentage. 100 before the first day. */
   uptime(state: GameState): number;
+  /** Uptime over the IPO's record: the last recordDays days played since launch, as a percentage. 100 before launch. */
+  recordUptime(state: GameState): number;
   /** The product's features, in config order, with each one's progress. */
   features(state: GameState): FeatureView[];
   /**
@@ -382,6 +450,11 @@ export interface Sim {
    * now would cost and save. Null if none has been taken.
    */
   loan(state: GameState): LoanView | null;
+  /**
+   * How far cash can go below £0 before it has run out: shortfalls go onto a loan up to limitDays of the daily costs,
+   * and past that the vulture VC steps in (or, after a rescue, liquidation). With what they owe now, and the room left.
+   */
+  shortfall(state: GameState): ShortfallView;
   /**
    * What taking a bank loan now would cost: amount, rate, interest, total repaid, the daily repayment and the days
    * of its fixed term. Null when one can't be taken: one is being repaid, or the game is in its last days.
@@ -498,6 +571,12 @@ export interface Sim {
    */
   campaigns(state: GameState): CampaignsView;
   /**
+   * What a campaign started now would bring over its whole run, as a range of users and of cost per user, played
+   * forward as the market fills: or that the market is almost full. Changes nothing. Refuses an unknown type, or a
+   * budget or length out of range.
+   */
+  campaignQuote(state: GameState, customerType: string, budget: number, days: number): CampaignQuote;
+  /**
    * Every model's benefits, in config order: each one's tier, fees and whether it's unlocked, on the company's model
    * and on.
    */
@@ -591,13 +670,18 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
   const staff = createStaff(config, finance);
   const benefits = createBenefits(config, finance);
   const migration = createMigration(config, infra, features, events, servers, benefits);
-  const summary = createSummary(config, infra);
-  const loan = createLoan(config, finance);
+  const loan = createLoan(config, finance, (s) => runway(s).dailyCosts);
   const launch = createLaunch(config, servers, pricing, infra.units);
   const shares = createShares(config, finance, conversion);
+  const summary = createSummary(config, infra, shares);
   const api = createApi(config, features, finance, infra.apiuOn);
-  const encounters = createEncounters(config, servers);
-  const ipo = createIpo(config, finance, shares, servers, (s) => runway(s).dailyNet);
+  // A spike day, which an autoscaler failure waits for (#261): a payday, a holiday that brings load, or an event's.
+  const spikeDay = (state: GameState, day: number) =>
+    calendar.loadMultiplier(state, day) > 1 ||
+    pricing.isPayday(state.productType, day) ||
+    events.eventsToday(state, day).some((t) => !!t.event.load);
+  const encounters = createEncounters(config, servers, spikeDay);
+  const ipo = createIpo(config, finance, shares, servers, (s) => runway(s));
   const tiers = createTiers(config, { ipoReady: (s) => ipo.ipoView(s).ready });
   /** The MVP at today's developers. */
   const mvpView = (state: GameState) => mvpStatus(config, { ...state, output: staffOutput(config, state, "developers") });
@@ -616,10 +700,12 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     calendar: calendar.calendar,
     ipo: ipo.ipoView,
     danger: encounters.danger,
+    shortfall: loan.shortfallView,
+    opsShortfall: infra.opsShortfall,
   });
-  const rescue = createRescue(config, finance, shares, (s) => runway(s), (s) => infra.opsNeededNow(s));
+  const rescue = createRescue(config, finance, shares, (s) => runway(s), (s) => infra.opsNeededNow(s), loan.clearShortfall);
   const investors = createInvestors(config, finance, shares);
-  const campaigns = createCampaigns(config, calendar);
+  const campaigns = createCampaigns(config, calendar, customers.outlook);
   const payReview = createPayReview(config, { runwayDays: (s) => runway(s).days, chargeNow: finance.chargeNow });
   const drift = createDrift(config);
   const csuite = createCsuite(config);
@@ -707,6 +793,8 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       investors: investors.startingInvestors(),
       ...ipo.startingIpo(),
       rescue: null,
+      firstShortfallDay: null,
+      shortfallLimit: null,
       pastLoans: [],
       interestPaid: 0,
       schedule,
@@ -749,7 +837,11 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       load: Math.round(customers.baseLoad(launched.state, users, 1)),
       demand: customers.baseDemand(launched.state, users, 1),
     };
-    return advancePhase(finance.settle(started, 1, [...borrowed.entries, ...upfront, ...launched.entries]).state).state;
+    // The upfront bill is a one-off. Day 1's record keeps the daily costs it ends on, as every day played does.
+    const settled = finance.settle(started, 1, [...borrowed.entries, ...upfront.map((e) => ({ ...e, oneOff: true })), ...launched.entries]);
+    const first = advancePhase(config, settled.state, csuite.openDay(settled.state, "cfo")).state;
+    const record = first.spendByDay.at(-1)!;
+    return { ...first, spendByDay: [...first.spendByDay.slice(0, -1), { ...record, costs: runway(first).dailyCosts }] };
   }
 
   /** Refuses a game from an older version, then ends one that has played its final day. */
@@ -792,7 +884,11 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const state = loadPlaying(saved);
     const job = actionJob(action);
     if (job) checkJobOpen(state, job);
-    return advancePhase(playAction(state, action)).state;
+    // Ringing the opening bell ends the game: what's still owed on the loan comes off the cash.
+    const played = playAction(state, action);
+    const ended = endingDebt({ state: advancePhase(config, played, csuite.openDay(played, "cfo")).state, entries: [] }).state;
+    // So does the back pay still owed to the C-suite.
+    return ended.status === "playing" ? ended : csuite.settleBackPay(ended, finance.chargeNow).state;
   }
 
   function playAction(state: GameState, action: Action): GameState {
@@ -832,17 +928,23 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       case "rentServer":
         return servers.rentServer(state, action.server, action.size);
       case "cancelServer":
-        return servers.cancelServer(state, action.id);
+        return servers.cancelServer(state, action.id, action.now === true, retireRules);
       case "buyServer":
         return servers.buyServer(state, action.server, action.size, action.rack);
       case "sellServer":
-        return servers.sellServer(state, action.id);
+        return servers.sellServer(state, action.id, action.now === true, retireRules);
       case "buyRack":
         return racks.buyRack(state, action.size);
       case "sellRack":
         return racks.sellRack(state, action.id);
-      case "setInstances":
-        return servers.setInstances(state, action.count);
+      case "setInstances": {
+        // Instances set by hand are autoscaling's minimum, kept until set again (#261). A maximum below it rises to it.
+        const set = servers.setInstances(state, action.count);
+        const max = state.autoscale?.max;
+        return { ...set, autoscale: { ...state.autoscale, min: action.count, ...(max !== undefined ? { max: Math.max(max, action.count) } : {}) } };
+      }
+      case "setAutoscaleMax":
+        return setAutoscaleMax(state, action.max);
       case "setManagedService":
         return servers.setManagedService(state, action.service, action.size);
       case "takeLoan":
@@ -872,7 +974,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       case "pickInvestor":
         return investors.pickInvestor(state, action.investor);
       case "launch":
-        return launch.launch(state);
+        return launch.launch(state, action.price, action.rate);
       case "buyApi":
         return api.buyApi(state);
       case "switchServer":
@@ -954,7 +1056,9 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       [
         { users: ramping ? 0 : organic.arrived, weights: newMix },
         { users: wave.joined, weights: newMix },
-        { users: users - wave.users - marketing.users, weights: pricing.baseMix(state.productType) },
+        // Launch users in the mix the opening price let in, then any wave of free users from an event.
+        { users: launched.state.users - wave.users, weights: launched.joined ?? pricing.baseMix(state.productType) },
+        { users: viral.reduce((sum, n) => sum + n, 0), weights: pricing.baseMix(state.productType) },
         ...marketing.joined,
       ],
     );
@@ -970,7 +1074,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     const care = support.supportDay(state, bursts, moderated.satisfactionFactor);
 
     // Rivals answer the student's price from reactionDays ago and win their share of the market's new users.
-    const market = rivals.rivalsDay(state, day);
+    // While a rise's backlash lasts, grumbling online sends a share of the day's new users to rivals instead.
+    const divert = ramping ? 0 : pricing.grumbleDivert(state, day);
+    const diverted = divert > 0 && divert < 1 ? Math.round((organic.arrived * divert) / (1 - divert)) : 0;
+    const market = rivals.rivalsDay(state, day, diverted);
 
     // Developers work on the current build, and once the MVP was done before today, the slider's share of their output
     // goes into optimisation instead. A feature finished today helps growth from tomorrow, and so does today's
@@ -1067,8 +1174,14 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       rivalRng: market.rivalRng,
       rivalJoins: market.rivalJoins,
     };
-    // Managed autoscaling sets tomorrow's instances to today's demand.
-    const scaled = autoscaleInstances(played);
+    // Servers cancelled or sold while waiting for a replacement go once it's ready, after today's bills (#260).
+    const left = servers.leaveDay(played, day, retireRules);
+    entries.push(...left.entries);
+    // The first day demand went over the autoscaling maximum, when time stops (#261).
+    const maxHit = served.maxHit && left.state.autoscale?.maxHitDay === undefined;
+    const scaledFrom: GameState = maxHit ? { ...left.state, autoscale: { ...left.state.autoscale, maxHitDay: day } } : left.state;
+    // PaaS autoscaling sets tomorrow's instances to the baseline.
+    const scaled = autoscaleInstances(scaledFrom);
     entries.push(...scaled.entries);
     // The danger meter rises with the day's risks, on the model the day was played on.
     const risen: GameState = { ...scaled.state, ...encounters.riseDay(scaled.state, live, served.overloaded) };
@@ -1076,20 +1189,23 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     // The migration moves on after the day is played and billed, so a model switch takes effect from tomorrow.
     const migrated = migration.migrationDay(risen);
     entries.push(...migrated.entries);
-    // The first time cash runs out a vulture VC rescues the company; the second time is liquidation.
-    const settled = finance.settle(migrated.state, day, entries, rescue.rescue);
+    // Cash below £0 goes onto a loan, as far as the limit. Past it cash has run out: the first time a vulture VC rescues
+    // the company, the second time is liquidation. A game that ends today settles what's still owed on its loan.
+    const settled = endingDebt(finance.settle(migrated.state, day, entries, rescue.rescue, loan.coverShortfall));
     // A rescue's cuts may let go marketers who were running campaigns: those campaigns stop.
     const released = campaigns.release(settled.state);
-    // The board's pay holiday starts when cash runs low and ends once it has recovered: costs counted with their pay.
-    const paid = { ...released.state, csuite: { ...released.state.csuite, payHolidaySince: null } };
-    const holiday = csuite.payHolidayDay(released.state, runway(paid).dailyCosts);
+    // The board's pay holiday starts when cash runs low and ends once it has recovered, with what it skipped owed.
+    const holiday = csuite.payHolidayDay(released.state, payHolidayCosts(released.state), finance.chargeNow);
+    // Too long unpaid and an executive walks out, the bank paying their back pay onto the loan.
+    const walked = csuite.walkoutDay(holiday.state);
+    const owedToBank = walked.backPay ? loan.borrowFor(walked.state, walked.backPay) : { state: walked.state, entries: [] };
     // Last, the funding ladder: an angel's target, and an investor who approaches a company doing well.
-    const funded = investors.investorDay(holiday.state, {
+    const funded = investors.investorDay(owedToBank.state, {
       joined: (ramping ? 0 : organic.arrived) + wave.joined + (users - wave.users),
       left: (ramping ? 0 : organic.lost.reduce((sum, l) => sum + l.users, 0)) + (wave.left?.users ?? 0),
     });
     // An approach today may open a phase: the first angel's Grow, Series A's Scale. So may an auto launch.
-    const phased = advancePhase(funded.state);
+    const phased = advancePhase(config, funded.state, csuite.openDay(funded.state, "cfo"));
     // Then any tier whose condition is now met opens, for good.
     const opened = tiers.tiersDay(phased.state);
     const tiered: GameState =
@@ -1103,46 +1219,127 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       // First, what a tribunal settled before today.
       ...payReview.tribunalEntries(yesterday, day),
       ...payReview.schemeStartEntries(yesterday, day),
-      ...settled.entries, ...released.entries, ...holiday.entries, ...funded.entries, ...phased.entries, ...opened.entries, ...drifted.entries, ...reviewed.entries,
+      ...settled.entries, ...released.entries, ...holiday.entries, ...walked.entries, ...owedToBank.entries, ...funded.entries, ...phased.entries, ...opened.entries, ...drifted.entries, ...reviewed.entries,
       // C-suite roles that opened today, with their shortlists.
       ...csuite.openedEntries(yesterday, reviewed.state)];
     // Kit added today (managed autoscaling, a migration's new setup) gives what new kit gives now.
-    return { state: drift.stampNewKit(yesterday, reviewed.state), log: [{ day, entries: entriesToday }] };
+    const ended = drift.stampNewKit(yesterday, reviewed.state);
+    // The day's record keeps the daily costs it ended on, for the IPO's predictable costs.
+    const record = ended.spendByDay.at(-1)!;
+    const spendByDay = [...ended.spendByDay.slice(0, -1), { ...record, costs: runway(ended).dailyCosts }];
+    return { state: { ...ended, spendByDay }, log: [{ day, entries: entriesToday }] };
   }
 
   /**
-   * Managed autoscaling (a PaaS model benefit): after the day, the platform sets the app instance count to the day's
-   * CU demand plus its headroom, within the platform's limits, serving from tomorrow.
+   * How this game's cancels and sales are checked (#260): against today's load, refused when it'd leave the company
+   * short, or on Hard, allowed once confirmed; and again as one waiting for a replacement goes (#287).
+   */
+  const retireRules = {
+    shortBy: (before: GameState, without: GameState) => infra.shortBy(before, without),
+    confirm: DIFFICULTIES[difficulty].confirmRiskyCancels,
+  };
+
+  /**
+   * PaaS autoscaling (#261): after the day, the platform sets the app instances to the baseline, 1.25× the day's CU
+   * demand (1.5× with Managed autoscaling), never below the minimum set by hand nor over the maximum, serving from
+   * tomorrow. Burst instances during the day are in infra.serveLoad.
    */
   function autoscaleInstances(state: GameState): { state: GameState; entries: LogEntry[] } {
-    const scaling = managedAutoscaling(config, state, state.model);
+    const target = infra.autoscaleBaseline(state);
     const platform = servers.managed(state);
-    if (!scaling || !platform || platform.instanceUnits <= 0) return { state, entries: [] };
-    const wanted = Math.ceil((state.demand.cu * (1 + scaling.headroom)) / platform.instanceUnits);
-    const target = Math.min(platform.maxInstances, Math.max(1, wanted));
-    if (target === platform.instances) return { state, entries: [] };
-    const text = `Managed autoscaling: ${platform.instances} → ${target} app instances for tomorrow.`;
+    if (target === null || !platform || target === platform.instances) return { state, entries: [] };
+    const floor = target === (state.autoscale?.min ?? 1) && target > 1 ? " (your minimum)" : "";
+    const kind = infra.autoscaleView(state)?.managed ? "Managed autoscaling" : "Autoscaling";
+    const text = `${kind}: ${platform.instances} → ${target} app instances for tomorrow${floor}.`;
     return { state: servers.setInstances(state, target), entries: [{ text, cashDelta: 0 }] };
+  }
+
+  /**
+   * Sets PaaS autoscaling's maximum (#261): the most instances bursts can reach, from the minimum set by hand up to the
+   * platform's most.
+   */
+  function setAutoscaleMax(state: GameState, max: number): GameState {
+    const platform = servers.managed(state);
+    if (!platform) throw new SimError("not_managed", `${config.models[state.model].name} doesn't autoscale instances for you.`);
+    const min = state.autoscale?.min ?? 1;
+    if (!Number.isInteger(max) || max < min || max > platform.maxInstances) {
+      throw new SimError("bad_instances", `Set a maximum between your minimum of ${min} and the platform's most, ${platform.maxInstances}.`);
+    }
+    return { ...state, autoscale: { ...state.autoscale, max } };
+  }
+
+  /**
+   * What hiring a candidate would do to the runway, in words, on the costs line's figure: advisory only. Says the pay
+   * holiday will start when the new costs put cash under its line.
+   */
+  function hireRunwayNote(state: GameState, role: CsuiteRole, candidateId: string): string {
+    let hired: GameState;
+    try {
+      hired = csuite.hire(state, role, candidateId);
+    } catch {
+      return "";
+    }
+    const salary = hired.csuite.hired.at(-1)!.salary;
+    const { days } = runway(hired);
+    const { startDays } = config.csuite.payHoliday;
+    const onHoliday = (state.csuite.payHolidaySince ?? null) !== null;
+    const holiday = !onHoliday && startDays > 0 && state.cash < startDays * payHolidayCosts(hired);
+    const runwayText = days === null ? "cash still grows" : `runway falls to ${days} day${days === 1 ? "" : "s"}`;
+    return `With their pay (${pounds(salary)} a day), ${runwayText}${holiday ? `, and the pay holiday will start: cash is under ${startDays} days of running costs` : ""}.`;
+  }
+
+  /**
+   * The costs the board's pay holiday starts and ends on (#290): the daily costs with the executives' pay, holiday or
+   * not, and without Campaign spend, so starting a Campaign can't start one.
+   */
+  function payHolidayCosts(state: GameState): number {
+    const r = runway({ ...state, csuite: { ...state.csuite, payHolidaySince: null } });
+    return r.dailyCosts - (r.costs.find((h) => h.id === "campaigns")?.amount ?? 0);
   }
 
   function runway(state: GameState): RunwayView {
     // Charged the same way a day played charges them, so the rounding matches.
-    const charges = [
-      ...(state.launchDay !== null ? infra.infrastructureEntries(state, state.model, state.users) : []),
-      ...migration.newSetupEntries(state),
-      ...features.addonEntries(state),
-      ...benefits.benefitEntries(state),
-      ...staff.staffEntries(state),
-      ...csuite.payEntries(state),
-      ...schemeEntries(config, state),
-    ];
-    const repayment = loan.dailyRepayment(state);
+    const charged = (entries: LogEntry[]) => entries.reduce((sum, e) => sum - e.cashDelta, 0);
     const calls = api.usualDay(state);
-    const dailyCosts = repayment + calls.fee + pricing.usualSaasFee(state) - charges.reduce((sum, e) => sum + e.cashDelta, 0);
-    const dailyIncome = pricing.dailyIncome(state) + calls.income;
+    const amounts: Record<CostHeadingId, number> = {
+      staff: charged(staff.staffEntries(state)),
+      executives: charged(csuite.payEntries(state)),
+      schemes: charged(schemeEntries(config, state)),
+      hosting: charged([
+        ...(state.launchDay !== null ? infra.infrastructureEntries(state, state.model, state.users) : []),
+        ...migration.newSetupEntries(state),
+      ]),
+      fees: charged([...features.addonEntries(state), ...benefits.benefitEntries(state)]) + calls.fee + pricing.usualSaasFee(state),
+      campaigns: campaigns.dailySpend(state, state.day + 1),
+      loan: loan.dailyRepayment(state),
+    };
+    const costs = (Object.keys(COST_HEADINGS) as CostHeadingId[]).map((id) => ({ id, label: COST_HEADINGS[id], amount: amounts[id] }));
+    const dailyCosts = costs.reduce((sum, h) => sum + h.amount, 0);
+    // The last RUNWAY_DAYS days played, or as many as there have been: read from the end, as the record is in order.
+    let income = 0;
+    let oneOffsThisWeek = 0;
+    for (let i = state.spendByDay.length - 1; i >= 0 && state.spendByDay[i]!.day > state.day - RUNWAY_DAYS; i--) {
+      income += state.spendByDay[i]!.income;
+      oneOffsThisWeek += state.spendByDay[i]!.oneOffs;
+    }
+    const played = Math.min(RUNWAY_DAYS, state.day);
+    const dailyIncome = played > 0 ? Math.round((100 * income) / played) / 100 : 0;
     const dailyNet = dailyIncome - dailyCosts;
     const days = dailyNet < 0 ? Math.max(0, Math.floor(state.cash / -dailyNet)) : null;
-    return { dailyIncome, dailyCosts, dailyNet, days };
+    const startingSoon = charged(staff.staffEntries(staff.arrive(state, Infinity).state)) - amounts.staff;
+    const netOnceStarted = dailyNet - startingSoon;
+    const daysOnceStarted = netOnceStarted < 0 ? Math.max(0, Math.floor(state.cash / -netOnceStarted)) : null;
+    return {
+      dailyIncome,
+      dailyCosts,
+      dailyNet,
+      days,
+      costs,
+      payHoliday: (state.csuite.payHolidaySince ?? null) !== null,
+      oneOffsThisWeek,
+      startingSoon,
+      daysOnceStarted,
+    };
   }
 
   /**
@@ -1187,13 +1384,22 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
    */
   function developersIdle(state: GameState): string | null {
     if (staffOutput(config, state, "developers") <= 0 || state.mvp.doneDay === null) return null;
-    if (state.optimisationShare >= 1) return null;
-    // Only the features whose tier is unlocked can be built or bought.
+    // Only the features whose tier is unlocked can be built or bought, and only once the features job has opened.
     const all = config.productTypes[state.productType].features;
-    const list = all.filter((f) => isUnlocked(config, state, f.id));
+    const list = jobOpen(state, "features") ? all.filter((f) => isUnlocked(config, state, f.id)) : [];
     const allOn = list.every((f) => ["built", "addon"].includes(state.features[f.id]?.status ?? ""));
-    const locked = all.filter((f) => !isUnlocked(config, state, f.id));
+    const locked = all.filter((f) => !list.includes(f));
     const sofar = locked.length ? "unlocked so far " : "";
+    // With nothing to build and optimisation at its cap, every developer is idle, whatever the slider (#263).
+    if (allOn && optimisationAtCap(config, state)) {
+      const o = optimisationView(config, state, 0);
+      const what = state.model === "saas" ? `every add-on ${sofar}is on` : `every feature ${sofar}is built`;
+      return (
+        `Your developers have nothing to do: ${what}, and optimisation is at its cap (saving ${(100 * o.saving).toFixed(1)}% of at most ${Math.round(100 * o.cap)}%). ` +
+        "Move some to another team, where they retrain and keep their grade, or let them go to save their pay."
+      );
+    }
+    if (state.optimisationShare >= 1) return null;
     // Locked features either wait for their tier, or for research points to unlock them now it's available.
     const toUnlock = locked.some((f) => tierAvailable(state, featureTier(f)));
     const later = !locked.length
@@ -1206,9 +1412,21 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
       ? `the ${Math.round(100 * (1 - state.optimisationShare))}% of your developers' time not on optimisation goes spare`
       : "your developers have nothing to do";
     const slider = optimising ? "" : " Or move the slider to put them on optimisation.";
+    if (!jobOpen(state, "features")) {
+      const tier1 = state.model === "saas" ? "tier 1 add-ons" : "tier 1 features";
+      return `Nothing to build until you launch, when ${tier1} open: ${spare}.${optimising ? "" : " Move the slider to put them on optimisation."}`;
+    }
     if (state.model === "saas") {
       const needed = config.addons.minConfigDevelopers;
-      const setUp = needed > 0 ? ` Setting up an add-on needs the work of ${needed} developer${needed === 1 ? "" : "s"}.` : "";
+      // Short of it, no add-on can be bought at all (#289): say so, rather than only that they're idle.
+      const output = staffOutput(config, state, "developers");
+      const devs = (n: number) => `${n} developer${n === 1 ? "" : "s"}`;
+      const setUp =
+        needed <= 0
+          ? ""
+          : output < needed && !allOn
+            ? ` Setting up an add-on needs the work of ${devs(needed)}, and yours do the work of ${Math.round(output * 100) / 100}: no add-on can be bought until you hire more, counted in mids.`
+            : ` Setting up an add-on needs the work of ${devs(needed)}.`;
       return allOn
         ? `On SaaS the provider builds the features, and every add-on ${sofar}is on: ${spare}.${slider}${later}`
         : optimising
@@ -1249,7 +1467,16 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
 
   function endGame(saved: GameState): GameState {
     const state = load(saved);
-    return state.status === "playing" ? { ...state, status: "finished", endedByTeacher: true } : state;
+    if (state.status !== "playing") return state;
+    const ended = loan.settleAtEnd({ ...state, status: "finished", endedByTeacher: true }).state;
+    return csuite.settleBackPay(ended, finance.chargeNow).state;
+  }
+
+  /** Once a game has ended, whatever is still owed on its loan comes off its cash, with the line saying so. */
+  function endingDebt(result: { state: GameState; entries: LogEntry[] }): { state: GameState; entries: LogEntry[] } {
+    if (result.state.status === "playing") return result;
+    const settled = loan.settleAtEnd(result.state);
+    return { state: settled.state, entries: [...result.entries, ...settled.entries] };
   }
 
   return {
@@ -1267,13 +1494,16 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     sizeSetupFor: infra.sizeSetupFor,
     opsNeededNow: (s) => infra.opsNeededNow(load(s)),
     opsNeededOnceReady: (s) => servers.opsNeededOnceReady(load(s)),
+    opsShortfall: (s) => infra.opsShortfall(load(s)),
     dailyStaffCost: (s) => staff.dailyStaffCost(load(s)),
     staff: (s) => staffWithIdle(load(s)),
     monthlyInfrastructureCost: (s) => infra.monthlyInfrastructureCost(load(s)),
     monthlyAddonCost: (s) => features.monthlyAddonCost(load(s)),
     dailyIncome: (s) => pricing.dailyIncome(load(s)),
-    fairPrice: (s) => pricing.fairPrice(load(s).productType),
+    fairPrice: (s) => pricing.fairPrice(load(s)),
     pricePreview: (s, price, rate) => pricing.pricePreview(load(s), price, rate),
+    fairPriceView: (s) => pricing.fairPriceView(load(s)),
+    launchBands: (s, price, rate) => pricing.launchBands(load(s), price, rate),
     priceWave: (s) => pricing.priceWave(load(s)),
     priceLockDaysLeft: (s) => pricing.lockDaysLeft(load(s)),
     customerMix: (s) => mix.customerMix(load(s)),
@@ -1287,11 +1517,13 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     racks: (s) => racks.racks(load(s)),
     powerAndCooling: (model) => config.models[model].powerAndCooling,
     provider: (s) => infra.provider(load(s)),
+    autoscale: (s) => infra.autoscaleView(load(s)),
     dailyClearance: (s) => support.dailyClearance(load(s)),
     usualTickets: (s) => support.usualTickets(load(s)),
     moderation: (s) => moderation.moderationView(load(s)),
     conversion: (s) => conversion.conversion(load(s)),
     uptime: (s) => infra.uptime(load(s)),
+    recordUptime: (s) => ipo.recordUptime(load(s)),
     features: (s) => features.features(load(s)),
     loan: (s) => loan.loanView(load(s)),
     loanQuote: (s) => loan.loanQuote(load(s)),
@@ -1315,7 +1547,10 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     },
     drift: (s) => drift.driftView(load(s)),
     launch: (s) => launch.launchView(load(s)),
-    phase: (s) => phaseView(load(s)),
+    phase: (s) => {
+      const state = load(s);
+      return phaseView(config, state, csuite.openDay(state, "cfo"));
+    },
     mvp: (s) => mvpView(load(s)),
     optimisation: (s) => {
       const state = load(s);
@@ -1327,6 +1562,7 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     },
     tiers: (s) => tiers.tiersView(load(s)),
     campaigns: (s) => campaigns.campaignsView(load(s)),
+    campaignQuote: (s, customerType, budget, days) => campaigns.quote(load(s), customerType, budget, days),
     benefits: (s) => benefits.benefits(load(s)),
     monthlyBenefitCost: (s) => benefits.monthlyBenefitCost(load(s)),
     migration: (s) => migration.migration(load(s)),
@@ -1334,8 +1570,12 @@ function createGameSim(config: GameConfig, difficulty: DifficultyId): Sim {
     events: (s) => events.events(load(s)),
     calendar: (s) => calendar.calendar(load(s)),
     danger: (s) => encounters.danger(load(s)),
+    shortfall: (s) => loan.shortfallView(load(s)),
     featureGaps: (s) => events.featureGaps(load(s)),
-    csuite: (s) => csuite.csuiteView(load(s)),
+    csuite: (s) => {
+      const state = load(s);
+      return csuite.csuiteView(state, (role, id) => hireRunwayNote(state, role, id));
+    },
     summarise: (s) => summary.summarise(load(s)),
     api: (s) => api.apiView(load(s)),
   };

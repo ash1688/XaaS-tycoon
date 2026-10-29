@@ -73,9 +73,20 @@ export const eventHours = (config: GameConfig, state: BenefitState, model: Model
 export const autoscaling = (config: GameConfig, state: BenefitState, model: ModelId) =>
   effectsOn(config, state, model, "autoscaling")[0];
 
-/** Managed autoscaling on a model, if it's on: the platform sets the instance count each night. */
+/** Managed autoscaling on a model, if it's on: a higher nightly baseline for PaaS autoscaling. */
 export const managedAutoscaling = (config: GameConfig, state: BenefitState, model: ModelId) =>
   effectsOn(config, state, model, "managedAutoscaling")[0];
+
+/**
+ * PaaS autoscaling on a model, if it has a platform: basic autoscaling's numbers, with Managed autoscaling's higher
+ * headroom once it's bought.
+ */
+export function paasAutoscaling(config: GameConfig, state: BenefitState, model: ModelId) {
+  const basic = config.models[model].servers?.managed?.autoscaling;
+  if (!basic) return undefined;
+  const managed = managedAutoscaling(config, state, model);
+  return { ...basic, headroom: managed?.headroom ?? basic.headroom, managed: managed !== undefined };
+}
 
 /** Model benefits: buying them once their tier is unlocked, cancelling them, and billing them monthly. */
 export function createBenefits(config: GameConfig, finance: Finance) {

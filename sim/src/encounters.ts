@@ -1,5 +1,6 @@
 import { DANGER_RISKS, type DangerRisk, type EventConfig, type GameConfig } from "./config.ts";
-import { breachShare, patchingNeed } from "./executives.ts";
+import { paasAutoscaling } from "./benefits.ts";
+import { breachShare } from "./executives.ts";
 import { layerOwner } from "./responsibility.ts";
 import { nextRandom } from "./rng.ts";
 import type { Servers } from "./servers.ts";
@@ -39,13 +40,13 @@ export interface DangerView {
 }
 
 /** The situation an encounter list is rolled in, and the meter checked against: the C-suite too, once there is one. */
-type Situation = Pick<GameState, "model" | "schedule" | "featureGaps" | "dangerRisks"> & Partial<Pick<GameState, "csuite">>;
+type Situation = Pick<GameState, "model" | "schedule" | "featureGaps" | "dangerRisks"> & Partial<Pick<GameState, "csuite" | "benefits">>;
 
 /** The event a CISO makes less likely. */
 const BREACH_EVENT = "breach";
 
 /** The danger meter and the encounter list: when random events fire, and which. See EncounterConfig. */
-export function createEncounters(config: GameConfig, servers: Servers) {
+export function createEncounters(config: GameConfig, servers: Servers, spikeDay: (state: GameState, day: number) => boolean) {
   const { encounters } = config;
   const eventConfig = (id: string) => config.events.find((e) => e.id === id);
 
@@ -63,6 +64,8 @@ export function createEncounters(config: GameConfig, servers: Servers) {
       const recent = (fired: number) => followsWithinDays === undefined || day - fired <= followsWithinDays;
       if (!state.schedule.slice(last + 1).some((s) => follows.includes(s.event) && recent(s.day))) return false;
     }
+    // An autoscaler can only fail for a company whose platform autoscales (#261).
+    if (effect.autoscalerFails && !paasAutoscaling(config, { benefits: state.benefits ?? [], model: state.model }, state.model)) return false;
     return !(effect.featureGap && state.featureGaps.some((g) => g.event === event.id && g.model === state.model));
   }
 
@@ -112,7 +115,9 @@ export function createEncounters(config: GameConfig, servers: Servers) {
       return !!event && canHit(state, event, day);
     });
     const next = list[0];
-    const fires = !!next && state.dangerMeter >= next.threshold;
+    // One weighted towards spike days waits for one, for up to about spikeWaitDays of the meter's rise (#261).
+    const wait = next ? (eventConfig(next.event)?.encounter?.spikeWaitDays ?? 0) * encounters.dailyRise : 0;
+    const fires = !!next && state.dangerMeter >= next.threshold && (wait <= 0 || spikeDay(state, day) || state.dangerMeter >= next.threshold + wait);
     if (!fires && !(list.length === 0 && state.dangerMeter >= encounters.thresholdMax)) {
       const kept = { schedule: state.schedule, dangerMeter: state.dangerMeter, encounterList: list, encounterRng: state.encounterRng };
       return { state: kept, entries: [] as LogEntry[] };
@@ -134,7 +139,7 @@ export function createEncounters(config: GameConfig, servers: Servers) {
       // Ops still to start after hiring aren't patching yet. A CISO keeps patches up to date with fewer.
       unpatched:
         layerOwner(state.model, "os") === "you" &&
-        staffOutput(config, state, "ops") < servers.opsNeeded(state) * patchingNeed(config, state),
+        staffOutput(config, state, "ops") < servers.opsNeeded(state),
       overloaded,
       lowSatisfaction: state.satisfaction < config.support.poorSatisfaction,
     };
@@ -177,7 +182,7 @@ export function createEncounters(config: GameConfig, servers: Servers) {
     const event = next && eventConfig(next.event);
     if (!next || !event?.warning?.days || state.dangerMeter <= 0) return null;
     const within = state.dangerMeter + event.warning.days * encounters.dailyRise >= next.threshold;
-    return within ? { event: event.id, name: event.name, text: event.warning.text } : null;
+    return within ? { event: event.id, name: event.name, text: event.warning.byModel?.[state.model] ?? event.warning.text } : null;
   }
 
   /** A warning that came on today, for the day's log. */

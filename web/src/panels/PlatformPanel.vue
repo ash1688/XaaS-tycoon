@@ -13,6 +13,9 @@ const m = computed(() => game.managed);
 const instanceCu = computed(() => (m.value ? m.value.instances * m.value.instanceUnits : 0));
 
 const setInstances = (count: number) => game.act({ type: "setInstances", count });
+// PaaS autoscaling (#261): the instances set by hand are the minimum, and a maximum caps the burst instances.
+const scale = computed(() => game.company?.autoscale ?? null);
+const setMax = (max: number) => game.act({ type: "setAutoscaleMax", max });
 // With a paid API: API instances, the instance size, each giving APIU for its calls.
 const hasApi = computed(() => !!game.company?.api?.owned);
 const apiu = computed(() => (m.value ? m.value.apiInstances * m.value.apiInstanceUnits : 0));
@@ -115,6 +118,31 @@ async function remove(service: ManagedService) {
           testid="instances"
           @down="setInstances(m.instances - 1)"
           @up="setInstances(m.instances + 1)"
+        />
+      </li>
+
+      <li v-if="scale" data-testid="platform-autoscale">
+        <div class="server-info">
+          <strong>{{ scale.managed ? "Managed autoscaling" : "Basic autoscaling" }}</strong>
+          <span class="muted" data-testid="autoscale-summary">
+            Instances {{ scale.instances }} (min {{ scale.min }}, max {{ scale.max }}). Each night the platform sets
+            them to {{ scale.baseline }}× yesterday's demand, never below the {{ scale.min }} you set. During a day, burst instances cover
+            spikes up to your maximum, at {{ formatCash(scale.burstDayCost) }} each for the day. Demand over the maximum
+            is an outage.
+          </span>
+          <span class="managed-note">Your minimum is your insurance if the autoscaler fails.</span>
+        </div>
+        <StepperControl
+          label="Autoscaling maximum"
+          :value="String(scale.max)"
+          down-label="Lower the autoscaling maximum"
+          up-label="Raise the autoscaling maximum"
+          :down-why="scale.max <= scale.min ? `It can't go below your minimum of ${scale.min} instances.` : undefined"
+          :up-why="scale.max >= m.maxInstances ? `The platform runs at most ${m.maxInstances} instances.` : undefined"
+          :disabled="game.busy || game.over"
+          testid="autoscale-max"
+          @down="setMax(scale.max - 1)"
+          @up="setMax(scale.max + 1)"
         />
       </li>
 

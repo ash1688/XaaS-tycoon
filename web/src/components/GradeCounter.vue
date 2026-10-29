@@ -27,7 +27,7 @@ const who = computed(
   () => `${agency.value ? "agency " : ""}${current.value?.name.toLowerCase() ?? picked.value} ${info.value?.personName ?? props.pool}`,
 );
 // Hires still to start: of the kind picked (permanent or agency), of a grade of it, and of the picked grade.
-const waiting = computed(() => view.value?.hiring.filter((h) => h.agency === agency.value) ?? []);
+const waiting = computed(() => view.value?.hiring.filter((h) => h.agency === agency.value && !h.retraining) ?? []);
 const waitingOf = (g: StaffGrade) => waiting.value.filter((h) => h.grade === g).reduce((sum, h) => sum + h.count, 0);
 const starting = computed(() => waiting.value.reduce((sum, h) => sum + h.count, 0));
 // − cancels a hire still to start first, as that's free, then lets go someone on the team.
@@ -116,9 +116,15 @@ function letGo() {
       {{ agencyOnTeam.map((g) => `${g.count} ${gradeName(g.grade, g.count)}`).join(", ") }}, {{ formatCash(agencyPay) }} a day
     </p>
     <div v-if="view.hiring.length" class="hiring" :data-testid="`${pool}-hiring`" aria-live="polite">
-      <p v-for="(h, i) in view.hiring" :key="i">
-        {{ h.count }} {{ h.agency ? "agency " : labelPermanent ? "permanent " : "" }}{{ gradeName(h.grade, h.count) }} hired:
-        {{ h.count === 1 ? "starts" : "they start" }} on day {{ h.arrivesOn }}, in {{ days(h.daysLeft) }}.
+      <p v-for="(h, i) in view.hiring" :key="i" :data-retraining="h.retraining || undefined">
+        <template v-if="h.retraining">
+          {{ h.count }} {{ gradeName(h.grade, h.count) }} retraining, paid already:
+          {{ h.count === 1 ? "starts" : "they start" }} on day {{ h.arrivesOn }}, in {{ days(h.daysLeft) }}.
+        </template>
+        <template v-else>
+          {{ h.count }} {{ h.agency ? "agency " : labelPermanent ? "permanent " : "" }}{{ gradeName(h.grade, h.count) }} hired:
+          {{ h.count === 1 ? "starts" : "they start" }} on day {{ h.arrivesOn }}, in {{ days(h.daysLeft) }}.
+        </template>
       </p>
     </div>
     <LetGoConfirm v-model:open="confirming" :pool="pool" :grade="picked" :count="1" :control="control" />

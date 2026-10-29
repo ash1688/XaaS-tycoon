@@ -1,6 +1,6 @@
 import { expect, test, type Browser, type APIRequestContext } from "@playwright/test";
 import { E2E_FINAL_DAY, E2E_TEACHER_PASSWORD } from "../playwright.config.ts";
-import { createCode, launch } from "./staff.ts";
+import { createCode, launch, withBenefit } from "./staff.ts";
 
 async function newCompany(browser: Browser, request: APIRequestContext, name: string, model: string) {
   const teacher = await (await browser.newContext()).newPage();
@@ -87,4 +87,37 @@ test("on SaaS, the Infrastructure page says capacity is the provider's job and s
   await expect(student.getByTestId("tier-cu")).toHaveCount(0);
   await expect(student.getByTestId("servers-panel")).toHaveCount(0);
   await expect(student.getByTestId("platform-panel")).toHaveCount(0);
+});
+
+test("on PaaS, the platform autoscales, shows the instances, the minimum and a maximum to set, and Managed autoscaling raises the baseline (#261)", async ({
+  browser,
+  request,
+}) => {
+  const teacher = await (await browser.newContext()).newPage();
+  await teacher.goto("/staff");
+  await teacher.getByLabel("Teacher password").fill(E2E_TEACHER_PASSWORD);
+  await teacher.getByRole("button", { name: "Sign in" }).click();
+  const code = await createCode(teacher);
+  const { id } = await (await request.post(`/api/codes/${code}/companies`, { data: { name: "Scaling Co", productType: "social", model: "paas" } })).json();
+  await launch(request, code, id, "paas");
+  const act = (data: object) => request.post(`/api/codes/${code}/companies/${id}/actions`, { data });
+  // Set by hand to 4: with autoscaling, that's the minimum.
+  expect((await act({ type: "setInstances", count: 4 })).ok()).toBe(true);
+
+  // Every PaaS company has basic autoscaling.
+  const student = await (await browser.newContext()).newPage();
+  await student.goto(`/play/${code}/${id}/infrastructure`);
+  const scaling = student.getByTestId("platform-autoscale");
+  await expect(scaling).toContainText("Basic autoscaling");
+  await expect(scaling.getByTestId("autoscale-summary")).toContainText("1.25× yesterday's demand, never below the 4 you set");
+
+  await withBenefit(id, "paasAutoscaling");
+  await student.reload();
+  await expect(scaling).toContainText("Managed autoscaling");
+  await expect(scaling.getByTestId("autoscale-summary")).toContainText("Instances 4 (min 4, max 12).");
+  await expect(scaling.getByTestId("autoscale-summary")).toContainText("1.5× yesterday's demand, never below the 4 you set");
+  // The maximum can't go below the minimum; raising it is saved.
+  await scaling.getByTestId("autoscale-max-up").click();
+  await expect(scaling.getByTestId("autoscale-max-value")).toHaveText("13");
+  await expect(scaling.getByTestId("autoscale-summary")).toContainText("(min 4, max 13)");
 });
