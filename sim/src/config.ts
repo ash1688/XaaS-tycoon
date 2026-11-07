@@ -1829,6 +1829,9 @@ export interface InvestorsConfig {
  *   offers lapse brings three new VCs retryDays later for the same round, unless the next round approaches first.
  *   Each approach declined in a round makes the round's next VCs less generous: declinePremium off the most premium,
  *   declineShare on the least share.
+ * - maxShare is the most of the company any VC asks for in one approach: when the most a VC could ask (the round's
+ *   most share, both rounds' added in a merged round, times the largest lean) is more, every VC's share asked is
+ *   scaled down by the same factor, so their cash falls with it and they still differ as they lean.
  * - Accepting sets the valuation to the chosen VC's figure, as the angel's does, and closes friends and family and the
  *   grant. All the cash is paid on signing.
  */
@@ -1839,6 +1842,7 @@ export interface VcConfig {
   leadPremium: number;
   declinePremium: number;
   declineShare: number;
+  maxShare: number;
   leans: Record<VcLean, { share: number; premium: number }>;
   rounds: Record<SeriesId, VcRoundConfig>;
 }
@@ -3167,6 +3171,8 @@ export const defaultConfig: GameConfig = {
       leadPremium: 0.1,
       declinePremium: 0.1,
       declineShare: 0.02,
+      // A 180-day game's Series A asked up to ~70% of the company before this, and its least-ownership VC ~40%.
+      maxShare: 0.35,
       leans: {
         cash: { share: 1.3, premium: 0 },
         conditions: { share: 1, premium: -0.1 },

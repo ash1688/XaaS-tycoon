@@ -743,9 +743,10 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
   /**
    * A VC's offer for one of the four rounds' terms, from where its two draws fell (0–1) between the least and most
    * premium and share, as an angel's, plus the VC's lean and the lead VC's premium. `round` is the round approaching,
-   * whose declines make it less generous.
+   * whose declines make it less generous. `squeeze` scales the share asked down to fit maxShare. Returns the valuation
+   * their terms put on the company before their cash, and the cash that buys the share asked at it.
    */
-  function roundOffer(state: GameState, r: VcRoundConfig, round: SeriesId, lean: VcLean, isLead: boolean, premiumAt: number, shareAt: number) {
+  function roundOffer(state: GameState, r: VcRoundConfig, round: SeriesId, lean: VcLean, isLead: boolean, premiumAt: number, shareAt: number, squeeze: number) {
     const leaning = vcConfig.leans[lean];
     // Word gets round: each approach turned down in this round makes the next VCs less generous.
     const declines = state.investors.vc.declined.filter((d) => d.round === round).length;
@@ -755,10 +756,22 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
     const cash = netCash(state);
     const premium =
       Math.round((r.premium.min + premiumAt * (premiumMax - r.premium.min) + leaning.premium + (isLead ? vcConfig.leadPremium : 0)) * 100) / 100;
-    const asked = Math.min(MAX_SHARE, roundTo((shareMin + shareAt * (r.share.max - shareMin)) * leaning.share, 0.005));
+    const asked = Math.min(MAX_SHARE, roundTo((shareMin + shareAt * (r.share.max - shareMin)) * leaning.share * squeeze, 0.005));
     const preMoney = Math.max(premium * business + cash, 0.25 * premium * business);
-    const amount = Math.min(r.maxAmount, Math.max(r.minAmount, roundTo((asked * preMoney) / (1 - asked), 1000)));
-    return { amount, share: amount / (preMoney + amount) };
+    return { preMoney, wanted: (asked * preMoney) / (1 - asked) };
+  }
+
+  /**
+   * A round's least cash is the smallest cheque its VCs write. When the lowest of the three offers falls short of it,
+   * all three are lifted in step, the company valued higher rather than more of it asked, so they still differ as they
+   * lean: lifting each to the least on its own gave three offers of the same cash for most of a small company.
+   */
+  function liftedOffers(r: VcRoundConfig, drafts: { preMoney: number; wanted: number }[]) {
+    const lift = Math.max(1, r.minAmount / Math.max(1, Math.min(...drafts.map((d) => d.wanted))));
+    return drafts.map((d) => {
+      const amount = Math.min(r.maxAmount, Math.max(r.minAmount, roundTo(d.wanted * lift, 1000)));
+      return { amount, share: amount / (d.preMoney * lift + amount) };
+    });
   }
 
   /**
@@ -796,20 +809,27 @@ export function createInvestors(config: GameConfig, finance: Finance, shares: Sh
     const business = shares.businessWorth(state);
     const cash = netCash(state);
 
-    const pitch = (investor: string, lean: VcLean, isLead: boolean): VcPitch => {
+    // The most any VC could ask this approach, both rounds' added in a merged round: scaled to maxShare if more.
+    const most = rung.parts.reduce((sum, p) => sum + vcConfig.rounds[p].share.max, 0) * Math.max(...VC_LEANS.map((l) => vcConfig.leans[l].share));
+    const squeeze = Math.min(1, vcConfig.maxShare / Math.min(MAX_SHARE, most));
+    const draft = (investor: string, lean: VcLean, isLead: boolean) => {
       const premiumAt = draw();
       const shareAt = draw();
-      const parts = rung.parts.map((p) => ({ round: p, ...roundOffer(state, vcConfig.rounds[p], round, lean, isLead, premiumAt, shareAt) }));
-      const amount = parts.reduce((sum, p) => sum + p.amount, 0);
-      const share = Math.min(MAX_SHARE, parts.reduce((sum, p) => sum + p.share, 0));
-      return { investor, lean, lead: isLead, negotiation: negotiator.open({ amount, share }), parts: parts.length > 1 ? parts : null };
+      return { investor, lean, isLead, parts: rung.parts.map((p) => roundOffer(state, vcConfig.rounds[p], round, lean, isLead, premiumAt, shareAt, squeeze)) };
     };
-    const vcs: VcPitch[] = lead ? [pitch(lead.investor, lead.lean, true)] : [];
-    while (vcs.length < 3) {
+    const drafts = lead ? [draft(lead.investor, lead.lean, true)] : [];
+    while (drafts.length < 3) {
       const investor = pool.splice(Math.floor(draw() * pool.length), 1)[0]!;
       const lean = VC_LEANS[Math.floor(draw() * VC_LEANS.length)]!;
-      vcs.push(pitch(investor, lean, false));
+      drafts.push(draft(investor, lean, false));
     }
+    const offered = rung.parts.map((p, i) => liftedOffers(vcConfig.rounds[p], drafts.map((d) => d.parts[i]!)));
+    const vcs: VcPitch[] = drafts.map((d, at) => {
+      const parts = rung.parts.map((p, i) => ({ round: p, ...offered[i]![at]! }));
+      const amount = parts.reduce((sum, p) => sum + p.amount, 0);
+      const share = Math.min(MAX_SHARE, parts.reduce((sum, p) => sum + p.share, 0));
+      return { investor: d.investor, lean: d.lean, lead: d.isLead, negotiation: negotiator.open({ amount, share }), parts: parts.length > 1 ? parts : null };
+    });
     const record: VcApproach = { round, day: state.day, business, netCash: cash, vcs, picked: null };
     const offers = vcs
       .map((p) => {
