@@ -216,6 +216,7 @@ export function configFields(base: GameConfig = defaultConfig): ConfigField[] {
     add("investors.vc.leadPremium", "Money", V, "Lead VC's extra premium", "The lead VC, back for the next round, values the business at this much more premium than they otherwise would.", range(0, 1, 0.05));
     add("investors.vc.declinePremium", "Money", V, "Premium lost per decline", "Each approach declined in a round takes this off the most premium the round's next VCs offer (never below the least).", range(0, 1, 0.05));
     add("investors.vc.declineShare", "Money", V, "Share added per decline", "Each approach declined in a round adds this to the least share the round's next VCs ask for (never above the most).", range(0, 0.2, 0.01));
+    add("investors.vc.maxShare", "Money", V, "Most share asked", "No VC asks for more of the company than this in one approach: when a round's most share, after the lean, is more, every VC's share asked (and the cash it buys) is scaled down to fit.", range(0.05, 0.9, 0.01));
     const LEANS = { cash: "Most cash", conditions: "Fewest conditions", ownership: "Least ownership" } as const;
     for (const lean of VC_LEANS) {
       add(`investors.vc.leans.${lean}.share`, "Money", V, `${LEANS[lean]}: share asked`, "A VC leaning this way asks for the round's share multiplied by this.", range(0.1, 3, 0.05));

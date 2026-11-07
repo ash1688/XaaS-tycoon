@@ -370,7 +370,8 @@ describe("a 180-day game's two rounds", () => {
   });
 
   it("takes the cash and share of the two rounds added together", () => {
-    // Fixed ranges, so a merged offer's share is the two rounds' shares, as the lean asks, added together.
+    // Fixed ranges, so a merged offer's share is the two rounds' shares, as the lean asks, added together: with no cap
+    // on the share, which would scale them all down.
     const rounds = fast.investors.vc.rounds;
     const fixed = createSim({
       ...fast,
@@ -378,6 +379,7 @@ describe("a 180-day game's two rounds", () => {
         ...fast.investors,
         vc: {
           ...fast.investors.vc,
+          maxShare: 0.9,
           rounds: {
             ...rounds,
             seriesA: { ...rounds.seriesA, premium: { min: 1.5, max: 1.5 }, share: { min: 0.2, max: 0.2 }, minAmount: 0, maxAmount: 1e9 },
@@ -401,6 +403,35 @@ describe("a 180-day game's two rounds", () => {
       const ask = a.vcs.find((p) => p.investor === o.investor)!.negotiation.offers[0]!;
       expect(ask.share).toBeCloseTo(shareFor(0.2) + shareFor(0.15), 6);
     }
+  });
+
+  it("never asks for more than maxShare of the company, the shares scaled down so they still differ as they lean", () => {
+    for (const seed of [1, 2, 3, 42]) {
+      const a = until("seriesA", sim, short(sim, seed)).state.investors.vc.approach!;
+      const asks = a.vcs.map((p) => p.negotiation.offers[0]!);
+      for (const ask of asks) expect(ask.share).toBeLessThanOrEqual(vc.maxShare + 0.005);
+    }
+  });
+
+  it("lifts all three offers in step when the lowest falls short of the round's least cash, so they still differ", () => {
+    const rounds = fast.investors.vc.rounds;
+    const big = createSim({
+      ...fast,
+      investors: {
+        ...fast.investors,
+        vc: {
+          ...fast.investors.vc,
+          rounds: { ...rounds, seriesA: { ...rounds.seriesA, minAmount: 5_000_000, maxAmount: 1e9 }, seriesB: { ...rounds.seriesB, maxAmount: 1e9 } },
+        },
+      },
+    });
+    const a = until("seriesA", big, short(big)).state.investors.vc.approach!;
+    const firstParts = a.vcs.map((p) => p.parts![0]!);
+    // The lowest is lifted to the least; the others by the same factor, so their cash isn't all the same.
+    expect(Math.min(...firstParts.map((p) => p.amount))).toBe(5_000_000);
+    expect(new Set(firstParts.map((p) => p.amount)).size).toBeGreaterThan(1);
+    // The company is valued higher instead, so no one asks for more than the cap.
+    for (const p of a.vcs) expect(p.negotiation.offers[0]!.share).toBeLessThanOrEqual(fast.investors.vc.maxShare + 0.005);
   });
 
   it("pays the first tranche on signing, and the second once old Series B's target is hit", () => {
